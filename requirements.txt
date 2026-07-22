@@ -1,65 +1,52 @@
-# LanceraOS v2 — Python dependencies
-# Matches CLAUDE.md Section 2 (Tech Stack — Exact Versions, No Deviations).
-# Built out during the Users/Auth module; every later module chat should
-# ADD to this file, never replace it, and never introduce a package that
-# duplicates something already listed here.
+# requirements.txt
+#
+# Everything here is a package actually imported by code that exists
+# today (core/ + apps/users/). Deliberately NOT included: WeasyPrint,
+# and anything else CLAUDE.md's tech-stack section names for a module
+# that hasn't been built yet (invoices, tax, etc.) — that module's own
+# chat adds its own dependencies when it's built, rather than this file
+# accumulating packages nothing imports yet.
+#
+# Tested in this chat against Django 6.0.7 (what was available in the
+# sandbox) — pinned here to 5.2 LTS per CLAUDE.md's tech-stack decision.
+# Nothing version-specific to 6.0 was knowingly used, but re-run the test
+# suite locally against 5.2 before deploying to confirm.
 
-# ── Core framework ──────────────────────────────────────────────────
+# ── Django core ──────────────────────────────────────────────
 Django==5.2.*
 djangorestframework==3.15.*
+djangorestframework-simplejwt==5.3.*
+django-environ==0.11.*
+
+# ── Database ─────────────────────────────────────────────────
 psycopg2-binary==2.9.*
 
-# ── Auth ─────────────────────────────────────────────────────────────
-djangorestframework-simplejwt==5.3.*
+# ── ASGI / WebSockets (Daphne + Channels — no consumers exist yet,
+#    but config/asgi.py and config/settings.py already wire these up) ──
+daphne==4.1.*
+channels==4.1.*
+channels-redis==4.2.*
+
+# ── Background tasks ─────────────────────────────────────────
+celery==5.4.*
+django-celery-beat==2.9.*
+redis==5.0.*
+
+# ── CORS ─────────────────────────────────────────────────────
+django-cors-headers==4.4.*
+
+# ── Password hashing (Argon2 — CLAUDE.md rule 7) ────────────
 argon2-cffi==23.1.*
-# Password hashing per CLAUDE.md rule 7 (Argon2, never bcrypt/plaintext).
-# Configure PASSWORD_HASHERS in settings.py with Argon2PasswordHasher first.
 
-# ── OAuth (hand-rolled, NOT django-allauth — see DECISIONS.md) ───────
-google-auth==2.*
+# ── Encryption (core/encryption.py) ─────────────────────────
+cryptography==43.0.*
+
+# ── HTTP client (core/email.py -> Resend; apps/users/oauth/ ->
+#    Google/Facebook Graph API verification) ────────────────
 requests==2.32.*
-# `requests` also used for hand-rolled Facebook Graph API calls and the
-# Google userinfo-endpoint fallback path.
 
-# ── Async / real-time ────────────────────────────────────────────────
-daphne==4.*
-channels==4.*
-channels-redis==4.*
+# ── Google OAuth ID-token verification ───────────────────────
+google-auth==2.34.*
 
-# ── Background tasks ─────────────────────────────────────────────────
-celery==5.*
-django-celery-beat==2.*
-redis==5.*
-# Single Redis instance serves as Celery broker/result backend, Django
-# cache backend, and rate-limiting store — see DECISIONS.md.
-
-# ── Encryption ────────────────────────────────────────────────────────
-cryptography==42.*
-# Fernet symmetric encryption for custom SMTP passwords (apps/users/encryption.py).
-
-# ── Media storage ────────────────────────────────────────────────────
-cloudinary==1.*
-# Avatar upload/replace/delete.
-
-# ── Email (platform emails via Resend HTTP API) ─────────────────────
-resend==2.*
-
-# ── CORS ──────────────────────────────────────────────────────────────
-django-cors-headers==4.*
-# Required for the app.lanceraos.com / api.lanceraos.com subdomain split.
-# Access-Control-Allow-Credentials: true, explicit origin, never a wildcard.
-
-# ── Config / environment ─────────────────────────────────────────────
-python-decouple==3.*
-# Reads .env for all secrets/config — never hardcode credentials.
-
-# ── Observability ─────────────────────────────────────────────────────
-sentry-sdk==2.*
-
-# ── Production server ────────────────────────────────────────────────
-gunicorn==23.*
-whitenoise==6.*
-
-# ── AI inference (Groq — used by other modules, listed here since this
-#    is the first requirements.txt any module chat will extend) ──────
-groq==0.*
+# ── Media storage (profile/business logo uploads) ───────────
+cloudinary==1.41.*

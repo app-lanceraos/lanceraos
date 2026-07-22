@@ -47,7 +47,11 @@ Developer: Solo founder - Ali Amir
 - ASGI server: Daphne
 - WebSockets: Django Channels 4
 - Authentication: djangorestframework-simplejwt
-- OAuth: django-allauth (Google + Facebook)
+- OAuth: hand-rolled (Google + Facebook), same account-linking logic for
+  both providers — not django-allauth. v1's working Google flow was
+  hand-rolled and already handled account-linking collisions correctly;
+  allauth would mean re-deriving that same logic inside its own hooks
+  for no benefit. See DECISIONS.md.
 - Email: Resend HTTP API (platform emails) + Custom SMTP per user (client-facing emails)
 - PDF generation: WeasyPrint
 - Media storage: Cloudinary
@@ -84,28 +88,43 @@ Every module must follow them exactly.
 ### Backend rules
 1. All API views use @api_view and @permission_classes decorators.
    Never use class-based views (ModelViewSet, APIView, etc.)
-2. USE_TZ = False in settings. The platform operates in Pakistan
-   Standard Time only. No timezone conversion anywhere. 
+2. USE_TZ = False in settings. The platform stores and operates on
+   Pakistan Standard Time only, with zero server-side timezone
+   conversion anywhere. FreelancerProfile.timezone (user-set, defaults
+   to Asia/Karachi) is used exclusively for FRONTEND display
+   formatting — it never drives any backend conversion logic.
 3. All emails go through a shared send_email() utility that calls
    the Resend HTTP API on port 443. Never use Django's email backend
-   or SMTP directly.
+   or SMTP directly for LanceraOS's own platform emails. (Django's SMTP
+   backend IS still used, deliberately, inside apps/users/views/smtp.py's
+   save_custom_smtp() — but that tests a USER'S OWN mail server, a
+   different operation from LanceraOS sending its own mail.)
 4. All AI calls go through a shared call_groq() utility function
    in core/ai.py. Never call the Groq API directly from views.
 5. All prompts live in a prompts.py file inside the relevant app.
    Never hardcode prompt strings inside view functions.
 6. Sensitive fields (SMTP passwords, API keys stored per user) are
    encrypted with Fernet before saving. Never store them in plain text.
+   Fields that also need a uniqueness constraint (CNIC, NTN, PSEB
+   registration number) additionally carry an HMAC blind-index column
+   (`*_hash`, unique=True) using a SEPARATE key (BLIND_INDEX_KEY) from
+   the Fernet encryption key (ENCRYPTION_KEY) — see DECISIONS.md.
 7. Passwords are hashed with Argon2. Never bcrypt, never plain text.
 8. All database queries go through Django ORM. No raw SQL anywhere.
 9. All background tasks use @shared_task decorator, not @app.task.
-10. Every state-changing action writes a row to the audit_log table.
-11. Every API request is logged by middleware to api_request_logs.
+10. Every state-changing action writes a row to the shared core.AuditLog
+    table (replaces the pattern of one audit table per app).
+11. Every API request is logged by middleware to core.ApiRequestLog.
     Request bodies are logged with sensitive fields auto-redacted.
     Response bodies are only logged when status_code >= 500.
 12. Rate limiting is applied at three tiers:
     - Strict: auth endpoints (login, register, OTP)
     - Moderate: data-mutation endpoints
     - Generous: read-only endpoints
+    Implemented via explicit Django-cache checks inside each view, not
+    DRF's scoped-throttle mechanism (declaring throttle rates without
+    attaching throttle_scope to a view does nothing — confirmed as dead
+    config in v1 and not carried forward).
 13. UUIDs as primary keys for all models (not auto-increment integers).
     This prevents enumeration attacks on a financial application.
 14. CSRF protection is mandatory because auth uses httpOnly cookies.
@@ -170,12 +189,12 @@ Every email sent TO A CLIENT byt the LanceraOS user goes through this decision c
 Every operation that crosses a service boundary gets a request_id.
 This is how you investigate "why didn't this happened?"
 
-1. Every incoming HTTP request gets a UUID assigned by middleware.
-   This request_id is:
+1. Every incoming HTTP request gets a UUID assigned by middleware
+   (core.middleware.RequestLoggingMiddleware). This request_id is:
    - Added to every log line for that request
    - Passed to every Celery task spawned by that request
    - Returned in the response header as X-Request-ID
-   - Stored in api_request_logs
+   - Stored in core.ApiRequestLog
 
 2. Every Celery task logs:
    - task_id (Celery's own ID)
@@ -201,7 +220,7 @@ This is how you investigate "why didn't this happened?"
    - success or error
 
 5. When investigating a support issue:
-   - Find the request_id from api_request_logs by user + timestamp
+   - Find the request_id from core.ApiRequestLog by user + timestamp
    - Search all logs for that request_id
    - You get a complete timeline: HTTP request → task queued →
      PDF generated → email attempted → fallback or success
@@ -213,8 +232,10 @@ This is how you investigate "why didn't this happened?"
 2. All CSS tokens (colors, spacing, fonts, transitions) live in
    src/styles/theme.css as CSS custom properties on :root.
 3. API calls go through a shared Axios instance in src/lib/api.js
-   that automatically attaches the JWT access token and handles
-   silent token refresh on 401 responses.
+   that automatically attaches cookies (withCredentials: true) and
+   handles silent token refresh on 401 responses via the httpOnly
+   refresh cookie. Never handles raw access/refresh token strings —
+   those never appear in JS-visible storage or in any response body.
 4. Auth state (user object, loading, isAuthenticated) lives in
    src/store/authStore.js using Zustand.
 5. The AppShell layout component (src/components/AppShell.jsx)
@@ -244,7 +265,7 @@ Before writing any Django model, answer these 6 questions for every table:
 
 3. AUDIT TRAIL?
    Does every change to this record need to be tracked?
-   If yes, write to audit_log on every create/update/delete.
+   If yes, write to core.AuditLog on every create/update/delete.
 
 4. INDEXED?
    Which fields will be used in WHERE clauses or ORDER BY?
@@ -256,7 +277,10 @@ Before writing any Django model, answer these 6 questions for every table:
    Does this field contain PII or credentials that must be
    encrypted at rest? SMTP passwords, NTN numbers, and any
    field that would cause legal or financial harm if the
-   database were breached.
+   database were breached. If the field also needs a uniqueness
+   constraint, add a separate HMAC blind-index column rather than
+   trying to enforce uniqueness on the encrypted value directly
+   (Fernet's randomized IV makes that impossible).
 
 6. CASCADE BEHAVIOR?
    What happens to this record when a related record is deleted?
@@ -291,17 +315,18 @@ lanceraos/                          <- Django project root
 │   ├── settings.py                 <- Django settings
 │   ├── urls.py                     <- Root URL configuration
 │   ├── celery.py                   <- Celery configuration
-│   └── asgi.py                     <- ASGI config (Daphne + Channels)
+│   ├── asgi.py                     <- ASGI config (Daphne + Channels)
+│   └── wsgi.py                     <- WSGI fallback entrypoint
 ├── core/
-│   ├── ai.py              ← Shared Groq API utility (call_groq)
-│   ├── email.py           ← Email router: decides Resend vs custom SMTP
-│   ├── smtp.py            ← Custom SMTP sending utility
-│   ├── middleware.py      ← Request ID injection + API request logging
-│   ├── models.py          ← AuditLog, ApiRequestLog, EmailLog, TaskLog
-│   ├── observability.py   ← Logging helpers used by all modules
-│   └── permissions.py     ← Shared DRF permission classes
+│   ├── ai.py              ← Shared Groq API utility (call_groq) [not yet built]
+│   ├── email.py            ← Resend HTTP API sender (send_email)
+│   ├── encryption.py        ← Fernet + HMAC blind-index helpers
+│   ├── middleware.py        ← Request ID injection + API request logging
+│   ├── models.py            ← AuditLog, ApiRequestLog
+│   ├── observability.py     ← Logging/request-metadata helpers used by all modules
+│   └── permissions.py       ← Shared DRF permission classes [not yet built]
 ├── apps/
-│   ├── users/                      <- Auth, profile, settings
+│   ├── users/                      <- Auth, profile, settings — BUILT
 │   ├── invoices/                   <- Invoice lifecycle + client CRM + portal
 │   ├── payments/                   <- Income, expenses, P&L, CSV import
 │   ├── tax/                        <- FBR tax, SRO 586, income certificate
@@ -334,28 +359,41 @@ lanceraos/                          <- Django project root
 ## 5. Modules — What Exists and What Each Does
 
 ### Module 1 — Users (Authentication + Profile)
-Status: [updated as built]
+Status: Backend complete. Frontend not started.
 App: apps/users/
 
 Handles all authentication and user account management.
 
 Registration: 3-step wizard (name + birthdate -> email + username ->
-password). Age must be >= 16. Email verification required before login.
+password), submitted as a single API call after the wizard completes.
+Age must be >= 16. Email verification required before login.
 
-Auth providers: Email/password, Google OAuth, Facebook OAuth.
-Account linking: if a user registers via email then tries Google
-OAuth with the same email, it auto-links to the existing account.
-Never creates duplicate accounts. All 8 collision scenarios handled.
+Auth providers: Email/password, Google OAuth, Facebook OAuth (hand-rolled,
+identical account-linking logic for both — see DECISIONS.md).
+Account linking: if a user registers via email then tries Google or
+Facebook OAuth with the same email, it auto-links to the existing
+account. Never creates duplicate accounts.
 
-JWT strategy: access token 15 minutes, refresh token 7 days (60 days
-if Remember Me), stored in httpOnly cookies. Silent background refresh.
-Maximum 3 concurrent sessions per account. 4th login logs out oldest.
+JWT strategy: access token 15 minutes, refresh token 30 days (90 days
+if Remember Me), stored in httpOnly cookies (never localStorage,
+never returned in any JSON response body). Silent background refresh
+works even when the access-token cookie has already expired. Maximum
+3 concurrent sessions per account, tracked via a first-class Session
+model (device, IP, refresh-token hash, timestamps) — 4th login evicts
+the least-recently-used session. Sessions listable/individually
+revocable at GET/DELETE /api/auth/sessions/.
 
-2FA: OTP via email. Optional but available.
+2FA: OTP via email. Optional but available. A trusted-device cookie
+(httpOnly, 30 days) can skip 2FA on a recognized device.
 
 Profile holds: 
    - first name, last name, avatar, business name, NTN number,
-   - PSEB number, default currency, timezone.
+   - PSEB number, default currency, timezone (display-only, never
+     drives backend conversion — see rule 2).
+   - CNIC, NTN, PSEB registration number: Fernet-encrypted, each with
+     a separate HMAC blind-index column enforcing cross-account
+     uniqueness (prevents one account claiming another person's real
+     tax-identity number — see DECISIONS.md).
    - SMTP host, port, username, from_name, from_email (custom email settings)
    - SMTP password (Fernet encrypted, never returned in API responses)
 
@@ -363,14 +401,18 @@ Onboarding: after registration, collects profession, income source,
 platform used (Upwork/Fiverr/direct/other).
 
 Notification preferences: per-category toggles (Invoice Events, Client
-Messages, Payments, Security Alerts). Security Alerts cannot be disabled.
+Messages, Payments). Security Alerts has no toggle anywhere — cannot
+be disabled, by omission rather than a disabled-but-present control.
 
-Account deletion: soft delete -> 30-day recovery window -> anonymise PII
--> retain financial records in anonymised form.
+Account deletion: password -> OTP -> confirm -> 30-day recovery window
+-> anonymize (never hard-delete) -> financial records (future modules)
+retain a PROTECT relationship to the now-anonymized user, in anonymized
+form. Confirming deletion revokes every session and clears cookies
+immediately.
 
 Key API endpoints:
 - POST /api/auth/register/
-- POST /api/auth/verify-email/
+- POST /api/auth/verify-email/<uid>/<token>/ (GET)
 - POST /api/auth/login/
 - POST /api/auth/logout/
 - POST /api/auth/token/refresh/
@@ -380,11 +422,13 @@ Key API endpoints:
 - GET/PUT /api/auth/settings/notifications/
 - GET /api/auth/sessions/
 - DELETE /api/auth/sessions/{id}/
-- POST /api/auth/2fa/enable/
 - POST /api/auth/2fa/verify/
-- POST /api/auth/password/change/
-- POST /api/auth/password/reset/
-- DELETE /api/auth/account/
+- POST /api/auth/2fa/toggle/
+- POST /api/auth/change-password/
+- POST /api/auth/forgot-password/ + /api/auth/reset-password/<uid>/<token>/
+- POST /api/auth/email-change/request/ (+ validate/complete/activate/cancel)
+- POST /api/auth/deletion/initiate/ (+ verify-otp/confirm/cancel)
+- POST /api/auth/smtp/save/ (+ disable/status)
 
 ---
 
@@ -723,7 +767,9 @@ as context. Answers questions about how to use the platform only.
 ---
 
 ## 6. Database Schema
-[Updated as each module is built. Add all new tables here.]
+See DATABASE.md — the 6-question framework answered for every table
+that exists (core.AuditLog, core.ApiRequestLog, and all six
+apps.users tables as of this writing).
 
 ---
 
@@ -731,7 +777,7 @@ as context. Answers questions about how to use the platform only.
 
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
-| Users / Auth         | -       | -        | -     | Not started |
+| Users / Auth         | Built   | -        | -     | Backend complete |
 | Invoices + Clients   | -       | -        | -     | Not started |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
@@ -755,28 +801,41 @@ DB_PASSWORD=
 DB_HOST=
 DB_PORT=
 REDIS_URL=
+CELERY_BROKER_URL=
+CELERY_RESULT_BACKEND=
+CHANNEL_LAYER_URL=
 GROQ_API_KEY=
 GROQ_MODEL_FAST=openai/gpt-oss-20b
 GROQ_MODEL_QUALITY=llama-3.3-70b-versatile
 RESEND_API_KEY=
 RESEND_FROM_EMAIL=noreply@lanceraos.com
+RESEND_FROM_NAME=LanceraOS
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
 GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
 FACEBOOK_APP_ID=
 FACEBOOK_APP_SECRET=
-FERNET_KEY=
 VITE_API_URL=http://localhost:8000
 VITE_WS_URL=ws://localhost:8000
-### Email fallback (always available even when custom SMTP is configured)
-RESEND_API_KEY=
-RESEND_FROM_EMAIL=noreply@lanceraos.com
-RESEND_FROM_NAME=LanceraOS
+FRONTEND_URL=http://localhost:5173
 
-### Encryption key for SMTP passwords and other sensitive fields
-FERNET_KEY=
+### Cookies (httpOnly JWT + CSRF — see DECISIONS.md)
+COOKIE_DOMAIN=
+# Local dev: leave blank (host-only cookie). Production: .lanceraos.com
+COOKIE_SECURE=False
+# Production: True
+COOKIE_SAMESITE=Lax
+CSRF_TRUSTED_ORIGINS=
+# Production: https://app.lanceraos.com
+
+### Encryption
+# Fernet key — reversible encryption (CNIC/NTN/PSEB, custom SMTP passwords)
+ENCRYPTION_KEY=
+# HMAC key for blind-indexing CNIC/NTN/PSEB — NEVER reuse ENCRYPTION_KEY
+# here. Opposite security properties by design (randomized vs.
+# deterministic) and must be rotatable independently.
+BLIND_INDEX_KEY=
 
 ### Observability
 SENTRY_DSN=
@@ -786,7 +845,8 @@ SENTRY_DSN=
 ## 8b. Three Supporting Documents
 
 Alongside CLAUDE.md, maintain these three files in the project root.
-Update them as you build.
+Update them as you build. All three now have real content as of the
+Users/Auth module build — see DATABASE.md, STANDARDS.md, DECISIONS.md.
 
 ### STANDARDS.md
 Coding conventions every module chat must follow.
@@ -799,6 +859,8 @@ Contains:
 - Every model must have __str__ returning a human-readable string
 - Every view must have a docstring explaining what it does
 - No print() statements anywhere — use logging.getLogger(__name__)
+- File path as the first line of every file
+- Dead code/config gets removed on discovery, not preserved for fidelity
 
 ### DATABASE.md
 Grows as each module is built.
@@ -815,10 +877,8 @@ Format for each entry:
   
 Example:
   Date: July 2026
-  Decision: WeasyPrint for PDF generation instead of ReportLab
-  Reason: HTML/CSS templates are far easier to design and maintain
-  than ReportLab's programmatic approach. Designers can work on
-  PDF templates without knowing Python.
-  Alternatives considered: ReportLab (too verbose), Puppeteer
-  (requires Node.js subprocess from Django, added complexity)
-
+  Decision: JWT stored in httpOnly cookies, not localStorage.
+  Reason: localStorage is readable by any JS on the page — a single
+  XSS vulnerability becomes an instant account-takeover vector.
+  Alternatives considered: v1's Authorization-header + localStorage
+  approach (rejected, exactly the anti-pattern being replaced).

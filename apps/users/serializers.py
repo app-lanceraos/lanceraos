@@ -1,0 +1,349 @@
+# apps/users/serializers.py
+import re
+from datetime import date
+
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import RegexValidator
+from rest_framework import serializers
+
+from .models import FreelancerProfile, Session
+
+User = get_user_model()
+
+# Kept in exactly one place (v1 duplicated these constants between
+# views.py and serializers.py — a real drift risk, since editing one
+# copy and forgetting the other silently reopens a hole). views.py
+# imports these from here rather than redefining them.
+DISPOSABLE_DOMAINS = {
+    'mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwam.com',
+    'sharklasers.com', 'guerrillamailblock.com', 'grr.la', 'guerrillamail.info',
+    'spam4.me', 'trashmail.com', 'yopmail.com', 'maildrop.cc', 'dispostable.com',
+    'fakeinbox.com', 'mailnull.com', 'spamgourmet.com', 'trashmail.me',
+    'discard.email', 'spamgourmet.net', 'spamgourmet.org', 'tempinbox.com',
+    'throwaway.email', 'getairmail.com', 'filzmail.com', 'tempr.email',
+    'spamherr.com', 'trashmail.net', 'trashmail.at', 'trashmail.io',
+    'spambox.us', 'mailnesia.com', 'trbvm.com', 'mailexpire.com',
+}
+
+RESERVED_USERNAMES = {
+    'admin', 'root', 'superuser', 'staff', 'api', 'static', 'media',
+    'support', 'help', 'billing', 'security', 'login', 'logout',
+    'register', 'dashboard', 'settings', 'lanceraos', 'info',
+    'contact', 'mail', 'email', 'abuse', 'noreply', 'no-reply',
+    'webmaster', 'postmaster', 'null', 'undefined', 'test', 'demo',
+}
+
+PASSWORD_RULES = [
+    (r'.{8,}', 'at least 8 characters'),
+    (r'[A-Z]', 'one uppercase letter'),
+    (r'[a-z]', 'one lowercase letter'),
+    (r'[0-9]', 'one number'),
+    (r'[!@#$%^&*()\-_=+\[\]{};:\'",.<>/?\\|`~]', 'one special character'),
+]
+
+MIN_AGE_YEARS = 16
+
+
+def validate_password_strength(value):
+    missing = [msg for pattern, msg in PASSWORD_RULES if not re.search(pattern, value)]
+    if missing:
+        raise serializers.ValidationError(f'Password must contain: {", ".join(missing)}')
+    return value
+
+
+def _calculate_age(dob: date) -> int:
+    today = date.today()
+    years = today.year - dob.year
+    if (today.month, today.day) < (dob.month, dob.day):
+        years -= 1
+    return years
+
+
+# ══════════════════════════════════════════════════════════════════
+# REGISTRATION
+# ══════════════════════════════════════════════════════════════════
+
+class RegisterSerializer(serializers.ModelSerializer):
+    """
+    Backs the single POST /api/auth/register/ call made after the
+    frontend's 3-step wizard completes (name+DOB -> email+username ->
+    password). The wizard is a frontend-only UX concern — the backend
+    validates the whole payload as one unit, the same way v1 did.
+    check_availability() (a separate view, unchanged from v1) is what
+    gives the frontend live per-step feedback before this final submit.
+    """
+    password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+    username = serializers.CharField(
+        min_length=3, max_length=30,
+        validators=[RegexValidator(
+            regex=r'^[a-zA-Z0-9_]+$',
+            message='Username can only contain letters, numbers, and underscores.',
+        )],
+    )
+    date_of_birth = serializers.DateField(required=True)
+
+    class Meta:
+        model = User
+        fields = ['email', 'username', 'password', 'confirm_password',
+                  'first_name', 'last_name', 'date_of_birth']
+
+    def validate_email(self, value):
+        value = value.lower().strip()
+        domain = value.split('@')[-1].lower()
+        if domain in DISPOSABLE_DOMAINS:
+            raise serializers.ValidationError(
+                'Please use a permanent email address. Temporary email services are not allowed.'
+            )
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('An account with this email address already exists.')
+        return value
+
+    def validate_username(self, value):
+        value = value.lower().strip()
+        if value in RESERVED_USERNAMES:
+            raise serializers.ValidationError('This username is not available.')
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError('This username is already taken.')
+        return value
+
+    def validate_first_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('First name is required.')
+        if len(value) < 2:
+            raise serializers.ValidationError('First name must be at least 2 characters.')
+        if not re.match(r'^[a-zA-Z\s\-]+$', value):
+            raise serializers.ValidationError('First name can only contain letters, spaces, and hyphens.')
+        return value
+
+    def validate_last_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('Last name is required.')
+        if not re.match(r'^[a-zA-Z\s\-]+$', value):
+            raise serializers.ValidationError('Last name can only contain letters, spaces, and hyphens.')
+        return value
+
+    def validate_date_of_birth(self, value):
+        age = _calculate_age(value)
+        if age < MIN_AGE_YEARS:
+            raise serializers.ValidationError(f'You must be at least {MIN_AGE_YEARS} years old to register.')
+        if age > 120:
+            raise serializers.ValidationError('Please enter a valid date of birth.')
+        return value
+
+    def validate_password(self, value):
+        return validate_password_strength(value)
+
+    def validate(self, data):
+        if data.get('password') != data.get('confirm_password'):
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        return data
+
+    def create(self, validated_data):
+        validated_data.pop('confirm_password')
+        dob = validated_data.pop('date_of_birth')
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data['email'],
+            password=validated_data['password'],
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', ''),
+        )
+        user.date_of_birth = dob
+        user.save(update_fields=['date_of_birth'])
+        user.add_to_password_history(user.password)
+        return user
+
+
+# ══════════════════════════════════════════════════════════════════
+# ACCOUNT UPDATE — Profile page's "Account" tab
+# ══════════════════════════════════════════════════════════════════
+
+class AccountUpdateSerializer(serializers.ModelSerializer):
+    """
+    Distinct from RegisterSerializer even though the field-level rules
+    look similar: uniqueness/reserved-name checks here must exclude the
+    user's OWN current value (self.instance), not just check for any
+    existing match — RegisterSerializer's validators would incorrectly
+    reject a user re-submitting their own unchanged username.
+    """
+    username = serializers.CharField(
+        min_length=3, max_length=30, required=False,
+        validators=[RegexValidator(
+            regex=r'^[a-zA-Z0-9_]+$',
+            message='Username can only contain letters, numbers, and underscores.',
+        )],
+    )
+    date_of_birth = serializers.DateField(required=False, allow_null=True)
+
+    class Meta:
+        model = User
+        fields = ['first_name', 'last_name', 'username', 'date_of_birth']
+
+    def validate_first_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('First name is required.')
+        if not re.match(r'^[a-zA-Z\s\-]+$', value):
+            raise serializers.ValidationError('First name can only contain letters, spaces, and hyphens.')
+        return value
+
+    def validate_last_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('Last name is required.')
+        if not re.match(r'^[a-zA-Z\s\-]+$', value):
+            raise serializers.ValidationError('Last name can only contain letters, spaces, and hyphens.')
+        return value
+
+    def validate_username(self, value):
+        value = value.strip().lower()
+        if value in RESERVED_USERNAMES:
+            raise serializers.ValidationError('This username is not available.')
+        qs = User.objects.filter(username=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('This username is already taken.')
+        return value
+
+    def validate_date_of_birth(self, value):
+        if value is None:
+            return value
+        age = _calculate_age(value)
+        if age < MIN_AGE_YEARS:
+            raise serializers.ValidationError(f'You must be at least {MIN_AGE_YEARS} years old.')
+        if age > 120:
+            raise serializers.ValidationError('Please enter a valid date of birth.')
+        return value
+
+
+# ══════════════════════════════════════════════════════════════════
+# USER — read-only representation
+# ══════════════════════════════════════════════════════════════════
+
+class UserSerializer(serializers.ModelSerializer):
+    is_oauth_only = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'username', 'first_name', 'last_name',
+            'is_email_verified', 'two_fa_enabled', 'date_of_birth',
+            'last_login', 'last_login_ip', 'last_login_device',
+            'is_deleted',
+            'is_oauth_only',
+            # Required by ChangeEmail.jsx / Profile.jsx to show the pending-change banner.
+            'pending_email',
+            # Required by the Login deletion modal and the Dashboard deletion banner.
+            'deletion_requested_at',
+            'deletion_scheduled_at',
+        ]
+        read_only_fields = fields
+
+    def get_is_oauth_only(self, obj):
+        try:
+            return obj.is_oauth_only()
+        except Exception:
+            return False
+
+
+# ══════════════════════════════════════════════════════════════════
+# FREELANCER PROFILE
+# ══════════════════════════════════════════════════════════════════
+
+class FreelancerProfileSerializer(serializers.ModelSerializer):
+    """
+    CNIC/NTN/PSEB are never read from or written to *_encrypted/*_hash
+    directly through this serializer. Reads go through the model's
+    decrypted properties (cnic/ntn/pseb); writes go through write-only
+    "_input" fields that route through set_cnic()/set_ntn()/set_pseb()
+    in update(), which is where validation + the cross-account
+    uniqueness check actually happen. This is the only path by which
+    these three fields may change — there is no field on this
+    serializer that touches *_encrypted or *_hash directly.
+    """
+    email = serializers.EmailField(source='user.email', read_only=True)
+    username = serializers.CharField(source='user.username', read_only=True)
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+    date_of_birth = serializers.DateField(source='user.date_of_birth', read_only=True)
+    completion_percentage = serializers.IntegerField(read_only=True)
+
+    cnic = serializers.SerializerMethodField()
+    ntn = serializers.SerializerMethodField()
+    pseb = serializers.SerializerMethodField()
+    cnic_input = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    ntn_input = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    pseb_input = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = FreelancerProfile
+        exclude = [
+            'cnic_encrypted', 'cnic_hash', 'ntn_encrypted', 'ntn_hash',
+            'pseb_encrypted', 'pseb_hash',
+            'custom_smtp_password',
+            'wise_access_token', 'wise_refresh_token',
+            'user',
+        ]
+
+    def get_cnic(self, obj):
+        return obj.cnic
+
+    def get_ntn(self, obj):
+        return obj.ntn
+
+    def get_pseb(self, obj):
+        return obj.pseb
+
+    def update(self, instance, validated_data):
+        cnic_input = validated_data.pop('cnic_input', None)
+        ntn_input = validated_data.pop('ntn_input', None)
+        pseb_input = validated_data.pop('pseb_input', None)
+
+        # Apply the plain fields first via the normal ModelSerializer path...
+        instance = super().update(instance, validated_data)
+
+        # ...then the three validated/encrypted fields, translating the
+        # model layer's ValidationError (raised by set_cnic/set_ntn/set_pseb
+        # on bad format or a cross-account collision) into a DRF
+        # ValidationError so it surfaces as a normal 400 field error
+        # instead of leaking a Django-level exception out of the view.
+        errors = {}
+        for field_name, raw_value, setter in (
+            ('cnic', cnic_input, instance.set_cnic),
+            ('ntn', ntn_input, instance.set_ntn),
+            ('pseb', pseb_input, instance.set_pseb),
+        ):
+            if raw_value is None:
+                continue
+            try:
+                setter(raw_value)
+            except DjangoValidationError as exc:
+                errors[field_name] = exc.messages if hasattr(exc, 'messages') else [str(exc)]
+
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        instance.save()
+        return instance
+
+
+# ══════════════════════════════════════════════════════════════════
+# SESSION — for GET /api/auth/sessions/
+# ══════════════════════════════════════════════════════════════════
+
+class SessionSerializer(serializers.ModelSerializer):
+    is_current = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Session
+        fields = ['id', 'device_name', 'ip_address', 'created_at', 'last_used_at', 'expires_at', 'is_current']
+        read_only_fields = fields
+
+    def get_is_current(self, obj):
+        current_session_id = self.context.get('current_session_id')
+        return current_session_id is not None and obj.pk == current_session_id
