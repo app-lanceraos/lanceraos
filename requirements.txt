@@ -1,0 +1,65 @@
+# LanceraOS v2 — Python dependencies
+# Matches CLAUDE.md Section 2 (Tech Stack — Exact Versions, No Deviations).
+# Built out during the Users/Auth module; every later module chat should
+# ADD to this file, never replace it, and never introduce a package that
+# duplicates something already listed here.
+
+# ── Core framework ──────────────────────────────────────────────────
+Django==5.2.*
+djangorestframework==3.15.*
+psycopg2-binary==2.9.*
+
+# ── Auth ─────────────────────────────────────────────────────────────
+djangorestframework-simplejwt==5.3.*
+argon2-cffi==23.1.*
+# Password hashing per CLAUDE.md rule 7 (Argon2, never bcrypt/plaintext).
+# Configure PASSWORD_HASHERS in settings.py with Argon2PasswordHasher first.
+
+# ── OAuth (hand-rolled, NOT django-allauth — see DECISIONS.md) ───────
+google-auth==2.*
+requests==2.32.*
+# `requests` also used for hand-rolled Facebook Graph API calls and the
+# Google userinfo-endpoint fallback path.
+
+# ── Async / real-time ────────────────────────────────────────────────
+daphne==4.*
+channels==4.*
+channels-redis==4.*
+
+# ── Background tasks ─────────────────────────────────────────────────
+celery==5.*
+django-celery-beat==2.*
+redis==5.*
+# Single Redis instance serves as Celery broker/result backend, Django
+# cache backend, and rate-limiting store — see DECISIONS.md.
+
+# ── Encryption ────────────────────────────────────────────────────────
+cryptography==42.*
+# Fernet symmetric encryption for custom SMTP passwords (apps/users/encryption.py).
+
+# ── Media storage ────────────────────────────────────────────────────
+cloudinary==1.*
+# Avatar upload/replace/delete.
+
+# ── Email (platform emails via Resend HTTP API) ─────────────────────
+resend==2.*
+
+# ── CORS ──────────────────────────────────────────────────────────────
+django-cors-headers==4.*
+# Required for the app.lanceraos.com / api.lanceraos.com subdomain split.
+# Access-Control-Allow-Credentials: true, explicit origin, never a wildcard.
+
+# ── Config / environment ─────────────────────────────────────────────
+python-decouple==3.*
+# Reads .env for all secrets/config — never hardcode credentials.
+
+# ── Observability ─────────────────────────────────────────────────────
+sentry-sdk==2.*
+
+# ── Production server ────────────────────────────────────────────────
+gunicorn==23.*
+whitenoise==6.*
+
+# ── AI inference (Groq — used by other modules, listed here since this
+#    is the first requirements.txt any module chat will extend) ──────
+groq==0.*
