@@ -1,304 +1,360 @@
-/* LanceraOS design tokens — DESIGN.md is the source of truth.
-   Light mode is :root. Dark mode is [data-theme="dark"] on <body>. */
+/* ═══════════════════════════════════════════════════════════════
+   FreelanceOS — Design System
+   Single source of truth. Import this once in main.jsx.
+   All pages, components, and modules reference these variables.
+   ═══════════════════════════════════════════════════════════════ */
 
-:root {
-  /* Brand / accent */
-  --accent: #00c896;
-  --accent-dim: #00a87e;
-  --accent-vivid: #00e5a0;
-  --accent-glow: rgba(0, 200, 150, 0.12);
-  --accent-glow-md: rgba(0, 200, 150, 0.2);
-  --accent-glow-lg: rgba(0, 200, 150, 0.3);
-  --teal: #00c896;
+/* ── Google Fonts ──────────────────────────────────────────── */
+/* DM Sans is loaded via <link> in index.html for performance. DM Sans + Mono remain here. */
+@import url('https://fonts.googleapis.com/css2?family=DM Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 
-  /* Backgrounds */
-  --bg-page: #0a0b14;
-  --bg-surface: #ffffff;
-  --bg-surface-2: #f8f8fc;
-  --bg-surface-3: #f0f0f6;
-  --bg-overlay: rgba(255, 255, 255, 0.85);
-  --bg-invert: #0f0f18;
+/* ── Base reset ────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 
-  /* Text */
-  --text-primary: #0e0e1a;
-  --text-secondary: #4a4a65;
-  --text-tertiary: #8888a8;
-  --text-disabled: #b8b8cc;
-  --text-on-accent: #000000;
-  --text-on-dark: #f0f0f8;
+/* ══════════════════════════════════════════════════════════════
+   LIGHT MODE (default)
+   ══════════════════════════════════════════════════════════════ */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
 
-  /* Borders */
-  --border-subtle: rgba(0, 0, 0, 0.06);
-  --border-default: rgba(0, 0, 0, 0.1);
-  --border-strong: rgba(0, 0, 0, 0.18);
-  --border-accent: rgba(0, 200, 150, 0.4);
+  /* ── Brand ── */
+  --accent:           #00c896;
+  --accent-dim:       #00a87e;
+  --accent-vivid:     #00e5a0;
+  --accent-glow:      rgba(0, 200, 150, 0.12);
+  --accent-glow-md:   rgba(0, 200, 150, 0.20);
+  --accent-glow-lg:   rgba(0, 200, 150, 0.30);
 
-  /* Status */
-  --status-green: #10b981;
-  --status-green-bg: rgba(16, 185, 129, 0.12);
-  --status-green-text: #10b981;
-  --status-amber: #f59e0b;
-  --status-amber-bg: rgba(245, 158, 11, 0.12);
-  --status-amber-text: #f59e0b;
-  --status-red: #ef4444;
-  --status-red-bg: rgba(239, 68, 68, 0.12);
-  --status-red-text: #ef4444;
-  --status-blue: #60a5fa;
-  --status-blue-bg: rgba(96, 165, 250, 0.12);
-  --status-blue-text: #60a5fa;
-  --status-gray: #6b7280;
-  --status-gray-bg: rgba(107, 114, 128, 0.12);
-  --status-gray-text: #6b7280;
+  /* ── Backgrounds ── */
+  --bg-page:          #0a0b14;
+  --bg-surface:       #ffffff;
+  --bg-surface-2:     #f8f8fc;
+  --bg-surface-3:     #f0f0f6;
+  --bg-overlay:       rgba(255, 255, 255, 0.85);
+  --bg-invert:        #0f0f18;
 
-  /* Form elements */
-  --input-bg: #ffffff;
-  --input-border: #d4d4e0;
+  /* ── Text ── */
+  --text-primary:     #0e0e1a;
+  --text-secondary:   #4a4a65;
+  --text-tertiary:    #8888a8;
+  --text-disabled:    #b8b8cc;
+  --text-on-accent:   #000000;
+  --text-on-dark:     #f0f0f8;
+
+  /* ── Borders ── */
+  --border-subtle:    rgba(0, 0, 0, 0.06);
+  --border-default:   rgba(0, 0, 0, 0.10);
+  --border-strong:    rgba(0, 0, 0, 0.18);
+  --border-accent:    rgba(0, 200, 150, 0.40);
+
+  /* ── Auth card (navy header) ── */
+  --card-header-from: #1e3a5f;
+  --card-header-to:   #2563a8;
+  --card-header-text: #ffffff;
+  --card-header-sub:  rgba(255, 255, 255, 0.70);
+  --card-header-icon: rgba(255, 255, 255, 0.18);
+  --card-bg:          #ffffff;
+  --card-footer-bg:   #f8f8fc;
+  --card-footer-text: #6b6b88;
+  --card-shadow:      0 4px 6px -1px rgba(0,0,0,0.06), 0 20px 60px -10px rgba(0,0,0,0.12);
+
+  /* ── Sidebar/App shell ── */
+  --shell-bg:         #1a1a2e;
+  --shell-border:     rgba(255, 255, 255, 0.06);
+  --shell-text:       rgba(255, 255, 255, 0.65);
+  --shell-text-hover: rgba(255, 255, 255, 0.95);
+  --shell-active-bg:  rgba(0, 200, 150, 0.12);
+  --shell-active-text:#00c896;
+  --shell-icon-muted: rgba(255, 255, 255, 0.35);
+
+  /* ── Form elements ── */
+  --input-bg:         #ffffff;
+  --input-border:     #d4d4e0;
   --input-border-focus: #00c896;
   --input-border-error: #e53e3e;
-  --input-text: #0e0e1a;
-  --input-placeholder: #9090b0;
+  --input-text:       #0e0e1a;
+  --input-placeholder:#9090b0;
   --input-shadow-focus: 0 0 0 3px rgba(0, 200, 150, 0.15);
   --input-shadow-error: 0 0 0 3px rgba(229, 62, 62, 0.12);
 
-  /* Buttons */
-  --btn-primary-bg: #1e3a5f;
-  --btn-primary-hover: #162d4a;
+  /* ── Buttons ── */
+  --btn-primary-bg:   #1e3a5f;
+  --btn-primary-hover:#162d4a;
   --btn-primary-text: #ffffff;
-  --btn-accent-bg: #00c896;
+  --btn-accent-bg:    #00c896;
   --btn-accent-hover: #00a87e;
-  --btn-accent-text: #000000;
+  --btn-accent-text:  #000000;
   --btn-ghost-border: #d4d4e0;
-  --btn-ghost-hover: #f0f0f6;
-  --btn-ghost-text: #4a4a65;
+  --btn-ghost-hover:  #f0f0f6;
+  --btn-ghost-text:   #4a4a65;
 
-  /* Sidebar / shell — dark in both themes, never flips */
-  --bg: #0a0b14;
-  --surface: #f6fafe;
-  --icon: #342858;
+  /* ── Status ── */
+  --success-bg:       #f0faf6;
+  --success-border:   #b3e8d4;
+  --success-text:     #1a6b4a;
+  --warning-bg:       #fffbeb;
+  --warning-border:   #f6d860;
+  --warning-text:     #854d0e;
+  --error-bg:         #fff5f5;
+  --error-border:     #fecaca;
+  --error-text:       #c53030;
+  --info-bg:          #eff6ff;
+  --info-border:      #bfdbfe;
+  --info-text:        #1d4ed8;
+
+  /* ── Misc ── */
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  14px;
+  --radius-xl:  20px;
+  --radius-full: 9999px;
+  --transition-fast: 0.15s ease;
+  --transition-base: 0.25s ease;
+  --transition-slow: 0.4s ease;
+
+  /* ── LanceraOS shell design tokens ── */
+  --font: 'DM Sans', sans-serif;
+
+  /* Sidebar nav icon colours */
+  --icon:        #342858;
   --icon-active: #a89cf2;
-  --nav-text: rgba(255, 255, 255, 0.45);
+
+  /* Liquid-glass primitives */
+  --glass-tint:  #6656cf0e;
+  --glass-light: #6656cf;
+  --glass-dark:  #000000;
+  --glass-blur:  18px;
+  --saturation:  150%;
+
+  /* Core surfaces — sidebar/header stay dark; main content follows --bg-page */
+  --bg:      #0a0b14;
+  --surface: #f6fafe;
+  --card:    var(--bg-surface, #0a0b14);
+  --card-border: rgba(255,255,255,0.05);
+
+  /* Shell accent (sidebar hover/glass, distinct from brand --accent) */
+  --accent-icon-hover: #a89cf2;
+  --accent-hover:      rgba(168,156,242,0.10);
+
+  /* Text (shell-specific) */
+  --text:       rgba(255,255,255,0.82);
+  --text-dim:   rgba(255,255,255,0.45);
+  --text-faint: rgba(255,255,255,0.32);
+  --main-text:  rgba(255,255,255,0.82);
   --nav-active: #a89cf2;
-  --nav-hover-bg: rgba(255, 255, 255, 0.06);
-  --wordmark: #ffffff;
-  --header-title: rgba(255, 255, 255, 0.8);
-  --header-icon: rgba(255, 255, 255, 0.55);
-  --notif: #ff5100;
-  --avatar-bg: rgba(255, 255, 255, 0.06);
-  --profile-name: rgba(255, 255, 255, 0.82);
-  --profile-email: rgba(255, 255, 255, 0.35);
-  --chevron: rgba(255, 255, 255, 0.4);
-  --menu-bg: rgba(245, 247, 247, 0.98);
-  --menu-text: rgba(17, 23, 31, 0.7);
-  --menu-text-hover: rgba(17, 23, 31, 0.95);
-  --menu-hover-bg: rgba(0, 0, 0, 0.06);
-  --danger: #d32f2f;
-  --danger-hover: rgba(211, 47, 47, 0.1);
-  --divider: rgba(0, 0, 0, 0.08);
-  --switch-idle: rgba(255, 255, 255, 0.45);
-  --switch-active: rgba(255, 255, 255, 0.92);
+
+  /* Header chrome */
+  --wordmark:     #ffffff;
+  --header-title: rgba(255,255,255,0.80);
+  --header-icon:  rgba(255,255,255,0.55);
+  --notif:        #ff5100;
+
+  /* Sidebar nav */
+  --nav-text:     rgba(255,255,255,0.45);
+  --nav-hover-bg: rgba(255,255,255,0.06);
+
+  /* Profile + popup */
+  --avatar-bg:        rgba(255,255,255,0.06);
+  --profile-name:     rgba(255,255,255,0.82);
+  --profile-email:    rgba(255,255,255,0.35);
+  --chevron:          rgba(255,255,255,0.40);
+  --menu-bg:          rgba(245,247,247,0.98);
+  --menu-text:        rgba(17,23,31,0.70);
+  --menu-text-hover:  rgba(17,23,31,0.95);
+  --menu-hover-bg:    rgba(0,0,0,0.06);
+  --danger:           #d32f2f;
+  --danger-hover:     rgba(211,47,47,0.10);
+  --divider:          rgba(0,0,0,0.08);
+
+  /* Theme-switch icon colours (always on dark sidebar bg) */
+  --switch-idle:   rgba(255,255,255,0.45);
+  --switch-active: rgba(255,255,255,0.92);
+
+  /* Logo fills */
   --logo-body: #8074c0;
   --logo-mark: #050508;
 
-  /* Liquid-glass primitives — sidebar nav pill only */
-  --glass-tint: #6656cf0e;
-  --glass-light: #6656cf;
-  --glass-dark: #000000;
-  --glass-blur: 18px;
-  --saturation: 150%;
-
-  /* Typography */
-  --font: 'DM Sans', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
-
-  /* Radius */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
-  --radius-full: 9999px;
-
   /* Layout */
-  --sidebar-w: 218px;
+  --sidebar-w:         218px;
   --sidebar-collapsed: 72px;
-  --header-h: 60px;
+  --header-h:          60px;
+  --radius:            14px;
+
+  /* Motion */
+  --t:    0.32s cubic-bezier(0.4,0,0.2,1);
+  --fast: 0.18s ease;
+  --pill: 0.28s cubic-bezier(0.22,1,0.36,1);
+
+  /* Shared liquid-glass shadow recipe */
+  --glass-shadow:
+    inset 0 0 0 1px       color-mix(in srgb, var(--glass-light) 10%, transparent),
+    inset 1.8px 3px 0 -2px  color-mix(in srgb, var(--glass-light) 90%, transparent),
+    inset -2px -2px 0 -2px  color-mix(in srgb, var(--glass-light) 80%, transparent),
+    inset -3px -8px 1px -6px color-mix(in srgb, var(--glass-light) 60%, transparent),
+    inset -0.3px -1px 4px 0  color-mix(in srgb, var(--glass-dark) 12%, transparent),
+    inset 0 3px 4px -2px     color-mix(in srgb, var(--glass-dark) 20%, transparent),
+    0 1px 5px 0              color-mix(in srgb, var(--glass-dark) 10%, transparent),
+    0 6px 16px 0             color-mix(in srgb, var(--glass-dark) 8%, transparent);
+
+  /* Lightweight nav-item highlight shadow (no blur — GPU-friendly) */
+  --nav-glass-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--glass-light) 12%, transparent),
+    inset 1.5px 2px 0 -1px color-mix(in srgb, var(--glass-light) 70%, transparent),
+    0 2px 6px 0 color-mix(in srgb, var(--glass-dark) 12%, transparent);
 }
 
-:root[data-theme='dark'],
-body[data-theme='dark'] {
-  --accent: #00e5a0;
-  --accent-dim: #00c896;
-  --accent-vivid: #00ffc0;
-  --accent-glow: rgba(0, 229, 160, 0.1);
-  --accent-glow-md: rgba(0, 229, 160, 0.18);
-  --accent-glow-lg: rgba(0, 229, 160, 0.28);
+/* ══════════════════════════════════════════════════════════════
+   DARK MODE
+   ══════════════════════════════════════════════════════════════ */
+[data-theme="dark"] {
+  color-scheme: dark;
 
-  --bg-surface: #111118;
-  --bg-surface-2: #18181f;
-  --bg-surface-3: #222230;
-  --bg-overlay: rgba(17, 17, 24, 0.9);
-  --bg-invert: #f4f4f8;
+  /* ── Brand ── */
+  --accent:           #00e5a0;
+  --accent-dim:       #00c896;
+  --accent-vivid:     #00ffc0;
+  --accent-glow:      rgba(0, 229, 160, 0.10);
+  --accent-glow-md:   rgba(0, 229, 160, 0.18);
+  --accent-glow-lg:   rgba(0, 229, 160, 0.28);
 
-  --text-primary: #f0f0f8;
-  --text-secondary: #a0a0c0;
-  --text-tertiary: #60607a;
-  --text-disabled: #404058;
+  /* ── Backgrounds ── */
+  --bg-page:          #0a0b14;
+  --bg-surface:       #111118;
+  --bg-surface-2:     #18181f;
+  --bg-surface-3:     #222230;
+  --bg-overlay:       rgba(17, 17, 24, 0.90);
+  --bg-invert:        #f4f4f8;
 
-  --border-subtle: rgba(255, 255, 255, 0.04);
-  --border-default: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --border-accent: rgba(0, 229, 160, 0.3);
+  /* ── Text ── */
+  --text-primary:     #f0f0f8;
+  --text-secondary:   #a0a0c0;
+  --text-tertiary:    #60607a;
+  --text-disabled:    #404058;
+  --text-on-accent:   #000000;
+  --text-on-dark:     #f0f0f8;
 
-  --input-bg: #18181f;
-  --input-border: #2a2a3a;
+  /* ── Borders ── */
+  --border-subtle:    rgba(255, 255, 255, 0.04);
+  --border-default:   rgba(255, 255, 255, 0.08);
+  --border-strong:    rgba(255, 255, 255, 0.14);
+  --border-accent:    rgba(0, 229, 160, 0.30);
+
+  /* ── Auth card (dark glass) ── */
+  --card-header-from: #0d1b2e;
+  --card-header-to:   #1a2f4a;
+  --card-header-text: #ffffff;
+  --card-header-sub:  rgba(255, 255, 255, 0.55);
+  --card-header-icon: rgba(255, 255, 255, 0.12);
+  --card-bg:          #111118;
+  --card-footer-bg:   #0e0e15;
+  --card-footer-text: #60607a;
+  --card-shadow:      0 4px 6px -1px rgba(0,0,0,0.4), 0 20px 60px -10px rgba(0,0,0,0.6);
+
+  /* ── Sidebar/App shell ── */
+  --shell-bg:         #0d0d16;
+  --shell-border:     rgba(255, 255, 255, 0.05);
+  --shell-text:       rgba(255, 255, 255, 0.55);
+  --shell-text-hover: rgba(255, 255, 255, 0.95);
+  --shell-active-bg:  rgba(0, 229, 160, 0.10);
+  --shell-active-text:#00e5a0;
+  --shell-icon-muted: rgba(255, 255, 255, 0.28);
+
+  /* ── Form elements ── */
+  --input-bg:         #18181f;
+  --input-border:     #2a2a3a;
   --input-border-focus: #00e5a0;
   --input-border-error: #fc8181;
-  --input-text: #f0f0f8;
-  --input-placeholder: #50507a;
+  --input-text:       #f0f0f8;
+  --input-placeholder:#50507a;
   --input-shadow-focus: 0 0 0 3px rgba(0, 229, 160, 0.12);
-  --input-shadow-error: 0 0 0 3px rgba(252, 129, 129, 0.1);
+  --input-shadow-error: 0 0 0 3px rgba(252, 129, 129, 0.10);
 
-  --btn-primary-bg: #2563a8;
-  --btn-primary-hover: #1e4f8a;
-  --btn-accent-bg: #00e5a0;
+  /* ── Buttons ── */
+  --btn-primary-bg:   #2563a8;
+  --btn-primary-hover:#1e4f8a;
+  --btn-primary-text: #ffffff;
+  --btn-accent-bg:    #00e5a0;
   --btn-accent-hover: #00c896;
+  --btn-accent-text:  #000000;
   --btn-ghost-border: #2a2a3a;
-  --btn-ghost-hover: #1a1a28;
-  --btn-ghost-text: #a0a0c0;
+  --btn-ghost-hover:  #1a1a28;
+  --btn-ghost-text:   #a0a0c0;
 
-  --surface: #111318;
-  --menu-bg: rgba(18, 24, 30, 0.98);
-  --menu-text: rgba(255, 255, 255, 0.7);
-  --menu-text-hover: rgba(255, 255, 255, 0.95);
-  --menu-hover-bg: rgba(255, 255, 255, 0.07);
-  --danger: #ff4d4d;
-  --danger-hover: rgba(255, 77, 77, 0.1);
-  --divider: rgba(255, 255, 255, 0.08);
+  /* ── Status ── */
+  --success-bg:       rgba(0, 229, 160, 0.08);
+  --success-border:   rgba(0, 229, 160, 0.20);
+  --success-text:     #00e5a0;
+  --warning-bg:       rgba(251, 191, 36, 0.08);
+  --warning-border:   rgba(251, 191, 36, 0.20);
+  --warning-text:     #fbbf24;
+  --error-bg:         rgba(252, 129, 129, 0.08);
+  --error-border:     rgba(252, 129, 129, 0.20);
+  --error-text:       #fc8181;
+  --info-bg:          rgba(96, 165, 250, 0.08);
+  --info-border:      rgba(96, 165, 250, 0.20);
+  --info-text:        #60a5fa;
+
+  /* ── Shell tokens: dark mode surface is slightly lighter than --bg so rounded corners are visible ── */
+  --surface:    #111318;
+  --main-text:  rgba(255,255,255,0.82);
+
+  /* ── Shell popup tokens (dark mode — overrides light-mode defaults) ── */
+  --menu-bg:         rgba(18,24,30,0.98);
+  --menu-text:       rgba(255,255,255,0.70);
+  --menu-text-hover: rgba(255,255,255,0.95);
+  --menu-hover-bg:   rgba(255,255,255,0.07);
+  --danger:          #ff4d4d;
+  --danger-hover:    rgba(255,77,77,0.10);
+  --divider:         rgba(255,255,255,0.08);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --accent: #00e5a0;
-    --bg-surface: #111118;
-    --bg-surface-2: #18181f;
-    --bg-surface-3: #222230;
-    --text-primary: #f0f0f8;
-    --text-secondary: #a0a0c0;
-    --text-tertiary: #60607a;
-    --border-subtle: rgba(255, 255, 255, 0.04);
-    --border-default: rgba(255, 255, 255, 0.08);
-    --input-bg: #18181f;
-    --input-border: #2a2a3a;
-    --input-text: #f0f0f8;
-    --surface: #111318;
-  }
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html {
-  font-size: 16px;
-}
-
+/* ══════════════════════════════════════════════════════════════
+   TYPOGRAPHY SYSTEM
+   ══════════════════════════════════════════════════════════════ */
 body {
-  margin: 0;
   font-family: var(--font);
   font-size: 1rem;
   line-height: 1.6;
   color: var(--text-primary);
   background: var(--bg-page);
+  transition: background var(--transition-base), color var(--transition-base);
 }
 
-body.app-shell-active {
+/* Scroll lock — applied by AppShell on mount so public pages are unaffected */
+body.app-shell-active,
+html.app-shell-active {
   overflow: hidden;
+  height: 100%;
 }
 
-a {
-  color: inherit;
-}
+/* Display / Marketing headings */
+.font-display { font-family: 'DM Sans', sans-serif; }
 
-/* ── Buttons ─────────────────────────────────────────────────────── */
-.fos-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 20px;
-  border-radius: var(--radius-md);
-  border: none;
-  font-family: var(--font);
-  font-size: 0.875rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.15s ease, opacity 0.15s ease;
-}
-.fos-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.fos-btn-primary {
-  background: var(--btn-primary-bg);
-  color: var(--btn-primary-text);
-}
-.fos-btn-primary:hover:not(:disabled) {
-  background: var(--btn-primary-hover);
-}
-.fos-btn-accent {
-  background: var(--btn-accent-bg);
-  color: var(--btn-accent-text);
-}
-.fos-btn-accent:hover:not(:disabled) {
-  background: var(--btn-accent-hover);
-}
-.fos-btn-ghost {
-  background: transparent;
-  color: var(--btn-ghost-text);
-  border: 1px solid var(--btn-ghost-border);
-}
-.fos-btn-ghost:hover:not(:disabled) {
-  background: var(--btn-ghost-hover);
-}
-.fos-btn-danger {
-  background: var(--danger);
-  color: #ffffff;
-}
-.fos-btn-full {
+/* Mono for code, labels, data */
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+
+/* ══════════════════════════════════════════════════════════════
+   GLOBAL FORM ELEMENTS
+   ══════════════════════════════════════════════════════════════ */
+
+/* Base input — apply .fos-input to all text inputs */
+.fos-input {
   width: 100%;
-}
-.fos-spinner {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: currentColor;
-  animation: fos-spin 0.6s linear infinite;
-}
-@keyframes fos-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* ── Form elements ───────────────────────────────────────────────── */
-.fos-input,
-.fos-select {
-  width: 100%;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--input-border);
   background: var(--input-bg);
-  color: var(--input-text);
-  font-family: var(--font);
+  border: 1.5px solid var(--input-border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-family: 'DM Sans', sans-serif;
   font-size: 0.9rem;
+  color: var(--text-primary);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-base);
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.fos-input::placeholder {
-  color: var(--input-placeholder);
-}
-.fos-input:focus,
-.fos-select:focus {
+
+.fos-input::placeholder { color: var(--input-placeholder); }
+.fos-input:focus {
   border-color: var(--input-border-focus);
   box-shadow: var(--input-shadow-focus);
 }
@@ -306,90 +362,416 @@ a {
   border-color: var(--input-border-error);
   box-shadow: var(--input-shadow-error);
 }
+.fos-input:disabled {
+  background: var(--bg-surface-3);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+/* Select */
+.fos-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238888a8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+
+/* Labels */
 .fos-label {
   display: block;
-  margin-bottom: 6px;
   font-size: 0.78rem;
   font-weight: 500;
   color: var(--text-secondary);
-}
-.fos-error {
-  margin-top: 6px;
-  font-size: 0.78rem;
-  color: var(--status-red-text);
-}
-.fos-hint {
-  margin-top: 6px;
-  font-size: 0.78rem;
-  color: var(--text-tertiary);
+  margin-bottom: 6px;
+  letter-spacing: 0.01em;
 }
 
-/* ── Feedback ─────────────────────────────────────────────────────── */
+.fos-label .required { color: var(--error-text); margin-left: 2px; }
+
+/* Error message */
+.fos-error {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  color: var(--error-text);
+  margin-top: 5px;
+}
+
+/* Hint text */
+.fos-hint {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  margin-top: 5px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   GLOBAL BUTTON SYSTEM
+   ══════════════════════════════════════════════════════════════ */
+
+.fos-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.fos-btn:active:not(:disabled) { transform: scale(0.985); }
+.fos-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Primary — dark navy */
+.fos-btn-primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+}
+.fos-btn-primary:hover:not(:disabled) { background: var(--btn-primary-hover); }
+
+/* Accent — teal/green */
+.fos-btn-accent {
+  background: var(--btn-accent-bg);
+  color: var(--btn-accent-text);
+}
+.fos-btn-accent:hover:not(:disabled) {
+  background: var(--btn-accent-hover);
+  box-shadow: 0 4px 20px var(--accent-glow-md);
+}
+
+/* Ghost — outlined */
+.fos-btn-ghost {
+  background: transparent;
+  border: 1.5px solid var(--btn-ghost-border);
+  color: var(--btn-ghost-text);
+}
+.fos-btn-ghost:hover:not(:disabled) { background: var(--btn-ghost-hover); }
+
+/* Danger */
+.fos-btn-danger {
+  background: var(--error-text);
+  color: #ffffff;
+}
+.fos-btn-danger:hover:not(:disabled) { filter: brightness(0.88); }
+
+/* Full-width util */
+.fos-btn-full { width: 100%; }
+
+/* Spinner inside button */
+.fos-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: fos-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes fos-spin { to { transform: rotate(360deg); } }
+
+/* ══════════════════════════════════════════════════════════════
+   ALERT / STATUS BANNERS
+   ══════════════════════════════════════════════════════════════ */
+
 .fos-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   padding: 12px 16px;
   border-radius: var(--radius-md);
   font-size: 0.875rem;
-  border: 1px solid transparent;
-}
-.fos-alert-success {
-  background: var(--status-green-bg);
-  color: var(--status-green-text);
-  border-color: var(--status-green);
-}
-.fos-alert-warning {
-  background: var(--status-amber-bg);
-  color: var(--status-amber-text);
-  border-color: var(--status-amber);
-}
-.fos-alert-error {
-  background: var(--status-red-bg);
-  color: var(--status-red-text);
-  border-color: var(--status-red);
-}
-.fos-alert-info {
-  background: var(--status-blue-bg);
-  color: var(--status-blue-text);
-  border-color: var(--status-blue);
-}
-.fos-divider {
-  border: none;
-  border-top: 1px solid var(--border-default);
-  margin: 0;
+  line-height: 1.5;
+  border: 1px solid;
 }
 
-/* ── Shell-specific (AppShell only — never used in page components) ── */
-.nav-item {
+.fos-alert-error   { background: var(--error-bg);   border-color: var(--error-border);   color: var(--error-text);   }
+.fos-alert-success { background: var(--success-bg); border-color: var(--success-border); color: var(--success-text); }
+.fos-alert-warning { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning-text); }
+.fos-alert-info    { background: var(--info-bg);    border-color: var(--info-border);    color: var(--info-text);    }
+
+/* ══════════════════════════════════════════════════════════════
+   THEME TOGGLE BUTTON (reusable across all pages)
+   ══════════════════════════════════════════════════════════════ */
+
+.fos-theme-toggle {
   position: relative;
-  z-index: 1;
+  width: 48px;
+  height: 26px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.fos-theme-toggle__track {
+  position: absolute;
+  inset: 0;
+  border-radius: 13px;
+  background: var(--bg-surface-3);
+  border: 1px solid var(--border-default);
+  transition: background var(--transition-base);
+}
+
+.fos-theme-toggle__thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+}
+
+.fos-theme-toggle__thumb.is-light { transform: translateX(22px); }
+
+/* ══════════════════════════════════════════════════════════════
+   DIVIDER
+   ══════════════════════════════════════════════════════════════ */
+
+.fos-divider {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  color: var(--nav-text);
-  font-size: 0.875rem;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
   font-weight: 500;
-  text-decoration: none;
-  transition: color 0.15s ease, background 0.15s ease;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
-.nav-item:hover {
-  background: var(--nav-hover-bg);
+
+.fos-divider::before,
+.fos-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-default);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   SCROLLBAR (global)
+   ══════════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* ══════════════════════════════════════════════════════════════
+   SELECTION
+   ══════════════════════════════════════════════════════════════ */
+
+::selection { background: var(--accent-glow-md); color: var(--text-primary); }
+
+/* ══════════════════════════════════════════════════════════════
+   TAILWIND COMPATIBILITY LAYER
+   These classes let existing Tailwind-heavy components work
+   without full refactor, while new components use the system.
+   ══════════════════════════════════════════════════════════════ */
+
+/* Map Tailwind bg-gray-50 → our surface */
+.bg-gray-50  { background-color: var(--bg-surface-2) !important; }
+.bg-white    { background-color: var(--bg-surface)   !important; }
+.text-gray-800 { color: var(--text-primary)   !important; }
+.text-gray-600 { color: var(--text-secondary) !important; }
+.text-gray-500 { color: var(--text-secondary) !important; }
+.text-gray-400 { color: var(--text-tertiary)  !important; }
+.border-gray-200 { border-color: var(--border-default) !important; }
+.border-gray-300 { border-color: var(--border-strong)  !important; }
+
+/* Prevent mobile browser auto-zoom on input focus.
+   iOS Safari and Android Chrome zoom in when an input's font-size < 16px.
+   This override keeps pinch-zoom available (unlike user-scalable=no). */
+@media (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* ── Mobile: prevent browser auto-zoom on input focus ────────── */
+/* Browsers zoom in when input font-size < 16px. This prevents it. */
+@media (max-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   APPSHELL — GLASS SHELL DESIGN SYSTEM
+   ══════════════════════════════════════════════════════════════ */
+
+/* Nav item base */
+.nav-item {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px; border-radius: 99em;
+  color: var(--nav-text); font-size: 13.5px;
+  white-space: nowrap; text-decoration: none;
+  cursor: pointer; user-select: none;
+  border: 1px solid transparent;
+  font-family: var(--font);
+  transform: translateZ(0);
+  transition: color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease;
+}
+
+/* Hover glass on non-active items */
+.nav-item:hover:not(.active) {
+  color: var(--nav-active);
+  background: color-mix(in srgb, var(--glass-tint) 34%, transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(var(--saturation));
+  backdrop-filter: blur(8px) saturate(var(--saturation));
+  box-shadow: var(--glass-shadow);
+}
+
+/* Active item: color only — the pill element provides the background */
 .nav-item.active {
   color: var(--nav-active);
 }
+
+/* Nav icon — color controlled independently from nav item text */
+.nav-item .nav-icon          { color: var(--icon);        transition: color 0.22s ease; }
+.nav-item.active .nav-icon   { color: var(--icon-active); }
+.nav-item:hover  .nav-icon   { color: var(--icon-active); }
+
+/* Popup-item icon colors — brand purple pair, unaffected by theme */
+.popup-item .nav-icon          { color: var(--icon);        transition: color var(--fast); }
+.popup-item:hover .nav-icon    { color: var(--icon-active); }
+.popup-item.danger .nav-icon   { color: var(--danger) !important; }
+.popup-item.danger:hover .nav-icon { color: var(--danger) !important; }
+
+/* Group label */
+.group-label {
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-faint);
+  padding: 2px 8px 4px; height: 20px; margin-bottom: 2px;
+  white-space: nowrap; overflow: hidden;
+  font-family: var(--font);
+}
+
+/* Collapsed rail tooltips (CSS pseudo-elements only on desktop) */
+@media (min-width: 769px) {
+  body.collapsed .nav-item[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute; left: calc(100% + 14px); top: 50%;
+    transform: translateY(-50%) translateX(-6px) scale(0.96);
+    background: var(--menu-bg); color: var(--menu-text-hover);
+    font-size: 12.5px; font-weight: 500; padding: 7px 12px; border-radius: 9px;
+    white-space: nowrap; pointer-events: none; opacity: 0; z-index: 9999;
+    backdrop-filter: blur(18px) saturate(var(--saturation));
+    -webkit-backdrop-filter: blur(18px) saturate(var(--saturation));
+    box-shadow: 0 6px 20px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+    font-family: var(--font);
+    transition: opacity var(--fast), transform 0.22s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  body.collapsed .nav-item[data-tip]::before {
+    content: ''; position: absolute; left: calc(100% + 8px); top: 50%;
+    transform: translateY(-50%) translateX(-6px) rotate(45deg);
+    width: 8px; height: 8px; background: var(--menu-bg); border-radius: 2px;
+    pointer-events: none; opacity: 0; z-index: 9999;
+    transition: opacity var(--fast), transform 0.22s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  body.collapsed .nav-item[data-tip]:hover::after {
+    opacity: 1; transform: translateY(-50%) translateX(0) scale(1);
+  }
+  body.collapsed .nav-item[data-tip]:hover::before {
+    opacity: 1; transform: translateY(-50%) translateX(0) rotate(45deg);
+  }
+  /* Let rail tooltip overflow sidebar bounds */
+  body.collapsed aside { overflow: visible !important; }
+  body.collapsed .shell-nav { overflow: visible !important; }
+}
+
+/* Mobile layout overrides */
+@media (max-width: 768px) {
+  :root {
+    --sidebar-w: 240px;
+    --sidebar-collapsed: 0px;
+    --header-h: 56px;
+  }
+  /* Nav items start hidden for entrance animation */
+  .shell-nav .nav-item,
+  .shell-nav .group-label { opacity: 0; transform: translateX(-18px); }
+}
+
+@media (min-width: 769px) {
+  .shell-hamburger, .shell-mobile-logo { display: none !important; }
+  .shell-nav .nav-item, .shell-nav .group-label { opacity: 1; transform: none; }
+}
+
+/* Mobile nav entrance cascade — triggered by .mobile-nav-open on the nav */
+.mobile-nav-open .nav-item,
+.mobile-nav-open .group-label {
+  animation: navIn 0.42s cubic-bezier(0.22,1,0.36,1) forwards;
+}
+@keyframes navIn { to { opacity: 1; transform: translateX(0); } }
+
+/* Floating pill — single glass element that slides between active items */
 .nav-pill {
   position: absolute;
+  top: 0; left: 0;
   z-index: 0;
-  border-radius: var(--radius-md);
-  background: var(--glass-tint);
-  transition: top 0.2s ease, height 0.2s ease;
+  pointer-events: none;
+  opacity: 0;
+  border-radius: 99em;
+  background: color-mix(in srgb, var(--glass-tint) 34%, transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(var(--saturation));
+  backdrop-filter: blur(8px) saturate(var(--saturation));
+  box-shadow: var(--glass-shadow);
+  transition: transform var(--pill), width var(--pill), height var(--pill), border-radius var(--pill);
 }
-.group-label {
-  padding: 0 14px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--nav-text);
+.nav-pill.no-anim { transition: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-item, .nav-item.active { transition: none !important; }
+  .nav-pill { transition: none !important; }
 }
+
+/* Collapsed-desktop: items become 44px circles */
+@media (min-width: 769px) {
+  body.collapsed .nav-item {
+    width: 44px; height: 44px; padding: 0;
+    justify-content: center; gap: 0;
+    border-radius: 50%;
+  }
+}
+
+/* Sidebar nav scrollbar — hide in webkit (Firefox handled by scrollbarWidth:none inline) */
+.shell-nav::-webkit-scrollbar { display: none; }
+
+/* Body-level tooltip (shared singleton, appended by useAppTooltip) */
+.app-tooltip {
+  position: fixed;
+  z-index: 100002;
+  pointer-events: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: var(--menu-text-hover);
+  background: var(--menu-bg);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+  backdrop-filter: blur(18px) saturate(var(--saturation));
+  -webkit-backdrop-filter: blur(18px) saturate(var(--saturation));
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+  transition: opacity var(--fast), transform 0.2s cubic-bezier(0.34,1.56,0.64,1);
+}
+.app-tooltip.show { opacity: 1; transform: translateY(0) scale(1); }

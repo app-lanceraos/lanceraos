@@ -59,6 +59,20 @@ User = get_user_model()
 NO_AUTH = []
 
 
+@api_view(['GET'])
+@authentication_classes(NO_AUTH)
+@permission_classes([AllowAny])
+def get_csrf_token(request):
+    """
+    Forces Django's CsrfViewMiddleware to send the csrftoken cookie.
+    The frontend calls this once, lazily, before its first
+    state-changing request — see lib/api.js's ensureCsrfCookie().
+    """
+    from django.middleware.csrf import get_token
+    get_token(request)
+    return Response({'detail': 'CSRF cookie set'})
+
+
 # ══════════════════════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════════════════════

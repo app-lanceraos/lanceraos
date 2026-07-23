@@ -6,6 +6,9 @@ from .views import auth, deletion, oauth, profile, security, sessions, smtp
 app_name = 'users'
 
 urlpatterns = [
+    # ── CSRF ─────────────────────────────────────────────────────
+    path('csrf/', auth.get_csrf_token, name='csrf'),
+
     # ── Registration ─────────────────────────────────────────────
     path('register/', auth.register, name='register'),
     path('check-availability/', auth.check_availability, name='check_availability'),

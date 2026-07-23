@@ -85,3 +85,64 @@ If a reader would reasonably expect approach A and the code does B, say why in a
 of divergence — don't rely on this document or chat history being available to a future reader. E.g.
 `core/email.py`'s docstring explains why it doesn't use Django's mail backend even though that's the
 "obvious" Django way to send email.
+
+---
+
+## Frontend conventions
+
+Established during the Users/Auth frontend build (12 pages, 127 tests). Apply the same conventions to
+every module's frontend built after this one.
+
+### Never emojis or bare symbols — icon components only
+
+No emoji and no bare Unicode symbols (⚠ ✓ ✗ etc.) standing in for an icon, anywhere in rendered UI —
+always a real `lucide-react` component instead, even for small inline indicators that feel throwaway.
+Full rule and reasoning: DESIGN.md Section 0b. Found and fixed during this build: `Login.jsx`'s `⚠` and
+`Register.jsx`/`ResetPassword.jsx`'s `✓`/`✗` password-match indicators.
+
+### Two distinct visual languages, two distinct component sets
+
+Auth pages (Login, Register, password reset, etc.) use a fixed "orbit" palette that never responds to
+the light/dark theme toggle — their own components (`AuthField`, `AuthButton`, `AuthAlert`, `AuthSelect`,
+all in `src/components/`) use inline styles with JS-tracked focus/value state, not CSS pseudo-classes,
+specifically so the floating-label pattern doesn't depend on `:not(:placeholder-shown)` (which v1 relied
+on via a large per-page `<style>` block — a real violation of DESIGN.md's "no per-page `<style>` blocks"
+rule that v2 corrected rather than carried forward). Authenticated app pages (Settings, Profile) use the
+theme-responsive `.fos-*` classes and `var(--*)` tokens instead, via `Card`/`FormField`/`FormSelect`/
+`FosAlert`/`SaveButton` (see DESIGN.md Section 12's amended shared-component rule). Never mix the two —
+an auth-page component reaching for a `var(--text-primary)` token, or a Settings section hand-rolling the
+orbit palette, is a sign something's been copy-pasted from the wrong context.
+
+### Independent per-section state, not one giant form
+
+Every editable section (an Account tab, a Settings section, Profile) tracks its own dirty state
+independently against a `useRef` snapshot of the last-saved values, and its own `saving`/error state — no
+single page-wide "Save All" button covering unrelated sections. The Save button itself reads "No Changes"
+and is disabled until something is actually edited, and doesn't flip back to that until the server
+confirms the save succeeded (never optimistically on click).
+
+### Field-specific errors land on the field, not a generic banner
+
+When the server rejects a request with field-keyed errors (DRF's standard `{field: [msg, ...]}` shape),
+map each one to that exact field's `error` prop — never a single generic "Something went wrong" banner
+when a specific field is actually the problem. Reserve a generic alert banner for errors that are
+genuinely not field-specific (e.g. `{error: "Incorrect password."}` on a delete-account confirmation).
+Watch for the specific bug this guards against: treating every JSON error response as field-mappable
+will silently swallow a generic `{error: "..."}` response into a field key nothing renders — found in
+v1's `ChangeEmail.jsx`, fixed in v2 by explicitly distinguishing real form-field keys from everything else.
+
+### Test discipline for async/debounced UI (a real bug found twice)
+
+When testing a debounced action (availability checks, notification-toggle auto-save), wait on the actual
+async signal — a mock's call count, or a `waitFor` on the resulting state change — never on text that's
+assumed to appear. Found twice during this build: once waiting on the literal word "checking" when the
+UI actually renders an ellipsis character, and once using `getByText` on a button label that also
+matched a card heading, both of which made the test pass or fail for the wrong reason. A passing test
+whose wait condition is wrong isn't a safety net — verify what the test is actually waiting on, not just
+that it eventually goes green.
+
+### Test files live next to what they test
+
+`ComponentName.test.jsx` sits in a `__tests__/` folder alongside `ComponentName.jsx`, not in one
+project-wide test directory. Section components under `pages/settings/` have their own
+`pages/settings/__tests__/` folder for the same reason.

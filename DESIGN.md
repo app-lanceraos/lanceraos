@@ -23,6 +23,34 @@ classes listed in Section 6.
 
 ---
 
+## 0b. Never Emojis — Icon Components Only
+
+No emoji characters and no bare Unicode symbols standing in for an icon
+(⚠ ✓ ✗ ⭐ etc.) anywhere in rendered UI, in any component, on any page —
+auth pages, authenticated app pages, PDFs, and emails alike. Use a real
+icon component instead, exclusively from `lucide-react`
+(`import { Check, X, AlertTriangle } from 'lucide-react'`).
+
+This applies even to small inline indicators that feel throwaway — a
+"passwords match" checkmark, a warning glyph next to a link, a success
+tick after a save. Every one of these is a lucide icon sized and colored
+to match the surrounding text (typically `size={13}`–`16`, `color`
+inherited or set to the relevant status token), never a text character.
+
+Found and fixed during the Users/Auth build: `Login.jsx` had a bare `⚠`
+in a link's text, and `Register.jsx`/`ResetPassword.jsx` had bare `✓`/`✗`
+for password-match feedback — all three replaced with `AlertTriangle`/
+`Check`/`X` components. Treat discovering a bare symbol the same way
+STANDARDS.md treats dead code: a signal to fix it on sight, not preserve
+it for consistency with something else that has the same problem.
+
+The only exception is this document's own internal reference tables
+(e.g. the asset-location table in Section 13) — those are markdown
+documentation notation, not rendered product UI, and are unaffected by
+this rule.
+
+---
+
 ## 1. Design Philosophy
 
 LanceraOS is a flat, bordered, dark-first SaaS dashboard. The visual
@@ -389,6 +417,17 @@ them as inline objects.
 .nav-pill             the sliding active indicator (one per sidebar)
 .group-label          uppercase section label in nav
 .app-tooltip          singleton body-level tooltip (JS-positioned)
+```
+
+### React wrapper components (authenticated app pages)
+Built during the Settings/Profile work as the sanctioned exception noted
+in Section 12 — reuse these rather than reimplementing the same markup:
+```
+Card.jsx        title/subtitle/action bordered container (src/components/)
+FormField.jsx   labeled text/password input wrapping .fos-input/.fos-label/.fos-error/.fos-hint
+FormSelect.jsx  labeled select wrapping .fos-input/.fos-select
+FosAlert.jsx    dismissible alert wrapping .fos-alert-* with a lucide icon
+SaveButton.jsx  Save/Saving…/No Changes button wrapping .fos-btn-accent
 ```
 
 ---
@@ -793,9 +832,23 @@ DO NOT define per-page `<style>` blocks for anything except:
 @keyframes, @media queries, and the FAB mobile-display hack.
 Everything else is inline style objects.
 
-DO NOT create new shared utility components (Card, Modal, Badge, Table).
-These do not exist in v1 and v2 keeps the inline-object pattern.
+DO NOT create new shared utility components (Modal, Badge, Table) for
+authenticated app pages. v2 keeps the inline-object pattern by default.
 The exception: buttons and form inputs use the global `.fos-*` classes.
+
+AMENDED during the Settings/Profile build: `Card.jsx`, `FormField.jsx`,
+`FormSelect.jsx`, `FosAlert.jsx`, and `SaveButton.jsx` now exist as
+shared components in `src/components/`. This is a deliberate, reasoned
+exception, not drift — see DECISIONS.md for the full reasoning. In
+short: `FormField`/`FormSelect`/`FosAlert`/`SaveButton` wrap the
+existing `.fos-*` classes rather than introducing new styling (they
+extract the repeated label+input+error JSX *structure*, not new visual
+rules); `Card` is a genuine new structural component, justified because
+Settings' 7 sections and Profile all needed an identical title/subtitle/
+action bordered-container, and duplicating that inline 8 times would
+itself violate STANDARDS.md's single-source-of-truth rule. Any future
+module needing this same title/subtitle/action card shape should reuse
+`Card.jsx`, not create a second near-identical wrapper.
 
 DO NOT introduce a new navy hex on public pages. Use `#1e3a5f` or
 `#2e5987` only. v1 had three inconsistent navies — v2 has two.

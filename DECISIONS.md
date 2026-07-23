@@ -174,3 +174,74 @@ Reason: Confirmed by actually installing from `requirements.txt` into a clean vi
 LTS pin CLAUDE.md specifies. `2.9.x` is the version actually confirmed compatible.
 Alternatives considered: Downgrade Django to satisfy `django-celery-beat==2.7` (rejected — Django 5.2
 LTS is the locked tech-stack decision, not up for renegotiation over a Celery add-on).
+
+---
+
+Date: July 2026
+Decision: Added GET /api/auth/csrf/ endpoint.
+Reason: Discovered during frontend integration that no view ever called get_token(), so Django's
+CSRF cookie was never actually sent to the browser — every authenticated mutating request from the
+frontend would have failed with "CSRF cookie not set." This endpoint exists purely to trigger that.
+Alternatives considered: Decorating every view with @ensure_csrf_cookie (rejected — one dedicated
+endpoint the frontend calls once on load is simpler than touching every view).
+
+---
+
+Date: July 2026
+Decision: Production frontend is served at the bare root domain `lanceraos.com`, not `app.lanceraos.com`.
+The backend API keeps its own subdomain, `api.lanceraos.com`, unchanged. `COOKIE_DOMAIN=.lanceraos.com`
+still covers both, so the SameSite=Lax cookie-sharing reasoning from the original cookie-architecture
+decision above is unaffected — only which subdomain the frontend itself lives on changes.
+Reason: Product decision — users should land on the plain root domain when they visit the site, not a
+subdomain, since `app.` reads as a secondary/internal surface rather than the product itself.
+Alternatives considered: Keep `app.lanceraos.com` for the frontend (rejected per this product decision).
+Also considered serving both frontend and backend from the exact same origin with no subdomain split at
+all (rejected — Vercel/Railway hosting are still two separate deployments; a shared registrable domain
+via subdomains is what actually makes SameSite=Lax cookies work across them, not a single shared origin).
+
+---
+
+Date: July 2026
+Decision: Profile and Settings are two separate pages/routes (`/profile`, `/settings`), not one combined
+page. Profile holds only light personal identity (logo, display name, business name, phone, a completion
+indicator). Settings holds 7 sections: Account, Business, Tax & PSEB, Security, Sessions, Notifications,
+Email Sending (SMTP).
+Reason: Explicit product direction — v1's single monolithic Profile page mixed "who you are" with "how
+the account behaves," which reads as unpolished for a commercial SaaS product; every comparable product
+(GitHub, Stripe, Linear, Notion) splits these. Also let each section adopt independent dirty-state
+tracking and its own save call, rather than one giant form/save button covering everything.
+Alternatives considered: Keep v1's single-page structure (rejected per the product direction above);
+a single page with client-side tabs for everything including Profile fields (rejected — conflates two
+different mental models, "who I am" vs. "how my account works," into one navigation surface).
+
+---
+
+Date: July 2026
+Decision: `Settings.jsx` is a thin shell (~100 lines: tab nav + a single shared `GET /auth/profile/`
+fetch) importing 7 section components from `src/pages/settings/`, rather than one large file containing
+all section logic inline.
+Reason: All 7 sections' logic combined would have put a single file well past 1,000 lines. Splitting by
+section means a bug in, say, the SMTP form only requires opening `SmtpSection.jsx`, not scrolling through
+every other section's code to find it. Business and Tax share one lifted `profile` fetch (passed down as
+props) specifically because they both read/write the same `FreelancerProfile` object — switching between
+those two tabs doesn't re-fetch, and a save in one is immediately visible in the other without a reload.
+Alternatives considered: One large `Settings.jsx` with all 7 sections inline (rejected — the 1,000+ line
+outcome above); each section fetching its own copy of the profile independently (rejected — would cause
+Business and Tax to silently go out of sync with each other within the same session).
+
+---
+
+Date: July 2026
+Decision: Five new shared React components exist for authenticated app pages — `Card.jsx`,
+`FormField.jsx`, `FormSelect.jsx`, `FosAlert.jsx`, `SaveButton.jsx` — amending DESIGN.md Section 12's
+"do not create new shared utility components" rule.
+Reason: `FormField`/`FormSelect`/`FosAlert`/`SaveButton` wrap the already-sanctioned `.fos-*` CSS classes
+rather than introducing new visual rules — they only extract the repeated label+input+error-message JSX
+*structure* that all 7 Settings sections and Profile would otherwise each hand-roll independently.
+`Card` is a genuine new structural component (title/subtitle/action bordered container), justified
+because duplicating that exact structure inline across 8 files would itself violate STANDARDS.md's
+single-source-of-truth rule — the two project rules were in direct tension here, and consistency-via-a-
+thin-wrapper won over strict adherence to "no new components."
+Alternatives considered: Duplicate the card/field markup inline in every section (rejected — the direct
+STANDARDS.md conflict above); build these as a bigger, more generic component library (rejected — scope
+was kept to exactly what Settings/Profile needed, not speculative future generality).
