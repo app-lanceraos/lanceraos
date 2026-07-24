@@ -268,6 +268,9 @@ class User(AbstractUser):
         profile.custom_smtp_from_name = ''
         profile.custom_smtp_verified = False
         profile.custom_smtp_verified_at = None
+        profile.profession = ''
+        profile.income_source = ''
+        profile.platform_used = ''
         profile.save()
 
 
@@ -282,6 +285,19 @@ class FreelancerProfile(models.Model):
         ('email', 'Email only'),
         ('whatsapp', 'WhatsApp (manual share)'),
         ('both', 'Email + WhatsApp'),
+    ]
+
+    INCOME_SOURCE_CHOICES = [
+        ('full_time', 'Full-time freelancer'),
+        ('part_time', 'Part-time, alongside a job'),
+        ('side_income', 'Occasional side income'),
+        ('student', 'Student'),
+    ]
+    PLATFORM_CHOICES = [
+        ('upwork', 'Upwork'),
+        ('fiverr', 'Fiverr'),
+        ('direct', 'Direct clients'),
+        ('other', 'Other'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -328,6 +344,9 @@ class FreelancerProfile(models.Model):
     wise_refresh_token = models.TextField(blank=True)
 
     onboarding_completed = models.BooleanField(default=False)
+    profession = models.CharField(max_length=100, blank=True)
+    income_source = models.CharField(max_length=20, choices=INCOME_SOURCE_CHOICES, blank=True)
+    platform_used = models.CharField(max_length=20, choices=PLATFORM_CHOICES, blank=True)
     language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default='en')
     timezone = models.CharField(max_length=50, default='Asia/Karachi')
 

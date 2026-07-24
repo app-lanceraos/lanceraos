@@ -117,10 +117,21 @@ export default function SecuritySection() {
   }
 
   if (isOAuthOnly) {
+    // linked_providers is a list (e.g. ['google']) — a user could
+    // theoretically have more than one linked, though today's UI never
+    // lets them link an additional provider after signup. Falls back to
+    // the generic "Google or Facebook" wording only if this field is
+    // ever missing, rather than showing a broken/empty message.
+    const providers = user?.linked_providers || []
+    const providerNames = { google: 'Google', facebook: 'Facebook' }
+    const providerLabel = providers.length > 0
+      ? providers.map((p) => providerNames[p] || p).join(' and ')
+      : 'Google or Facebook'
+
     return (
       <Card title="Security">
         <FosAlert type="info">
-          Your account is managed by Google or Facebook. To manage your password or two-factor authentication,
+          Your account is managed by {providerLabel}. To manage your password or two-factor authentication,
           visit your provider's account settings directly.
         </FosAlert>
       </Card>

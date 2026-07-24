@@ -19,6 +19,7 @@ import ActivateEmail from '@/pages/ActivateEmail'
 import DeletionReview from '@/pages/DeletionReview'
 import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
+import Onboarding from '@/pages/Onboarding'
 
 export default function App() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -50,6 +51,14 @@ export default function App() {
         <Route path="/account/deletion-review" element={<DeletionReview />} />
 
         {/* Private — require an active session */}
+        {/* Onboarding is deliberately NOT wrapped in AppShell — it's a
+            continuation of the signup journey, not a page within the
+            app itself (see PrivateRoute.jsx for the redirect that sends
+            people here until onboarding_completed is true). */}
+        <Route
+          path="/onboarding"
+          element={<PrivateRoute><Onboarding /></PrivateRoute>}
+        />
         <Route
           path="/profile"
           element={<PrivateRoute><AppShell><Profile /></AppShell></PrivateRoute>}

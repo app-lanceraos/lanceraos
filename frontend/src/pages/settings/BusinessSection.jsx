@@ -34,10 +34,27 @@ const TIMEZONES = [
   { value: 'Australia/Sydney', label: 'Australia Eastern' },
 ]
 
+const INCOME_SOURCE_OPTIONS = [
+  { value: 'full_time', label: 'Full-time freelancer' },
+  { value: 'part_time', label: 'Part-time, alongside a job' },
+  { value: 'side_income', label: 'Occasional side income' },
+  { value: 'student', label: 'Student' },
+]
+
+const PLATFORM_OPTIONS = [
+  { value: 'upwork', label: 'Upwork' },
+  { value: 'fiverr', label: 'Fiverr' },
+  { value: 'direct', label: 'Direct clients' },
+  { value: 'other', label: 'Other' },
+]
+
 const FIELD_NAMES = [
   'address_line1', 'address_line2', 'city', 'country',
   'default_currency', 'default_payment_terms', 'language', 'timezone',
   'bank_name', 'bank_account_number', 'jazzcash_number', 'easypaisa_number', 'payoneer_email',
+  // Collected during onboarding — surfaced here so they're viewable/
+  // editable afterward, rather than write-once-never-seen-again.
+  'profession', 'income_source', 'platform_used',
 ]
 
 function extractDraft(profile) {
@@ -173,6 +190,30 @@ export default function BusinessSection({ profile, loading, onProfileUpdate }) {
             onChange={(e) => handleChange('payoneer_email', e.target.value)}
             error={fieldErrors.payoneer_email}
           />
+        </div>
+      </Card>
+
+      <Card title="About Your Work" subtitle="Collected when you first signed up — update it any time">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <FormField
+            label="Profession"
+            value={draft.profession}
+            onChange={(e) => handleChange('profession', e.target.value)}
+          />
+          <div className="settings-grid-2">
+            <FormSelect
+              label="How you freelance"
+              value={draft.income_source}
+              onChange={(e) => handleChange('income_source', e.target.value)}
+              options={INCOME_SOURCE_OPTIONS}
+            />
+            <FormSelect
+              label="Where you find clients"
+              value={draft.platform_used}
+              onChange={(e) => handleChange('platform_used', e.target.value)}
+              options={PLATFORM_OPTIONS}
+            />
+          </div>
         </div>
       </Card>
     </>

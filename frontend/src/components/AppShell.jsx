@@ -752,12 +752,14 @@ export default function AppShell({ children }) {
             <div style={{
               width: 32, height: 32, borderRadius: '50%',
               background: 'var(--avatar-bg)',
+              border: '1px solid var(--profile-b)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               flexShrink: 0, overflow: 'hidden', color: 'var(--profile-name)',
+              boxSizing: 'border-box',
             }}>
               {avatarSrc
                 ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : <UserIcon size={18} />}
+                : <UserIcon size={16} />}
             </div>
 
             {(!collapsed || isMobile) && (

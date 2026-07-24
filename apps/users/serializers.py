@@ -223,6 +223,8 @@ class AccountUpdateSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     is_oauth_only = serializers.SerializerMethodField()
+    onboarding_completed = serializers.SerializerMethodField()
+    linked_providers = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -237,6 +239,9 @@ class UserSerializer(serializers.ModelSerializer):
             # Required by the Login deletion modal and the Dashboard deletion banner.
             'deletion_requested_at',
             'deletion_scheduled_at',
+            # Required by PrivateRoute.jsx to redirect to /onboarding until this is true.
+            'onboarding_completed',
+            'linked_providers',
         ]
         read_only_fields = fields
 
@@ -246,6 +251,14 @@ class UserSerializer(serializers.ModelSerializer):
         except Exception:
             return False
 
+    def get_onboarding_completed(self, obj):
+        try:
+            return obj.profile.onboarding_completed
+        except FreelancerProfile.DoesNotExist:
+            return False
+
+    def get_linked_providers(self, obj):
+        return list(obj.social_accounts.values_list('provider', flat=True))
 
 # ══════════════════════════════════════════════════════════════════
 # FREELANCER PROFILE
@@ -327,6 +340,72 @@ class FreelancerProfileSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 
+# ══════════════════════════════════════════════════════════════════
+# ONBOARDING — new for v2, did not exist in v1
+# ══════════════════════════════════════════════════════════════════
+
+class UnderageOnboardingError(Exception):
+    """
+    Raised by OnboardingSerializer.validate() when a submitted date of
+    birth reveals the user is under MIN_AGE_YEARS. Distinct from a
+    normal serializers.ValidationError because the correct response
+    isn't "fix this field and resubmit" — it's closing the account
+    (see the onboarding view), the same outcome registration already
+    enforces upfront. OAuth signups can't know age until this point,
+    since neither provider supplies a birthday today.
+    """
+    def __init__(self, message):
+        self.message = message
+        super().__init__(message)
+
+
+class OnboardingSerializer(serializers.Serializer):
+    username = serializers.CharField(
+        min_length=3, max_length=30,
+        validators=[RegexValidator(
+            regex=r'^[a-zA-Z0-9_]+$',
+            message='Username can only contain letters, numbers, and underscores.',
+        )],
+    )
+    # Only required for users who don't already have one (OAuth signups —
+    # neither Google nor Facebook's current integration supplies a
+    # birthday). Enforced conditionally in validate(), not here, since
+    # whether it's required depends on the user in context.
+    date_of_birth = serializers.DateField(required=False)
+    profession = serializers.CharField(max_length=100, min_length=2)
+    income_source = serializers.ChoiceField(choices=FreelancerProfile.INCOME_SOURCE_CHOICES)
+    platform_used = serializers.ChoiceField(choices=FreelancerProfile.PLATFORM_CHOICES)
+
+    def validate_username(self, value):
+        value = value.strip().lower()
+        if value in RESERVED_USERNAMES:
+            raise serializers.ValidationError('This username is not available.')
+        user = self.context['user']
+        if User.objects.filter(username=value).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError('This username is already taken.')
+        return value
+
+    def validate(self, data):
+        user = self.context['user']
+        if not user.date_of_birth:
+            dob = data.get('date_of_birth')
+            if not dob:
+                raise serializers.ValidationError({'date_of_birth': 'Date of birth is required.'})
+            age = _calculate_age(dob)
+            if age > 120:
+                raise serializers.ValidationError({'date_of_birth': 'Enter a valid date of birth.'})
+            if age < MIN_AGE_YEARS:
+                raise UnderageOnboardingError(
+                    f'Your account has been closed because you do not meet the '
+                    f'minimum age requirement ({MIN_AGE_YEARS}+).'
+                )
+        else:
+            # Already has a verified DOB from registration — onboarding is
+            # not the place to change it (that's Settings' job, with its
+            # own validation). Ignored even if a client sends one, as
+            # defense in depth against silently overwriting it here.
+            data.pop('date_of_birth', None)
+        return data
 
 # ══════════════════════════════════════════════════════════════════
 # SESSION — for GET /api/auth/sessions/

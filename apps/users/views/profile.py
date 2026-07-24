@@ -6,10 +6,13 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from rest_framework import serializers
+
 from core.observability import log_event
 
+from ..cookies import clear_auth_cookies
 from ..models import FreelancerProfile
-from ..serializers import AccountUpdateSerializer, FreelancerProfileSerializer, UserSerializer
+from ..serializers import AccountUpdateSerializer, FreelancerProfileSerializer, UserSerializer, OnboardingSerializer, UnderageOnboardingError
 
 ALLOWED_LOGO_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.svg'}
 MAX_LOGO_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -127,3 +130,48 @@ def upload_logo(request):
 
     log_event('logo_uploaded', user=request.user, request=request)
     return Response({'logo': prof.logo})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def complete_onboarding(request):
+    user = request.user
+    try:
+        profile = user.profile
+    except FreelancerProfile.DoesNotExist:
+        return Response({'error': 'Profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if profile.onboarding_completed:
+        return Response({'error': 'Onboarding has already been completed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    serializer = OnboardingSerializer(data=request.data, context={'user': user})
+    try:
+        serializer.is_valid(raise_exception=True)
+    except UnderageOnboardingError as exc:
+        user.anonymize()
+        log_event('onboarding_underage_closed', user=user, request=request)
+        response = Response(
+            {'error': exc.message, 'account_closed': True},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+        clear_auth_cookies(response)
+        return response
+    except serializers.ValidationError:
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    data = serializer.validated_data
+    user.username = data['username']
+    user_update_fields = ['username']
+    if 'date_of_birth' in data:
+        user.date_of_birth = data['date_of_birth']
+        user_update_fields.append('date_of_birth')
+    user.save(update_fields=user_update_fields)
+
+    profile.profession = data['profession']
+    profile.income_source = data['income_source']
+    profile.platform_used = data['platform_used']
+    profile.onboarding_completed = True
+    profile.save(update_fields=['profession', 'income_source', 'platform_used', 'onboarding_completed'])
+
+    log_event('onboarding_completed', user=user, request=request)
+    return Response(UserSerializer(user).data)

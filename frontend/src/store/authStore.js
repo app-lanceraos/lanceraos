@@ -53,7 +53,16 @@ const useAuthStore = create((set, get) => ({
   // refresh attempt itself fails — the session is already confirmed
   // dead server-side at that point, so calling /logout/ again would be
   // redundant (and would likely itself fail).
-  clearLocalAuth: () => set({ user: null, isAuthenticated: false, deletionScheduledAt: null }),
+  //
+  // Also clears the cached sidebar avatar: without this, logging out
+  // and into a DIFFERENT account in the same browser tab would show
+  // the previous account's photo in AppShell's sidebar (sessionStorage
+  // is scoped to the tab, not to whichever account happens to be
+  // logged into it) until that new account uploads its own photo.
+  clearLocalAuth: () => {
+    sessionStorage.removeItem('profile_logo')
+    set({ user: null, isAuthenticated: false, deletionScheduledAt: null })
+  },
 
   updateUser: (patch) => set((state) => ({
     user: { ...state.user, ...patch },

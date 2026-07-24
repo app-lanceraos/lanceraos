@@ -42,6 +42,7 @@ urlpatterns = [
     path('profile/upload-logo/', profile.upload_logo, name='upload_logo'),
     path('settings/notifications/', profile.notification_settings, name='notification_settings'),
     path('account/', profile.update_account, name='update_account'),
+    path('onboarding/complete/', profile.complete_onboarding, name='onboarding_complete'),
 
     # ── Sessions ─────────────────────────────────────────────────
     path('sessions/', sessions.list_sessions, name='sessions_list'),
