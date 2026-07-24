@@ -62,9 +62,16 @@ const useAuthStore = create((set, get) => ({
       : state.deletionScheduledAt,
   })),
 
-  updateAvatar: (logoUrl) => set((state) => ({
-    user: { ...state.user, profile_logo: logoUrl },
-  })),
+  // Also keeps sessionStorage in sync — AppShell.jsx bootstraps its
+  // sidebar avatar from a cached sessionStorage value on mount (so it
+  // doesn't have to wait on a network round-trip every time), but that
+  // cache has no other invalidation path. Without updating it here too,
+  // uploading a new photo then refreshing would keep showing the old
+  // cached photo indefinitely, for the rest of that browser tab's life.
+  updateAvatar: (logoUrl) => {
+    sessionStorage.setItem('profile_logo', logoUrl)
+    set((state) => ({ user: { ...state.user, profile_logo: logoUrl } }))
+  },
 
   setDeletionWarning: (date) => set({ deletionScheduledAt: date }),
 }))

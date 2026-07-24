@@ -262,7 +262,19 @@ export default function Login() {
                 type="checkbox"
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
-                style={{ accentColor: authTokens.focus }}
+                className="round-check"
+                style={{
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                  width: '18px',
+                  height: '18px',
+                  borderRadius: '50%',
+                  border: '1px solid #342E58',
+                  background: rememberMe ? authTokens.focus : '#141126',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  position: 'relative',
+                }}
               />
               Remember me
             </label>
@@ -286,8 +298,10 @@ export default function Login() {
               <span style={{ flex: 1, height: 1, background: '#6C61A6' }} />
             </div>
 
-            <GoogleButton onSuccess={handleOAuthSuccess} onError={setError} disabled={inputsDisabled} />
-            <FacebookButton onSuccess={handleOAuthSuccess} onError={setError} disabled={inputsDisabled} />
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <GoogleButton onSuccess={handleOAuthSuccess} onError={setError} disabled={inputsDisabled} />
+              <FacebookButton onSuccess={handleOAuthSuccess} onError={setError} disabled={inputsDisabled} />
+            </div>
           </div>
         </form>
 
@@ -298,6 +312,21 @@ export default function Login() {
           </Link>
         </p>
       </AuthLayout>
-    </>
-  )
+
+      <style>{`
+        .round-check:checked::after {
+          content: "";
+          position: absolute;
+          left: 50%;
+          top: 45%;
+          width: 4px;
+          height: 8px;
+          border: solid #141126;
+          border-width: 0 2px 2px 0;
+          transform: translate(-50%, -50%) rotate(45deg);
+        }
+      `}</style>
+      
+    </>   
+  ) 
 }

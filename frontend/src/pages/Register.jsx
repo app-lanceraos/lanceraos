@@ -52,15 +52,19 @@ function AvailDot({ status }) {
   return null
 }
 
+// Spans the full width of the form (matching the AuthFields/buttons below
+// it) rather than sitting small and centered — the connector between each
+// pair of circles is a flex-growing segment, not a fixed width, so the
+// whole bar stretches to fill the container.
 function StepBar({ current }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 28 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', width: '100%', marginBottom: 28 }}>
       {STEPS.map((s, i) => {
         const done = current > s.id
         const active = current === s.id
         return (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <div key={s.id} style={{ display: 'contents' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
               <div
                 style={{
                   width: 34, height: 34, borderRadius: '50%',
@@ -76,7 +80,7 @@ function StepBar({ current }) {
               </div>
               <span
                 style={{
-                  fontSize: '0.72rem', fontWeight: 500, marginTop: 4,
+                  fontSize: '0.72rem', fontWeight: 500, marginTop: 4, whiteSpace: 'nowrap',
                   color: done ? authTokens.success : active ? authTokens.focus : authTokens.placeholder,
                 }}
               >
@@ -84,7 +88,7 @@ function StepBar({ current }) {
               </span>
             </div>
             {i < STEPS.length - 1 && (
-              <div style={{ width: 56, height: 2, margin: '0 4px 16px', background: done ? authTokens.focus : authTokens.inputBorder, transition: 'background 0.25s ease' }} />
+              <div style={{ flex: 1, height: 2, margin: '16px 4px 0', background: done ? authTokens.focus : authTokens.inputBorder, transition: 'background 0.25s ease' }} />
             )}
           </div>
         )
@@ -181,8 +185,7 @@ export default function Register() {
     if (!form.first_name.trim()) e.first_name = 'First name is required.'
     else if (!/^[a-zA-Z\s-]+$/.test(form.first_name)) e.first_name = 'Letters only.'
     else if (form.first_name.trim().length < 2) e.first_name = 'At least 2 characters.'
-    if (!form.last_name.trim()) e.last_name = 'Last name is required.'
-    else if (!/^[a-zA-Z\s-]+$/.test(form.last_name)) e.last_name = 'Letters only.'
+    if (form.last_name.trim() && !/^[a-zA-Z\s-]+$/.test(form.last_name)) e.last_name = 'Letters only.'
     if (!form.dob_day || !form.dob_month || !form.dob_year) {
       e.date_of_birth = 'Date of birth is required.'
     } else {
@@ -285,7 +288,13 @@ export default function Register() {
   const handleOAuthSuccess = () => navigate('/dashboard', { replace: true })
 
   return (
-    <AuthLayout maxWidth={480}>
+    <AuthLayout formMaxWidth="30rem">
+      <h1 style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 700, marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
+          Create your account
+      </h1>
+      <p style={{ color: '#8C89A8', fontSize: '0.9rem', marginBottom: 24 }}>
+          Start managing your freelance business
+      </p>
       <StepBar current={step} />
 
       {serverError && (
@@ -299,7 +308,7 @@ export default function Register() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               <AuthField label="First Name" value={form.first_name} onChange={set_('first_name')} error={errors.first_name} autoComplete="given-name" />
-              <AuthField label="Last Name" value={form.last_name} onChange={set_('last_name')} error={errors.last_name} autoComplete="family-name" />
+              <AuthField label="Last Name (optional)" value={form.last_name} onChange={set_('last_name')} error={errors.last_name} autoComplete="family-name" />
             </div>
 
             <div>
@@ -431,8 +440,10 @@ export default function Register() {
           or sign up with
           <span style={{ flex: 1, height: 1, background: '#6C61A6' }} />
         </div>
-        <GoogleButton onSuccess={handleOAuthSuccess} onError={setServerError} />
-        <FacebookButton onSuccess={handleOAuthSuccess} onError={setServerError} />
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <GoogleButton onSuccess={handleOAuthSuccess} onError={setServerError} />
+          <FacebookButton onSuccess={handleOAuthSuccess} onError={setServerError} />
+        </div>
       </div>
 
       <p style={{ textAlign: 'center', marginTop: 24, fontSize: '0.875rem', color: '#8C89A8' }}>

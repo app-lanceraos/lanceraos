@@ -28,7 +28,7 @@ html { font-size: 16px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoot
   --accent-glow-lg:   rgba(0, 200, 150, 0.30);
 
   /* ── Backgrounds ── */
-  --bg-page:          #0a0b14;
+  --bg-page:          #e4e4ff;
   --bg-surface:       #ffffff;
   --bg-surface-2:     #f8f8fc;
   --bg-surface-3:     #f0f0f6;
@@ -60,16 +60,111 @@ html { font-size: 16px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoot
   --card-footer-text: #6b6b88;
   --card-shadow:      0 4px 6px -1px rgba(0,0,0,0.06), 0 20px 60px -10px rgba(0,0,0,0.12);
 
-  /* ── Sidebar/App shell ── */
-  --shell-bg:         #1a1a2e;
-  --shell-border:     rgba(255, 255, 255, 0.06);
-  --shell-text:       rgba(255, 255, 255, 0.65);
-  --shell-text-hover: rgba(255, 255, 255, 0.95);
-  --shell-active-bg:  rgba(0, 200, 150, 0.12);
-  --shell-active-text:#00c896;
-  --shell-icon-muted: rgba(255, 255, 255, 0.35);
+  /* ══════════════════════════════════════════════════════════════
+     APP SHELL — SINGLE SOURCE OF TRUTH for sidebar/header colors.
+     Every token the AppShell (header, sidebar, nav, profile popup)
+     reads from lives here and in the matching block in the
+     [data-theme="dark"] section below. Change shell colors in
+     EXACTLY these two places — nowhere else in the codebase
+     defines a shell color.
+     ══════════════════════════════════════════════════════════════ */
+  --font: 'DM Sans', sans-serif;
 
-  /* ── Form elements ── */
+  /* Sidebar nav icon colours — brand purple, intentionally the same
+     saturated tone in both themes (works on either a light or dark
+     shell background), not a neutral gray that would need per-theme
+     adjustment. */
+  --icon:        #342858;
+  --icon-active: #a89cf2;
+  --nav-active:  #a89cf2;
+
+  /* Liquid-glass primitives — also theme-invariant; the glass effect
+     reads correctly against either shell background as-is. */
+  --glass-tint:  #6656cf0e;
+  --glass-light: #6656cf;
+  --glass-dark:  #000000;
+  --glass-blur:  18px;
+  --saturation:  150%;
+
+  /* Shell surface — header + sidebar background. Light mode: a
+     genuinely light surface, matching the rest of the light theme
+     (not a dark shell forced onto a light page). */
+  --bg:      #e4e4ff;
+  --surface: #f6fafe;
+  --card:    var(--bg-surface, #ffffff);
+  --card-border: rgba(0,0,0,0.06);
+
+  --accent-icon-hover: #a89cf2;
+  --accent-hover:      rgba(168,156,242,0.08);
+
+  /* Shell text scale */
+  --text:       rgba(14,14,26,0.82);
+  --text-dim:   rgba(14,14,26,0.45);
+  --text-faint: rgba(14,14,26,0.32);
+  --main-text:  rgba(14,14,26,0.82);
+
+  /* Header chrome */
+  --wordmark:     #0e0e1a;
+  --header-title: rgba(14,14,26,0.80);
+  --header-icon:  rgba(14,14,26,0.55);
+  --notif:        #ff5100;
+
+  /* Sidebar nav (inactive item text + hover tint) */
+  --nav-text:     rgba(14,14,26,0.45);
+  --nav-hover-bg: rgba(0,0,0,0.045);
+
+  /* Profile row + popup */
+  --avatar-bg:        rgba(0,0,0,0.05);
+  --profile-name:     rgba(14,14,26,0.82);
+  --profile-email:    rgba(14,14,26,0.35);
+  --chevron:          rgba(14,14,26,0.40);
+  --menu-bg:          rgba(245,247,247,0.98);
+  --menu-text:        rgba(17,23,31,0.70);
+  --menu-text-hover:  rgba(17,23,31,0.95);
+  --menu-hover-bg:    rgba(0,0,0,0.06);
+  --danger:           #d32f2f;
+  --danger-hover:     rgba(211,47,47,0.10);
+  --divider:          rgba(0,0,0,0.08);
+
+  /* Theme-switch icon colours — dark icons on the now-light shell bg */
+  --switch-idle:   rgba(14,14,26,0.45);
+  --switch-active: rgba(14,14,26,0.92);
+
+  /* Logo fills — fixed brand colors, intentionally NOT theme-dependent
+     (the hexagon's own two-tone contrast works against either shell
+     background, the same way most product logos don't restyle
+     per-theme). */
+  --logo-body: #8074c0;
+  --logo-mark: #050508;
+
+  /* Layout */
+  --sidebar-w:         218px;
+  --sidebar-collapsed: 72px;
+  --header-h:          60px;
+  --radius:            14px;
+
+  /* Motion */
+  --t:    0.32s cubic-bezier(0.4,0,0.2,1);
+  --fast: 0.18s ease;
+  --pill: 0.28s cubic-bezier(0.22,1,0.36,1);
+
+  /* Shared liquid-glass shadow recipe */
+  --glass-shadow:
+    inset 0 0 0 1px       color-mix(in srgb, var(--glass-light) 10%, transparent),
+    inset 1.8px 3px 0 -2px  color-mix(in srgb, var(--glass-light) 90%, transparent),
+    inset -2px -2px 0 -2px  color-mix(in srgb, var(--glass-light) 80%, transparent),
+    inset -3px -8px 1px -6px color-mix(in srgb, var(--glass-light) 60%, transparent),
+    inset -0.3px -1px 4px 0  color-mix(in srgb, var(--glass-dark) 12%, transparent),
+    inset 0 3px 4px -2px     color-mix(in srgb, var(--glass-dark) 20%, transparent),
+    0 1px 5px 0              color-mix(in srgb, var(--glass-dark) 10%, transparent),
+    0 6px 16px 0             color-mix(in srgb, var(--glass-dark) 8%, transparent);
+
+  /* Lightweight nav-item highlight shadow (no blur — GPU-friendly) */
+  --nav-glass-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--glass-light) 12%, transparent),
+    inset 1.5px 2px 0 -1px color-mix(in srgb, var(--glass-light) 70%, transparent),
+    0 2px 6px 0 color-mix(in srgb, var(--glass-dark) 12%, transparent);
+
   --input-bg:         #ffffff;
   --input-border:     #d4d4e0;
   --input-border-focus: #00c896;
@@ -113,96 +208,6 @@ html { font-size: 16px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoot
   --transition-fast: 0.15s ease;
   --transition-base: 0.25s ease;
   --transition-slow: 0.4s ease;
-
-  /* ── LanceraOS shell design tokens ── */
-  --font: 'DM Sans', sans-serif;
-
-  /* Sidebar nav icon colours */
-  --icon:        #342858;
-  --icon-active: #a89cf2;
-
-  /* Liquid-glass primitives */
-  --glass-tint:  #6656cf0e;
-  --glass-light: #6656cf;
-  --glass-dark:  #000000;
-  --glass-blur:  18px;
-  --saturation:  150%;
-
-  /* Core surfaces — sidebar/header stay dark; main content follows --bg-page */
-  --bg:      #0a0b14;
-  --surface: #f6fafe;
-  --card:    var(--bg-surface, #0a0b14);
-  --card-border: rgba(255,255,255,0.05);
-
-  /* Shell accent (sidebar hover/glass, distinct from brand --accent) */
-  --accent-icon-hover: #a89cf2;
-  --accent-hover:      rgba(168,156,242,0.10);
-
-  /* Text (shell-specific) */
-  --text:       rgba(255,255,255,0.82);
-  --text-dim:   rgba(255,255,255,0.45);
-  --text-faint: rgba(255,255,255,0.32);
-  --main-text:  rgba(255,255,255,0.82);
-  --nav-active: #a89cf2;
-
-  /* Header chrome */
-  --wordmark:     #ffffff;
-  --header-title: rgba(255,255,255,0.80);
-  --header-icon:  rgba(255,255,255,0.55);
-  --notif:        #ff5100;
-
-  /* Sidebar nav */
-  --nav-text:     rgba(255,255,255,0.45);
-  --nav-hover-bg: rgba(255,255,255,0.06);
-
-  /* Profile + popup */
-  --avatar-bg:        rgba(255,255,255,0.06);
-  --profile-name:     rgba(255,255,255,0.82);
-  --profile-email:    rgba(255,255,255,0.35);
-  --chevron:          rgba(255,255,255,0.40);
-  --menu-bg:          rgba(245,247,247,0.98);
-  --menu-text:        rgba(17,23,31,0.70);
-  --menu-text-hover:  rgba(17,23,31,0.95);
-  --menu-hover-bg:    rgba(0,0,0,0.06);
-  --danger:           #d32f2f;
-  --danger-hover:     rgba(211,47,47,0.10);
-  --divider:          rgba(0,0,0,0.08);
-
-  /* Theme-switch icon colours (always on dark sidebar bg) */
-  --switch-idle:   rgba(255,255,255,0.45);
-  --switch-active: rgba(255,255,255,0.92);
-
-  /* Logo fills */
-  --logo-body: #8074c0;
-  --logo-mark: #050508;
-
-  /* Layout */
-  --sidebar-w:         218px;
-  --sidebar-collapsed: 72px;
-  --header-h:          60px;
-  --radius:            14px;
-
-  /* Motion */
-  --t:    0.32s cubic-bezier(0.4,0,0.2,1);
-  --fast: 0.18s ease;
-  --pill: 0.28s cubic-bezier(0.22,1,0.36,1);
-
-  /* Shared liquid-glass shadow recipe */
-  --glass-shadow:
-    inset 0 0 0 1px       color-mix(in srgb, var(--glass-light) 10%, transparent),
-    inset 1.8px 3px 0 -2px  color-mix(in srgb, var(--glass-light) 90%, transparent),
-    inset -2px -2px 0 -2px  color-mix(in srgb, var(--glass-light) 80%, transparent),
-    inset -3px -8px 1px -6px color-mix(in srgb, var(--glass-light) 60%, transparent),
-    inset -0.3px -1px 4px 0  color-mix(in srgb, var(--glass-dark) 12%, transparent),
-    inset 0 3px 4px -2px     color-mix(in srgb, var(--glass-dark) 20%, transparent),
-    0 1px 5px 0              color-mix(in srgb, var(--glass-dark) 10%, transparent),
-    0 6px 16px 0             color-mix(in srgb, var(--glass-dark) 8%, transparent);
-
-  /* Lightweight nav-item highlight shadow (no blur — GPU-friendly) */
-  --nav-glass-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--glass-light) 12%, transparent),
-    inset 1.5px 2px 0 -1px color-mix(in srgb, var(--glass-light) 70%, transparent),
-    0 2px 6px 0 color-mix(in srgb, var(--glass-dark) 12%, transparent);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -220,7 +225,7 @@ html { font-size: 16px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoot
   --accent-glow-lg:   rgba(0, 229, 160, 0.28);
 
   /* ── Backgrounds ── */
-  --bg-page:          #0a0b14;
+  --bg-page:          #0d0d16;
   --bg-surface:       #111118;
   --bg-surface-2:     #18181f;
   --bg-surface-3:     #222230;
@@ -252,14 +257,45 @@ html { font-size: 16px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoot
   --card-footer-text: #60607a;
   --card-shadow:      0 4px 6px -1px rgba(0,0,0,0.4), 0 20px 60px -10px rgba(0,0,0,0.6);
 
-  /* ── Sidebar/App shell ── */
-  --shell-bg:         #0d0d16;
-  --shell-border:     rgba(255, 255, 255, 0.05);
-  --shell-text:       rgba(255, 255, 255, 0.55);
-  --shell-text-hover: rgba(255, 255, 255, 0.95);
-  --shell-active-bg:  rgba(0, 229, 160, 0.10);
-  --shell-active-text:#00e5a0;
-  --shell-icon-muted: rgba(255, 255, 255, 0.28);
+  /* ══════════════════════════════════════════════════════════════
+     APP SHELL — dark-mode half of the single source of truth above.
+     Only tokens that actually differ between themes are redefined
+     here; icon colors, the nav-active accent, glass-effect tokens,
+     logo fills, motion, and layout tokens are intentionally
+     theme-invariant and inherit from the light-mode block unchanged.
+     ══════════════════════════════════════════════════════════════ */
+  --bg:      #0d0d16;
+  --surface: #111318;
+  --card:    var(--bg-surface, #111118);
+  --card-border: rgba(255,255,255,0.05);
+  --accent-hover: rgba(168,156,242,0.10);
+
+  --text:       rgba(255,255,255,0.82);
+  --text-dim:   rgba(255,255,255,0.45);
+  --text-faint: rgba(255,255,255,0.32);
+  --main-text:  rgba(255,255,255,0.82);
+
+  --wordmark:     #ffffff;
+  --header-title: rgba(255,255,255,0.80);
+  --header-icon:  rgba(255,255,255,0.55);
+
+  --nav-text:     rgba(255,255,255,0.45);
+  --nav-hover-bg: rgba(255,255,255,0.06);
+
+  --avatar-bg:        rgba(255,255,255,0.06);
+  --profile-name:     rgba(255,255,255,0.82);
+  --profile-email:    rgba(255,255,255,0.35);
+  --chevron:          rgba(255,255,255,0.40);
+  --menu-bg:          rgba(18,24,30,0.98);
+  --menu-text:        rgba(255,255,255,0.70);
+  --menu-text-hover:  rgba(255,255,255,0.95);
+  --menu-hover-bg:    rgba(255,255,255,0.07);
+  --danger:           #ff4d4d;
+  --danger-hover:     rgba(255,77,77,0.10);
+  --divider:          rgba(255,255,255,0.08);
+
+  --switch-idle:   rgba(255,255,255,0.45);
+  --switch-active: rgba(255,255,255,0.92);
 
   /* ── Form elements ── */
   --input-bg:         #18181f;
@@ -295,19 +331,6 @@ html { font-size: 16px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoot
   --info-bg:          rgba(96, 165, 250, 0.08);
   --info-border:      rgba(96, 165, 250, 0.20);
   --info-text:        #60a5fa;
-
-  /* ── Shell tokens: dark mode surface is slightly lighter than --bg so rounded corners are visible ── */
-  --surface:    #111318;
-  --main-text:  rgba(255,255,255,0.82);
-
-  /* ── Shell popup tokens (dark mode — overrides light-mode defaults) ── */
-  --menu-bg:         rgba(18,24,30,0.98);
-  --menu-text:       rgba(255,255,255,0.70);
-  --menu-text-hover: rgba(255,255,255,0.95);
-  --menu-hover-bg:   rgba(255,255,255,0.07);
-  --danger:          #ff4d4d;
-  --danger-hover:    rgba(255,77,77,0.10);
-  --divider:         rgba(255,255,255,0.08);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -687,9 +710,11 @@ html.app-shell-active {
   }
   body.collapsed .nav-item[data-tip]:hover::after {
     opacity: 1; transform: translateY(-50%) translateX(0) scale(1);
+    transition-delay: 0.5s;
   }
   body.collapsed .nav-item[data-tip]:hover::before {
     opacity: 1; transform: translateY(-50%) translateX(0) rotate(45deg);
+    transition-delay: 0.5s;
   }
   /* Let rail tooltip overflow sidebar bounds */
   body.collapsed aside { overflow: visible !important; }

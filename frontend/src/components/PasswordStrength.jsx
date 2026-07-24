@@ -20,8 +20,15 @@ export function isPasswordValid(password = '') {
 export default function PasswordStrength({ password = '' }) {
   const results = RULES.map((r) => ({ ...r, met: r.test(password) }))
   const metCount = results.filter((r) => r.met).length
-  const strength = password.length === 0 ? 0 : metCount / RULES.length
+  const allMet = metCount === RULES.length
 
+  // Hide entirely once the password is empty or already meets every rule —
+  // there's nothing useful left to show the person once it's valid, and
+  // showing nothing for an empty field avoids clutter before they've
+  // started typing at all.
+  if (password.length === 0 || allMet) return null
+
+  const strength = metCount / RULES.length
   const barColor = strength < 0.4 ? '#F2748B' : strength < 1 ? '#f59e0b' : '#5FD08A'
 
   return (
@@ -46,7 +53,7 @@ export default function PasswordStrength({ password = '' }) {
         />
       </div>
 
-      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 10px' }}>
         {results.map((r) => (
           <li
             key={r.label}

@@ -75,7 +75,7 @@ export default function Settings() {
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 20px' }}>
+    <div style={{ width: '100%' }}>
       <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4, fontFamily: "'DM Sans', sans-serif" }}>
         Settings
       </h1>
@@ -94,10 +94,7 @@ export default function Settings() {
       {activeTab === 'smtp' && <SmtpSection />}
 
       <style>{`
-        .settings-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-        @media (max-width: 600px) {
-          .settings-grid-2 { grid-template-columns: 1fr; }
-        }
+        .settings-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
       `}</style>
     </div>
   )

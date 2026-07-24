@@ -1,14 +1,14 @@
 // src/components/AuthField.jsx
-import { useId, useState } from 'react'
+import { useId } from 'react'
 import { authTokens } from './AuthLayout'
 
 /**
- * Shared floating-label input for every auth page. Deliberately does NOT
- * rely on CSS's `:not(:placeholder-shown)` trick (which is how v1 did
- * this, via a large per-page <style> block) — DESIGN.md prohibits
- * per-page <style> blocks for anything but @keyframes/@media, and we
- * already know whether the field has a value via React state, so the
- * float condition is just `focused || value.length > 0`.
+ * Shared floating-label input for every auth page. Uses CSS's
+ * `:not(:placeholder-shown)` + a `::before` notch to hide the border
+ * behind the floated label — see DECISIONS.md for why this scoped
+ * <style> block is a deliberate, documented exception to the "no
+ * per-page style blocks" rule (this is a shared component, not a page,
+ * and the mechanism genuinely can't be done via inline styles/JS).
  */
 export default function AuthField({
   label,
@@ -22,27 +22,13 @@ export default function AuthField({
   error,
 }) {
   const id = useId()
-  const [focused, setFocused] = useState(false)
-  const floated = focused || String(value ?? '').length > 0
-  const borderColor = error ? authTokens.error : focused ? authTokens.focus : authTokens.inputBorder
+  const borderColor = error ? authTokens.error : authTokens.inputBorder
 
   return (
-    <div style={{ position: 'relative' }}>
-      <div style={{ position: 'relative' }}>
+    <div className="af-wrap">
+      <div className={`af-field ${Icon ? 'af-field--icon' : ''} ${error ? 'af-field--error' : ''} ${rightElement ? 'af-field--right' : ''}`}>
         {Icon && (
-          <span
-            style={{
-              position: 'absolute',
-              left: '1rem',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              color: authTokens.placeholder,
-              pointerEvents: 'none',
-              display: 'flex',
-              zIndex: 2,
-            }}
-            aria-hidden="true"
-          >
+          <span className="af-field__icon" aria-hidden="true">
             <Icon size={18} />
           </span>
         )}
@@ -54,64 +40,113 @@ export default function AuthField({
           onChange={onChange}
           autoComplete={autoComplete}
           disabled={disabled}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          style={{
-            width: '100%',
-            height: '3.1rem',
-            background: authTokens.inputBg,
-            border: `1px solid ${borderColor}`,
-            borderRadius: 10,
-            padding: Icon ? '0 1rem 0 2.85rem' : '0 1rem',
-            paddingRight: rightElement ? '2.85rem' : undefined,
-            fontFamily: "'DM Sans', sans-serif",
-            fontSize: '0.875rem',
-            lineHeight: '1.15rem',
-            color: '#FFFFFF',
-            outline: 'none',
-            transition: 'border-color 0.2s ease',
-          }}
+          placeholder=" " // IMPORTANT: single space for :placeholder-shown trick
         />
+        <label htmlFor={id}>{label}</label>
 
-        <label
-          htmlFor={id}
-          style={{
-            position: 'absolute',
-            left: floated ? '0.75rem' : Icon ? '2.85rem' : '1rem',
-            top: floated ? 0 : '50%',
-            transform: 'translateY(-50%)',
-            fontSize: floated ? '0.75rem' : '0.875rem',
-            lineHeight: '1.15rem',
-            color: authTokens.placeholder,
-            pointerEvents: 'none',
-            transition: 'top 0.18s ease, font-size 0.18s ease, left 0.18s ease',
-            zIndex: 2,
-            background: floated ? authTokens.inputBg : 'transparent',
-            padding: floated ? '0 4px' : 0,
-          }}
-        >
-          {label}
-        </label>
-
-        {rightElement && (
-          <div
-            style={{
-              position: 'absolute',
-              right: '0.9rem',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              zIndex: 3,
-              display: 'flex',
-            }}
-          >
-            {rightElement}
-          </div>
-        )}
+        {rightElement && <div className="af-field__right">{rightElement}</div>}
       </div>
 
-      {error && (
-        <p style={{ marginTop: 6, fontSize: '0.78rem', color: authTokens.error }}>{error}</p>
-      )}
+      {error && <p className="af-error">{error}</p>}
+
+      <style>{`
+        .af-wrap { position: relative; width: 100%; }
+        .af-field { position: relative; width: 100%; }
+
+        .af-field input {
+          width: 100%;
+          height: 3.1rem;
+          background: ${authTokens.inputBg};
+          border: 1px solid ${borderColor};
+          border-radius: 10px;
+          padding: 0 1rem;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 0.875rem;
+          line-height: 1.15rem;
+          color: #FFFFFF;
+          outline: none;
+          transition: border-color 0.2s ease;
+        }
+        .af-field input:focus { border-color: ${authTokens.focus}; }
+        .af-field--error input { border-color: ${authTokens.error} !important; }
+
+        .af-field--icon input { padding-left: 2.85rem; }
+        .af-field--right input { padding-right: 2.85rem; }
+
+        .af-field__icon {
+          position: absolute;
+          left: 1rem; top: 50%;
+          transform: translateY(-50%);
+          color: ${authTokens.placeholder};
+          pointer-events: none;
+          display: flex; z-index: 2;
+        }
+
+        .af-field__right {
+          position: absolute;
+          right: 0.9rem; top: 50%;
+          transform: translateY(-50%);
+          z-index: 3; display: flex;
+        }
+
+        .af-field label {
+          position: absolute;
+          left: ${Icon ? '2.85rem' : '1rem'};
+          top: 50%;
+          transform: translateY(-50%);
+          font-size: 0.875rem;
+          line-height: 1.15rem;
+          color: ${authTokens.placeholder};
+          pointer-events: none;
+          transition: top 0.18s ease, font-size 0.18s ease, left 0.18s ease;
+          z-index: 2;
+        }
+
+        /* This is the notch that hides the border */
+        .af-field label::before {
+          content: "";
+          position: absolute;
+          left: -4px; right: -4px; top: 50%;
+          height: 2px;
+          background: ${authTokens.inputBg};
+          transform: translateY(-50%) scaleX(0);
+          transition: transform 0.18s ease;
+          z-index: -1;
+        }
+
+        .af-field input:focus + label,
+        .af-field input:not(:placeholder-shown) + label {
+          top: 0;
+          left: 0.75rem;
+          font-size: 0.75rem;
+        }
+
+        .af-field input:focus + label::before,
+        .af-field input:not(:placeholder-shown) + label::before {
+          transform: translateY(-50%) scaleX(1);
+        }
+
+        .af-error {
+          margin-top: 6px;
+          font-size: 0.78rem;
+          color: ${authTokens.error};
+        }
+
+        /* autofill fix */
+        .af-field input:-webkit-autofill {
+          -webkit-text-fill-color: #FFFFFF;
+          -webkit-box-shadow: 0 0 0 1000px ${authTokens.inputBg} inset;
+          caret-color: #FFFFFF;
+          transition: background-color 5000s ease-in-out 0s;
+        }
+
+        @media (max-width: 860px) {
+          .af-field input { font-size: 16px; }
+          .af-field label { font-size: 16px; }
+          .af-field input:focus + label,
+          .af-field input:not(:placeholder-shown) + label { font-size: 0.8rem; }
+        }
+      `}</style>
     </div>
   )
 }

@@ -120,9 +120,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def validate_last_name(self, value):
         value = value.strip()
-        if not value:
-            raise serializers.ValidationError('Last name is required.')
-        if not re.match(r'^[a-zA-Z\s\-]+$', value):
+        if value and not re.match(r'^[a-zA-Z\s\-]+$', value):
             raise serializers.ValidationError('Last name can only contain letters, spaces, and hyphens.')
         return value
 
@@ -193,9 +191,7 @@ class AccountUpdateSerializer(serializers.ModelSerializer):
 
     def validate_last_name(self, value):
         value = value.strip()
-        if not value:
-            raise serializers.ValidationError('Last name is required.')
-        if not re.match(r'^[a-zA-Z\s\-]+$', value):
+        if value and not re.match(r'^[a-zA-Z\s\-]+$', value):
             raise serializers.ValidationError('Last name can only contain letters, spaces, and hyphens.')
         return value
 

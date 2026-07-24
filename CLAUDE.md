@@ -63,13 +63,15 @@ Developer: Solo founder - Ali Amir
 
 
 ### Frontend
-- Framework: React 18
+- Framework: React 19
 - Build tool: Vite
 - State management: Zustand
-- Routing: React Router v6
+- Routing: React Router v7
 - Charts: Recharts
 - Styling: Inline styles + CSS custom properties (NO Tailwind, NO CSS modules)
-- HTTP client: Axios with JWT interceptor
+- HTTP client: Axios with cookie-based auth (withCredentials), silent 401 refresh
+- Icons: lucide-react exclusively — never emojis or bare Unicode symbols
+  (⚠✓✗ etc.) anywhere in rendered UI. See DESIGN.md Section 0b.
 
 ### Infrastructure
 - Backend hosting: Railway
@@ -240,8 +242,15 @@ This is how you investigate "why didn't this happened?"
    src/store/authStore.js using Zustand.
 5. The AppShell layout component (src/components/AppShell.jsx)
    owns the sidebar, header, and main content frame. Page components
-   render inside it via React Router's Outlet. Page components
+   render inside it via App.jsx passing them as children. Page components
    never define their own layout frame.
+   CURRENT STATE: AppShell.jsx is now the full, v1-faithful
+   implementation — collapsible sidebar with the liquid-glass nav pill,
+   every nav group/item from v1 (including modules not yet built —
+   see DECISIONS.md), notification bell/panel UI (no backend behind it
+   yet), profile popup (Profile/Settings/Help/Sign out), theme toggle.
+   Shell colors (header/sidebar/nav/popup) follow the light/dark theme
+   toggle — see DESIGN.md Section 2.8 for the single source of truth.
 6. JWT tokens are stored in httpOnly cookies, never localStorage.
 7. WebSocket connection is managed by a shared hook
    src/hooks/useWebSocket.js. Never open WebSocket connections
@@ -336,15 +345,26 @@ lanceraos/                          <- Django project root
 │   └── subscriptions/              <- Free/Pro plans and enforcement
 ├── frontend/                       <- React application
 │   ├── src/
+│   │   ├── App.jsx                 <- Routing root (BrowserRouter + all routes)
 │   │   ├── components/
-│   │   │   └── AppShell.jsx        <- Layout: sidebar, header, frame
+│   │   │   ├── AppShell.jsx        <- Layout: header, nav, frame (placeholder — see rule 5)
+│   │   │   ├── PrivateRoute.jsx    <- Redirects to /login if not authenticated
+│   │   │   ├── PublicRoute.jsx     <- Redirects logged-in users away from Login/Register
+│   │   │   ├── Card.jsx, FormField.jsx, FormSelect.jsx,
+│   │   │   │   FosAlert.jsx, SaveButton.jsx  <- Shared authenticated-app primitives,
+│   │   │   │   wrapping the .fos-* classes (see DESIGN.md Section 6 exception)
+│   │   │   └── AuthField.jsx, AuthButton.jsx, AuthAlert.jsx,
+│   │   │       AuthSelect.jsx, AuthLayout.jsx  <- Auth-page-only equivalents
+│   │   │       (fixed orbit palette, never theme-responsive — see DESIGN.md)
 │   │   ├── pages/                  <- One file per module page
+│   │   │   └── settings/           <- Settings page's 7 sections, one file each,
+│   │   │       plus validators.js  <- imported by Settings.jsx as a thin shell
 │   │   ├── store/
 │   │   │   └── authStore.js        <- Zustand auth state
 │   │   ├── lib/
 │   │   │   └── api.js              <- Shared Axios instance
 │   │   ├── hooks/
-│   │   │   └── useWebSocket.js     <- Shared WebSocket hook
+│   │   │   └── useWebSocket.js     <- Shared WebSocket hook [not yet built]
 │   │   └── styles/
 │   │       └── theme.css           <- All CSS custom properties
 │   └── index.html
@@ -358,8 +378,8 @@ lanceraos/                          <- Django project root
 
 ## 5. Modules — What Exists and What Each Does
 
-### Module 1 — Users (Authentication + Profile)
-Status: Backend complete. Frontend not started.
+### Module 1 — Users (Authentication + Profile + Settings)
+Status: Backend complete. Frontend complete (12 pages, 127 tests passing).
 App: apps/users/
 
 Handles all authentication and user account management.
@@ -381,54 +401,66 @@ works even when the access-token cookie has already expired. Maximum
 3 concurrent sessions per account, tracked via a first-class Session
 model (device, IP, refresh-token hash, timestamps) — 4th login evicts
 the least-recently-used session. Sessions listable/individually
-revocable at GET/DELETE /api/auth/sessions/.
+revocable at GET/DELETE /api/auth/sessions/ (frontend: Settings > Sessions).
 
 2FA: OTP via email. Optional but available. A trusted-device cookie
 (httpOnly, 30 days) can skip 2FA on a recognized device.
 
-Profile holds: 
-   - first name, last name, avatar, business name, NTN number,
-   - PSEB number, default currency, timezone (display-only, never
-     drives backend conversion — see rule 2).
-   - CNIC, NTN, PSEB registration number: Fernet-encrypted, each with
-     a separate HMAC blind-index column enforcing cross-account
-     uniqueness (prevents one account claiming another person's real
-     tax-identity number — see DECISIONS.md).
-   - SMTP host, port, username, from_name, from_email (custom email settings)
-   - SMTP password (Fernet encrypted, never returned in API responses)
+Frontend information architecture — Profile and Settings are two
+separate pages, not one (v1 had a single monolithic Profile page mixing
+personal identity with account configuration; this was a deliberate
+product decision to split them — see DECISIONS.md):
+  - Profile (/profile): light personal identity only — logo/photo
+    (with crop-and-zoom), display name, business name, phone, and a
+    profile-completion indicator.
+  - Settings (/settings): 7 sections — Account (email/username/name/DOB),
+    Business (address, currency, payment terms, bank/JazzCash/Easypaisa/
+    Payoneer), Tax & PSEB (CNIC/NTN/PSEB), Security (password, 2FA,
+    danger-zone deletion), Sessions, Notifications, Email Sending (SMTP).
 
-Onboarding: after registration, collects profession, income source,
-platform used (Upwork/Fiverr/direct/other).
-
-Notification preferences: per-category toggles (Invoice Events, Client
-Messages, Payments). Security Alerts has no toggle anywhere — cannot
-be disabled, by omission rather than a disabled-but-present control.
+Notification preferences: exactly 3 real per-category toggles (Invoice
+Events, Client Messages, Payments) — notif_invoice_events,
+notif_client_messages, notif_payments on FreelancerProfile. Security
+Alerts has no toggle anywhere in the UI or the backend — cannot be
+disabled, by omission of any control rather than a disabled-but-visible
+one. Every notification a user receives beyond security alerts is one
+they have explicitly enabled; nothing is opt-out.
 
 Account deletion: password -> OTP -> confirm -> 30-day recovery window
 -> anonymize (never hard-delete) -> financial records (future modules)
 retain a PROTECT relationship to the now-anonymized user, in anonymized
 form. Confirming deletion revokes every session and clears cookies
-immediately.
+immediately. Frontend: Settings > Security > Danger Zone initiates the
+password+OTP steps, then hands off to the standalone (shell-less)
+DeletionReview page with the resulting one-time token.
 
 Key API endpoints:
 - POST /api/auth/register/
-- POST /api/auth/verify-email/<uid>/<token>/ (GET)
+- POST /api/auth/check-availability/ (live email/username availability
+  during the registration wizard)
+- GET /api/auth/verify-email/<uid>/<token>/
+- POST /api/auth/resend-verification/
 - POST /api/auth/login/
 - POST /api/auth/logout/
 - POST /api/auth/token/refresh/
+- GET /api/auth/csrf/ (triggers Django's CSRF cookie issuance)
+- GET /api/auth/me/ (session check on app load)
 - POST /api/auth/google/
 - POST /api/auth/facebook/
-- GET/PUT /api/auth/profile/
+- GET/PUT /api/auth/account/ (Settings > Account: name/username/DOB)
+- GET/PUT /api/auth/profile/ (Profile page + Settings > Business/Tax —
+  same FreelancerProfile object, partial=True so each page/section can
+  save independently without clobbering the others)
+- POST /api/auth/profile/upload-logo/ (multipart; Cloudinary-backed)
 - GET/PUT /api/auth/settings/notifications/
-- GET /api/auth/sessions/
-- DELETE /api/auth/sessions/{id}/
-- POST /api/auth/2fa/verify/
-- POST /api/auth/2fa/toggle/
+- GET /api/auth/sessions/ + DELETE /api/auth/sessions/<id>/
+- POST /api/auth/2fa/verify/ + /api/auth/2fa/resend/ + /api/auth/2fa/toggle/
 - POST /api/auth/change-password/
 - POST /api/auth/forgot-password/ + /api/auth/reset-password/<uid>/<token>/
-- POST /api/auth/email-change/request/ (+ validate/complete/activate/cancel)
-- POST /api/auth/deletion/initiate/ (+ verify-otp/confirm/cancel)
-- POST /api/auth/smtp/save/ (+ disable/status)
+- POST /api/auth/email-change/request/ + /validate/<ecr_uid>/<token>/ (GET)
+  + /complete/<ecr_uid>/<token>/ + /activate/<ecr_uid>/<token>/ + /cancel/
+- POST /api/auth/deletion/initiate/ + /verify-otp/ + /confirm/ + /cancel/
+- GET /api/auth/smtp/status/ + POST /api/auth/smtp/save/ + /disable/
 
 ---
 
@@ -777,7 +809,7 @@ apps.users tables as of this writing).
 
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
-| Users / Auth         | Built   | -        | -     | Backend complete |
+| Users / Auth         | Built   | Built    | 127 passing (frontend) | Complete |
 | Invoices + Clients   | -       | -        | -     | Not started |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
@@ -827,7 +859,10 @@ COOKIE_SECURE=False
 # Production: True
 COOKIE_SAMESITE=Lax
 CSRF_TRUSTED_ORIGINS=
-# Production: https://app.lanceraos.com
+# Production: https://lanceraos.com (users visit the root domain directly —
+# there is no app.lanceraos.com. The API backend lives on a separate
+# subdomain, api.lanceraos.com, which users never visit directly; see the
+# domain decision entry in DECISIONS.md.)
 
 ### Encryption
 # Fernet key — reversible encryption (CNIC/NTN/PSEB, custom SMTP passwords)

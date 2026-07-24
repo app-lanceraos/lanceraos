@@ -45,6 +45,30 @@ export default function FacebookButton({ onError, onSuccess, disabled = false })
   const [loading, setLoading] = useState(false)
   const configured = Boolean(FB_APP_ID)
 
+  // Split out from the FB.login() call site on purpose — some versions
+  // of the Facebook JS SDK do internal validation on the callback it's
+  // given (its own toString()-based duck-typing) that rejects an async
+  // function specifically, throwing "Expression is of type asyncfunction,
+  // not function" even though `typeof asyncFn === 'function'` is true.
+  // FB.login() itself must receive a plain, synchronous function; the
+  // async work happens inside it instead.
+  const handleFacebookResponse = async (response) => {
+    if (response.authResponse?.accessToken) {
+      try {
+        const res = await api.post('/auth/facebook/', {
+          access_token: response.authResponse.accessToken,
+        })
+        loginSuccess(res.data.user)
+        onSuccess?.(res.data)
+      } catch (err) {
+        onError?.(err?.response?.data?.error || 'Facebook sign-in failed. Please try again.')
+      }
+    } else {
+      onError?.('Facebook sign-in was cancelled.')
+    }
+    setLoading(false)
+  }
+
   const handleClick = async () => {
     if (!configured) {
       onError?.('Facebook sign-in is not available yet.')
@@ -53,25 +77,7 @@ export default function FacebookButton({ onError, onSuccess, disabled = false })
     setLoading(true)
     try {
       const FB = await loadFacebookSdk()
-      FB.login(
-        async (response) => {
-          if (response.authResponse?.accessToken) {
-            try {
-              const res = await api.post('/auth/facebook/', {
-                access_token: response.authResponse.accessToken,
-              })
-              loginSuccess(res.data.user)
-              onSuccess?.(res.data)
-            } catch (err) {
-              onError?.(err?.response?.data?.error || 'Facebook sign-in failed. Please try again.')
-            }
-          } else {
-            onError?.('Facebook sign-in was cancelled.')
-          }
-          setLoading(false)
-        },
-        { scope: 'email,public_profile' },
-      )
+      FB.login((response) => { handleFacebookResponse(response) }, { scope: 'email,public_profile' })
     } catch (err) {
       onError?.(err.message || 'Facebook sign-in failed. Please try again.')
       setLoading(false)
@@ -85,20 +91,17 @@ export default function FacebookButton({ onError, onSuccess, disabled = false })
       type="button"
       onClick={handleClick}
       disabled={isDisabled}
-      title={configured ? undefined : 'Facebook sign-in is being set up'}
+      aria-label={loading ? 'Connecting to Facebook…' : 'Continue with Facebook'}
+      title={configured ? 'Continue with Facebook' : 'Facebook sign-in is being set up'}
       style={{
-        width: '100%',
+        flex: 1,
         height: '2.5rem',
         borderRadius: 20,
         border: `1px solid ${authTokens.inputBorder}`,
         background: 'transparent',
-        color: '#F6F4FE',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 10,
-        fontSize: 14,
-        fontWeight: 500,
         cursor: isDisabled ? 'not-allowed' : 'pointer',
         opacity: isDisabled ? 0.5 : 1,
         transition: 'background 0.15s ease',
@@ -110,8 +113,7 @@ export default function FacebookButton({ onError, onSuccess, disabled = false })
         e.currentTarget.style.background = 'transparent'
       }}
     >
-      <FacebookF size={16} />
-      {loading ? 'Connecting…' : 'Continue with Facebook'}
+      {loading ? <span className="fos-spinner" /> : <FacebookF size={18} />}
     </button>
   )
 }

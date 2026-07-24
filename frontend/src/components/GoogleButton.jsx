@@ -44,19 +44,17 @@ export default function GoogleButton({ onError, onSuccess, disabled = false }) {
       type="button"
       onClick={() => triggerLogin()}
       disabled={disabled}
+      aria-label="Continue with Google"
+      title="Continue with Google"
       style={{
-        width: '100%',
+        flex: 1,
         height: '2.5rem',
         borderRadius: 20,
         border: `1px solid ${authTokens.inputBorder}`,
         background: 'transparent',
-        color: '#F6F4FE',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 10,
-        fontSize: 14,
-        fontWeight: 500,
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.5 : 1,
         transition: 'background 0.15s ease',
@@ -68,8 +66,7 @@ export default function GoogleButton({ onError, onSuccess, disabled = false }) {
         e.currentTarget.style.background = 'transparent'
       }}
     >
-      <GoogleG size={16} />
-      Continue with Google
+      <GoogleG size={18} />
     </button>
   )
 }

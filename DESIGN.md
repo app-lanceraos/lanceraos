@@ -185,24 +185,34 @@ hardcoding the same hex in different files.
 --btn-ghost-text:    #4a4a65   (dark: #a0a0c0)
 ```
 
-### 2.8 Sidebar / Shell (dark in both themes — never flips)
+### 2.8 Sidebar / Shell — single source of truth, follows the theme toggle
+
+**REVERSED from the original decision below this heading's old name
+("dark in both themes — never flips"):** the shell (header + sidebar +
+nav + profile popup) now has genuinely distinct light-mode and
+dark-mode colors, like every other themed surface — see DECISIONS.md
+for the reasoning. Every token below lives in exactly two places in
+`theme.css`: the consolidated `APP SHELL` block in `:root,
+[data-theme="light"]`, and its matching `APP SHELL` block in
+`[data-theme="dark"]`. Nowhere else in the codebase defines a shell
+color — change both blocks together when adjusting shell colors.
 
 ```css
---bg:               #0a0b14    /* sidebar + header background */
---surface:          #f6fafe    (dark: #111318)   /* main content surface */
---icon:             #342858    /* nav icon at rest — dark purple */
---icon-active:      #a89cf2    /* nav icon active/hover — light purple */
---nav-text:         rgba(255,255,255,.45)
---nav-active:       #a89cf2
---nav-hover-bg:     rgba(255,255,255,.06)
---wordmark:         #ffffff
---header-title:     rgba(255,255,255,.80)
---header-icon:      rgba(255,255,255,.55)
---notif:            #ff5100    /* notification dot */
---avatar-bg:        rgba(255,255,255,.06)
---profile-name:     rgba(255,255,255,.82)
---profile-email:    rgba(255,255,255,.35)
---chevron:          rgba(255,255,255,.40)
+--bg:               #f8f8fc      (dark: #0d0d16)   /* sidebar + header background */
+--surface:          #f6fafe      (dark: #111318)   /* main content surface */
+--icon:             #342858      /* nav icon at rest — theme-invariant brand purple */
+--icon-active:      #a89cf2      /* nav icon active/hover — theme-invariant brand purple */
+--nav-text:         rgba(14,14,26,.45)   (dark: rgba(255,255,255,.45))
+--nav-active:       #a89cf2      /* theme-invariant */
+--nav-hover-bg:     rgba(0,0,0,.045)     (dark: rgba(255,255,255,.06))
+--wordmark:         #0e0e1a      (dark: #ffffff)
+--header-title:     rgba(14,14,26,.80)   (dark: rgba(255,255,255,.80))
+--header-icon:      rgba(14,14,26,.55)   (dark: rgba(255,255,255,.55))
+--notif:            #ff5100      /* notification dot — theme-invariant */
+--avatar-bg:        rgba(0,0,0,.05)      (dark: rgba(255,255,255,.06))
+--profile-name:     rgba(14,14,26,.82)   (dark: rgba(255,255,255,.82))
+--profile-email:    rgba(14,14,26,.35)   (dark: rgba(255,255,255,.35))
+--chevron:          rgba(14,14,26,.40)   (dark: rgba(255,255,255,.40))
 --menu-bg:          rgba(245,247,247,.98)   (dark: rgba(18,24,30,.98))
 --menu-text:        rgba(17,23,31,.70)      (dark: rgba(255,255,255,.70))
 --menu-text-hover:  rgba(17,23,31,.95)      (dark: rgba(255,255,255,.95))
@@ -210,10 +220,10 @@ hardcoding the same hex in different files.
 --danger:           #d32f2f                 (dark: #ff4d4d)
 --danger-hover:     rgba(211,47,47,.10)     (dark: rgba(255,77,77,.10))
 --divider:          rgba(0,0,0,.08)         (dark: rgba(255,255,255,.08))
---switch-idle:      rgba(255,255,255,.45)   /* always light — sidebar stays dark */
---switch-active:    rgba(255,255,255,.92)
---logo-body:        #8074c0
---logo-mark:        #050508
+--switch-idle:      rgba(14,14,26,.45)   (dark: rgba(255,255,255,.45))
+--switch-active:    rgba(14,14,26,.92)   (dark: rgba(255,255,255,.92))
+--logo-body:        #8074c0      /* theme-invariant brand color, both themes */
+--logo-mark:        #050508      /* theme-invariant brand color, both themes */
 ```
 
 ### 2.9 Liquid-Glass Primitives (sidebar only)
@@ -832,6 +842,21 @@ DO NOT define per-page `<style>` blocks for anything except:
 @keyframes, @media queries, and the FAB mobile-display hack.
 Everything else is inline style objects.
 
+AMENDED: `AuthField.jsx` (a shared component, not a page) uses a scoped
+`<style>` block implementing the floating label via CSS's
+`:not(:placeholder-shown)` + a `::before` notch to hide the border
+behind the floated label — this replaced an earlier JS-state-driven
+version specifically because the CSS-native approach is the correct,
+well-established technique for this exact problem, and (like the
+`-webkit-autofill` override already documented) genuinely cannot be
+done via inline styles or JS. `Login.jsx` similarly uses a small
+page-level `<style>` block for its custom circular checkbox's checkmark
+(a CSS border-trick, not a text/emoji character — doesn't conflict with
+Section 0b), since drawing that shape requires either a pseudo-element
+or an absolutely-positioned icon overlay. Treat both as the same kind
+of reasoned exception as the `Card.jsx`/`FormField.jsx` amendment below:
+a genuine "can't be done inline" case, not a default to reach for.
+
 DO NOT create new shared utility components (Modal, Badge, Table) for
 authenticated app pages. v2 keeps the inline-object pattern by default.
 The exception: buttons and form inputs use the global `.fos-*` classes.
@@ -950,8 +975,9 @@ function WordmarkSVG({ width = 140, height = 21 }) {
 
 **Color token that controls the wordmark:**
 ```css
---wordmark: #ffffff   /* always white — sidebar is always dark */
+--wordmark: #0e0e1a (light mode)  /  #ffffff (dark mode)
 ```
+No longer a fixed white — see Section 2.8, the shell now follows the theme toggle.
 
 ---
 

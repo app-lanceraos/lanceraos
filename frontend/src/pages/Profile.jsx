@@ -220,7 +220,7 @@ export default function Profile() {
   }
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 20px' }}>
+    <div style={{ width: '100%' }}>
       {cropSrc && (
         <CropperModal
           imageSrc={cropSrc}

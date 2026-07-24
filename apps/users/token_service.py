@@ -47,8 +47,17 @@ def issue_tokens_and_session(user, request, remember_me=False):
         ip_address=get_client_ip(request),
         lifetime_days=days,
     )
-    return str(refresh.access_token), refresh_str, session
 
+    # The session doesn't exist yet when the refresh token is built above
+    # (Session.create_for_user needs the refresh string already computed,
+    # to hash it) — so the session ID can only be embedded on the access
+    # token, built fresh here after the session row exists. This is what
+    # CookieJWTAuthentication.get_user() checks to make revoking a
+    # session (deleting its row) take effect immediately, not only once
+    # the refresh token is next used.
+    access = refresh.access_token
+    access['sid'] = str(session.pk)
+    return str(access), refresh_str, session
 
 def rotate_session(user, session, request):
     """
@@ -69,4 +78,6 @@ def rotate_session(user, session, request):
     session.ip_address = get_client_ip(request) or session.ip_address
     session.save(update_fields=['ip_address'])
 
-    return str(refresh.access_token), refresh_str
+    access = refresh.access_token
+    access['sid'] = str(session.pk)
+    return str(access), refresh_str

@@ -46,7 +46,6 @@ export default function AccountSection() {
   const handleSave = async () => {
     const errs = {}
     if (!af.first_name.trim()) errs.first_name = 'First name is required.'
-    if (!af.last_name.trim()) errs.last_name = 'Last name is required.'
     if (!af.username.trim()) errs.username = 'Username is required.'
     else if (af.username.length < 3) errs.username = 'At least 3 characters.'
     else if (!/^[a-zA-Z0-9_]+$/.test(af.username)) errs.username = 'Letters, numbers, and _ only.'
@@ -145,7 +144,7 @@ export default function AccountSection() {
       >
         <div className="settings-grid-2">
           <FormField label="First Name" required value={af.first_name} onChange={(e) => handleChange('first_name', e.target.value)} error={fieldErrors.first_name} />
-          <FormField label="Last Name" required value={af.last_name} onChange={(e) => handleChange('last_name', e.target.value)} error={fieldErrors.last_name} />
+          <FormField label="Last Name" value={af.last_name} onChange={(e) => handleChange('last_name', e.target.value)} error={fieldErrors.last_name} />
         </div>
         <div style={{ marginTop: 14 }}>
           <FormField label="Username" required value={af.username} onChange={(e) => handleChange('username', e.target.value)} error={fieldErrors.username} />

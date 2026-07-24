@@ -10,7 +10,7 @@ const api = axios.create({
   timeout: 15000,
   // Sends/receives the httpOnly JWT cookies and the (non-httpOnly)
   // csrftoken cookie on every request, including cross-origin ones
-  // between app.lanceraos.com and api.lanceraos.com in production.
+  // between app.lanceraos.com and lanceraos.com in production.
   withCredentials: true,
 })
 

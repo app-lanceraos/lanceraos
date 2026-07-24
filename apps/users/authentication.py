@@ -28,7 +28,9 @@ from rest_framework.authentication import CSRFCheck
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
 
+from django.utils import timezone
 from .cookies import ACCESS_COOKIE_NAME
+from .models import Session
 
 
 def _dummy_get_response(request):
@@ -58,6 +60,22 @@ class CookieJWTAuthentication(JWTAuthentication):
                 raise InvalidToken(
                     'Token has been invalidated by a password change. '
                     'Please sign in again.'
+                )
+
+        # Makes session revocation (deleting a Session row from the
+        # Sessions page) take effect immediately, rather than only once
+        # this device's access token naturally expires and it tries to
+        # refresh. sid_claim is None for tokens issued before this change
+        # existed — those are left alone rather than force-logged-out,
+        # and simply pick up a real sid claim the next time they refresh.
+        sid_claim = validated_token.get('sid')
+        if sid_claim is not None:
+            session_exists = Session.objects.filter(
+                pk=sid_claim, user=user, expires_at__gt=timezone.now(),
+            ).exists()
+            if not session_exists:
+                raise InvalidToken(
+                    'Session has been revoked. Please sign in again.'
                 )
         return user
 
