@@ -72,6 +72,36 @@ def cleanup_expired_sessions():
 
 
 @shared_task
+def send_password_reset_email_task(user_id, token, uid):
+    """
+    Offloads the outbound Resend HTTPS call in forgot_password() (views/auth.py)
+    onto a worker so the HTTP response doesn't wait on it — otherwise the
+    "account exists" branch takes measurably longer than the "account
+    doesn't exist" branch (a cache write only), defeating the endpoint's
+    own uniform-response timing claim.
+    """
+    from .emails import send_password_reset_email
+    User = get_user_model()
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return
+    send_password_reset_email(user, token, uid)
+
+
+@shared_task
+def send_verification_email_task(user_id, token, uid):
+    """Same timing-parity reasoning as send_password_reset_email_task, for forgot_password()'s unverified-user branch and resend_verification()."""
+    from .emails import send_verification_email
+    User = get_user_model()
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return
+    send_verification_email(user, token, uid)
+
+
+@shared_task
 def cleanup_email_change_requests():
     """
     Marks expired EmailChangeRequest rows as 'expired' and clears

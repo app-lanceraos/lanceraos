@@ -20,10 +20,10 @@ class SecurityTestBase(TestCase):
         self.user.is_email_verified = True
         self.user.is_active = True
         self.user.save()
+        self.csrf_token = self._csrf_token()
         self.client.post(reverse('users:login'), data=json.dumps({
             'login': 'sec@example.com', 'password': 'Sup3r$ecret1',
-        }), content_type='application/json')
-        self.csrf_token = self._csrf_token()
+        }), content_type='application/json', HTTP_X_CSRFTOKEN=self.csrf_token)
 
     def _csrf_token(self):
         dummy = self.rf.get('/')
@@ -44,9 +44,12 @@ class ChangePasswordTests(SecurityTestBase):
     @patch('apps.users.views.security.send_password_changed_email', return_value=True)
     def test_change_password_keeps_current_device_kills_others(self, mock_email):
         other_client = Client(enforce_csrf_checks=True)
+        dummy = self.rf.get('/')
+        other_csrf_token = get_token(dummy)
+        other_client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
         other_client.post(reverse('users:login'), data=json.dumps({
             'login': 'sec@example.com', 'password': 'Sup3r$ecret1',
-        }), content_type='application/json')
+        }), content_type='application/json', HTTP_X_CSRFTOKEN=other_csrf_token)
         self.assertEqual(Session.objects.filter(user=self.user).count(), 2)
 
         resp = self._post(reverse('users:change_password'), {'old_password': 'Sup3r$ecret1', 'new_password': 'NewPass!456'})
@@ -87,7 +90,7 @@ class EmailChangeFlowTests(SecurityTestBase):
             resp = self.client.post(
                 reverse('users:email_change_complete', kwargs={'ecr_uid': ecr_uid, 'token': step1_token}),
                 data=json.dumps({'new_email': 'newmail@example.com', 'password': 'Sup3r$ecret1'}),
-                content_type='application/json',
+                content_type='application/json', HTTP_X_CSRFTOKEN=self.csrf_token,
             )
             self.assertEqual(resp.status_code, 200)
             step2_uid = mock_step2_email.call_args[0][2]
@@ -96,7 +99,7 @@ class EmailChangeFlowTests(SecurityTestBase):
         with patch('apps.users.views.security.send_email_changed_notification_to_old', return_value=True):
             resp = self.client.post(
                 reverse('users:email_change_activate', kwargs={'ecr_uid': step2_uid, 'token': step2_token}),
-                content_type='application/json',
+                content_type='application/json', HTTP_X_CSRFTOKEN=self.csrf_token,
             )
             self.assertEqual(resp.status_code, 200)
 

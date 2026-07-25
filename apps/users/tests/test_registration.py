@@ -3,7 +3,8 @@ import json
 from unittest.mock import patch
 
 from django.core.cache import cache
-from django.test import Client, TestCase
+from django.middleware.csrf import get_token
+from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 
 from apps.users.models import User
@@ -12,15 +13,26 @@ from apps.users.models import User
 class RegistrationTests(TestCase):
     def setUp(self):
         cache.clear()
+        self.rf = RequestFactory()
         self.client = Client(enforce_csrf_checks=True)
         self.valid_payload = {
             'email': 'ali@example.com', 'username': 'aliamir',
             'password': 'Sup3r$ecret1', 'confirm_password': 'Sup3r$ecret1',
             'first_name': 'Ali', 'last_name': 'Amir', 'date_of_birth': '2000-01-01',
         }
+        self.csrf_token = self._csrf_token()
+
+    def _csrf_token(self):
+        dummy = self.rf.get('/')
+        token = get_token(dummy)
+        self.client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        return token
 
     def _post(self, path, payload):
-        return self.client.post(path, data=json.dumps(payload), content_type='application/json')
+        return self.client.post(
+            path, data=json.dumps(payload), content_type='application/json',
+            HTTP_X_CSRFTOKEN=self.csrf_token,
+        )
 
     @patch('apps.users.views.auth.send_verification_email', return_value=True)
     def test_register_happy_path_creates_unverified_user(self, mock_email):
@@ -74,16 +86,16 @@ class RegistrationTests(TestCase):
 
     def test_check_availability_email_taken(self):
         User.objects.create_user(email='taken@example.com', password='x')
-        resp = self.client.post(reverse('users:check_availability'), data=json.dumps({
+        resp = self._post(reverse('users:check_availability'), {
             'field': 'email', 'value': 'taken@example.com',
-        }), content_type='application/json')
+        })
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(resp.json()['available'])
 
     def test_check_availability_username_free(self):
-        resp = self.client.post(reverse('users:check_availability'), data=json.dumps({
+        resp = self._post(reverse('users:check_availability'), {
             'field': 'username', 'value': 'brandnewname',
-        }), content_type='application/json')
+        })
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json()['available'])
 

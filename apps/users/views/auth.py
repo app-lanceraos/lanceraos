@@ -16,6 +16,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 
 from core.observability import get_client_ip, get_user_agent, log_event
 
+from ..authentication import enforce_csrf_standalone
 from ..cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -30,7 +31,6 @@ from ..emails import (
     send_account_locked_email,
     send_new_device_login_email,
     send_password_changed_email,
-    send_password_reset_email,
     send_verification_email,
     send_welcome_email,
 )
@@ -42,10 +42,17 @@ from ..serializers import (
     UserSerializer,
     validate_password_strength,
 )
+from ..tasks import send_password_reset_email_task, send_verification_email_task
 from ..token_service import issue_tokens_and_session, rotate_session
 from ..tokens import decode_uid, email_verification_token, encode_uid, password_reset_token
 
 User = get_user_model()
+
+# Precomputed once at module load. Used only to burn comparable Argon2
+# time on the "user not found" login path, so it can't be distinguished
+# from "wrong password" via response timing. The actual value is never
+# checked against anything real — it exists purely for its timing cost.
+_DUMMY_PASSWORD_HASH = make_password('dummy-fixed-value-for-timing-parity')
 
 # These public endpoints must not depend on (or be blocked by) whatever
 # is currently sitting in the access-token cookie — in particular,
@@ -121,7 +128,7 @@ def _update_last_login(user, request):
         and (user.last_login_ip != ip or user.last_login_device != ua_normalized)
     )
     if is_new_device:
-        send_new_device_login_email(user, ip, ua, timezone.now())
+        send_new_device_login_email(user, ip, ua_normalized, timezone.now())
 
     user.last_login = timezone.now()
     user.last_login_ip = ip
@@ -170,6 +177,7 @@ def _finalize_login_response(user, access, refresh_str, days, extra=None):
 @permission_classes([AllowAny])
 def register(request):
     """Creates an account and sends a verification email. Does not log the user in."""
+    enforce_csrf_standalone(request)
     if _check_registration_rate_limit(request):
         log_event('registration_failed', request=request, metadata={'reason': 'rate_limited'})
         return Response(
@@ -212,6 +220,7 @@ def register(request):
 @permission_classes([AllowAny])
 def check_availability(request):
     """Live email/username availability check used during the registration wizard."""
+    enforce_csrf_standalone(request)
     ip = get_client_ip(request)
     key = f'avail_check_{ip}'
     count = cache.get(key, 0)
@@ -251,6 +260,7 @@ def check_availability(request):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def login(request):
+    enforce_csrf_standalone(request)
     ip = get_client_ip(request)
     ua = get_user_agent(request)
     login_input = request.data.get('login', '').strip().lower()
@@ -272,6 +282,7 @@ def login(request):
     try:
         user = User.objects.get(email=login_input) if '@' in login_input else User.objects.get(username=login_input)
     except User.DoesNotExist:
+        check_password('irrelevant-value', _DUMMY_PASSWORD_HASH)  # burn comparable Argon2 time
         log_event('login_failed', request=request, metadata={'reason': 'user_not_found'})
         return Response(
             {'error': 'Invalid credentials. Please check your email or username and password.'},
@@ -397,6 +408,7 @@ def refresh(request):
     point) — see the NO_AUTH note at the top of this file for why
     authentication is disabled on this view specifically.
     """
+    enforce_csrf_standalone(request)
     raw_refresh = request.COOKIES.get(REFRESH_COOKIE_NAME)
     if not raw_refresh:
         response = Response({'error': 'No refresh token found.'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -460,6 +472,7 @@ def refresh(request):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def verify_2fa(request):
+    enforce_csrf_standalone(request)
     session_id = request.data.get('session_id', '').strip()
     otp_code = request.data.get('otp_code', '').strip()
     trust_device = bool(request.data.get('trust_device', False))
@@ -523,6 +536,7 @@ def verify_2fa(request):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def resend_2fa(request):
+    enforce_csrf_standalone(request)
     session_id = request.data.get('session_id', '').strip()
     if not session_id:
         return Response({'error': 'Session ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -594,6 +608,7 @@ def verify_email(request, uid, token):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def resend_verification(request):
+    enforce_csrf_standalone(request)
     email = request.data.get('email', '').strip().lower()
     if not email:
         return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -609,7 +624,7 @@ def resend_verification(request):
         if not user.is_email_verified:
             uid = encode_uid(user)
             token = email_verification_token.make_token(user)
-            send_verification_email(user, token, uid)
+            send_verification_email_task.delay(str(user.pk), token, uid)
             log_event('resend_verification', user=user, request=request)
     except User.DoesNotExist:
         pass  # Never reveal whether an email exists.
@@ -625,16 +640,24 @@ def resend_verification(request):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def forgot_password(request):
+    enforce_csrf_standalone(request)
     email = request.data.get('email', '').strip().lower()
     if not email:
         return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
     ip = get_client_ip(request)
-    key = f'forgot_pw_{ip}'
-    count = cache.get(key, 0)
-    if count >= 5:
+    ip_key = f'forgot_pw_{ip}'
+    ip_count = cache.get(ip_key, 0)
+    if ip_count >= 5:
         return Response({'error': 'Too many requests. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
-    cache.set(key, count + 1, timeout=3600)
+
+    email_key = f'forgot_pw_email_{email}'
+    email_count = cache.get(email_key, 0)
+    if email_count >= 5:
+        return Response({'error': 'Too many requests. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    cache.set(ip_key, ip_count + 1, timeout=3600)
+    cache.set(email_key, email_count + 1, timeout=3600)
 
     try:
         user = User.objects.get(email=email)
@@ -643,11 +666,11 @@ def forgot_password(request):
         elif not user.is_email_verified:
             uid = encode_uid(user)
             token = email_verification_token.make_token(user)
-            send_verification_email(user, token, uid)
+            send_verification_email_task.delay(str(user.pk), token, uid)
         else:
             uid = encode_uid(user)
             token = password_reset_token.make_token(user)
-            send_password_reset_email(user, token, uid)
+            send_password_reset_email_task.delay(str(user.pk), token, uid)
             log_event('password_reset_request', user=user, request=request)
     except User.DoesNotExist:
         pass  # Always 200 — never reveal whether an email exists.
@@ -659,6 +682,7 @@ def forgot_password(request):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def reset_password(request, uid, token):
+    enforce_csrf_standalone(request)
     new_password = request.data.get('new_password', '')
     confirm_password = request.data.get('confirm_password', '')
 

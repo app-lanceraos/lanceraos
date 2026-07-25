@@ -21,9 +21,10 @@ class SessionTests(TestCase):
         self.user.save()
 
     def _login(self, client, email='sessions@example.com'):
+        csrf_token = self._csrf_token(client)
         return client.post(reverse('users:login'), data=json.dumps({
             'login': email, 'password': 'Sup3r$ecret1',
-        }), content_type='application/json')
+        }), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token)
 
     def _csrf_token(self, client):
         dummy = self.rf.get('/')

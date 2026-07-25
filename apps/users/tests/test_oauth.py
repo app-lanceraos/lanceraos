@@ -3,7 +3,8 @@ import json
 from unittest.mock import patch
 
 from django.core.cache import cache
-from django.test import Client, TestCase
+from django.middleware.csrf import get_token
+from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 
 from apps.users.models import User, UserSocialAccount
@@ -56,24 +57,38 @@ class LinkOrCreateUserTests(TestCase):
 class OAuthViewTests(TestCase):
     def setUp(self):
         cache.clear()
+        self.rf = RequestFactory()
         self.client = Client(enforce_csrf_checks=True)
+        self.csrf_token = self._csrf_token()
+
+    def _csrf_token(self):
+        dummy = self.rf.get('/')
+        token = get_token(dummy)
+        self.client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        return token
+
+    def _post(self, path, payload):
+        return self.client.post(
+            path, data=json.dumps(payload), content_type='application/json',
+            HTTP_X_CSRFTOKEN=self.csrf_token,
+        )
 
     @patch('apps.users.views.oauth.verify_google_token')
     def test_google_login_new_user(self, mock_verify):
         mock_verify.return_value = {'provider_uid': 'g-x', 'email': 'gnew@example.com', 'first_name': '', 'last_name': '', 'picture_url': ''}
-        resp = self.client.post(reverse('users:google_login'), data=json.dumps({'credential': 'fake'}), content_type='application/json')
+        resp = self._post(reverse('users:google_login'), {'credential': 'fake'})
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json()['is_new_user'])
 
     @patch('apps.users.views.oauth.verify_google_token', side_effect=GoogleError('invalid'))
     def test_google_login_verification_failure_creates_no_account(self, mock_verify):
         count_before = User.objects.count()
-        resp = self.client.post(reverse('users:google_login'), data=json.dumps({'credential': 'garbage'}), content_type='application/json')
+        resp = self._post(reverse('users:google_login'), {'credential': 'garbage'})
         self.assertEqual(resp.status_code, 401)
         self.assertEqual(User.objects.count(), count_before)
 
     def test_google_login_missing_credential(self):
-        resp = self.client.post(reverse('users:google_login'), data=json.dumps({}), content_type='application/json')
+        resp = self._post(reverse('users:google_login'), {})
         self.assertEqual(resp.status_code, 400)
 
     @patch('apps.users.views.oauth.verify_facebook_token')
@@ -83,7 +98,7 @@ class OAuthViewTests(TestCase):
         existing.is_active = True
         existing.save()
         mock_verify.return_value = {'provider_uid': 'f-x', 'email': 'fbexisting@example.com', 'first_name': '', 'last_name': '', 'picture_url': ''}
-        resp = self.client.post(reverse('users:facebook_login'), data=json.dumps({'access_token': 'fake'}), content_type='application/json')
+        resp = self._post(reverse('users:facebook_login'), {'access_token': 'fake'})
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(resp.json()['is_new_user'])
 
@@ -94,5 +109,5 @@ class OAuthViewTests(TestCase):
         disabled.is_active = False
         disabled.save()
         mock_verify.return_value = {'provider_uid': 'g-disabled', 'email': 'disabled@example.com', 'first_name': '', 'last_name': '', 'picture_url': ''}
-        resp = self.client.post(reverse('users:google_login'), data=json.dumps({'credential': 'fake'}), content_type='application/json')
+        resp = self._post(reverse('users:google_login'), {'credential': 'fake'})
         self.assertEqual(resp.status_code, 403)

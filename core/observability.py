@@ -22,9 +22,20 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════
 
 def get_client_ip(request):
+    """
+    Only trusts X-Forwarded-For's LAST entry (the one closest to Django —
+    i.e. the one the trusted reverse proxy itself appended), never the
+    first entry, which is fully client-controlled and trivially spoofed
+    to defeat IP-based rate limiting and poison the audit trail. This
+    assumes exactly one trusted reverse proxy sits in front of Django
+    (Railway's edge) — if that topology ever changes (e.g. a CDN added
+    in front of Railway), this needs revisiting, since "last entry" only
+    reflects "closest proxy," not "the one you trust," once there's more
+    than one hop.
+    """
     forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
     if forwarded:
-        return forwarded.split(',')[0].strip()
+        return forwarded.split(',')[-1].strip()
     return request.META.get('REMOTE_ADDR', '') or None
 
 

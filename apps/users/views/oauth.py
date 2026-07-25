@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 from core.observability import log_event
 
+from ..authentication import enforce_csrf_standalone
 from ..oauth.base import link_or_create_user
 from ..oauth.facebook import OAuthVerificationError as FacebookError
 from ..oauth.facebook import verify_facebook_token
@@ -45,6 +46,7 @@ def _complete_oauth_login(provider, identity, request):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def google_login(request):
+    enforce_csrf_standalone(request)
     credential = request.data.get('credential', '').strip()
     access_token = request.data.get('access_token', '').strip()
 
@@ -64,6 +66,7 @@ def google_login(request):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def facebook_login(request):
+    enforce_csrf_standalone(request)
     access_token = request.data.get('access_token', '').strip()
 
     if not access_token:

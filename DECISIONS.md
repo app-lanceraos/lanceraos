@@ -349,3 +349,147 @@ desktop / `20px 16px` mobile), so the pages themselves no longer need their own 
 Alternatives considered: A smaller, deliberate max-width (e.g. 1400px) for readability on very wide
 monitors (not implemented this pass — not requested, and the `repeat(auto-fit, minmax(240px,1fr))` grids
 inside Settings already reflow into more columns rather than becoming unreadably wide single-column rows).
+
+---
+
+Date: July 2026
+Decision: Ran a two-pass security audit (checklist-style, then attacker-scenario tracing) against
+the full Users/Auth codebase before building further modules on top of it. Findings and fixes below;
+this entry exists so the reasoning behind each fix — and one genuinely unresolved item — survives
+past this conversation.
+
+**Critical — fixed.** `FreelancerProfileSerializer` used `Meta.exclude` rather than an explicit
+`fields` allowlist, which meant `onboarding_completed` and every `custom_smtp_*` field were
+ordinary writable fields on `PUT /api/auth/profile/`. Since OAuth signups (Google/Facebook never
+supply a birthday) are only age-checked once, inside `OnboardingSerializer`, this meant
+`PUT {"onboarding_completed": true}` was a one-request bypass of the platform's mandatory 16+ age
+gate — the single most serious finding across both audit passes. Fixed via `read_only_fields` on
+the affected fields, then hardened further to reject (400) rather than silently no-op (200) an
+attempted write to them, so a bypass attempt is distinguishable in logs from an innocent mistake.
+`pseb_registered` has the identical structural issue (self-declarable with no corroborating check)
+but was deliberately NOT locked down the same way — it backs a legitimate, currently-working
+"I am registered with PSEB" checkbox in Settings > Tax. Note for whenever the Tax module is built:
+SRO 586 eligibility logic must derive PSEB registration from `bool(profile.pseb_hash)` (a real,
+validated PSEB number on file), never from this self-declared flag alone.
+Alternatives considered: Rewrite the whole serializer to an explicit `fields` allowlist immediately
+(rejected for this pass — larger diff, real risk of accidentally omitting a field the Business/Tax
+UI currently depends on; `read_only_fields` closes the actual hole with a much smaller, safer diff).
+
+**High — fixed.** `send_new_device_login_email` interpolated the raw, attacker-controlled
+`User-Agent` header (and IP) directly into unescaped HTML (this module hand-builds HTML via
+f-strings, no template-engine autoescaping). Exploitable by anyone who already has valid credentials
+for an account (phishing, credential stuffing, a leaked password) — they could log in with a crafted
+`User-Agent` and have LanceraOS's own legitimate "new sign-in" email deliver attacker HTML into the
+real victim's inbox, at exactly the moment a takeover victim is primed to click a "secure your
+account" link. Fixed by using the already-sanitized `ua_normalized` string instead of the raw
+header, plus `django.utils.html.escape()` on both values as defense-in-depth. A second, identical-
+class instance was found and fixed while checking for others: `send_email_changed_notification_to_old`
+interpolated `new_email` unescaped, and the regex validating it (`^\S+@\S+\.\S+$`) doesn't exclude
+HTML metacharacters — replaced with Django's real `validate_email`, plus `escape()` at the
+interpolation site too.
+
+**High — fixed.** Login was vulnerable to timing-based user enumeration: the "user not found" path
+returned immediately after a DB lookup, while "wrong password" ran a real Argon2 hash (deliberately
+slow by design) — identical response bodies, measurably different response times. Fixed by running
+a precomputed dummy Argon2 check on the not-found path too. Verified empirically (10 samples each
+side through the real view): medians landed within ~1ms of each other post-fix, versus an isolated
+~30ms gap (bare DB miss vs. the dummy Argon2 check) that existed before — confirms the fix actually
+closes the timing gap, not just theoretically.
+
+**High — fixed, but with a genuinely unresolved dependency.** `get_client_ip()` trusted
+`X-Forwarded-For`'s first entry unconditionally — fully client-controlled, defeating IP-based rate
+limiting on `register`/`check_availability` (no account-scoped backstop exists for those) and
+poisoning `Session.ip_address`/the audit trail. Fixed to trust the last entry instead, matching
+standard reverse-proxy convention (nginx, AWS ALB, etc.).
+**Open item, deliberately not treated as resolved:** which position (first or last) is actually
+trustworthy for this app's specific Railway deployment is unconfirmed — Railway's own staff
+contradict each other across multiple community support threads (one says "rightmost is real,"
+another says "leftmost is real" while also claiming their edge "appends" — internally inconsistent
+with itself — a third says the same, contradicted by a user in the same thread who received IPs
+that included neither position). Railway's own docs say nothing about `X-Forwarded-For` handling at
+all. `X-Real-IP` was considered as an alternative and rejected — Railway has a known, admitted bug
+where it reflects a CDN edge IP instead of the real client IP when Fastly sits in front of a
+deployment. The "trust the last entry" fix is kept as the safer default of the two options
+regardless of which is correct (it's strictly better than the previous unconditional-first-entry
+trust either way), but **this needs empirical verification against the actual production deployment
+before it should be fully trusted** — log the raw header for a real request, send one request with
+a known spoofed value from an external client, and confirm which position holds the genuine IP. A
+support ticket to Railway for a current, authoritative answer is also worth filing, since community
+threads alone aren't a reliable foundation for a security control and Railway's edge behavior may
+have changed over time or depend on whether a CDN is in the path for a given deployment.
+Alternatives considered: Do nothing until Railway's answer is confirmed (rejected — the previous
+code was unambiguously wrong regardless of which position turns out to be correct, so shipping the
+improvement now rather than waiting is the right call); trust neither header and only use
+`REMOTE_ADDR` (rejected — if a reverse proxy genuinely sits in front of Django in production,
+`REMOTE_ADDR` would just be the proxy's own IP for every request, losing client-IP info entirely
+rather than gaining reliability).
+
+**High — fixed.** Django admin (`/admin/`) had none of the app's own brute-force protections
+(account lockout, rate limiting) despite being the highest-privilege path in the system. Added
+`django-axes` (`AXES_FAILURE_LIMIT = 5`, `AXES_COOLOFF_TIME = 1` hour, keyed on
+`['username', 'ip_address']`). Verified against a throwaway superuser: locked out on the 5th failed
+attempt (axes intercepts before the 5th credential check even runs, not only starting at the 6th —
+stricter than initially specified, not looser), and confirmed a subsequently-correct password is
+also rejected while locked out (genuine account/IP lockout, not just another failed-credentials
+response).
+Alternatives considered: Hand-roll admin-specific rate limiting reusing the app's own cache-based
+throttle pattern (rejected — `django-axes` is a well-tested, widely-used library for exactly this
+problem; reimplementing it custom would be re-deriving the same logic for no benefit, the same
+reasoning already applied to rejecting `django-allauth` for OAuth elsewhere in this file).
+
+**Medium — not yet fixed, scoped for a following pass:** a TOCTOU race on the 3-session cap
+(`Session.create_for_user` has no `select_for_update()`/atomic wrapping — concurrent logins for the
+same user can produce 4+ live sessions, one over the documented cap); `forgot_password` has no
+per-email throttle (only per-IP, unlike every sibling endpoint in the same file — `resend_verification`,
+`initiate_deletion`, `request_email_change` all correctly key on the user/email too) and calls the
+Resend API synchronously inline, which is a larger timing oracle than the login one just fixed
+(tens-to-hundreds of ms of a real network round-trip, versus Argon2's single-digit-to-tens of ms of
+local CPU work) — the same uniform-response-body claim ("If an account exists...") is only true of
+the body, not the timing, for this endpoint specifically.
+
+---
+
+Date: July 2026
+Decision: Admin panel work is sequenced as "foundation now, incremental per-module after" — not
+built as one project after the entire product is done, and not built as a single monolithic push
+right now either.
+Reason: Waiting until the whole product ships would leave a real operational gap the moment
+Invoices/Payments exist — real users, real money, and zero way to look up an account or investigate
+a support request in the meantime, which is a genuine risk for a financial product, not a
+nice-to-have deferral. Building the entire admin panel immediately is equally wrong in the other
+direction — there's nothing to administer yet beyond Users/Auth, and building screens for modules
+that don't exist yet is the same "Payments tab" mistake already made and corrected once earlier in
+this project. The chosen middle path: foundational, module-independent infrastructure
+(`can_access_admin_panel`, the `AuditLog.actor` field, the separate `admin.lanceraos.com` session
+mechanism, and Users/Auth's own admin screens) gets built now, since none of it depends on any
+future module. Every subsequent module then builds its own admin screen as part of finishing that
+module — the same incremental-growth philosophy already established for `AppShell`'s sidebar,
+applied to admin instead of navigation. Tracked in the new `ADMIN.md` (separate from
+`ADMIN_PANEL_DESIGN.md`, which holds the original design reasoning) — a living per-module status
+table so future module chats have the established patterns in front of them rather than each
+inventing its own admin conventions in isolation.
+Alternatives considered: Defer all admin work to a dedicated chat after the full product ships
+(rejected — the operational-blindness risk above); build the complete admin panel now, ahead of any
+other module (rejected — nothing to administer yet for modules that don't exist).
+
+---
+
+Date: July 2026
+Decision: A premium/paid tier is sequenced as "minimal data-model hook now, real billing/gating
+logic deferred" — and treated as an entirely separate timing decision from the admin panel above,
+not bundled with it despite both being "big cross-cutting" questions.
+Reason: A `plan`/`tier` field on the relevant model, even with `'free'` as the only value in active
+use for a long while, is a trivial addition today and a genuinely painful retrofit later if many
+features get built first with no tier-awareness anywhere in the codebase. Actual billing integration
+(payment processing, feature-gating, upgrade/downgrade flows) is deliberately deferred until there's
+enough of the real product built that "premium" has validated content to actually sell — building
+that machinery now would mean guessing at a business model with nothing to hang it on yet, a common
+early-stage-SaaS failure mode. Note: the security audit's own findings already used the phrase
+"any authenticated free-tier user" before this concept was explicitly defined anywhere, suggesting
+a tier system was already being implicitly assumed — this decision makes that assumption real and
+minimal, rather than leaving it implicit.
+Alternatives considered: Build full billing/tier logic now, ahead of the modules a premium tier
+would actually gate (rejected — nothing concrete to sell yet, high risk of designing the wrong tier
+boundaries before real usage data exists); add no tier concept at all until a premium tier is
+actually being launched (rejected — the retrofit cost of adding tier-awareness after many
+tier-blind features exist is real and avoidable for the cost of one field today).

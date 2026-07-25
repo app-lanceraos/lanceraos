@@ -1,11 +1,12 @@
 # apps/users/views/security.py
 import hashlib
-import re
+import hmac
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
@@ -17,6 +18,7 @@ from rest_framework.response import Response
 
 from core.observability import log_event
 
+from ..authentication import enforce_csrf_standalone
 from ..cookies import REFRESH_COOKIE_NAME, set_auth_cookies
 from ..emails import (
     send_2fa_disabled_email,
@@ -229,7 +231,7 @@ def validate_email_change_token(request, ecr_uid, token):
         return Response({'valid': False, 'error': 'Invalid link.'}, status=status.HTTP_400_BAD_REQUEST)
 
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    if ecr.step1_token != token_hash:
+    if not hmac.compare_digest(ecr.step1_token, token_hash):
         return Response({'valid': False, 'error': 'Invalid link.'}, status=status.HTTP_400_BAD_REQUEST)
     if not ecr.is_step1_valid():
         return Response(
@@ -245,12 +247,13 @@ def validate_email_change_token(request, ecr_uid, token):
 @permission_classes([AllowAny])
 def complete_email_change_step1(request, ecr_uid, token):
     """Step 1C: user submits the new email + current password. Sends the activation link to the NEW inbox."""
+    enforce_csrf_standalone(request)
     ecr = _decode_ecr_uid(ecr_uid)
     if ecr is None:
         return Response({'error': 'Invalid link.'}, status=status.HTTP_400_BAD_REQUEST)
 
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    if ecr.step1_token != token_hash or not ecr.is_step1_valid():
+    if not hmac.compare_digest(ecr.step1_token, token_hash) or not ecr.is_step1_valid():
         return Response(
             {'error': 'This link has expired. Please request a new email change from your profile.'},
             status=status.HTTP_400_BAD_REQUEST,
@@ -260,10 +263,17 @@ def complete_email_change_step1(request, ecr_uid, token):
     password = request.data.get('password', '')
     user = ecr.user
 
+    new_email_invalid = False
+    if new_email:
+        try:
+            validate_email(new_email)
+        except ValidationError:
+            new_email_invalid = True
+
     errors = {}
     if not new_email:
         errors['new_email'] = 'New email address is required.'
-    elif not re.match(r'^\S+@\S+\.\S+$', new_email):
+    elif new_email_invalid:
         errors['new_email'] = 'Enter a valid email address.'
     elif new_email == user.email:
         errors['new_email'] = 'New email must be different from your current email.'
@@ -311,12 +321,13 @@ def complete_email_change_step1(request, ecr_uid, token):
 @permission_classes([AllowAny])
 def activate_new_email(request, ecr_uid, token):
     """Step 2: user clicks the activation link in the NEW inbox. Finalizes the change."""
+    enforce_csrf_standalone(request)
     ecr = _decode_ecr_uid(ecr_uid)
     if ecr is None:
         return Response({'error': 'Invalid link.'}, status=status.HTTP_400_BAD_REQUEST)
 
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    if ecr.step2_token != token_hash or not ecr.is_step2_valid():
+    if not hmac.compare_digest(ecr.step2_token, token_hash) or not ecr.is_step2_valid():
         return Response(
             {'error': 'This activation link has expired. Please start the email change process again from your profile.'},
             status=status.HTTP_400_BAD_REQUEST,

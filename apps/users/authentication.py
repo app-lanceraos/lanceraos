@@ -90,3 +90,20 @@ class CookieJWTAuthentication(JWTAuthentication):
         reason = check.process_view(request, None, (), {})
         if reason:
             raise exceptions.PermissionDenied(f'CSRF Failed: {reason}')
+
+
+def enforce_csrf_standalone(request):
+    """
+    Same check as CookieJWTAuthentication.enforce_csrf, but callable on its
+    own — for @authentication_classes(NO_AUTH) views (login, register,
+    refresh, etc.), where CookieJWTAuthentication.authenticate() never runs
+    (there's no JWT cookie to authenticate yet), so its enforce_csrf() never
+    fires either. Without this, those endpoints are protected only by
+    SameSite=Lax rather than an explicit token check, unlike every other
+    state-changing endpoint in the app.
+    """
+    check = CSRFCheck(_dummy_get_response)
+    check.process_request(request)
+    reason = check.process_view(request, None, (), {})
+    if reason:
+        raise exceptions.PermissionDenied(f'CSRF Failed: {reason}')

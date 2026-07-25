@@ -71,6 +71,7 @@ INSTALLED_APPS = [
     # `manage.py runserver` uses ASGI, not the WSGI dev server.
     'daphne',
     'django.contrib.admin',
+    'axes',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -104,6 +105,12 @@ MIDDLEWARE = [
     # resolved by DRF's authentication step inside the view, which is
     # exactly what ApiRequestLog needs to attribute correctly.
     'core.middleware.RequestLoggingMiddleware',
+    # django-axes — must be last per its own docs, so it sees the final
+    # response (including from other middleware) before deciding whether
+    # to lock out. Only guards /admin/ login today; apps.users' own views
+    # already have their own account-lockout/rate-limiting logic and
+    # don't go through AUTHENTICATION_BACKENDS at all.
+    'axes.middleware.AxesMiddleware',
 ]
 
 TEMPLATES = [
@@ -237,6 +244,26 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
+
+# ══════════════════════════════════════════════════════════════════
+# DJANGO-AXES — /admin/ brute-force protection
+# ══════════════════════════════════════════════════════════════════
+# apps.users' own login/2FA/deletion/etc. views never go through
+# AUTHENTICATION_BACKENDS or django.contrib.auth's authenticate() at
+# all (they call user.check_password() directly and enforce their own
+# cache-based lockout/rate-limiting) — so this only ever guards
+# /admin/login/, which had no brute-force protection of its own before
+# this. Axes' backend must run before ModelBackend so it gets the
+# chance to reject a login attempt before Django's own password check.
+
+AUTHENTICATION_BACKENDS = [
+    'axes.backends.AxesStandaloneBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = 1  # hours
+AXES_LOCKOUT_PARAMETERS = ['username', 'ip_address']
 
 # ══════════════════════════════════════════════════════════════════
 # SECURITY HEADERS (production only)

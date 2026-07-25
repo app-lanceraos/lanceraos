@@ -298,6 +298,35 @@ class FreelancerProfileSerializer(serializers.ModelSerializer):
             'wise_access_token', 'wise_refresh_token',
             'user',
         ]
+        # These fields must only ever change via their own dedicated,
+        # validated endpoints (complete_onboarding; save_custom_smtp /
+        # disable_custom_smtp) — never through this general-purpose
+        # profile PUT. Without this, any authenticated user could
+        # PUT {"onboarding_completed": true} directly, skipping the
+        # mandatory 16+ age check entirely (the only place age is
+        # verified for OAuth signups, which never collect a birthday
+        # at registration). Still readable via GET — just not writable
+        # through this serializer.
+        read_only_fields = [
+            'onboarding_completed',
+            'custom_smtp_enabled', 'custom_smtp_host', 'custom_smtp_port',
+            'custom_smtp_username', 'custom_smtp_use_tls', 'custom_smtp_use_ssl',
+            'custom_smtp_from_name', 'custom_smtp_verified', 'custom_smtp_verified_at',
+        ]
+
+    # Mirrors Meta.read_only_fields above. read_only_fields silently
+    # strips these from validated_data before validate() ever sees
+    # them, so an attempted write here would otherwise 200 as a
+    # no-op — indistinguishable in logs from a client that just
+    # didn't send the field. Checking self.initial_data (the raw
+    # incoming dict) is the only way to detect the attempt and turn
+    # it into a visible 400.
+    LOCKED_FIELDS = {
+        'onboarding_completed', 'custom_smtp_enabled', 'custom_smtp_host',
+        'custom_smtp_port', 'custom_smtp_username', 'custom_smtp_use_tls',
+        'custom_smtp_use_ssl', 'custom_smtp_from_name', 'custom_smtp_verified',
+        'custom_smtp_verified_at',
+    }
 
     def get_cnic(self, obj):
         return obj.cnic
@@ -307,6 +336,14 @@ class FreelancerProfileSerializer(serializers.ModelSerializer):
 
     def get_pseb(self, obj):
         return obj.pseb
+
+    def validate(self, data):
+        attempted = self.LOCKED_FIELDS & set(self.initial_data.keys())
+        if attempted:
+            raise serializers.ValidationError(
+                {field: 'This field can only be changed via its own dedicated endpoint.' for field in attempted}
+            )
+        return data
 
     def update(self, instance, validated_data):
         cnic_input = validated_data.pop('cnic_input', None)

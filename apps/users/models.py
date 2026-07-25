@@ -6,7 +6,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from core.encryption import (
@@ -532,21 +532,25 @@ class Session(models.Model):
     def create_for_user(cls, user, raw_token, device_name, ip_address, lifetime_days):
         """
         Enforces MAX_SESSIONS_PER_USER by evicting the least-recently-used
-        session before creating the new one, then creates it.
+        session before creating the new one, then creates it. Locks the
+        user row for the duration so concurrent logins can't both read the
+        same under-cap count and race past MAX_SESSIONS_PER_USER.
         """
-        active = cls.objects.filter(user=user, expires_at__gt=timezone.now())
-        if active.count() >= cls.MAX_SESSIONS_PER_USER:
-            oldest = active.order_by('last_used_at').first()
-            if oldest:
-                oldest.delete()
+        with transaction.atomic():
+            type(user).objects.select_for_update().get(pk=user.pk)
+            active = cls.objects.select_for_update().filter(user=user, expires_at__gt=timezone.now())
+            if active.count() >= cls.MAX_SESSIONS_PER_USER:
+                oldest = active.order_by('last_used_at').first()
+                if oldest:
+                    oldest.delete()
 
-        return cls.objects.create(
-            user=user,
-            refresh_token_hash=cls._hash_token(raw_token),
-            device_name=device_name[:300],
-            ip_address=ip_address,
-            expires_at=timezone.now() + timedelta(days=lifetime_days),
-        )
+            return cls.objects.create(
+                user=user,
+                refresh_token_hash=cls._hash_token(raw_token),
+                device_name=device_name[:300],
+                ip_address=ip_address,
+                expires_at=timezone.now() + timedelta(days=lifetime_days),
+            )
 
     def rotate(self, new_raw_token, lifetime_days):
         """Called on token refresh — same row, new hash, new expiry."""

@@ -1,6 +1,8 @@
 # apps/users/views/profile.py
+import logging
 import os
 
+from PIL import Image, UnidentifiedImageError
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -14,7 +16,12 @@ from ..cookies import clear_auth_cookies
 from ..models import FreelancerProfile
 from ..serializers import AccountUpdateSerializer, FreelancerProfileSerializer, UserSerializer, OnboardingSerializer, UnderageOnboardingError
 
-ALLOWED_LOGO_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.svg'}
+logger = logging.getLogger(__name__)
+
+# SVG deliberately excluded — it can embed <script> tags, a real stored-XSS
+# risk once logos are shown to people outside the account (future
+# invoice/proposal recipients). A logo doesn't need to be a vector format.
+ALLOWED_LOGO_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff'}
 MAX_LOGO_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 
 # Security Alerts has no entry here, deliberately — CLAUDE.md requires it
@@ -106,6 +113,16 @@ def upload_logo(request):
     if file.size > MAX_LOGO_SIZE_BYTES:
         return Response({'error': 'File too large. Maximum size is 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Extension alone doesn't confirm the file's actual content — verify it's
+    # a genuine, decodable image. Image.verify() can leave the file object in
+    # a state that's unusable for a subsequent real read, so re-open it
+    # afterward rather than reusing the same handle.
+    try:
+        Image.open(file).verify()
+    except (UnidentifiedImageError, OSError):
+        return Response({'error': 'That doesn\'t look like a valid image file.'}, status=status.HTTP_400_BAD_REQUEST)
+    file.seek(0)
+
     try:
         prof = request.user.profile
     except Exception:
@@ -121,8 +138,9 @@ def upload_logo(request):
 
     try:
         result = cloudinary.uploader.upload(file, folder='lanceraos/logos', resource_type='image')
-    except Exception as exc:
-        return Response({'error': f'Upload failed: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+    except Exception:
+        logger.exception('Cloudinary logo upload failed for user_id=%s', request.user.pk)
+        return Response({'error': 'Upload failed. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
 
     prof.logo = result.get('secure_url', '')
     prof.logo_public_id = result.get('public_id', '')

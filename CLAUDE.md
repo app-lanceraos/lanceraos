@@ -47,6 +47,9 @@ Developer: Solo founder - Ali Amir
 - ASGI server: Daphne
 - WebSockets: Django Channels 4
 - Authentication: djangorestframework-simplejwt
+- Admin brute-force protection: django-axes (added after a security audit
+  found /admin/ had none of the app's own account-lockout protections —
+  see DECISIONS.md)
 - OAuth: hand-rolled (Google + Facebook), same account-linking logic for
   both providers — not django-allauth. v1's working Google flow was
   hand-rolled and already handled account-linking collisions correctly;

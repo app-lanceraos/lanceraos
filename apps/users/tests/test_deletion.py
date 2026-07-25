@@ -19,12 +19,12 @@ class DeletionFlowTests(TestCase):
         self.user.is_email_verified = True
         self.user.is_active = True
         self.user.save()
-        self.client.post(reverse('users:login'), data=json.dumps({
-            'login': 'delete@example.com', 'password': 'Sup3r$ecret1',
-        }), content_type='application/json')
         dummy = self.rf.get('/')
         self.csrf_token = get_token(dummy)
         self.client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        self.client.post(reverse('users:login'), data=json.dumps({
+            'login': 'delete@example.com', 'password': 'Sup3r$ecret1',
+        }), content_type='application/json', HTTP_X_CSRFTOKEN=self.csrf_token)
 
     def _post(self, path, payload):
         return self.client.post(path, data=json.dumps(payload), content_type='application/json', HTTP_X_CSRFTOKEN=self.csrf_token)
@@ -73,15 +73,15 @@ class DeletionFlowTests(TestCase):
         self._post(reverse('users:deletion_confirm'), {'deletion_token': deletion_token})
 
         client2 = Client(enforce_csrf_checks=True)
-        resp = client2.post(reverse('users:login'), data=json.dumps({
-            'login': 'delete@example.com', 'password': 'Sup3r$ecret1',
-        }), content_type='application/json')
-        self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.json()['deletion_pending'])
-
         dummy = self.rf.get('/')
         csrf_token2 = get_token(dummy)
         client2.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        resp = client2.post(reverse('users:login'), data=json.dumps({
+            'login': 'delete@example.com', 'password': 'Sup3r$ecret1',
+        }), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token2)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['deletion_pending'])
+
         resp = client2.post(reverse('users:deletion_cancel'), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token2)
         self.assertEqual(resp.status_code, 200)
         self.user.refresh_from_db()

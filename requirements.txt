@@ -15,7 +15,11 @@
 # ── Django core ──────────────────────────────────────────────
 Django==5.2.*
 djangorestframework==3.15.*
-djangorestframework-simplejwt==5.3.*
+# >=5.5.1 required — CVE-2024-22513: disabled/is_active=False users could
+# still authenticate with a previously-issued token below that version,
+# directly relevant to this app's account-lockout story (CLAUDE.md).
+djangorestframework-simplejwt>=5.5.1,<6.0
+
 django-environ==0.11.*
 
 # ── Database ─────────────────────────────────────────────────
@@ -23,7 +27,8 @@ psycopg2-binary==2.9.*
 
 # ── ASGI / WebSockets (Daphne + Channels — no consumers exist yet,
 #    but config/asgi.py and config/settings.py already wire these up) ──
-daphne==4.1.*
+# >=4.2.2 required — CVE-2026-44546, CVE-2026-44545.
+daphne>=4.2.2,<5.0
 channels==4.1.*
 channels-redis==4.2.*
 
@@ -39,7 +44,8 @@ django-cors-headers==4.4.*
 argon2-cffi==23.1.*
 
 # ── Encryption (core/encryption.py) ─────────────────────────
-cryptography==43.0.*
+# >=46.0.6 required — multiple CVEs, including a bundled-OpenSSL one.
+cryptography>=46.0.6,<47.0
 
 # ── HTTP client (core/email.py -> Resend; apps/users/oauth/ ->
 #    Google/Facebook Graph API verification) ────────────────
@@ -50,3 +56,11 @@ google-auth==2.34.*
 
 # ── Media storage (profile/business logo uploads) ───────────
 cloudinary==1.41.*
+# Content-validates uploaded logos are genuine images before they reach
+# Cloudinary (apps/users/views/profile.py upload_logo) — extension alone
+# doesn't confirm file content, and SVG is deliberately excluded from
+# ALLOWED_LOGO_EXTENSIONS below rather than handled here.
+Pillow==11.*
+
+# ── Admin brute-force protection (core/, config/settings.py) ─
+django-axes==8.3.*

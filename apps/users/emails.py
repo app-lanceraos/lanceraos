@@ -8,6 +8,7 @@ password reset, 2FA, security alerts), regardless of whether the
 recipient has their own custom SMTP configured for client-facing mail.
 """
 from django.conf import settings
+from django.utils.html import escape
 
 from core.email import send_email
 
@@ -200,7 +201,7 @@ def send_email_change_step2_email(user, token, uid, new_email) -> bool:
 def send_email_changed_notification_to_old(user, old_email, new_email) -> bool:
     body = (
         _heading('Your email address was changed')
-        + _paragraph(f'This confirms your LanceraOS account email was changed from {old_email} to {new_email}.')
+        + _paragraph(f'This confirms your LanceraOS account email was changed from {escape(old_email)} to {escape(new_email)}.')
         + _alert_box('If you did not make this change, contact support immediately.')
     )
     return send_email(old_email, 'Your LanceraOS email address was changed', _html(body))
@@ -240,8 +241,8 @@ def send_new_device_login_email(user, ip_address, user_agent, timestamp) -> bool
         _heading('New sign-in to your account')
         + _paragraph(f'Hi {_name(user)}, your account was just signed into from a new device or location:')
         + f'<p style="margin:0 0 4px;color:#0e0e1a;font-size:14px;"><strong>When:</strong> {when}</p>'
-        + f'<p style="margin:0 0 4px;color:#0e0e1a;font-size:14px;"><strong>IP address:</strong> {ip_address or "unknown"}</p>'
-        + f'<p style="margin:0 0 16px;color:#0e0e1a;font-size:14px;"><strong>Device:</strong> {user_agent or "unknown"}</p>'
+        + f'<p style="margin:0 0 4px;color:#0e0e1a;font-size:14px;"><strong>IP address:</strong> {escape(ip_address) if ip_address else "unknown"}</p>'
+        + f'<p style="margin:0 0 16px;color:#0e0e1a;font-size:14px;"><strong>Device:</strong> {escape(user_agent) if user_agent else "unknown"}</p>'
         + _alert_box('If this wasn\'t you, change your password immediately.')
     )
     return send_email(user.email, 'New sign-in to your LanceraOS account', _html(body))

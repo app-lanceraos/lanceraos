@@ -1,4 +1,10 @@
 # apps/users/views/smtp.py
+import ipaddress
+import logging
+import smtplib
+import socket
+import ssl
+
 from django.core.mail import EmailMultiAlternatives, get_connection
 from django.utils import timezone
 from rest_framework import status
@@ -10,6 +16,8 @@ from core.encryption import encrypt_field
 from core.observability import log_event
 
 from ..models import FreelancerProfile
+
+logger = logging.getLogger(__name__)
 
 SMTP_UPDATE_FIELDS = [
     'custom_smtp_enabled', 'custom_smtp_host', 'custom_smtp_port',
@@ -61,6 +69,16 @@ def save_custom_smtp(request):
         return Response(errors, status=status.HTTP_400_BAD_REQUEST)
 
     try:
+        resolved_ip = ipaddress.ip_address(socket.gethostbyname(host))
+    except socket.gaierror:
+        return Response({'host': 'Could not resolve that hostname.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local:
+        return Response(
+            {'host': 'That host is not reachable from LanceraOS.'}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
         conn = get_connection(
             backend='django.core.mail.backends.smtp.EmailBackend',
             host=host, port=port, username=username, password=password,
@@ -80,8 +98,27 @@ def save_custom_smtp(request):
             connection=conn,
         )
         msg.send(fail_silently=False)
-    except Exception as exc:
-        return Response({'error': f'SMTP connection failed: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
+    except smtplib.SMTPAuthenticationError:
+        return Response(
+            {'error': 'Authentication failed — check your username and password.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except smtplib.SMTPConnectError:
+        return Response({'error': 'Could not connect to that host.'}, status=status.HTTP_400_BAD_REQUEST)
+    except socket.timeout:
+        return Response({'error': 'Connection timed out.'}, status=status.HTTP_400_BAD_REQUEST)
+    except socket.gaierror:
+        return Response({'error': 'Could not resolve that hostname.'}, status=status.HTTP_400_BAD_REQUEST)
+    except ssl.SSLError:
+        return Response(
+            {'error': 'SSL/TLS error connecting to that host.'}, status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception:
+        logger.exception('Custom SMTP test connection failed for user_id=%s host=%s', user.pk, host)
+        return Response(
+            {'error': 'Connection failed. Please check your settings and try again.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     try:
         prof = user.profile
