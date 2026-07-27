@@ -306,6 +306,12 @@ RESEND_FROM_NAME = env('RESEND_FROM_NAME', default='LanceraOS')
 
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:5173')
 
+# Because core/email.py bypasses Django's mail backend entirely (see
+# above), `manage.py test` needs its own safety net to guarantee no test
+# can reach the real Resend API — see core/test_runner.py for why this
+# has to patch requests.post rather than core.email.send_email directly.
+TEST_RUNNER = 'core.test_runner.SafeTestRunner'
+
 # ══════════════════════════════════════════════════════════════════
 # OAUTH
 # ══════════════════════════════════════════════════════════════════

@@ -500,6 +500,13 @@ class Session(models.Model):
     )
     refresh_token_hash = models.CharField(max_length=64, unique=True)
     device_name = models.CharField(max_length=300, blank=True)
+    trusted_device = models.ForeignKey(
+        'TrustedDevice', null=True, blank=True, on_delete=models.SET_NULL, related_name='sessions',
+        help_text='The recognized device this session belongs to, when one exists — lets a '
+                   'custom nickname persist across future logins from the same device, rather '
+                   'than needing to be re-set every time a new session is created. Null for '
+                   'sessions created before this link existed.',
+    )
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(auto_now_add=True)
@@ -529,7 +536,7 @@ class Session(models.Model):
         ).first()
 
     @classmethod
-    def create_for_user(cls, user, raw_token, device_name, ip_address, lifetime_days):
+    def create_for_user(cls, user, raw_token, device_name, ip_address, lifetime_days, trusted_device=None):
         """
         Enforces MAX_SESSIONS_PER_USER by evicting the least-recently-used
         session before creating the new one, then creates it. Locks the
@@ -550,6 +557,7 @@ class Session(models.Model):
                 device_name=device_name[:300],
                 ip_address=ip_address,
                 expires_at=timezone.now() + timedelta(days=lifetime_days),
+                trusted_device=trusted_device,
             )
 
     def rotate(self, new_raw_token, lifetime_days):
@@ -602,6 +610,19 @@ class TrustedDevice(models.Model):
     )
     token_hash = models.CharField(max_length=64, unique=True)
     device_name = models.CharField(max_length=300, blank=True)
+    custom_name = models.CharField(
+        max_length=100, blank=True,
+        help_text='User-editable label (e.g. "My MacBook"), shown instead of '
+                   'device_name when set. Set via Settings > Sessions.',
+    )
+    skip_2fa = models.BooleanField(
+        default=False,
+        help_text='Whether this device may bypass the 2FA prompt — set only '
+                   'via the explicit "don\'t ask again" checkbox at 2FA-verify '
+                   'time. Distinct from the device simply being recognized: '
+                   'every login creates/matches a TrustedDevice row now, but '
+                   'only this flag grants 2FA-skipping specifically.',
+    )
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
@@ -627,13 +648,14 @@ class TrustedDevice(models.Model):
         ).first()
 
     @classmethod
-    def create_for_user(cls, user, raw_token, device_name, ip_address):
+    def create_for_user(cls, user, raw_token, device_name, ip_address, skip_2fa=False):
         return cls.objects.create(
             user=user,
             token_hash=cls._hash_token(raw_token),
             device_name=device_name[:300],
             ip_address=ip_address,
             expires_at=timezone.now() + timedelta(days=30),
+            skip_2fa=skip_2fa,
         )
 
     @classmethod

@@ -41,6 +41,9 @@ def anonymize_expired_accounts(self):
                 user.anonymize()
                 processed += 1
                 logger.info('[ANONYMIZE] Anonymized account: %s (id=%s)', email, user_id)
+
+            from .emails import send_account_deleted_email
+            send_account_deleted_email(email)
         except Exception as exc:
             failed += 1
             logger.error('[ANONYMIZE ERROR] Failed for user pk=%s: %s', user.pk, exc)

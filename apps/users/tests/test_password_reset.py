@@ -47,7 +47,7 @@ class PasswordResetTests(TestCase):
         resp = self._post(reverse('users:forgot_password'), {'email': 'nobody@example.com'})
         self.assertEqual(resp.status_code, 200)
 
-    @patch('apps.users.views.auth.send_password_changed_email', return_value=True)
+    @patch('apps.users.views.auth.send_password_reset_completed_email', return_value=True)
     def test_reset_password_happy_path_invalidates_all_sessions(self, mock_email):
         Session.create_for_user(self.user, 'existing-token', 'device', '1.1.1.1', lifetime_days=30)
         self.assertEqual(Session.objects.filter(user=self.user).count(), 1)
@@ -86,7 +86,7 @@ class PasswordResetTests(TestCase):
         })
         self.assertEqual(resp.status_code, 400)
 
-    @patch('apps.users.views.auth.send_password_changed_email', return_value=True)
+    @patch('apps.users.views.auth.send_password_reset_completed_email', return_value=True)
     def test_reset_password_token_cannot_be_reused(self, mock_email):
         uid = encode_uid(self.user)
         token = password_reset_token.make_token(self.user)

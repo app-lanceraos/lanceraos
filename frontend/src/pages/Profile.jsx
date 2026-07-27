@@ -67,7 +67,7 @@ function CropperModal({ imageSrc, onConfirm, onCancel, uploading }) {
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', width: '100%', maxWidth: 400, overflow: 'hidden' }}>
         <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-subtle)' }}>
-          <p style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.9rem' }}>Crop Profile Photo</p>
+          <p style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.9rem' }}>Crop Business Logo</p>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: 2 }}>Drag to reposition · Scroll to zoom</p>
         </div>
         <div style={{ position: 'relative', height: 260, background: '#000' }}>
@@ -203,7 +203,7 @@ export default function Profile() {
       setLogoPreview(res.data.logo)
       updateAvatar(res.data.logo)
       setCropSrc(null)
-      show('success', 'Profile photo updated.')
+      show('success', 'Business logo updated.')
     } catch (err) {
       show('error', err.response?.data?.error || 'Upload failed.')
     } finally {
@@ -271,7 +271,7 @@ export default function Profile() {
             )}
           </div>
           <div>
-            <p style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Profile Photo</p>
+            <p style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Business Logo</p>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 2 }}>JPG, PNG, or GIF. Max 5MB.</p>
           </div>
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} style={{ display: 'none' }} />

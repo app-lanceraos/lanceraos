@@ -14,7 +14,13 @@ from ..oauth.facebook import verify_facebook_token
 from ..oauth.google import OAuthVerificationError as GoogleError
 from ..oauth.google import verify_google_token
 from ..token_service import issue_tokens_and_session
-from .auth import NO_AUTH, _finalize_login_response, _update_last_login
+from .auth import (
+    NO_AUTH,
+    _create_or_update_trusted_device,
+    _finalize_login_response,
+    _get_trusted_device,
+    _update_last_login,
+)
 
 # OAuth sessions always use the standard lifetime — there's no "remember
 # me" checkbox on a Google/Facebook button, unlike the email/password
@@ -33,13 +39,16 @@ def _complete_oauth_login(provider, identity, request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    _update_last_login(user, request)
+    device = _get_trusted_device(user, request)
+    _update_last_login(user, request, device_recognized=(device is not None))
     log_event(f'login_{provider}', user=user, request=request, metadata={'new_user': is_new_user})
 
-    access, refresh_str, session = issue_tokens_and_session(user, request, remember_me=False)
-    return _finalize_login_response(
+    access, refresh_str, session = issue_tokens_and_session(user, request, remember_me=False, trusted_device=device)
+    response = _finalize_login_response(
         user, access, refresh_str, OAUTH_REFRESH_DAYS, extra={'is_new_user': is_new_user},
     )
+    _create_or_update_trusted_device(user, request, response, existing_device=device, grant_skip_2fa=False)
+    return response
 
 
 @api_view(['POST'])

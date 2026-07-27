@@ -917,6 +917,46 @@ Example:
   Date: July 2026
   Decision: JWT stored in httpOnly cookies, not localStorage.
   Reason: localStorage is readable by any JS on the page — a single
+
+## 8c. Running This Locally
+
+Four things need to be running simultaneously for the app to actually work end to end — not
+just the two (`runserver` + `npm run dev`) that were enough before scheduled background tasks
+(account deletion, session/device cleanup) started mattering.
+
+```
+redis-server                                    # brew services start redis — leave this always-on
+python manage.py runserver                      # Django backend, :8000
+npm run dev                                      # Vite frontend, :5173  (run from frontend/)
+celery -A config worker -l info                  # actually executes scheduled/background tasks
+celery -A config beat -l info                    # actually triggers them on schedule
+```
+
+**Redis** is cheap, stateless infrastructure — leave it running permanently as a background
+service (`brew services start redis`), the same way you'd never think to manually start/stop a
+database.
+
+**Celery worker + beat** are your own application code, not infrastructure — start them
+manually alongside `runserver` when you're working on anything that touches deletion, sessions,
+2FA, or email-sending, same as you'd start `runserver` itself. Don't run them as a permanent
+background service yet — with only one module built and a small, infrequently-changed beat
+schedule, a silently-running worker executing stale code because you forgot it was still up is a
+worse failure mode than "oh right, I need to start it." Revisit this once more modules land and
+scheduled tasks are relied on constantly, not just when deliberately testing this specific area.
+
+**macOS-specific gotcha, will bite you every time otherwise:** the Celery worker crashes the
+moment it tries to fork a child process to actually run a task (`WorkerLostError: signal 6
+(SIGABRT)`, from Apple's Objective-C runtime not tolerating being forked into). Not a Celery bug
+— start the worker with this env var set:
+```
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES celery -A config worker -l info
+```
+
+**To manually trigger a scheduled task right now**, without waiting for Beat's schedule (useful
+for testing deletion/cleanup behavior): `python manage.py shell`, then
+`from apps.users.tasks import anonymize_expired_accounts; anonymize_expired_accounts.delay()`
+— this publishes a real task through the real Redis queue to a running worker, not a shortcut
+that bypasses the actual pipeline.
   XSS vulnerability becomes an instant account-takeover vector.
   Alternatives considered: v1's Authorization-header + localStorage
   approach (rejected, exactly the anti-pattern being replaced).

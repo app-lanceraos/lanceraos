@@ -1,6 +1,7 @@
 # apps/users/tests/test_sessions.py
 import json
 import uuid
+from unittest.mock import patch
 
 from django.core.cache import cache
 from django.middleware.csrf import get_token
@@ -19,6 +20,13 @@ class SessionTests(TestCase):
         self.user.is_email_verified = True
         self.user.is_active = True
         self.user.save()
+        # Every test here logs in from multiple distinct clients (distinct
+        # TrustedDevice cookies), so each login is a genuinely new device —
+        # this suite is about session listing/revocation, not new-device
+        # email content, so mock it rather than let it fire for real.
+        patcher = patch('apps.users.views.auth.send_new_device_login_email', return_value=True)
+        self.mock_new_device_email = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _login(self, client, email='sessions@example.com'):
         csrf_token = self._csrf_token(client)

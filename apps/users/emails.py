@@ -131,6 +131,23 @@ def send_password_changed_email(user) -> bool:
     return send_email(user.email, 'Your LanceraOS password was changed', _html(body))
 
 
+def send_password_reset_completed_email(user) -> bool:
+    """
+    Distinct from send_password_changed_email on purpose: "changed"
+    implies the person was already logged in and did it themselves;
+    "reset" tells them the recovery flow was used instead — a
+    meaningfully different signal for someone checking whether this was
+    really them.
+    """
+    body = (
+        _heading('Your password was reset')
+        + _paragraph(f'Hi {_name(user)}, your LanceraOS password was just reset using the account '
+                     'recovery process. All other devices have been signed out.')
+        + _alert_box('If you did not request this, contact support immediately.')
+    )
+    return send_email(user.email, 'Your LanceraOS password was reset', _html(body))
+
+
 def send_account_locked_email(user, duration_minutes: int) -> bool:
     body = (
         _heading('Your account has been temporarily locked')
@@ -155,18 +172,26 @@ def send_2fa_code_email(user, otp_code: str) -> bool:
     return send_email(user.email, f'Your LanceraOS verification code: {otp_code}', _html(body))
 
 
-def send_2fa_enabled_email(user) -> bool:
+def send_2fa_enabled_email(user, ip_address, user_agent, timestamp) -> bool:
+    when = timestamp.strftime('%B %d, %Y at %I:%M %p').replace(' 0', ' ')
     body = (
         _heading('Two-factor authentication enabled')
         + _paragraph(f'Hi {_name(user)}, two-factor authentication is now active on your account.')
+        + f'<p style="margin:0 0 4px;color:#0e0e1a;font-size:14px;"><strong>When:</strong> {when}</p>'
+        + f'<p style="margin:0 0 4px;color:#0e0e1a;font-size:14px;"><strong>Device:</strong> {escape(user_agent) if user_agent else "unknown"}</p>'
+        + f'<p style="margin:0 0 4px;color:#0e0e1a;font-size:14px;"><strong>IP address:</strong> {escape(ip_address) if ip_address else "unknown"}</p>'
     )
     return send_email(user.email, 'Two-factor authentication enabled', _html(body))
 
 
-def send_2fa_disabled_email(user) -> bool:
+def send_2fa_disabled_email(user, ip_address, user_agent, timestamp) -> bool:
+    when = timestamp.strftime('%B %d, %Y at %I:%M %p').replace(' 0', ' ')
     body = (
         _heading('Two-factor authentication disabled')
         + _paragraph(f'Hi {_name(user)}, two-factor authentication has been turned off for your account.')
+        + f'<p style="margin:0 0 4px;color:#0e0e1a;font-size:14px;"><strong>When:</strong> {when}</p>'
+        + f'<p style="margin:0 0 4px;color:#0e0e1a;font-size:14px;"><strong>Device:</strong> {escape(user_agent) if user_agent else "unknown"}</p>'
+        + f'<p style="margin:0 0 4px;color:#0e0e1a;font-size:14px;"><strong>IP address:</strong> {escape(ip_address) if ip_address else "unknown"}</p>'
         + _alert_box('If you didn\'t make this change, secure your account immediately.')
     )
     return send_email(user.email, 'Two-factor authentication disabled', _html(body))
@@ -229,6 +254,22 @@ def send_account_deletion_confirmed_email(user) -> bool:
         + _alert_box('After 30 days, your account and personal information will be permanently removed. This cannot be undone.')
     )
     return send_email(user.email, 'Your LanceraOS account is scheduled for deletion', _html(body))
+
+
+def send_account_deleted_email(email: str) -> bool:
+    """
+    Sent from inside the anonymization Celery task, to the ORIGINAL email
+    address captured before anonymize() overwrites it — takes a raw email
+    string, not a User, since by the time this fires the user object's
+    own .email field no longer holds a real address.
+    """
+    body = (
+        _heading('Your LanceraOS account has been deleted')
+        + _paragraph('This confirms your LanceraOS account and personal data have been permanently '
+                     'deleted, as scheduled.')
+        + _paragraph('If you\'d like to use LanceraOS again in the future, you\'re welcome to create a new account.')
+    )
+    return send_email(email, 'Your LanceraOS account has been deleted', _html(body))
 
 
 # ══════════════════════════════════════════════════════════════════

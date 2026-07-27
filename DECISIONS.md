@@ -493,3 +493,143 @@ would actually gate (rejected — nothing concrete to sell yet, high risk of des
 boundaries before real usage data exists); add no tier concept at all until a premium tier is
 actually being launched (rejected — the retrofit cost of adding tier-awareness after many
 tier-blind features exist is real and avoidable for the cost of one field today).
+
+---
+
+Date: July 2026
+Decision: Every remaining actionable item from both security audit passes (`SECURITY_AUDIT.md`,
+`SECURITY_AUDIT_PASS2.md`) was closed in a single consolidated fix pass. Specifics:
+SMTP-test endpoint now rejects private/loopback/link-local targets before connecting (closes the
+SSRF-adjacent finding) and no longer echoes raw exception text (specific `smtplib`/`socket`/`ssl`
+exceptions mapped to safe messages, real exception logged server-side); Cloudinary upload failures
+same treatment; logo upload now verifies actual file content via Pillow (`Image.verify()`) rather
+than trusting the extension alone, and SVG was dropped from the allowed list entirely; the three
+`!=` token comparisons in `security.py` replaced with `hmac.compare_digest`; every `NO_AUTH` POST
+view now explicitly enforces CSRF via a new `enforce_csrf_standalone()` helper, independent of
+`SameSite`'s incidental protection (this required updating seven existing test files to attach a
+CSRF token before posting — the full 72-test suite was restored to passing, not left broken);
+`Session.create_for_user` wrapped in `transaction.atomic()` with `select_for_update()`, closing the
+concurrent-login race (verified with a 10-thread test: 7 sessions produced without the fix, exactly
+3 with it); `forgot_password` gained a per-email throttle alongside its existing per-IP one, and
+both it and `resend_verification`'s email sends moved onto Celery tasks, closing the timing-oracle
+gap those synchronous sends created; `djangorestframework-simplejwt`/`daphne`/`cryptography` bumped
+to CVE-patched versions; `.env.example`'s `DEBUG` default flipped to `False`.
+Not fixed, deliberately deferred: the `react-router-dom` `npm audit` finding (a downgrade to a
+SemVer-major-older version) — this needs a direct discussion before acting, not an automated fix,
+since a downgrade risks breaking working features for a CVE (an RSC-mode CSRF bypass) that likely
+doesn't even apply here, given this app doesn't use RSC mode.
+Also confirmed (no changes needed): `linked_providers` on `UserSerializer` and the optional-
+`last_name` validation, both requested in an earlier round, were already correctly in place —
+verified directly rather than assumed.
+
+---
+
+Date: July 2026
+Decision: Fixed a real bug where logging into an account with a scheduled deletion never showed
+the "restore or continue?" modal at all — it silently landed on `/profile` instead, with no
+warning the account would still be deleted on schedule.
+Reason: `Login.jsx` calls `loginSuccess(data.user)` before it checks `data.deletion_pending` —
+the moment that call runs, `isAuthenticated` flips to `true` in the shared store, and
+`PublicRoute` (wrapping `/login`) reacts immediately with `<Navigate to="/profile" />`,
+unmounting `Login.jsx` before its own deletion check and modal render ever get a chance to run.
+Both pieces of code were individually correct; the bug only existed in the untested interaction
+between them — a race between a route guard reacting to global state and a page component
+reacting to the same state one tick later. Fixed by having `PublicRoute` also check the store's
+existing `deletionScheduledAt` value (already correctly populated by `loginSuccess`, just never
+consulted here) and skip its auto-redirect when it's set, deferring to `Login.jsx`'s own
+navigation once the user makes an explicit choice.
+Also changed, based on further review: "Continue with deletion" used to leave the user fully
+signed in, with deletion still scheduled in the background — a "logged in but marked for
+deletion" limbo state with no clear product purpose (no data-export feature exists to justify
+continued access) and a whole category of unasked edge-case questions it would otherwise force
+(can a soon-to-be-deleted account still change its email? Upload a new photo?). Changed to sign
+the user back out immediately (revoking the session this same login just created) and return
+them to `/login` with a dated confirmation message — the deletion schedule itself is untouched
+either way; only whether they get a working session changes.
+Alternatives considered: Auto-cancel the deletion on any successful login (rejected — an
+incidental action like logging in shouldn't silently reverse a deliberate, deliberate-to-undo
+decision; the explicit two-button choice puts the actual decision in the user's hands via an
+unambiguous action).
+
+---
+
+Date: July 2026
+Decision: Celery established from scratch on a new local development machine (a Mac, replacing
+the Windows setup v1 was built on) — worker and Beat were previously never running locally on
+this machine at all, meaning every scheduled background task (account anonymization, trusted-
+device/session/email-change-request cleanup) had silently never executed, despite the schedule
+itself already being correctly configured in `config/celery.py`.
+Found and worked around: Celery's worker crashes on this Mac the moment it tries to fork a child
+process to run a task (`WorkerLostError: signal 6 (SIGABRT)`) — a known macOS issue where Apple's
+Objective-C runtime doesn't tolerate being forked into after certain frameworks initialize, not a
+Celery bug. Fixed by setting `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` when starting the worker.
+This needs to be set every time the worker starts on this machine — see CLAUDE.md's new
+"Running This Locally" section.
+Also found: `requirements.txt` pins `celery==5.4.*`, but the venv actually has `5.6.3` installed
+and is what was verified working end-to-end (real task dispatched through a real Redis queue,
+consumed by a real worker, account genuinely anonymized). A clean `pip install -r requirements.txt`
+right now would install a different, never-actually-tested minor version. Not yet fixed —
+flagging as a known, real drift to close out (bump the pin to match what's verified) rather than
+silently carrying forward.
+Decision: worker and Beat run manually alongside `runserver`, not as permanent background
+services, for now. Reasoning: only one module exists, the beat schedule has 4 infrequently-
+relevant entries, and a worker silently executing stale code because it was forgotten to be
+running is a worse failure mode during active development than remembering to start it. Redis
+itself does run as a permanent background service — it's stateless infrastructure, not
+application code, the same distinction that puts `runserver` in the "start manually" bucket too.
+Revisit once more modules land and scheduled tasks are relied on constantly rather than only
+when deliberately testing this specific area.
+
+---
+
+Date: July 2026
+Decision: Two real, related bugs fixed in `api.js`'s CSRF/session handling, both surfaced by
+literally reading the browser console rather than assuming "no visible malfunction" meant nothing
+was wrong.
+First: the silent-refresh call inside the response interceptor used a raw `axios.post(...)` that
+bypassed the CSRF-cookie-ensuring logic already built for the main `api` instance — meaning it
+never attached a CSRF token, and since `/auth/token/refresh/` correctly enforces CSRF (from an
+earlier security pass), this call would always fail with 403 unless a CSRF cookie happened to
+already exist from some earlier request. Concretely: a returning user whose 15-minute access
+token expired while their 30-90 day refresh token was still genuinely valid would get silently,
+incorrectly logged out — not because their session was actually invalid, but because one specific
+network call forgot to attach a header every other call already attaches correctly. Fixed by
+routing this call through the same `ensureCsrfCookie()` helper before firing it. Verified with a
+real before/after contrast on the same account (git-stashed the fix to prove the bug was real: 403,
+silent logout, landed at `/login`; restored the fix: 200, session preserved, same page after reload).
+Second, a related but distinct finding from asking "why does Google not show this but we do":
+every page load was firing a `GET /auth/me/` (and, before the first fix, a resulting refresh
+attempt) even for a completely fresh, never-logged-in visitor — technically correct behavior
+(checking auth status), but avoidably noisy, and the noise was masking the real bug above by
+making it look like "normal" console clutter. Fixed by adding a small, deliberately non-httpOnly
+"session hint" cookie (`lanceraos_has_session`, carrying no secret — just `'1'`) set/cleared
+alongside the real httpOnly auth cookies. The frontend checks for this hint first; if absent,
+it skips the `/auth/me/` call entirely rather than firing it and getting back an expected-but-
+noisy 401. This does not weaken the httpOnly protection on the real access/refresh tokens in any
+way — the hint cookie carries nothing worth stealing even if read by an XSS payload, and was
+verified to leave the actual token cookies' httpOnly flag untouched throughout.
+Alternatives considered: Leave the `/me/` 401 as unavoidable noise (rejected once the actual
+technique — a non-secret hint cookie — was properly considered, rather than assumed away).
+
+---
+
+Date: July 2026
+Decision: Fixed a real bug where toggling light mode anywhere in the app would corrupt the
+auth pages' wordmark (turning it near-black, invisible against the auth pages' permanently-black
+background) the next time a user landed on `/login` or similar.
+Reason: `WordmarkSVG` (shared between `AppShell` and the auth pages, per DESIGN.md's Brand Assets
+reference) renders using `var(--wordmark)` — a genuinely theme-dependent CSS custom property,
+correctly designed for `AppShell`'s own theme-following shell. Since CSS custom properties are set
+globally on `<html>`/`<body>` and cascade regardless of which page is currently rendered,
+whichever theme was last active anywhere in the app leaked onto the auth pages too — which are
+explicitly supposed to be fully theme-independent (a fixed, deliberate design decision already on
+record: pre-login pages have no session or established user preference for "theme" to even
+represent). Fixed by locally overriding `--wordmark` (and, defensively, `--logo-body`/
+`--logo-mark`, which are already theme-invariant globally but pinned here too against that ever
+changing) inside `.auth-orbit`'s own CSS rule in `AuthLayout.jsx` — a scoped override, not a
+change to the shared `Brand.jsx` component, which correctly stays theme-aware for its other use
+inside `AppShell`.
+Alternatives considered: Design a full parallel light-mode palette for the auth pages (rejected —
+a logged-out visitor has no established preference for a "theme" to reflect in the first place;
+the original fixed-palette design was deliberate and the bug was a genuine leak of stale global
+state, not evidence that a light variant was ever wanted here).

@@ -30,7 +30,7 @@ from ..emails import (
     send_2fa_code_email,
     send_account_locked_email,
     send_new_device_login_email,
-    send_password_changed_email,
+    send_password_reset_completed_email,
     send_verification_email,
     send_welcome_email,
 )
@@ -104,31 +104,74 @@ def _format_lockout_time(dt) -> str:
     return dt.strftime('%I:%M %p on %B %d, %Y').lstrip('0')
 
 
-def _check_trusted_device(user, request) -> bool:
+def _get_trusted_device(user, request):
+    """
+    Returns the matching TrustedDevice if the request's cookie matches a
+    valid, non-expired device for this user, else None. Extends the
+    device's expiry AND last_used_at on a match — a sliding 30-day window
+    from last use, not a fixed 30 days from creation — so an actively-used
+    device never silently stops being recognized, while one genuinely
+    abandoned for 30+ days reasonably falls out of the trusted set.
+    """
     raw_token = request.COOKIES.get(TRUSTED_DEVICE_COOKIE_NAME, '')
     if not raw_token:
-        return False
+        return None
     device = TrustedDevice.get_valid(raw_token, user)
     if device:
         device.last_used_at = timezone.now()
-        device.save(update_fields=['last_used_at'])
-        return True
-    return False
+        device.expires_at = timezone.now() + timedelta(days=30)
+        device.save(update_fields=['last_used_at', 'expires_at'])
+    return device
 
 
-def _update_last_login(user, request):
-    """Updates last_login fields; emails the user if this looks like a new device."""
+def _handle_new_device_detected(user, ip, ua_normalized):
+    """
+    The single fan-out point for a genuinely-new-device login. Today this
+    sends an email and writes the audit-log row the notification bell
+    reads from; if a second notification channel is ever added (push,
+    WhatsApp), this is the one place it gets wired in, rather than every
+    login call site needing its own update.
+    """
+    send_new_device_login_email(user, ip, ua_normalized, timezone.now())
+    log_event('new_device_login', user=user, ip_address=ip, user_agent=ua_normalized)
+
+
+def _create_or_update_trusted_device(user, request, response, existing_device, grant_skip_2fa=False):
+    """
+    Called once at the end of every successful login. If the device was
+    already recognized (existing_device is not None), only upgrades it to
+    skip_2fa=True if that was just newly granted (e.g. the "don't ask
+    again" box was checked on a device that was already recognized but
+    not yet 2FA-exempt) — never creates a duplicate row for the same
+    device. If genuinely new, creates the row and sets the cookie.
+    """
+    if existing_device:
+        if grant_skip_2fa and not existing_device.skip_2fa:
+            existing_device.skip_2fa = True
+            existing_device.save(update_fields=['skip_2fa'])
+        return
     from core.observability import normalize_user_agent
     ip = get_client_ip(request)
-    ua = get_user_agent(request)
-    ua_normalized = normalize_user_agent(ua)
-
-    is_new_device = (
-        user.last_login is not None
-        and (user.last_login_ip != ip or user.last_login_device != ua_normalized)
+    ua_normalized = normalize_user_agent(get_user_agent(request))
+    raw_token = _generate_token()
+    TrustedDevice.create_for_user(
+        user=user, raw_token=raw_token, device_name=ua_normalized,
+        ip_address=ip, skip_2fa=grant_skip_2fa,
     )
-    if is_new_device:
-        send_new_device_login_email(user, ip, ua_normalized, timezone.now())
+    set_trusted_device_cookie(response, raw_token)
+
+
+def _update_last_login(user, request, device_recognized):
+    """Updates last_login fields; emails the user only if this device wasn't already recognized."""
+    from core.observability import normalize_user_agent
+    ip = get_client_ip(request)
+    ua_normalized = normalize_user_agent(get_user_agent(request))
+
+    # Skip on a user's very first login ever (right after verifying their
+    # email) — "new device detected" on literally the first login is
+    # confusing noise, not useful signal, since of course it's new.
+    if user.last_login is not None and not device_recognized:
+        _handle_new_device_detected(user, ip, ua_normalized)
 
     user.last_login = timezone.now()
     user.last_login_ip = ip
@@ -338,7 +381,9 @@ def login(request):
     user.reset_failed_login()
 
     # ── 2FA ─────────────────────────────────────────────────────
-    if user.two_fa_enabled and not _check_trusted_device(user, request):
+    device = _get_trusted_device(user, request)
+    skip_2fa_allowed = device is not None and device.skip_2fa
+    if user.two_fa_enabled and not skip_2fa_allowed:
         otp = _generate_otp()
         session_id = str(uuid.uuid4())
         expiry = timezone.now() + timedelta(minutes=10)
@@ -367,11 +412,13 @@ def login(request):
         })
 
     # ── Issue tokens ────────────────────────────────────────────
-    _update_last_login(user, request)
+    _update_last_login(user, request, device_recognized=(device is not None))
     log_event('login_success', user=user, request=request)
-    access, refresh_str, session = issue_tokens_and_session(user, request, remember_me=remember_me)
+    access, refresh_str, session = issue_tokens_and_session(user, request, remember_me=remember_me, trusted_device=device)
     days = 90 if remember_me else 30
-    return _finalize_login_response(user, access, refresh_str, days)
+    response = _finalize_login_response(user, access, refresh_str, days)
+    _create_or_update_trusted_device(user, request, response, existing_device=device, grant_skip_2fa=False)
+    return response
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -509,24 +556,18 @@ def verify_2fa(request):
         return Response({'error': 'Account not found. Please log in again.'}, status=status.HTTP_400_BAD_REQUEST)
 
     remember_me = cached.get('remember_me', False)
-    _update_last_login(user, request)
+    device = _get_trusted_device(user, request)
+    _update_last_login(user, request, device_recognized=(device is not None))
     log_event('2fa_verified', user=user, request=request)
 
-    access, refresh_str, session = issue_tokens_and_session(user, request, remember_me=remember_me)
+    access, refresh_str, session = issue_tokens_and_session(user, request, remember_me=remember_me, trusted_device=device)
     days = 90 if remember_me else 30
 
     extra = {}
     response = _finalize_login_response(user, access, refresh_str, days, extra=extra)
 
+    _create_or_update_trusted_device(user, request, response, existing_device=device, grant_skip_2fa=trust_device)
     if trust_device:
-        raw_token = _generate_token()
-        from core.observability import normalize_user_agent
-        TrustedDevice.create_for_user(
-            user=user, raw_token=raw_token,
-            device_name=normalize_user_agent(get_user_agent(request)),
-            ip_address=get_client_ip(request),
-        )
-        set_trusted_device_cookie(response, raw_token)
         log_event('trusted_device_added', user=user, request=request)
 
     return response
@@ -724,7 +765,7 @@ def reset_password(request, uid, token):
     # into, so there's no "current device" to keep alive.
     Session.objects.filter(user=user).delete()
 
-    send_password_changed_email(user)
+    send_password_reset_completed_email(user)
     log_event('password_reset_done', user=user, request=request)
 
     return Response({'message': 'Password reset successfully. You can now sign in with your new password.'})

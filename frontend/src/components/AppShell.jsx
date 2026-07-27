@@ -10,12 +10,11 @@
 // gets built, its route in App.jsx starts resolving and the same nav
 // item becomes real with no further change needed here.
 //
-// The notification bell + panel UI is included and fully wired up on
-// the frontend side, but there is no notifications backend yet —
-// GET /notifications/ etc. will 404, which is caught and simply shows
-// the same "No notifications yet" empty state v1 shows when the list
-// is genuinely empty. No WebSocket connection is attempted (no
-// backend to connect to).
+// The notification bell + panel UI is backed by core/notifications.py
+// (GET/POST /api/notifications/...). A fetch failure still falls back
+// to the same "No notifications yet" empty state v1 shows when the
+// list is genuinely empty. No WebSocket connection is attempted —
+// the bell is poll-on-open, not push.
 //
 // v1's notification-type icons and empty-state icon were bare emoji
 // characters (🔔 👁 ✅ etc.) — replaced with lucide-react icons here,
@@ -27,9 +26,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import ReactDOM from 'react-dom'
 import {
-  Bell, CheckCircle2, Clock, CreditCard, DollarSign,
+  Bell, CheckCircle2, CheckCheck, CheckSquare, Clock, CreditCard, DollarSign,
   FileText, HelpCircle, LayoutGrid, LogOut, Mail, RefreshCw,
-  Receipt, Settings as SettingsIcon, TrendingUp, User as UserIcon,
+  Receipt, Settings as SettingsIcon, Square, Trash2, TrendingUp, User as UserIcon,
   Users, Wallet, AlertTriangle, Eye,
 } from 'lucide-react'
 
@@ -298,6 +297,8 @@ export default function AppShell({ children }) {
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifLoading, setNotifLoading] = useState(false)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(new Set())
   const notifRef = useRef(null)
   const notifPanelRef = useRef(null)
 
@@ -413,7 +414,15 @@ export default function AppShell({ children }) {
   }, [])
 
   useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') { setMobileOpen(false); setProfileOpen(false); setShowNotifPanel(false) } }
+    const handler = (e) => {
+      if (e.key === 'Escape') {
+        setMobileOpen(false)
+        setProfileOpen(false)
+        setShowNotifPanel(false)
+        setSelectMode(false)
+        setSelectedIds(new Set())
+      }
+    }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [])
@@ -423,7 +432,11 @@ export default function AppShell({ children }) {
     const handler = (e) => {
       const inBell = notifRef.current && notifRef.current.contains(e.target)
       const inPanel = notifPanelRef.current && notifPanelRef.current.contains(e.target)
-      if (!inBell && !inPanel) setShowNotifPanel(false)
+      if (!inBell && !inPanel) {
+        setShowNotifPanel(false)
+        setSelectMode(false)
+        setSelectedIds(new Set())
+      }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -469,6 +482,29 @@ export default function AppShell({ children }) {
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)))
       setUnreadCount((prev) => Math.max(0, prev - 1))
     } catch { /* no backend yet */ }
+  }
+
+  const markSelectedRead = async () => {
+    const ids = Array.from(selectedIds)
+    try {
+      await api.post('/notifications/mark-read/', { ids })
+      setNotifications((prev) => prev.map((n) => (selectedIds.has(n.id) ? { ...n, is_read: true } : n)))
+      setUnreadCount((prev) => Math.max(0, prev - ids.filter((id) => !notifications.find((n) => n.id === id)?.is_read).length))
+      setSelectMode(false)
+      setSelectedIds(new Set())
+    } catch { /* no-op */ }
+  }
+
+  const deleteSelected = async () => {
+    const ids = Array.from(selectedIds)
+    const unreadDeletedCount = notifications.filter((n) => selectedIds.has(n.id) && !n.is_read).length
+    try {
+      await api.post('/notifications/dismiss/', { ids })
+      setNotifications((prev) => prev.filter((n) => !selectedIds.has(n.id)))
+      setUnreadCount((prev) => Math.max(0, prev - unreadDeletedCount))
+      setSelectMode(false)
+      setSelectedIds(new Set())
+    } catch { /* no-op */ }
   }
 
   const openNotifPanel = () => { setShowNotifPanel(true); fetchNotifications() }
@@ -829,19 +865,68 @@ export default function AppShell({ children }) {
           overflow: 'hidden',
           animation: 'shell-popup-in 0.15s ease',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
-            <span style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>
-              Notifications
-              {unreadCount > 0 && (
-                <span style={{ marginLeft: 8, background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 700, borderRadius: '999px', padding: '1px 6px' }}>
-                  {unreadCount}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, gap: 8 }}>
+            {selectMode ? (
+              <>
+                <button
+                  onClick={() => setSelectedIds(new Set(notifications.map((n) => n.id)))}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, color: 'var(--accent)', padding: '2px 6px' }}
+                >
+                  Select All
+                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {selectedIds.size > 0 && (
+                    <>
+                      <button
+                        onClick={markSelectedRead}
+                        title="Mark selected as read"
+                        aria-label="Mark selected as read"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 4, display: 'flex' }}
+                      >
+                        <CheckCheck size={16} />
+                      </button>
+                      <button
+                        onClick={deleteSelected}
+                        title="Delete selected"
+                        aria-label="Delete selected"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger, #ef4444)', padding: 4, display: 'flex' }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => { setSelectMode(false); setSelectedIds(new Set()) }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text-tertiary)', padding: '2px 6px' }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setSelectMode(true)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text-tertiary)', padding: '2px 6px' }}
+                >
+                  Select
+                </button>
+                <span style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)', flex: 1, textAlign: 'center' }}>
+                  Notifications
+                  {unreadCount > 0 && (
+                    <span style={{ marginLeft: 8, background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 700, borderRadius: '999px', padding: '1px 6px' }}>
+                      {unreadCount}
+                    </span>
+                  )}
                 </span>
-              )}
-            </span>
-            {unreadCount > 0 && (
-              <button onClick={markAllRead} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--accent)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
-                Mark all read
-              </button>
+                {unreadCount > 0 ? (
+                  <button onClick={markAllRead} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--accent)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
+                    Mark all read
+                  </button>
+                ) : (
+                  <span style={{ width: 52 }} />
+                )}
+              </>
             )}
           </div>
           <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -858,24 +943,39 @@ export default function AppShell({ children }) {
             )}
             {!notifLoading && notifications.map((n) => {
               const NIcon = NOTIF_ICONS[n.type] || FileText
+              const isSelected = selectedIds.has(n.id)
               return (
                 <div
                   key={n.id}
                   onClick={() => {
+                    if (selectMode) {
+                      setSelectedIds((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(n.id)) next.delete(n.id)
+                        else next.add(n.id)
+                        return next
+                      })
+                      return
+                    }
                     if (!n.is_read) markOneRead(n.id)
                     setShowNotifPanel(false)
                     if (n.action_url) navigate(n.action_url)
                   }}
                   style={{
                     padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)',
-                    cursor: n.action_url ? 'pointer' : 'default',
-                    background: n.is_read ? 'transparent' : 'rgba(0,200,150,0.04)',
+                    cursor: 'pointer',
+                    background: isSelected ? 'var(--accent-glow)' : n.is_read ? 'transparent' : 'rgba(0,200,150,0.04)',
                     display: 'flex', gap: 10, alignItems: 'flex-start',
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={(e) => { if (n.action_url) e.currentTarget.style.background = 'var(--bg-surface-2)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = n.is_read ? 'transparent' : 'rgba(0,200,150,0.04)' }}
+                  onMouseEnter={(e) => { if (!selectMode && n.action_url) e.currentTarget.style.background = 'var(--bg-surface-2)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = isSelected ? 'var(--accent-glow)' : n.is_read ? 'transparent' : 'rgba(0,200,150,0.04)' }}
                 >
+                  {selectMode && (
+                    <span style={{ flexShrink: 0, display: 'flex', marginTop: 2 }}>
+                      {isSelected ? <CheckSquare size={16} color="var(--accent)" /> : <Square size={16} color="var(--text-tertiary)" />}
+                    </span>
+                  )}
                   <span style={{ flexShrink: 0, color: 'var(--text-tertiary)', display: 'flex', marginTop: 2 }}>
                     <NIcon size={16} />
                   </span>
@@ -890,7 +990,7 @@ export default function AppShell({ children }) {
                       {relativeTime(n.created_at)}
                     </p>
                   </div>
-                  {!n.is_read && <div style={{ width: 7, height: 7, background: '#00c896', borderRadius: '50%', flexShrink: 0, marginTop: 4 }} />}
+                  {!selectMode && !n.is_read && <div style={{ width: 7, height: 7, background: '#00c896', borderRadius: '50%', flexShrink: 0, marginTop: 4 }} />}
                 </div>
               )
             })}

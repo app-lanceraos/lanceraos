@@ -1,5 +1,6 @@
 // src/pages/Settings.jsx
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Bell, Briefcase, Laptop2, Mail as MailIcon, Receipt, ShieldCheck, User as UserIcon,
 } from 'lucide-react'
@@ -21,7 +22,7 @@ const TABS = [
   { id: 'security', label: 'Security', Icon: ShieldCheck },
   { id: 'sessions', label: 'Sessions', Icon: Laptop2 },
   { id: 'notifications', label: 'Notifications', Icon: Bell },
-  { id: 'smtp', label: 'Email Sending', Icon: MailIcon },
+  { id: 'smtp', label: 'Custom Email', Icon: MailIcon },
 ]
 
 function TabNav({ active, onChange }) {
@@ -54,7 +55,15 @@ function TabNav({ active, onChange }) {
 
 export default function Settings() {
   useTitle('LanceraOS | Settings')
-  const [activeTab, setActiveTab] = useState('account')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const VALID_TABS = ['account', 'business', 'tax', 'security', 'sessions', 'notifications', 'smtp']
+  const tabFromUrl = searchParams.get('tab')
+  const [activeTab, setActiveTabState] = useState(VALID_TABS.includes(tabFromUrl) ? tabFromUrl : 'account')
+
+  const setActiveTab = (tab) => {
+    setActiveTabState(tab)
+    setSearchParams({ tab }, { replace: true })
+  }
 
   // Business and Tax both read/write the same FreelancerProfile object —
   // fetched once here so switching between those two tabs doesn't

@@ -60,3 +60,23 @@ def revoke_session(request, session_id):
         # a refresh token that no longer resolves to anything.
         clear_auth_cookies(response)
     return response
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def rename_session_device(request, session_id):
+    try:
+        session = Session.objects.get(pk=session_id, user=request.user)
+    except (Session.DoesNotExist, ValueError, TypeError):
+        return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if session.trusted_device is None:
+        return Response(
+            {'error': 'This session predates device recognition and cannot be renamed. It will be replaced by a renameable one on its next login.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    custom_name = request.data.get('custom_name', '').strip()[:100]
+    session.trusted_device.custom_name = custom_name
+    session.trusted_device.save(update_fields=['custom_name'])
+    return Response(SessionSerializer(session, context={'current_session_id': _current_session_id(request)}).data)

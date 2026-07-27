@@ -1,6 +1,7 @@
 // src/store/authStore.js
 import { create } from 'zustand'
 import api from '@/lib/api'
+import { getCookie } from '@/lib/api'
 
 const useAuthStore = create((set, get) => ({
   user: null,
@@ -13,6 +14,15 @@ const useAuthStore = create((set, get) => ({
 
   // Call exactly once, on app mount.
   initialize: async () => {
+    // No hint cookie -> definitely no session -> skip the network call
+    // entirely, rather than firing it and getting back an expected but
+    // noisy 401. If the hint IS present, it doesn't prove anything on
+    // its own (the underlying session could have been revoked or
+    // expired since) — the real /auth/me/ check still runs to confirm.
+    if (!getCookie('lanceraos_has_session')) {
+      set({ user: null, isAuthenticated: false, deletionScheduledAt: null, isInitializing: false })
+      return
+    }
     try {
       const res = await api.get('/auth/me/')
       set({

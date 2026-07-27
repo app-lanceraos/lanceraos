@@ -64,6 +64,8 @@ export default function Login() {
   const navigate = useNavigate()
   const location = useLocation()
   const loginSuccess = useAuthStore((s) => s.loginSuccess)
+  const setDeletionWarning = useAuthStore((s) => s.setDeletionWarning)
+  const logout = useAuthStore((s) => s.logout)
 
   const [form, setForm] = useState({ login: '', password: '' })
   const [rememberMe, setRememberMe] = useState(false)
@@ -154,6 +156,7 @@ export default function Login() {
     setRestoring(true)
     try {
       await api.post('/auth/deletion/cancel/')
+      setDeletionWarning(null)
       setDeletionData(null)
       navigate(getRedirectPath(), { replace: true })
     } catch (err) {
@@ -164,9 +167,18 @@ export default function Login() {
     }
   }
 
-  const handleContinueWithDeletion = () => {
+  const handleContinueWithDeletion = async () => {
+    const scheduledDate = deletionData?.deletion_scheduled_at
     setDeletionData(null)
-    navigate(getRedirectPath(), { replace: true })
+    await logout() // revokes the session this login just created, clears cookies
+    navigate('/login', {
+      replace: true,
+      state: {
+        message: scheduledDate
+          ? `Your account will be deleted on ${new Date(scheduledDate).toLocaleDateString('en-PK', { dateStyle: 'long' })}. You can log in again anytime before then to restore it.`
+          : 'Your account deletion is still scheduled. You can log in again anytime before then to restore it.',
+      },
+    })
   }
 
   const handleOAuthSuccess = (data) => {

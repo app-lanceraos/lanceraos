@@ -47,6 +47,7 @@ urlpatterns = [
     # ── Sessions ─────────────────────────────────────────────────
     path('sessions/', sessions.list_sessions, name='sessions_list'),
     path('sessions/<uuid:session_id>/', sessions.revoke_session, name='session_revoke'),
+    path('sessions/<uuid:session_id>/rename/', sessions.rename_session_device, name='session_rename'),
 
     # ── Email change (3-step: current inbox -> new email + password -> new inbox) ──
     path('email-change/request/', security.request_email_change, name='email_change_request'),

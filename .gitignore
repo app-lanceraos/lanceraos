@@ -28,6 +28,8 @@ staticfiles/
 # Celery
 celerybeat-schedule
 celerybeat.pid
+celerybeat-schedule-shm
+celerybeat-schedule-wal
 
 # macOS system files
 .DS_Store

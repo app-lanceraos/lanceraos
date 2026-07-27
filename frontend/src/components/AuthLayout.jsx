@@ -200,6 +200,20 @@ export default function AuthLayout({ children, formMaxWidth = '22.5rem' }) {
           --link-purple:  #A89CF2;
           --doto-purple:  #B2A7F4;
 
+          /* Auth pages are pre-login — there's no user/session yet for a
+             "theme preference" to even represent, and this palette is
+             deliberately fixed regardless of the in-app theme (see
+             DESIGN.md). These three are shared, theme-dependent tokens
+             (set globally for AppShell's use) that would otherwise leak
+             in via WordmarkSVG/LogoSVG and break that fixed palette —
+             overridden locally here so the auth pages never depend on
+             whatever theme happens to be active elsewhere in the app.
+             --logo-body/--logo-mark are already theme-invariant globally,
+             but pinned here too as defense against that ever changing. */
+          --wordmark: #FFFFFF;
+          --logo-body: #8074C0;
+          --logo-mark: #050508;
+
           --ring-line:    rgba(160,135,255,0.28);
           --node-card-bg: rgba(6, 3, 20, 0.32);
           --node-border:  rgba(150,110,255,0.9);

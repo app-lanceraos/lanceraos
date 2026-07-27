@@ -29,7 +29,7 @@ def _build_refresh_token(user, days):
     return refresh
 
 
-def issue_tokens_and_session(user, request, remember_me=False):
+def issue_tokens_and_session(user, request, remember_me=False, trusted_device=None):
     """
     Creates a brand-new session — used for login, 2FA-verify, and OAuth,
     i.e. anywhere a genuinely new device/session is starting. Enforces
@@ -46,6 +46,7 @@ def issue_tokens_and_session(user, request, remember_me=False):
         device_name=normalize_user_agent(get_user_agent(request)),
         ip_address=get_client_ip(request),
         lifetime_days=days,
+        trusted_device=trusted_device,
     )
 
     # The session doesn't exist yet when the refresh token is built above

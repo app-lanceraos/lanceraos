@@ -1021,4 +1021,25 @@ DO NOT recreate either asset using CSS, Unicode, or any approximation.
 | Browser tab favicon | ✓ /logo.svg (index.html) | ✗ |
 | Email templates | ✓ img tag (Cloudinary hosted) | ✗ |
 | PDF documents (WeasyPrint) | ✓ img tag | ✗ |
+
+---
+
+## 14. Notifications
+
+**Every notification must navigate somewhere when clicked — this is a hard rule, not a
+preference.** A notification with nowhere to go is a broken notification. Concretely: every event
+in the notification bell's allowlist (`core/notifications.py`'s `NOTIFICATION_EVENTS`) must have a
+corresponding, real, non-null entry in `EVENT_ACTION_URLS` — never left to fall through to `None`.
+When a future module adds a new event to that allowlist, it must add its `action_url` in the same
+change, not as a follow-up. Verified as actually working, not just planned: all 8 current event
+types return real, non-null `action_url` values, confirmed via direct API testing.
+
+"Dismissing" a notification (delete, from the user's point of view) must never touch the
+underlying `AuditLog` row it's derived from — `AuditLog` is immutable and append-only by design
+(see its own docstring: it has to say what the system believed was true *at the time*, never
+edited afterward). Dismissal is tracked separately, on `NotificationRead.dismissed_at`, and only
+hides the notification from what the bell shows — the security record itself is untouched. This
+was verified directly, not assumed: dismissing a notification removes it from
+`GET /api/notifications/` while a direct database query confirms the `AuditLog` row is still
+present, unchanged.
 | Public invoice/contract pages | ✓ img tag | ✗ |

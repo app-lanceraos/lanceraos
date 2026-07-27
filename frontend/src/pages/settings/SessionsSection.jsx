@@ -1,6 +1,6 @@
 // src/pages/settings/SessionsSection.jsx
 import { useEffect, useState } from 'react'
-import { Laptop, Smartphone, Monitor } from 'lucide-react'
+import { Laptop, Pencil, Smartphone, Monitor } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTimedMessage from '@/hooks/useTimedMessage'
@@ -30,7 +30,20 @@ export default function SessionsSection() {
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
   const [revokingId, setRevokingId] = useState(null)
+  const [renamingId, setRenamingId] = useState(null)
   const { message, show, clear } = useTimedMessage()
+
+  const handleRename = async (session, newName) => {
+    setRenamingId(null)
+    const trimmed = newName.trim()
+    if (trimmed === (session.custom_name || '')) return
+    try {
+      const res = await api.patch(`/auth/sessions/${session.id}/rename/`, { custom_name: trimmed })
+      setSessions((prev) => prev.map((s) => (s.id === session.id ? res.data : s)))
+    } catch (err) {
+      show('error', err.response?.data?.error || 'Failed to rename device.')
+    }
+  }
 
   const loadSessions = () => {
     setLoading(true)
@@ -86,9 +99,30 @@ export default function SessionsSection() {
                   <Icon size={18} color="var(--text-tertiary)" style={{ flexShrink: 0 }} />
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                        {session.device_name || 'Unknown device'}
-                      </span>
+                      {renamingId === session.id ? (
+                        <input
+                          autoFocus
+                          defaultValue={session.custom_name || ''}
+                          placeholder={session.device_name || 'Unknown device'}
+                          onBlur={(e) => handleRename(session, e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setRenamingId(null) }}
+                          style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 6, padding: '2px 6px', width: 160 }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {session.custom_name || session.device_name || 'Unknown device'}
+                        </span>
+                      )}
+                      {session.can_rename && renamingId !== session.id && (
+                        <button
+                          onClick={() => setRenamingId(session.id)}
+                          title="Rename this device"
+                          aria-label="Rename this device"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 2, display: 'flex' }}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      )}
                       {session.is_current && (
                         <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-glow-md)', padding: '2px 8px', borderRadius: 999 }}>
                           This device

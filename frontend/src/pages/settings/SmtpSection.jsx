@@ -165,7 +165,7 @@ export default function SmtpSection() {
 
   if (loading) {
     return (
-      <Card title="Email Sending">
+      <Card title="Custom Email">
         <p style={{ fontSize: '0.875rem', color: 'var(--text-tertiary)' }}>Loading…</p>
       </Card>
     )
@@ -179,7 +179,7 @@ export default function SmtpSection() {
         </div>
       )}
 
-      <Card title="Email Sending" subtitle="Send client-facing emails (invoices, receipts) from your own address instead of noreply@lanceraos.com">
+      <Card title="Custom Sending" subtitle="Send client-facing emails (invoices, receipts) from your own address instead of noreply@lanceraos.com">
         {status?.custom_smtp_verified ? (
           <div style={{ padding: '12px 14px', background: 'var(--success-bg)', border: '1px solid var(--success-border)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

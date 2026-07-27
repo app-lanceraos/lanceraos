@@ -96,3 +96,23 @@ class ApiRequestLog(models.Model):
 
     def __str__(self):
         return f'{self.method} {self.path} -> {self.status_code} [{self.request_id}]'
+
+
+class NotificationRead(models.Model):
+    """
+    Per-user, per-notification UI state — read and dismissed both live
+    here, deliberately kept off AuditLog itself (immutable and
+    append-only by design). "Dismissed" hides a notification from the
+    bell; it never deletes the underlying audit record.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_reads',
+    )
+    audit_log = models.ForeignKey(AuditLog, on_delete=models.CASCADE, related_name='read_by')
+    read_at = models.DateTimeField(auto_now_add=True)
+    dismissed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'notification_reads'
+        unique_together = [['user', 'audit_log']]

@@ -450,12 +450,23 @@ class OnboardingSerializer(serializers.Serializer):
 
 class SessionSerializer(serializers.ModelSerializer):
     is_current = serializers.SerializerMethodField()
+    custom_name = serializers.SerializerMethodField()
+    can_rename = serializers.SerializerMethodField()
 
     class Meta:
         model = Session
-        fields = ['id', 'device_name', 'ip_address', 'created_at', 'last_used_at', 'expires_at', 'is_current']
+        fields = ['id', 'device_name', 'custom_name', 'can_rename', 'ip_address', 'created_at', 'last_used_at', 'expires_at', 'is_current']
         read_only_fields = fields
 
     def get_is_current(self, obj):
         current_session_id = self.context.get('current_session_id')
         return current_session_id is not None and obj.pk == current_session_id
+
+    def get_custom_name(self, obj):
+        return obj.trusted_device.custom_name if obj.trusted_device and obj.trusted_device.custom_name else None
+
+    def get_can_rename(self, obj):
+        # Only sessions linked to a recognized device can be renamed —
+        # legacy sessions created before this link existed have nowhere
+        # to durably store a nickname.
+        return obj.trusted_device is not None

@@ -23,7 +23,7 @@ const api = axios.create({
 // frontend has to read it and echo it back in a header for Django's
 // double-submit check to pass.
 
-function getCookie(name) {
+export function getCookie(name) {
   const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'))
   return match ? decodeURIComponent(match[1]) : null
 }
@@ -126,7 +126,12 @@ api.interceptors.response.use(
     isRefreshing = true
 
     try {
-      await axios.post(`${BASE_URL}/auth/token/refresh/`, {}, { withCredentials: true })
+      await ensureCsrfCookie()
+      const csrfToken = getCookie('csrftoken')
+      await axios.post(`${BASE_URL}/auth/token/refresh/`, {}, {
+        withCredentials: true,
+        headers: csrfToken ? { 'X-CSRFToken': csrfToken } : {},
+      })
       flushQueue(null)
       return api(originalRequest)
     } catch (refreshError) {

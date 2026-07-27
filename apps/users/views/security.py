@@ -16,7 +16,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from core.observability import log_event
+from core.observability import get_client_ip, get_user_agent, log_event
 
 from ..authentication import enforce_csrf_standalone
 from ..cookies import REFRESH_COOKIE_NAME, set_auth_cookies
@@ -143,10 +143,14 @@ def toggle_2fa(request):
     if not user.check_password(password):
         return Response({'error': 'Incorrect password.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    from core.observability import normalize_user_agent
+    ip = get_client_ip(request)
+    ua_normalized = normalize_user_agent(get_user_agent(request))
+
     if action == 'enable':
         user.two_fa_enabled = True
         user.save(update_fields=['two_fa_enabled'])
-        send_2fa_enabled_email(user)
+        send_2fa_enabled_email(user, ip, ua_normalized, timezone.now())
         log_event('2fa_enabled', user=user, request=request)
         return Response({'message': '2FA enabled.', 'two_fa_enabled': True, 'user': UserSerializer(user).data})
 
@@ -155,8 +159,13 @@ def toggle_2fa(request):
         user.two_fa_code = ''
         user.two_fa_code_expiry = None
         user.save(update_fields=['two_fa_enabled', 'two_fa_code', 'two_fa_code_expiry'])
-        user.trusted_devices.all().delete()
-        send_2fa_disabled_email(user)
+        # Only revokes the 2FA-skip privilege, NOT device recognition itself
+        # — TrustedDevice rows also drive the new-device-login email now
+        # (see checklist items 1-2), so wiping them entirely here would
+        # cause a burst of "new device" emails for already-known devices
+        # on their next login, purely because 2FA was turned off.
+        user.trusted_devices.update(skip_2fa=False)
+        send_2fa_disabled_email(user, ip, ua_normalized, timezone.now())
         log_event('2fa_disabled', user=user, request=request)
         return Response({'message': '2FA disabled.', 'two_fa_enabled': False, 'user': UserSerializer(user).data})
 
