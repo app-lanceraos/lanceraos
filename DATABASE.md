@@ -1,918 +1,404 @@
-# LanceraOS - v2 — Complete AI Chat Context Document
-Please confirm you have read and understood this context before we begin."
----
+# DATABASE.md — LanceraOS v2 Schema Reference
 
-## 1. What Is LanceraOS
+**A note on this document's history**: the original `DATABASE.md` was lost — a filename mixup
+(the same class of issue that briefly affected `apps/users/models.py`/`apps/users/urls.py`
+earlier in this project) meant an older copy of `CLAUDE.md` ended up saved under this filename
+instead, both locally and in the uploaded project files, and the real document wasn't recoverable
+from anywhere in this conversation. This is a **reconstruction**, built directly from the actual,
+current model files (`apps/users/models.py`, `core/models.py`) — accurate to what's really in the
+database today, but not a recovery of whatever reasoning or phrasing the original document used.
+Treat this as the new authoritative version going forward.
 
-LanceraOS is a production-grade, commercial SaaS platform — not a
-university project, not a prototype. It is an AI-powered financial
-management and business operations platform built exclusively for
-Pakistani freelancers who earn income from international clients
-through platforms like Upwork, Fiverr, Toptal, and direct contracts.
-
-The platform is the only product in the Pakistani market that combines:
-- Professional invoicing with PKR conversion and FBR tax compliance
-- Payoneer and Wise CSV income import
-- SRO 586(I)/2022 IT export tax exemption checking
-- AI-powered proposal writing
-- Financial health scoring
-- Digital contract signing
-
-Competitors either serve the global market without Pakistani localisation
-(FreshBooks, Bonsai, Wave) or address only tax filing without business
-management (Befiler). LanceraOS occupies the gap between them.
-
-Target user: Pakistani freelancer aged 18-35, earning USD 500-5000/month
-from international clients, receiving payments via Payoneer or Wise,
-operating as a sole proprietor, with limited FBR tax knowledge.
-
-Business model: Freemium. Free tier covers basics. Pro tier at
-5$/month unlocks all AI features, unlimited invoices, CSV import,
-and advanced reporting.
-
-Domain: lanceraos.com
-GitHub: github.com/lanceraos
-Developer: Solo founder - Ali Amir
+Per `CLAUDE.md`'s Database Design Rules: every table below answers the same 6 questions —
+**Mutable? Soft deleted? Audit trail? Indexed? Encrypted? Cascade behavior?** — plus its schema
+and the reasoning behind real design choices.
 
 ---
 
-## 2. Tech Stack — Exact Versions, No Deviations
+## `users` (`User`)
 
-### Backend
-- Language: Python 3.13
-- Framework: Django 5.2 LTS + Django REST Framework 3.15
-- Database: PostgreSQL 17
-- Cache / Broker: Redis 8
-- Background tasks: Celery 5 + Celery Beat
-- ASGI server: Daphne
-- WebSockets: Django Channels 4
-- Authentication: djangorestframework-simplejwt
-- OAuth: hand-rolled (Google + Facebook), same account-linking logic for
-  both providers — not django-allauth. v1's working Google flow was
-  hand-rolled and already handled account-linking collisions correctly;
-  allauth would mean re-deriving that same logic inside its own hooks
-  for no benefit. See DECISIONS.md.
-- Email: Resend HTTP API (platform emails) + Custom SMTP per user (client-facing emails)
-- PDF generation: WeasyPrint
-- Media storage: Cloudinary
-- AI inference: Groq API
-- AI model (fast tasks): openai/gpt-oss-20b
-- AI model (complex writing): llama-3.3-70b-versatile
-- Encryption: cryptography library (Fernet)
-- Node.js: 24 LTS
+Django's `AbstractUser`, extended. Email-first (`USERNAME_FIELD = 'email'`), UUID primary key
+(prevents account enumeration via sequential IDs on a financial application).
 
+**Schema** (fields beyond what `AbstractUser` already provides):
+```
+id                          UUIDField, primary key
+email                        EmailField, unique
+is_email_verified            BooleanField, default False
+date_of_birth                 DateField, nullable
 
-### Frontend
-- Framework: React 19
-- Build tool: Vite
-- State management: Zustand
-- Routing: React Router v7
-- Charts: Recharts
-- Styling: Inline styles + CSS custom properties (NO Tailwind, NO CSS modules)
-- HTTP client: Axios with cookie-based auth (withCredentials), silent 401 refresh
-- Icons: lucide-react exclusively — never emojis or bare Unicode symbols
-  (⚠✓✗ etc.) anywhere in rendered UI. See DESIGN.md Section 0b.
+two_fa_enabled                BooleanField, default False
+two_fa_code                    CharField(6), blank
+two_fa_code_expiry              DateTimeField, nullable
 
-### Infrastructure
-- Backend hosting: Railway
-- Frontend hosting: Vercel
-- Database hosting: Railway managed PostgreSQL
-- DNS: Cloudflare
-- Domain: Hostinger (lanceraos.com)
+failed_login_attempts           IntegerField, default 0
+account_locked_until              DateTimeField, nullable
+last_login_ip                      GenericIPAddressField, nullable  (display-only — see below)
+last_login_device                    CharField(300), blank            (display-only — see below)
 
----
+pending_email                          EmailField, blank
+pending_email_expires_at                 DateTimeField, nullable
 
-## 3. Architecture Rules — Follow These Without Being Asked
+password_history                          JSONField (list), default []
+password_changed_at                         DateTimeField, nullable
 
-These are non-negotiable decisions made at the project level.
-Every module must follow them exactly.
+is_deleted                                    BooleanField, default False
+deleted_at                                      DateTimeField, nullable
+deletion_requested_at                             DateTimeField, nullable
+deletion_scheduled_at                               DateTimeField, nullable
+anonymized_at                                         DateTimeField, nullable
+```
 
-### Backend rules
-1. All API views use @api_view and @permission_classes decorators.
-   Never use class-based views (ModelViewSet, APIView, etc.)
-2. USE_TZ = False in settings. The platform stores and operates on
-   Pakistan Standard Time only, with zero server-side timezone
-   conversion anywhere. FreelancerProfile.timezone (user-set, defaults
-   to Asia/Karachi) is used exclusively for FRONTEND display
-   formatting — it never drives any backend conversion logic.
-3. All emails go through a shared send_email() utility that calls
-   the Resend HTTP API on port 443. Never use Django's email backend
-   or SMTP directly for LanceraOS's own platform emails. (Django's SMTP
-   backend IS still used, deliberately, inside apps/users/views/smtp.py's
-   save_custom_smtp() — but that tests a USER'S OWN mail server, a
-   different operation from LanceraOS sending its own mail.)
-4. All AI calls go through a shared call_groq() utility function
-   in core/ai.py. Never call the Groq API directly from views.
-5. All prompts live in a prompts.py file inside the relevant app.
-   Never hardcode prompt strings inside view functions.
-6. Sensitive fields (SMTP passwords, API keys stored per user) are
-   encrypted with Fernet before saving. Never store them in plain text.
-   Fields that also need a uniqueness constraint (CNIC, NTN, PSEB
-   registration number) additionally carry an HMAC blind-index column
-   (`*_hash`, unique=True) using a SEPARATE key (BLIND_INDEX_KEY) from
-   the Fernet encryption key (ENCRYPTION_KEY) — see DECISIONS.md.
-7. Passwords are hashed with Argon2. Never bcrypt, never plain text.
-8. All database queries go through Django ORM. No raw SQL anywhere.
-9. All background tasks use @shared_task decorator, not @app.task.
-10. Every state-changing action writes a row to the shared core.AuditLog
-    table (replaces the pattern of one audit table per app).
-11. Every API request is logged by middleware to core.ApiRequestLog.
-    Request bodies are logged with sensitive fields auto-redacted.
-    Response bodies are only logged when status_code >= 500.
-12. Rate limiting is applied at three tiers:
-    - Strict: auth endpoints (login, register, OTP)
-    - Moderate: data-mutation endpoints
-    - Generous: read-only endpoints
-    Implemented via explicit Django-cache checks inside each view, not
-    DRF's scoped-throttle mechanism (declaring throttle rates without
-    attaching throttle_scope to a view does nothing — confirmed as dead
-    config in v1 and not carried forward).
-13. UUIDs as primary keys for all models (not auto-increment integers).
-    This prevents enumeration attacks on a financial application.
-14. CSRF protection is mandatory because auth uses httpOnly cookies.
-15. Input validation uses DRF serializers with explicit field definitions.
-    Never trust client-side validation alone.
+1. **Mutable?** Yes — this is a live account record, updated throughout its life (login
+   timestamps, 2FA state, lockout counters, etc.).
+2. **Soft deleted?** Yes, and specifically **anonymized in place, never hard-deleted**. Future
+   modules' financial records (invoices, payments) will hold a `PROTECT` FK to `User`, so the row
+   must continue to exist even after the person is long gone — `anonymize()` (below) strips PII
+   instead of removing the row.
+3. **Audit trail?** Indirectly — individual security-relevant actions (login, password change, 2FA
+   toggle, etc.) are logged to `AuditLog` by the views that perform them, not by the model itself.
+4. **Indexed?** `email`, `username`, `is_email_verified`, `is_deleted`, `deletion_scheduled_at` —
+   the last two specifically because the daily anonymization sweep filters on them.
+5. **Encrypted?** No PII on this model itself is encrypted (CNIC/NTN/PSEB live on
+   `FreelancerProfile` instead, where the actual tax-identity data is). Passwords use Django's
+   standard Argon2 hashing (not "encryption" in the reversible sense).
+6. **Cascade behavior?** `Session`, `TrustedDevice`, and `UserSocialAccount` all `CASCADE` from
+   `User` — pure auth artifacts with no independent value once the account is gone.
+   `FreelancerProfile` is a `OneToOneField` from its own side, also `CASCADE`.
 
-### Custom Email (SMTP) Rules
+**`last_login_ip`/`last_login_device` — important nuance**: these fields exist and are still
+updated on every login, but they are **not** what decides whether a login email fires anymore.
+That decision now runs through `TrustedDevice` (see below) — these two fields are legacy/display
+metadata only. See `DECISIONS.md` for the bug this distinction was introduced to fix.
 
-Every email sent TO A CLIENT byt the LanceraOS user goes through this decision chain:
-  1. Does this user have custom SMTP configured and verified? 
-     YES → send via their SMTP server
-     NO  → send via Resend HTTP API from noreply@lanceraos.com
-
-2. Client-facing emails that use custom SMTP when configured:
-   - Invoice delivery
-   - Invoice reminders
-   - Payment receipts
-   - Proposal delivery
-   - Contract delivery
-   - Client portal PIN
-   - Client messages
-
-3. Emails that ALWAYS come from lanceraos.com regardless of custom SMTP:
-   - User registration / email verification
-   - Password reset
-   - 2FA OTP codes
-   - Security alerts (new login, password changed etc)
-   - Subscription notifications
-   These are platform security emails. They must never come from
-   a user-controlled address.
-
-4. If custom SMTP fails (wrong credentials, server down, timeout):
-   - Immediately fall back and resend via Resend HTTP API
-   - Send an in-app notification to the user:
-     "Your email to [client] was sent from noreply@lanceraos.com
-      because your custom email failed. Check your SMTP settings."
-   - Log the failure with: user_id, smtp_host, error_message,
-     fallback_used=True, timestamp
-   - Do NOT tell the client the email came from a fallback
-
-5. Custom SMTP credentials storage:
-   - Host, port, username stored as plain text in user_profile
-   - Password encrypted with Fernet before saving
-   - Password never returned in any API response
-   - Password only decrypted inside the email sending utility,
-     never in views or serializers
-
-6. SMTP settings the user configures:
-   - SMTP host (e.g. smtp.gmail.com)
-   - SMTP port (587 recommended, 465 also supported)
-   - Username (usually their email address)
-   - Password (app password for Gmail, regular password for others)
-   - From name (e.g. "Ali Amir - Web Developer")
-   - From email (e.g. ali@mybusiness.com)
-
-7. Before saving SMTP settings, always send a test email to the
-   user's own registered email address to verify credentials work.
-   If the test fails, reject the settings with a clear error message.
-
-### Observability Rules
-
-Every operation that crosses a service boundary gets a request_id.
-This is how you investigate "why didn't this happened?"
-
-1. Every incoming HTTP request gets a UUID assigned by middleware
-   (core.middleware.RequestLoggingMiddleware). This request_id is:
-   - Added to every log line for that request
-   - Passed to every Celery task spawned by that request
-   - Returned in the response header as X-Request-ID
-   - Stored in core.ApiRequestLog
-
-2. Every Celery task logs:
-   - task_id (Celery's own ID)
-   - request_id (from the HTTP request that spawned it)
-   - started_at, completed_at
-   - success or failure with error detail
-
-3. Every email sent logs:
-   - request_id
-   - recipient email
-   - subject
-   - sent_via (resend or custom_smtp)
-   - smtp_host (if custom)
-   - provider_message_id (Resend's ID if used)
-   - status (sent / failed / fallback_used)
-   - timestamp
-
-4. Every PDF generated logs:
-   - request_id
-   - document_type (invoice / contract / statement / certificate)
-   - generated_at
-   - duration_ms
-   - success or error
-
-5. When investigating a support issue:
-   - Find the request_id from core.ApiRequestLog by user + timestamp
-   - Search all logs for that request_id
-   - You get a complete timeline: HTTP request → task queued →
-     PDF generated → email attempted → fallback or success
-
-### Frontend rules
-1. All styling uses inline style={{}} objects with CSS custom
-   properties (variables). Never Tailwind utility classes in JSX.
-   Never separate CSS files per component.
-2. All CSS tokens (colors, spacing, fonts, transitions) live in
-   src/styles/theme.css as CSS custom properties on :root.
-3. API calls go through a shared Axios instance in src/lib/api.js
-   that automatically attaches cookies (withCredentials: true) and
-   handles silent token refresh on 401 responses via the httpOnly
-   refresh cookie. Never handles raw access/refresh token strings —
-   those never appear in JS-visible storage or in any response body.
-4. Auth state (user object, loading, isAuthenticated) lives in
-   src/store/authStore.js using Zustand.
-5. The AppShell layout component (src/components/AppShell.jsx)
-   owns the sidebar, header, and main content frame. Page components
-   render inside it via React Router's Outlet. Page components
-   never define their own layout frame.
-   CURRENT STATE: AppShell.jsx as it exists today is a deliberately
-   minimal, functional placeholder (simple header with nav links, theme
-   toggle, logout) built only so Settings/Profile are reachable for
-   review — not the final sidebar-based design described in DESIGN.md.
-   The real AppShell (sidebar, liquid-glass nav pill, etc.) is separate
-   future work once there are enough pages/modules to navigate between.
-6. JWT tokens are stored in httpOnly cookies, never localStorage.
-7. WebSocket connection is managed by a shared hook
-   src/hooks/useWebSocket.js. Never open WebSocket connections
-   directly inside page components.
-
-### Database Design Rules
-
-Before writing any Django model, answer these 6 questions for every table:
-
-1. MUTABLE?
-   Can existing records be updated, or are they append-only?
-   Financial records (payments, invoices) should be append-only
-   where possible. Use status fields and new records instead of
-   editing existing ones.
-
-2. SOFT DELETED?
-   When a user "deletes" this record, do we actually delete it
-   or just hide it? Default to soft delete (deleted_at timestamp)
-   for anything with financial or legal significance.
-   Hard delete only for things with no business consequence.
-
-3. AUDIT TRAIL?
-   Does every change to this record need to be tracked?
-   If yes, write to core.AuditLog on every create/update/delete.
-
-4. INDEXED?
-   Which fields will be used in WHERE clauses or ORDER BY?
-   Those need database indexes. At minimum: user_id on every
-   user-owned table, status on lifecycle tables, created_at
-   on tables that are queried by date range.
-
-5. ENCRYPTED?
-   Does this field contain PII or credentials that must be
-   encrypted at rest? SMTP passwords, NTN numbers, and any
-   field that would cause legal or financial harm if the
-   database were breached. If the field also needs a uniqueness
-   constraint, add a separate HMAC blind-index column rather than
-   trying to enforce uniqueness on the encrypted value directly
-   (Fernet's randomized IV makes that impossible).
-
-6. CASCADE BEHAVIOR?
-   What happens to this record when a related record is deleted?
-   PROTECT (block deletion) for financial records.
-   SET_NULL for optional relationships.
-   CASCADE only when child records have no independent meaning.
-
-### Security baseline (applies to every module)
-- SQL injection: ORM parameterised queries only, no raw SQL
-- XSS: React JSX escaping handles output; never use
-  dangerouslySetInnerHTML with user content
-- CSRF: CSRF tokens on all state-changing requests
-- Secrets: all API keys and credentials in environment variables,
-  never hardcoded, never committed to git
-- Auth: every protected endpoint requires @permission_classes([IsAuthenticated])
-- HTTPS: enforced in production; Secure flag on all cookies
+**Key methods**: `is_account_locked()`, `increment_failed_attempts()` (tiered lockout — 5 attempts
+→ 15min, 11 → 60min, 16+ → 24h), `is_oauth_only()`, `anonymize()` (strips all PII on both `User`
+and its linked `FreelancerProfile`, sets `is_active=False`, deletes all `Session`/`TrustedDevice`/
+`UserSocialAccount` rows for the account).
 
 ---
 
-### Architecture Decision Rule
+## `freelancer_profiles` (`FreelancerProfile`)
 
-All decisions in this document are current best decisions,
-not permanent commitments. When a better approach is found:
-- Update CLAUDE.md
-- Add an entry to DECISIONS.md explaining what changed and why
-- Never silently change the architecture without recording the reason
+One-to-one with `User`. Everything that isn't core authentication state lives here: business
+details, tax identity, payment methods, notification preferences, custom SMTP config, onboarding
+data.
 
-## 4. Project Structure
+**Schema** (grouped by purpose):
+```
+id, user (OneToOne, CASCADE)
 
-lanceraos/                          <- Django project root
-├── config/
-│   ├── settings.py                 <- Django settings
-│   ├── urls.py                     <- Root URL configuration
-│   ├── celery.py                   <- Celery configuration
-│   ├── asgi.py                     <- ASGI config (Daphne + Channels)
-│   └── wsgi.py                     <- WSGI fallback entrypoint
-├── core/
-│   ├── ai.py              ← Shared Groq API utility (call_groq) [not yet built]
-│   ├── email.py            ← Resend HTTP API sender (send_email)
-│   ├── encryption.py        ← Fernet + HMAC blind-index helpers
-│   ├── middleware.py        ← Request ID injection + API request logging
-│   ├── models.py            ← AuditLog, ApiRequestLog
-│   ├── observability.py     ← Logging/request-metadata helpers used by all modules
-│   └── permissions.py       ← Shared DRF permission classes [not yet built]
-├── apps/
-│   ├── users/                      <- Auth, profile, settings — BUILT
-│   ├── invoices/                   <- Invoice lifecycle + client CRM + portal
-│   ├── payments/                   <- Income, expenses, P&L, CSV import
-│   ├── tax/                        <- FBR tax, SRO 586, income certificate
-│   ├── health/                     <- Financial health score
-│   ├── proposals/                  <- Proposals + AI writer
-│   ├── contracts/                  <- Contracts + digital signing
-│   └── subscriptions/              <- Free/Pro plans and enforcement
-├── frontend/                       <- React application
-│   ├── src/
-│   │   ├── App.jsx                 <- Routing root (BrowserRouter + all routes)
-│   │   ├── components/
-│   │   │   ├── AppShell.jsx        <- Layout: header, nav, frame (placeholder — see rule 5)
-│   │   │   ├── PrivateRoute.jsx    <- Redirects to /login if not authenticated
-│   │   │   ├── PublicRoute.jsx     <- Redirects logged-in users away from Login/Register
-│   │   │   ├── Card.jsx, FormField.jsx, FormSelect.jsx,
-│   │   │   │   FosAlert.jsx, SaveButton.jsx  <- Shared authenticated-app primitives,
-│   │   │   │   wrapping the .fos-* classes (see DESIGN.md Section 6 exception)
-│   │   │   └── AuthField.jsx, AuthButton.jsx, AuthAlert.jsx,
-│   │   │       AuthSelect.jsx, AuthLayout.jsx  <- Auth-page-only equivalents
-│   │   │       (fixed orbit palette, never theme-responsive — see DESIGN.md)
-│   │   ├── pages/                  <- One file per module page
-│   │   │   └── settings/           <- Settings page's 7 sections, one file each,
-│   │   │       plus validators.js  <- imported by Settings.jsx as a thin shell
-│   │   ├── store/
-│   │   │   └── authStore.js        <- Zustand auth state
-│   │   ├── lib/
-│   │   │   └── api.js              <- Shared Axios instance
-│   │   ├── hooks/
-│   │   │   └── useWebSocket.js     <- Shared WebSocket hook [not yet built]
-│   │   └── styles/
-│   │       └── theme.css           <- All CSS custom properties
-│   └── index.html
-├── CLAUDE.md                       <- Master context file (this document)
-├── .env                            <- Environment variables (never committed)
-├── .env.example                    <- Template with all required keys
-├── requirements.txt
-└── manage.py
+# Identity
+display_name, phone
 
----
+# Tax identity — Fernet-encrypted value + separate HMAC blind-index column each
+cnic_encrypted, cnic_hash (unique, nullable)
+ntn_encrypted, ntn_hash (unique, nullable)
+pseb_registered (plain bool — see note below), pseb_encrypted, pseb_hash (unique, nullable)
 
-## 5. Modules — What Exists and What Each Does
+# Business
+logo, logo_public_id, business_name, address_line1/2, city, country,
+default_currency, default_payment_terms
 
-### Module 1 — Users (Authentication + Profile + Settings)
-Status: Backend complete. Frontend complete (12 pages, 127 tests passing).
-App: apps/users/
+# Payment methods
+bank_name, bank_account_number, jazzcash_number, easypaisa_number,
+payoneer_email, wise_profile_id, wise_access_token, wise_refresh_token
 
-Handles all authentication and user account management.
+# Onboarding (collected once, editable afterward via Settings > Business)
+onboarding_completed, profession, income_source, platform_used
 
-Registration: 3-step wizard (name + birthdate -> email + username ->
-password), submitted as a single API call after the wizard completes.
-Age must be >= 16. Email verification required before login.
+# Preferences
+language, timezone, default_send_method
 
-Auth providers: Email/password, Google OAuth, Facebook OAuth (hand-rolled,
-identical account-linking logic for both — see DECISIONS.md).
-Account linking: if a user registers via email then tries Google or
-Facebook OAuth with the same email, it auto-links to the existing
-account. Never creates duplicate accounts.
+# Custom SMTP (Pro feature)
+custom_smtp_enabled, custom_smtp_host, custom_smtp_port, custom_smtp_username,
+custom_smtp_password (encrypted), custom_smtp_use_tls, custom_smtp_use_ssl,
+custom_smtp_from_name, custom_smtp_verified, custom_smtp_verified_at
 
-JWT strategy: access token 15 minutes, refresh token 30 days (90 days
-if Remember Me), stored in httpOnly cookies (never localStorage,
-never returned in any JSON response body). Silent background refresh
-works even when the access-token cookie has already expired. Maximum
-3 concurrent sessions per account, tracked via a first-class Session
-model (device, IP, refresh-token hash, timestamps) — 4th login evicts
-the least-recently-used session. Sessions listable/individually
-revocable at GET/DELETE /api/auth/sessions/ (frontend: Settings > Sessions).
+# Notification toggles — Security Alerts has NO field here; deliberately
+# not exposed, since it can never be disabled
+notif_invoice_events, notif_client_messages, notif_payments
 
-2FA: OTP via email. Optional but available. A trusted-device cookie
-(httpOnly, 30 days) can skip 2FA on a recognized device.
+# Future-module fields already present
+client_onboarding_enabled, client_onboarding_message, income_type
 
-Frontend information architecture — Profile and Settings are two
-separate pages, not one (v1 had a single monolithic Profile page mixing
-personal identity with account configuration; this was a deliberate
-product decision to split them — see DECISIONS.md):
-  - Profile (/profile): light personal identity only — logo/photo
-    (with crop-and-zoom), display name, business name, phone, and a
-    profile-completion indicator.
-  - Settings (/settings): 7 sections — Account (email/username/name/DOB),
-    Business (address, currency, payment terms, bank/JazzCash/Easypaisa/
-    Payoneer), Tax & PSEB (CNIC/NTN/PSEB), Security (password, 2FA,
-    danger-zone deletion), Sessions, Notifications, Email Sending (SMTP).
+last_email_changed_at, created_at, updated_at
+```
 
-Notification preferences: exactly 3 real per-category toggles (Invoice
-Events, Client Messages, Payments) — notif_invoice_events,
-notif_client_messages, notif_payments on FreelancerProfile. Security
-Alerts has no toggle anywhere in the UI or the backend — cannot be
-disabled, by omission of any control rather than a disabled-but-visible
-one. Every notification a user receives beyond security alerts is one
-they have explicitly enabled; nothing is opt-out.
+1. **Mutable?** Yes — this is a live profile record, edited via Settings.
+2. **Soft deleted?** N/A — deleted alongside `User` via `anonymize()`, never independently.
+3. **Audit trail?** No dedicated audit rows for profile edits themselves — the security-relevant
+   subset (email change, deletion, 2FA, SMTP save) each get their own `AuditLog` event from the
+   view that handles them.
+4. **Indexed?** None beyond the implicit `OneToOne` index on `user` — no field here is currently
+   queried across users at scale (this changes once modules that filter by business attributes
+   exist).
+5. **Encrypted?** Yes — `cnic_encrypted`/`ntn_encrypted`/`pseb_encrypted` (Fernet, reversible,
+   decrypted only via the `cnic`/`ntn`/`pseb` properties), `custom_smtp_password` (Fernet). The
+   `*_hash` columns are **not** the encrypted value — they're a separate HMAC blind index,
+   specifically so uniqueness can be enforced across accounts (Fernet's randomized IV makes
+   uniqueness checks on the encrypted value itself impossible) without ever storing plaintext.
+6. **Cascade behavior?** `CASCADE` from `User` (one-to-one) — no independent lifecycle.
 
-Account deletion: password -> OTP -> confirm -> 30-day recovery window
--> anonymize (never hard-delete) -> financial records (future modules)
-retain a PROTECT relationship to the now-anonymized user, in anonymized
-form. Confirming deletion revokes every session and clears cookies
-immediately. Frontend: Settings > Security > Danger Zone initiates the
-password+OTP steps, then hands off to the standalone (shell-less)
-DeletionReview page with the resulting one-time token.
+**Known, deliberate schema quirk**: `pseb_registered` is a plain boolean, entirely decoupled from
+`pseb_hash`/`pseb_encrypted` — a user can self-declare "I am PSEB registered" via a Settings
+checkbox without ever having a real, validated PSEB number on file. This was flagged during a
+security audit as something to close before the Tax module trusts it for a real SRO 586
+eligibility determination — that module should derive PSEB status from `bool(pseb_hash)`, not
+this flag alone. Not fixed yet; intentionally left as a forward note.
 
-Key API endpoints:
-- POST /api/auth/register/
-- POST /api/auth/check-availability/ (live email/username availability
-  during the registration wizard)
-- GET /api/auth/verify-email/<uid>/<token>/
-- POST /api/auth/resend-verification/
-- POST /api/auth/login/
-- POST /api/auth/logout/
-- POST /api/auth/token/refresh/
-- GET /api/auth/csrf/ (triggers Django's CSRF cookie issuance)
-- GET /api/auth/me/ (session check on app load)
-- POST /api/auth/google/
-- POST /api/auth/facebook/
-- GET/PUT /api/auth/account/ (Settings > Account: name/username/DOB)
-- GET/PUT /api/auth/profile/ (Profile page + Settings > Business/Tax —
-  same FreelancerProfile object, partial=True so each page/section can
-  save independently without clobbering the others)
-- POST /api/auth/profile/upload-logo/ (multipart; Cloudinary-backed)
-- GET/PUT /api/auth/settings/notifications/
-- GET /api/auth/sessions/ + DELETE /api/auth/sessions/<id>/
-- POST /api/auth/2fa/verify/ + /api/auth/2fa/resend/ + /api/auth/2fa/toggle/
-- POST /api/auth/change-password/
-- POST /api/auth/forgot-password/ + /api/auth/reset-password/<uid>/<token>/
-- POST /api/auth/email-change/request/ + /validate/<ecr_uid>/<token>/ (GET)
-  + /complete/<ecr_uid>/<token>/ + /activate/<ecr_uid>/<token>/ + /cancel/
-- POST /api/auth/deletion/initiate/ + /verify-otp/ + /confirm/ + /cancel/
-- GET /api/auth/smtp/status/ + POST /api/auth/smtp/save/ + /disable/
+**Key methods**: `set_cnic()`/`set_ntn()`/`set_pseb()` (validate, check cross-account uniqueness,
+encrypt — never assign the encrypted/hash fields directly), `can_change_email()` (90-day
+cooldown), `completion_percentage` (property, drives the Profile page's completion bar).
 
 ---
 
-### Module 2 — Invoices + Client CRM + Client Portal
-Status: [updated as built]
-App: apps/invoices/
+## `sessions` (`Session`)
 
-The most important module. Two closely related features in one app.
+One row per active login (refresh token), capped at 3 concurrent per user.
 
-Invoice Generator:
-Professional invoice creation in USD, EUR, GBP, or PKR. Line items with
-quantity and unit price. Tax rate and discount at invoice level. PKR
-equivalent shown at current exchange rate. Three PDF templates
-(Professional, Modern, Minimal) generated by WeasyPrint from HTML/CSS
-templates. Direct email to client via Resend with PDF attached.
+**Schema**:
+```
+id, user (FK, CASCADE)
+refresh_token_hash          CharField(64), unique  — SHA-256 of the refresh token, never the token itself
+device_name                  CharField(300), blank  — normalized UA string, e.g. "Chrome on Windows"
+trusted_device                 FK to TrustedDevice, nullable, SET_NULL
+ip_address                       GenericIPAddressField, nullable
+created_at, last_used_at, expires_at
+```
 
-Invoice status lifecycle: draft -> created -> sent -> viewed ->
-partially_paid -> paid -> overdue -> cancelled -> bad_debt.
-The update_paid_status() method enforces all transitions.
-Cancelled and bad_debt invoices are never modified by payment operations.
+1. **Mutable?** Yes — refreshing rotates `refresh_token_hash`/`last_used_at`/`expires_at` on the
+   **same row**, deliberately (otherwise "3 sessions max" would silently mean "3 refreshes since
+   login," not 3 actual devices).
+2. **Soft deleted?** No — hard-deleted on logout, revocation, or expiry. No business/legal
+   significance to preserving a dead session row.
+3. **Audit trail?** Yes — session creation, revocation (`session_revoked`), and rotation-relevant
+   events are logged via `log_event()` from the views that trigger them.
+4. **Indexed?** `(user, last_used_at)` (the eviction-of-oldest query), `refresh_token_hash`
+   (lookup on every authenticated request), `expires_at` (the daily cleanup sweep).
+5. **Encrypted?** No — only a SHA-256 hash of the token is stored, never the raw value. No HMAC
+   secret needed here (unlike CNIC/NTN/PSEB) since a JWT refresh token already carries its own
+   entropy from signing — there's nothing a dictionary attack could exploit the way it could
+   against a low-entropy tax ID.
+6. **Cascade behavior?** `CASCADE` from `User`. `SET_NULL` from `TrustedDevice` — if the linked
+   device record is ever removed, the session itself should still be valid, just without a
+   nickname/recognition link.
 
-Partial payments: multiple partial payments per invoice, each tracked
-with amount, currency, source, and date. Status updates automatically
-as payments are recorded.
+**`trusted_device` — new field, added for the device-nickname feature**: links a session to the
+`TrustedDevice` row (if any) recognized during that login, so a custom nickname persists across
+that device's *future* sessions rather than needing to be re-set every time. One known, inherent
+consequence: a device's very first-ever session is never retroactively linked, since the matching
+`TrustedDevice` row is created moments *after* the `Session` row during login — only the second
+login onward produces a renameable session. Not a bug; a consequence of the call order this was
+built with. See `DECISIONS.md`.
 
-Recurring invoices: Celery Beat generates child invoices from parent
-templates on schedule. Intervals: weekly, fortnightly, monthly.
-
-Payment reminders: automated escalating reminders via Celery.
-Configurable per invoice. Maximum 3 reminders.
-
-Public invoice page: unique token-based URL (never guessable).
-Client views invoice, submits payment confirmation, sees payment history.
-
-Client CRM:
-Client records with name, email, company, address, default currency.
-Auto-populate invoice fields when client is selected.
-Payment history per client. Reliability score based on payment speed,
-consistency, and total value - weighted, transparent, shown with breakdown.
-Flag problematic clients with reason. Archive inactive clients.
-Client statement PDF (WeasyPrint) covering all transactions in a period.
-
-Client Portal (secure, PIN-authenticated):
-Clients access a dedicated portal via token link in invoice emails.
-First access: 6-digit PIN sent to client's email. PIN is hashed before
-storage, never stored in plain text. Session persists 30 days after PIN
-entry. New device: client self-serves a new PIN via "Resend PIN" -
-freelancer not involved. Existing sessions on other devices remain active
-when a new PIN is issued. "Log out everywhere" available.
-Freelancer's "Open Portal" button bypasses PIN (they are already authed).
-
-Portal shows: all invoices with this freelancer, payment history,
-upcoming invoices, two-way message thread.
-
-Client Messaging (inside portal):
-Full two-way chat thread between client (in portal) and freelancer
-(in main app). No account needed for client - messages tied to portal
-session. When client sends a message: immediate in-app notification to
-freelancer. If unread after exactly 1 hour: one reminder email + one
-in-app notification. No further reminders. Freelancer replies from
-within the app. Messages stored with sender, timestamp, read status.
-
-Key API endpoints:
-- CRUD /api/invoices/
-- POST /api/invoices/{id}/send/
-- POST /api/invoices/{id}/mark-paid/
-- GET /api/invoices/{id}/pdf/
-- POST /api/invoices/{id}/payments/ (partial payment)
-- GET /api/invoices/public/{token}/ (unauthenticated)
-- POST /api/invoices/public/{token}/claim/ (payment claim)
-- CRUD /api/clients/
-- GET /api/clients/{id}/statement/pdf/
-- GET/POST /api/clients/{id}/messages/
-- POST /api/portal/{token}/pin/verify/
-- POST /api/portal/{token}/pin/resend/
-- GET /api/portal/{token}/messages/
-- POST /api/portal/{token}/messages/
+Concurrency: `create_for_user()` locks the user row (`select_for_update()`) for the duration of
+the check-evict-create sequence — without this, concurrent logins could both read the same
+under-cap session count and race past the 3-session limit (a real bug that was found and fixed;
+see `DECISIONS.md`).
 
 ---
 
-### Module 3 — Payments + Expenses + P&L
-Status: [updated as built]
-App: apps/payments/
+## `user_social_accounts` (`UserSocialAccount`)
 
-Income tracking:
-Manual payment entry with amount, currency, source, date, notes.
-Payoneer CSV import: parses Payoneer's specific CSV format, deduplicates
-via external_id, supports batch rollback.
-Wise CSV import: same pattern, different column mapping.
-Custom spreadsheet import: flexible column alias detection (20+ synonyms
-per field) to handle user-exported spreadsheets.
-Payment-invoice matching: link a recorded payment to an outstanding
-invoice. Outstanding balance updates automatically.
+Links a `User` to a Google or Facebook identity.
 
-Expense tracking:
-Expenses with amount, category, date, description, receipt image
-(uploaded to Cloudinary). Categories: software, equipment, internet,
-office, travel, professional development, other.
-Deductible/non-deductible flag per expense (affects FBR calculation).
+**Schema**:
+```
+id, user (FK, CASCADE)
+provider          CharField, choices ('google', 'facebook')
+provider_uid      CharField(200)
+created_at
+```
 
-Exchange rates:
-Daily USD, EUR, GBP to PKR snapshots via external rate API.
-Fetched by Celery Beat at 6:00 AM PKT daily.
-Used for PKR conversion on invoices and payments.
-Exchange rate alerts: user sets target rate + direction (above/below).
-Celery checks hourly, sends in-app + email notification once when
-threshold crossed. Alert auto-deactivates after firing.
-
-P&L Report:
-Date range selector + quick filters (current year, last year, Q1-Q4).
-Shows: total income by category, total expenses by category, gross
-profit, taxable income (after deductible expenses), estimated FBR tax.
-Downloadable as PDF (WeasyPrint).
-
-Income Certificate (sub-feature of this module, not a separate module):
-Formal PDF document suitable for banks, visa applications, PSEB
-registration. Configurable period and purpose. Shows monthly income
-breakdown in USD and PKR equivalent. Uses WeasyPrint with a formal
-letterhead layout. Triggered from the P&L section.
-
-Key API endpoints:
-- CRUD /api/payments/
-- POST /api/payments/import/payoneer/
-- POST /api/payments/import/wise/
-- POST /api/payments/import/custom/
-- DELETE /api/payments/import/{batch_id}/ (rollback)
-- POST /api/payments/{id}/link-invoice/
-- CRUD /api/expenses/
-- GET /api/payments/pnl/
-- GET /api/payments/pnl/pdf/
-- GET /api/payments/income-certificate/pdf/
-- GET /api/payments/exchange-rates/
-- CRUD /api/payments/alerts/
+1. **Mutable?** No — effectively append-only. A link is created once at OAuth signup/first-link
+   and never edited.
+2. **Soft deleted?** No — hard-deleted alongside the user via `anonymize()`. No independent
+   significance once the account is gone.
+3. **Audit trail?** Login events via this provider are logged (`login_google`/`login_facebook`),
+   not the linking itself as a separate event.
+4. **Indexed?** Implicit unique index on `(provider, provider_uid)` — this is what makes
+   "does this Google/Facebook identity already have an account" a fast, safe lookup.
+5. **Encrypted?** No — `provider_uid` is an opaque ID from Google/Facebook, not a secret.
+6. **Cascade behavior?** `CASCADE` from `User`.
 
 ---
 
-### Module 4 — FBR Tax
-Status: [updated as built]
-App: apps/tax/
+## `trusted_devices` (`TrustedDevice`)
 
-FBR income tax compliance for Pakistani freelancers.
-Covers the current tax year (2025-26 slabs from Finance Act 2025).
-Tax year runs July 1 to June 30.
+Recognizes a browser across logins — created/updated on **every** successful login (regular, 2FA,
+and OAuth) as of the trusted-device rework, not only when a user explicitly opts into it.
 
-Tax calculation:
-Uses actual FBR 2025-26 slab structure. Pulls income from
-apps/payments/ for the current tax year. Deducts recorded deductible
-expenses from apps/payments/. Calculates taxable income and tax owed.
-Shows effective rate. Projects year-end based on monthly average.
+**Schema**:
+```
+id, user (FK, CASCADE)
+token_hash        CharField(64), unique  — SHA-256 of a random token in an httpOnly cookie
+device_name       CharField(300), blank  — system-generated label, e.g. "Chrome on Windows"
+custom_name       CharField(100), blank  — user-editable nickname, shown instead of device_name when set
+skip_2fa          BooleanField, default False  — see note below
+ip_address        GenericIPAddressField, nullable
+created_at, expires_at, last_used_at
+```
 
-SRO 586(I)/2022 checker:
-Checks if user qualifies for complete IT export tax exemption.
-Eligibility requires: income from IT export, PSEB registration number
-in profile. Displays eligibility status, missing requirements, links to
-PSEB registration at pseb.org.pk and FBR Iris at iris.fbr.gov.pk.
+1. **Mutable?** Yes — `last_used_at`/`expires_at` extend on every match (a **sliding** 30-day
+   window from last use, not fixed from creation), and `custom_name`/`skip_2fa` are user/flow
+   editable.
+2. **Soft deleted?** No — hard-deleted on expiry (weekly cleanup sweep) or when 2FA is fully
+   disabled cancels the *skip_2fa* grant specifically (see below), not the row.
+3. **Audit trail?** Indirectly — `new_device_login` (when a device is genuinely new) and
+   `trusted_device_added` (when "don't ask again" is checked) are both logged.
+4. **Indexed?** `token_hash` — the lookup that happens on every login.
+5. **Encrypted?** No — same reasoning as `Session.refresh_token_hash`: a hash of a
+   high-entropy random cookie token, no HMAC/dictionary-attack concern.
+6. **Cascade behavior?** `CASCADE` from `User`. `SET_NULL` onto `Session.trusted_device` (a
+   `Session` outlives a deleted `TrustedDevice`, just loses its nickname link).
 
-Quarterly advance tax schedule:
-Shows Q1-Q4 payment deadlines and amounts based on projected annual income.
-Overdue quarters highlighted. Direct link to FBR Iris for payment.
-Celery Beat sends reminder notifications before each deadline.
-
-Monthly income breakdown:
-Month-by-month view of income and tax liability for the full tax year.
-
-Tax statement:
-Printable formal statement for accountant submission or FBR reference.
-Generated by WeasyPrint.
-
-FBR filing guide:
-Step-by-step guide to filing annual return on FBR Iris. Static content.
-
-Context injection for AI tax guidance:
-The actual text of FBR 2025-26 slabs and SRO 586 notification is
-embedded directly in every AI prompt for tax-related questions.
-The model is not asked to recall tax law from training - it is given
-the law as context. This produces accurate, updatable guidance without
-fine-tuning. When tax law changes, only the injected text needs updating.
-
-Key API endpoints:
-- GET /api/tax/overview/
-- GET /api/tax/quarterly/
-- GET /api/tax/monthly/
-- GET /api/tax/sro586/
-- POST /api/tax/calculator/
-- GET /api/tax/statement/pdf/
+**The `skip_2fa` distinction — this is the important design point on this table**: device
+*recognition* (does this browser get a "new device" email) is now automatic and universal, for
+every login. Whether a recognized device may *also* skip the 2FA prompt entirely remains a
+separate, explicit opt-in (the "don't ask again on this device" checkbox at 2FA-verify time).
+These used to be the same concept (this table originally existed only to serve 2FA-skipping); they
+were deliberately split so that disabling 2FA (`toggle_2fa`'s disable branch) only needs to revoke
+`skip_2fa` (`user.trusted_devices.update(skip_2fa=False)`) rather than deleting every recognized
+device outright — the earlier behavior, deleting all rows, would have caused a burst of incorrect
+"new device" emails for already-known devices the next time each logged back in. See
+`DECISIONS.md` for the full history of this table's evolution.
 
 ---
 
-### Module 5 — Financial Health Score
-Status: [updated as built]
-App: apps/health/
+## `email_change_requests` (`EmailChangeRequest`)
 
-Scores the freelancer's business health out of 100 across 5 dimensions.
-Configurable analysis window: 3, 6, 12, or 24 months.
+Backs the two-step (current-inbox confirmation → new-inbox confirmation) email-change flow.
 
-5 dimensions:
-1. Income Consistency (25 pts) - regularity and predictability of income
-2. Savings Buffer (20 pts) - expenses vs income ratio, financial cushion
-3. Tax Compliance (20 pts) - NTN registered, PSEB registered, income
-   tracked, expenses recorded, FBR awareness
-4. Income Growth (20 pts) - trend vs prior period
-5. Client Diversity (15 pts) - income spread across clients
+**Schema**:
+```
+id, user (FK, CASCADE)
+new_email                                  EmailField, blank
+step1_token, step2_token                   CharField(128) each
+step                                       CharField, choices (step1_pending / step1_clicked /
+                                             step2_pending / completed / cancelled / expired)
+step1_expires_at, step2_expires_at         DateTimeField (step2 nullable until step1 completes)
+created_at, completed_at
+```
 
-Each dimension shows current score, what is needed for a higher score,
-and specific actionable steps.
-
-Priority improvement tips:
-Ranked list of the improvements with highest score-gain potential.
-Specific, not generic. References the user's actual numbers.
-
-Radar chart: Recharts radar chart showing all 5 dimensions visually.
-
-Mini widget: Compact health score component shown on the dashboard.
-Score, grade (Excellent/Good/Fair/Poor), and top 1 improvement tip.
-
-Key API endpoints:
-- GET /api/health/score/?months=12
-- GET /api/health/mini/
+1. **Mutable?** Yes — `step` advances through the flow on the same row.
+2. **Soft deleted?** No — no long-term retention value once completed/cancelled/expired; not
+   currently cleaned up automatically (worth a cleanup task if these accumulate).
+3. **Audit trail?** Yes — `email_change_requested`, `email_change_step1`, `email_change_done`,
+   `email_change_cancelled` are all logged.
+4. **Indexed?** `(user, step)`, `step1_token`, `step2_token` — all three are lookup paths (the
+   two tokens from email links, the combination for "does this user have a pending request").
+5. **Encrypted?** No — tokens are compared via `hmac.compare_digest` (constant-time, fixed after a
+   security audit found the original `!=` comparisons were a timing side-channel), but the tokens
+   themselves aren't secrets requiring encryption at rest the way CNIC/NTN/PSEB are — they're
+   single-use, short-lived, and their value is in being unguessable, not undisclosed.
+6. **Cascade behavior?** `CASCADE` from `User`.
 
 ---
 
-### Module 6 — Proposals
-Status: [updated as built]
-App: apps/proposals/
+## `audit_log` (`AuditLog`, in `core`)
 
-Manual proposal creation:
-Scope sections, line items with pricing, payment terms, validity period.
-Client details auto-filled from CRM. Proposal number auto-generated.
+Shared across every module — not `apps.users`-specific. Immutable, append-only by design: "this
+table needs to say what the system believed was true *at the time*, never edited afterward."
 
-AI proposal generation:
-Freelancer pastes a job description. System sends to Groq with a
-carefully engineered prompt returning structured JSON: proposal text,
-quality score (1-10), improvement feedback, word count.
-Three tone options: Professional, Friendly, Technical.
-Generated proposals saved as drafts automatically.
+**Schema**:
+```
+id                UUIDField, primary key
+user              FK to User, nullable, SET_NULL  — the account the event is ABOUT
+actor             FK to User, nullable, SET_NULL  — who PERFORMED the action, only populated
+                                                       when different from `user` (admin actions)
+event             CharField(60)  — free-form, not a fixed choices list, deliberately
+request_id        CharField(36), nullable
+ip_address        GenericIPAddressField, nullable
+user_agent        CharField(500), blank
+metadata          JSONField, default dict
+created_at
+```
 
-Client response flow:
-Proposal sent to client via email with secure token link.
-Client views proposal on public page (no account needed).
-Client accepts or declines with optional message.
-Client IP address and timestamp recorded on response.
-Freelancer receives immediate in-app + email notification.
-Proposal expiry date: client cannot accept after expiry.
+1. **Mutable?** No — never updated after creation. This is the one hard rule on this table.
+2. **Soft deleted?** No deletion at all under normal operation.
+3. **Audit trail?** This *is* the audit trail for the whole application.
+4. **Indexed?** `(user, created_at)`, `(event, created_at)`, `(ip_address, created_at)`,
+   `(actor, created_at)`, `request_id`.
+5. **Encrypted?** No — `metadata` should never contain raw secrets; sensitive request fields are
+   redacted before logging (`core.observability.redact_sensitive_fields`).
+6. **Cascade behavior?** `SET_NULL` on both `user` and `actor` — the log entry survives even if
+   the account it describes (or the admin who performed the action) is later deleted.
 
-Convert to invoice:
-One click converts an accepted proposal to a draft invoice.
-Line items, client details, and amounts pre-populated. No re-entry.
+**`actor` — added for the admin-panel foundation**: every existing call site (self-service events)
+leaves this `null`, since the actor and the subject are already the same person captured in
+`user`. Only admin-initiated actions on someone else's account populate it, making "show me
+everything this admin has done" a real, indexed query rather than something buried in `metadata`.
 
-Key API endpoints:
-- CRUD /api/proposals/
-- POST /api/proposals/{id}/send/
-- POST /api/proposals/{id}/generate-ai/
-- GET /api/proposals/public/{token}/
-- POST /api/proposals/public/{token}/respond/
-- POST /api/proposals/{id}/convert-to-invoice/
-
----
-
-### Module 7 — Contracts
-Status: [updated as built]
-App: apps/contracts/
-
-5 pre-built templates: Web Development, Design, Consulting,
-Content Writing, Custom. Each is a WeasyPrint HTML template.
-
-Sending: contract sent to client via email with secure token link.
-Client views on public page using same PIN portal auth as invoices.
-
-Digital signing: client types name as signature. On submit: name,
-IP address, user agent, and timestamp recorded. Freelancer notified
-immediately via in-app + email.
-
-Decline flow: client can decline with reason. Freelancer notified.
-
-Contract linking: can link to a proposal or to an invoice.
-
-Key API endpoints:
-- CRUD /api/contracts/
-- POST /api/contracts/{id}/send/
-- GET /api/contracts/public/{token}/
-- POST /api/contracts/public/{token}/sign/
-- POST /api/contracts/public/{token}/decline/
+**`event` is deliberately free-form, not an enum**: a fixed choices list here would mean editing
+`core/models.py` for every future module's events, or every module reinventing its own event log —
+exactly the duplication this table exists to avoid. Each app documents its own event-name
+constants near its own `log_event()` call sites instead.
 
 ---
 
-### Module 8 — Subscriptions
-Status: [updated as built]
-App: apps/subscriptions/
+## `api_request_logs` (`ApiRequestLog`, in `core`)
 
-Plans:
-- Free: 5 invoices/month, 3 clients, manual payments only,
-  no AI features, no CSV import
-- Pro ($5/month): unlimited everything, all AI features,
-  CSV import, health score, exchange rate alerts
+One row per HTTP request, written by `core.middleware`. A developer debugging tool, distinct from
+`AuditLog` — deliberately kept out of the notification/admin-facing UI.
 
-Enforcement: every endpoint that creates invoices, clients, or
-payments checks subscription tier before proceeding. Returns 403
-with upgrade prompt if free tier limit reached.
+**Schema**:
+```
+id, request_id (unique)
+user               FK, nullable, SET_NULL
+method, path, status_code
+ip_address, user_agent
+request_body       JSONField, nullable  — sensitive fields redacted before storage
+response_body      JSONField, nullable  — only populated when status_code >= 500
+duration_ms
+created_at
+```
 
-Key API endpoints:
-- GET /api/subscriptions/status/
-- GET /api/subscriptions/plans/
-- POST /api/subscriptions/upgrade/
-
----
-
-### Module 9 — Dashboard
-Status: [updated as built]
-Not a separate app - aggregates data from all other apps.
-
-Contents:
-- Time-aware greeting
-- 4 KPI cards: Outstanding, Paid this month, Overdue, Active clients
-- Income trend bar chart (last 6 months, PKR) via Recharts
-- Financial health mini widget
-- AI income insights (3 specific insights, cached 24 hours)
-- Upcoming recurring invoices (next 7 days)
-- Recent activity feed
-- Live exchange rates (USD/EUR/GBP to PKR)
-- Needs attention section (overdue invoices, unread messages,
-  unanswered proposals)
-
-Key API endpoints:
-- GET /api/dashboard/summary/
-- GET /api/dashboard/insights/
+1. **Mutable?** No — append-only, one row per request.
+2. **Soft deleted?** No — not currently cleaned up automatically; worth a retention policy once
+   volume matters.
+3. **Audit trail?** This is the *technical* trail (what happened at the HTTP level), distinct from
+   `AuditLog`'s *security-event* trail.
+4. **Indexed?** `(user, created_at)`, `(status_code, created_at)`, `created_at`.
+5. **Encrypted?** No — but request bodies are redacted for sensitive fields before storage; full
+   response bodies are only ever captured on 5xx errors specifically (logging every response body
+   at scale is mostly noise and mostly PII).
+6. **Cascade behavior?** `SET_NULL` on `user`.
 
 ---
 
-### Module 10 — Help / AI Assistant
-Status: Built last, after all other modules complete.
+## `notification_reads` (`NotificationRead`, in `core`)
 
-A dedicated Help page (not a floating widget).
-Uses Groq AI with LanceraOS documentation embedded in system prompt
-as context. Answers questions about how to use the platform only.
+Per-user, per-notification UI state (read/dismissed) for the notification bell — deliberately kept
+off `AuditLog` itself, which must stay immutable.
 
----
+**Schema**:
+```
+id, user (FK, CASCADE)
+audit_log         FK to AuditLog, CASCADE
+read_at           DateTimeField, auto_now_add
+dismissed_at      DateTimeField, nullable
+```
+`unique_together = [['user', 'audit_log']]` — one row per user per notification.
 
-## 6. Database Schema
-See DATABASE.md — the 6-question framework answered for every table
-that exists (core.AuditLog, core.ApiRequestLog, and all six
-apps.users tables as of this writing).
-
----
-
-## 7. Module Build Status
-
-| Module               | Backend | Frontend | Tests | Status      |
-|----------------------|---------|----------|-------|-------------|
-| Users / Auth         | Built   | Built    | 127 passing (frontend) | Complete |
-| Invoices + Clients   | -       | -        | -     | Not started |
-| Payments + Expenses  | -       | -        | -     | Not started |
-| FBR Tax              | -       | -        | -     | Not started |
-| Health Score         | -       | -        | -     | Not started |
-| Proposals            | -       | -        | -     | Not started |
-| Contracts            | -       | -        | -     | Not started |
-| Subscriptions        | -       | -        | -     | Not started |
-| Dashboard            | -       | -        | -     | Not started |
-| Help / AI Assistant  | -       | -        | -     | Not started |
+1. **Mutable?** Yes — `dismissed_at` is set after creation, on dismiss.
+2. **Soft deleted?** N/A — this table itself *is* the soft-delete mechanism for notifications: a
+   dismissed notification is hidden from the bell (`list_notifications` filters it out) while its
+   underlying `AuditLog` row stays completely untouched. Verified directly, not just designed this
+   way: dismissing a notification removes it from the API response while a direct database query
+   confirms the `AuditLog` row is still present, unchanged.
+3. **Audit trail?** N/A — this table exists specifically *because* the real audit trail
+   (`AuditLog`) must never carry mutable UI state like read/dismissed.
+4. **Indexed?** Implicit via the `unique_together` constraint (also serves as the lookup index for
+   "has this user seen this notification").
+5. **Encrypted?** No — carries no sensitive data of its own.
+6. **Cascade behavior?** `CASCADE` from both `User` and `AuditLog` — if either is gone, the
+   read-state record has no meaning either.
 
 ---
 
-## 8. Environment Variables Required
+## Not yet built
 
-SECRET_KEY=
-DEBUG=
-ALLOWED_HOSTS=
-DB_NAME=
-DB_USER=
-DB_PASSWORD=
-DB_HOST=
-DB_PORT=
-REDIS_URL=
-CELERY_BROKER_URL=
-CELERY_RESULT_BACKEND=
-CHANNEL_LAYER_URL=
-GROQ_API_KEY=
-GROQ_MODEL_FAST=openai/gpt-oss-20b
-GROQ_MODEL_QUALITY=llama-3.3-70b-versatile
-RESEND_API_KEY=
-RESEND_FROM_EMAIL=noreply@lanceraos.com
-RESEND_FROM_NAME=LanceraOS
-CLOUDINARY_CLOUD_NAME=
-CLOUDINARY_API_KEY=
-CLOUDINARY_API_SECRET=
-GOOGLE_CLIENT_ID=
-FACEBOOK_APP_ID=
-FACEBOOK_APP_SECRET=
-VITE_API_URL=http://localhost:8000
-VITE_WS_URL=ws://localhost:8000
-FRONTEND_URL=http://localhost:5173
-
-### Cookies (httpOnly JWT + CSRF — see DECISIONS.md)
-COOKIE_DOMAIN=
-# Local dev: leave blank (host-only cookie). Production: .lanceraos.com
-COOKIE_SECURE=False
-# Production: True
-COOKIE_SAMESITE=Lax
-CSRF_TRUSTED_ORIGINS=
-# Production: https://lanceraos.com (users visit the root domain directly —
-# there is no app.lanceraos.com. The API backend lives on a separate
-# subdomain, api.lanceraos.com, which users never visit directly; see the
-# domain decision entry in DECISIONS.md.)
-
-### Encryption
-# Fernet key — reversible encryption (CNIC/NTN/PSEB, custom SMTP passwords)
-ENCRYPTION_KEY=
-# HMAC key for blind-indexing CNIC/NTN/PSEB — NEVER reuse ENCRYPTION_KEY
-# here. Opposite security properties by design (randomized vs.
-# deterministic) and must be rotatable independently.
-BLIND_INDEX_KEY=
-
-### Observability
-SENTRY_DSN=
-
----
-
-## 8b. Three Supporting Documents
-
-Alongside CLAUDE.md, maintain these three files in the project root.
-Update them as you build. All three now have real content as of the
-Users/Auth module build — see DATABASE.md, STANDARDS.md, DECISIONS.md.
-
-### STANDARDS.md
-Coding conventions every module chat must follow.
-Contains:
-- Model naming: singular PascalCase (Invoice not Invoices)
-- URL naming: plural kebab-case (/api/invoices/ not /api/invoice/)
-- View function naming: verb_noun (create_invoice, get_invoice_list)
-- Serializer naming: ModelNameSerializer, ModelNameCreateSerializer
-- Test naming: test_[action]_[condition]_[expected_result]
-- Every model must have __str__ returning a human-readable string
-- Every view must have a docstring explaining what it does
-- No print() statements anywhere — use logging.getLogger(__name__)
-- File path as the first line of every file
-- Dead code/config gets removed on discovery, not preserved for fidelity
-
-### DATABASE.md
-Grows as each module is built.
-For every table: the 6 questions answered + the schema + reasoning.
-This is the authoritative reference for what exists in the database.
-
-### DECISIONS.md
-Running log of architectural decisions.
-Format for each entry:
-  Date: [date]
-  Decision: [what was decided]
-  Reason: [why]
-  Alternatives considered: [what else was evaluated]
-  
-Example:
-  Date: July 2026
-  Decision: JWT stored in httpOnly cookies, not localStorage.
-  Reason: localStorage is readable by any JS on the page — a single
-  XSS vulnerability becomes an instant account-takeover vector.
-  Alternatives considered: v1's Authorization-header + localStorage
-  approach (rejected, exactly the anti-pattern being replaced).
+Every table for Invoices, Clients, Payments, Tax, Health Score, Proposals, Contracts,
+Subscriptions — none of these modules exist yet. This document only covers what's actually in the
+database today (Users/Auth + the shared `core` tables).
