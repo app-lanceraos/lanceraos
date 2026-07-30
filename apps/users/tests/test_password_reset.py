@@ -98,3 +98,22 @@ class PasswordResetTests(TestCase):
             'new_password': 'AnotherPass!88', 'confirm_password': 'AnotherPass!88',
         })
         self.assertEqual(resp.status_code, 400)
+
+    @patch('apps.users.views.security.send_password_changed_email', return_value=True)
+    @patch('apps.users.views.auth.send_password_reset_completed_email', return_value=True)
+    def test_reset_password_sends_reset_completed_not_changed_email(self, mock_reset_completed, mock_changed):
+        """
+        reset_password (the token-based recovery flow) must fire
+        send_password_reset_completed_email, never the in-app
+        change_password's send_password_changed_email — these are distinct
+        functions with different wording. Assert the right one fires for
+        this flow, not just that some email fires.
+        """
+        uid = encode_uid(self.user)
+        token = password_reset_token.make_token(self.user)
+        resp = self._post(reverse('users:reset_password', kwargs={'uid': uid, 'token': token}), {
+            'new_password': 'BrandNewPass!99', 'confirm_password': 'BrandNewPass!99',
+        })
+        self.assertEqual(resp.status_code, 200)
+        mock_reset_completed.assert_called_once()
+        mock_changed.assert_not_called()

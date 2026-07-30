@@ -1,6 +1,8 @@
 # apps/users/tests/test_models.py
+from datetime import timedelta
+
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
 from apps.users.models import Session, TrustedDevice, User, UserSocialAccount
@@ -164,3 +166,69 @@ class CNICUniquenessTests(TestCase):
         profile.set_ntn('12345678')
         profile.save()
         self.assertEqual(profile.ntn, '12345678')
+
+
+class TrustedDeviceModelTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(email='td@example.com', password='Sup3r$ecret1')
+
+    def test_create_for_user_defaults_skip_2fa_false(self):
+        device = TrustedDevice.create_for_user(self.user, 'raw-tok-1', 'device', '1.1.1.1')
+        self.assertFalse(device.skip_2fa)
+
+    def test_create_for_user_explicit_skip_2fa_true_respected(self):
+        device = TrustedDevice.create_for_user(self.user, 'raw-tok-2', 'device', '1.1.1.1', skip_2fa=True)
+        self.assertTrue(device.skip_2fa)
+
+    def test_get_valid_returns_none_for_expired_token(self):
+        device = TrustedDevice.create_for_user(self.user, 'raw-tok-3', 'device', '1.1.1.1')
+        device.expires_at = timezone.now() - timedelta(days=1)
+        device.save(update_fields=['expires_at'])
+        self.assertIsNone(TrustedDevice.get_valid('raw-tok-3', self.user))
+
+    def test_get_valid_returns_none_for_token_belonging_to_different_user(self):
+        other_user = User.objects.create_user(email='td-other@example.com', password='Sup3r$ecret1')
+        TrustedDevice.create_for_user(self.user, 'raw-tok-4', 'device', '1.1.1.1')
+        self.assertIsNone(TrustedDevice.get_valid('raw-tok-4', other_user))
+
+    def test_get_valid_returns_none_for_nonmatching_token(self):
+        TrustedDevice.create_for_user(self.user, 'raw-tok-5', 'device', '1.1.1.1')
+        self.assertIsNone(TrustedDevice.get_valid('completely-different-token', self.user))
+
+    def test_get_valid_returns_matching_device(self):
+        device = TrustedDevice.create_for_user(self.user, 'raw-tok-6', 'device', '1.1.1.1')
+        found = TrustedDevice.get_valid('raw-tok-6', self.user)
+        self.assertEqual(found.pk, device.pk)
+
+    def test_custom_name_persists_through_save_reload(self):
+        device = TrustedDevice.create_for_user(self.user, 'raw-tok-7', 'device', '1.1.1.1')
+        device.custom_name = 'My MacBook'
+        device.save(update_fields=['custom_name'])
+        device.refresh_from_db()
+        self.assertEqual(device.custom_name, 'My MacBook')
+
+    def test_get_trusted_device_extends_sliding_window(self):
+        """
+        _get_trusted_device (views/auth.py) is supposed to slide the 30-day
+        window forward from *last use*, not leave the original creation-time
+        expiry in place — assert the actual timestamps moved, not just that
+        a device was returned.
+        """
+        from apps.users.cookies import TRUSTED_DEVICE_COOKIE_NAME
+        from apps.users.views.auth import _get_trusted_device
+
+        device = TrustedDevice.create_for_user(self.user, 'raw-tok-8', 'device', '1.1.1.1')
+        device.last_used_at = timezone.now() - timedelta(days=10)
+        device.expires_at = timezone.now() + timedelta(days=20)
+        device.save(update_fields=['last_used_at', 'expires_at'])
+        old_last_used = device.last_used_at
+        old_expires = device.expires_at
+
+        request = RequestFactory().get('/')
+        request.COOKIES = {TRUSTED_DEVICE_COOKIE_NAME: 'raw-tok-8'}
+        result = _get_trusted_device(self.user, request)
+
+        self.assertIsNotNone(result)
+        device.refresh_from_db()
+        self.assertGreater(device.last_used_at, old_last_used)
+        self.assertGreater(device.expires_at, old_expires)

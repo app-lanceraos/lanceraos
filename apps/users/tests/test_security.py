@@ -8,7 +8,7 @@ from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.users.models import EmailChangeRequest, Session, User
+from apps.users.models import EmailChangeRequest, Session, TrustedDevice, User
 
 
 class SecurityTestBase(TestCase):
@@ -61,6 +61,20 @@ class ChangePasswordTests(SecurityTestBase):
         resp = other_client.get(reverse('users:me'))
         self.assertEqual(resp.status_code, 401)
 
+    @patch('apps.users.views.auth.send_password_reset_completed_email', return_value=True)
+    @patch('apps.users.views.security.send_password_changed_email', return_value=True)
+    def test_change_password_sends_changed_not_reset_completed_email(self, mock_changed, mock_reset_completed):
+        """
+        change_password (authenticated, in-app) must fire
+        send_password_changed_email — a distinct function from the
+        email-link reset flow's send_password_reset_completed_email. Assert
+        the right one fires for this flow, not just that some email fires.
+        """
+        resp = self._post(reverse('users:change_password'), {'old_password': 'Sup3r$ecret1', 'new_password': 'NewPass!456'})
+        self.assertEqual(resp.status_code, 200)
+        mock_changed.assert_called_once()
+        mock_reset_completed.assert_not_called()
+
 
 class Toggle2FATests(SecurityTestBase):
     @patch('apps.users.views.security.send_2fa_enabled_email', return_value=True)
@@ -72,6 +86,53 @@ class Toggle2FATests(SecurityTestBase):
     def test_enable_2fa_wrong_password_rejected(self):
         resp = self._post(reverse('users:2fa_toggle'), {'action': 'enable', 'password': 'wrong'})
         self.assertEqual(resp.status_code, 400)
+
+    def test_disable_2fa_preserves_trusted_devices_resets_skip_2fa(self):
+        """
+        Regression test: disabling 2FA must only revoke the skip_2fa
+        privilege on existing TrustedDevice rows, not delete them — device
+        recognition itself (new-device-login emails) has to survive 2FA
+        being turned off.
+        """
+        # SecurityTestBase.setUp already logged in once, which created one
+        # TrustedDevice row of its own — add a second, already skip_2fa=True,
+        # to prove disable resets EVERY row, not just ones it touches itself.
+        TrustedDevice.create_for_user(self.user, 'preexisting-tok', 'device', '1.1.1.1', skip_2fa=True)
+        devices_before = TrustedDevice.objects.filter(user=self.user)
+        self.assertEqual(devices_before.count(), 2)
+        ids_before = set(devices_before.values_list('pk', flat=True))
+
+        with patch('apps.users.views.security.send_2fa_enabled_email', return_value=True):
+            self._post(reverse('users:2fa_toggle'), {'action': 'enable', 'password': 'Sup3r$ecret1'})
+
+        with patch('apps.users.views.security.send_2fa_disabled_email', return_value=True):
+            resp = self._post(reverse('users:2fa_toggle'), {'action': 'disable', 'password': 'Sup3r$ecret1'})
+        self.assertEqual(resp.status_code, 200)
+
+        devices = TrustedDevice.objects.filter(user=self.user)
+        self.assertEqual({d.pk for d in devices}, ids_before)  # none deleted
+        self.assertTrue(all(not d.skip_2fa for d in devices))  # all reset to False
+
+    def test_enable_2fa_email_contains_device_time_ip(self):
+        with patch('apps.users.emails.send_email', return_value=True) as mock_send:
+            resp = self._post(reverse('users:2fa_toggle'), {'action': 'enable', 'password': 'Sup3r$ecret1'})
+        self.assertEqual(resp.status_code, 200)
+        html_body = mock_send.call_args[0][2]
+        self.assertIn('When:', html_body)
+        self.assertIn('Device:', html_body)
+        self.assertIn('IP address:', html_body)
+
+    def test_disable_2fa_email_contains_device_time_ip(self):
+        with patch('apps.users.views.security.send_2fa_enabled_email', return_value=True):
+            self._post(reverse('users:2fa_toggle'), {'action': 'enable', 'password': 'Sup3r$ecret1'})
+
+        with patch('apps.users.emails.send_email', return_value=True) as mock_send:
+            resp = self._post(reverse('users:2fa_toggle'), {'action': 'disable', 'password': 'Sup3r$ecret1'})
+        self.assertEqual(resp.status_code, 200)
+        html_body = mock_send.call_args[0][2]
+        self.assertIn('When:', html_body)
+        self.assertIn('Device:', html_body)
+        self.assertIn('IP address:', html_body)
 
 
 class EmailChangeFlowTests(SecurityTestBase):

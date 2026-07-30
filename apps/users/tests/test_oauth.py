@@ -7,7 +7,7 @@ from django.middleware.csrf import get_token
 from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 
-from apps.users.models import User, UserSocialAccount
+from apps.users.models import Session, TrustedDevice, User, UserSocialAccount
 from apps.users.oauth.base import link_or_create_user
 from apps.users.oauth.facebook import OAuthVerificationError as FacebookError
 from apps.users.oauth.google import OAuthVerificationError as GoogleError
@@ -111,3 +111,42 @@ class OAuthViewTests(TestCase):
         mock_verify.return_value = {'provider_uid': 'g-disabled', 'email': 'disabled@example.com', 'first_name': '', 'last_name': '', 'picture_url': ''}
         resp = self._post(reverse('users:google_login'), {'credential': 'fake'})
         self.assertEqual(resp.status_code, 403)
+
+    @patch('apps.users.views.oauth.verify_google_token')
+    def test_oauth_login_goes_through_same_device_recognition_flow_as_password_login(self, mock_verify):
+        """
+        _complete_oauth_login (views/oauth.py) is supposed to call the exact
+        same _get_trusted_device / _update_last_login / _create_or_update_
+        trusted_device helpers as the password-login and 2FA-verify call
+        sites — same assertions as DeviceRecognitionLoginTests, just via OAuth.
+        """
+        mock_verify.return_value = {
+            'provider_uid': 'g-device', 'email': 'oauthdevice@example.com',
+            'first_name': '', 'last_name': '', 'picture_url': '',
+        }
+
+        # First-ever login (via OAuth): no prior last_login, so no new-device
+        # email, but a TrustedDevice row is still created and the very first
+        # session has no trusted_device link yet.
+        with patch('apps.users.views.auth.send_new_device_login_email') as mock_email:
+            resp = self._post(reverse('users:google_login'), {'credential': 'fake'})
+            self.assertEqual(resp.status_code, 200)
+            mock_email.assert_not_called()
+
+        user = User.objects.get(email='oauthdevice@example.com')
+        self.assertEqual(TrustedDevice.objects.filter(user=user).count(), 1)
+        first_session = Session.objects.get(user=user)
+        self.assertIsNone(first_session.trusted_device)
+
+        # Second OAuth login from the same client: device is now recognized
+        # (cookie carried over), so no new TrustedDevice row and the new
+        # session links to the existing one.
+        with patch('apps.users.views.auth.send_new_device_login_email') as mock_email:
+            resp = self._post(reverse('users:google_login'), {'credential': 'fake'})
+            self.assertEqual(resp.status_code, 200)
+            mock_email.assert_not_called()
+
+        self.assertEqual(TrustedDevice.objects.filter(user=user).count(), 1)
+        sessions = list(Session.objects.filter(user=user).order_by('created_at'))
+        self.assertEqual(len(sessions), 2)
+        self.assertIsNotNone(sessions[1].trusted_device)
