@@ -70,6 +70,10 @@ export default function Onboarding() {
   // DOB was already collected at registration for email/password users —
   // only ask for it here if it's genuinely missing (OAuth signups).
   const needsDob = !user?.date_of_birth
+  // Same reasoning: email/password users already accepted the Terms of
+  // Service / Privacy Policy at registration — OAuth signups skip that
+  // wizard entirely, so onboarding is the first and only chance to ask.
+  const needsTermsAcceptance = !user?.terms_accepted_at
   const currentYear = new Date().getFullYear()
   const years = Array.from({ length: 85 }, (_, i) => currentYear - i)
 
@@ -82,6 +86,7 @@ export default function Onboarding() {
   const [serverError, setServerError] = useState('')
   const [loading, setLoading] = useState(false)
   const [usernameAvail, setUsernameAvail] = useState(null)
+  const [agreedToTerms, setAgreedToTerms] = useState(false)
   const usernameTimer = useRef(null)
   const originalUsername = useRef(user?.username || '')
 
@@ -149,6 +154,10 @@ export default function Onboarding() {
     if (!form.profession.trim()) e.profession = 'This helps us tailor LanceraOS to your work.'
     if (!form.income_source) e.income_source = 'Please select one.'
     if (!form.platform_used) e.platform_used = 'Please select one.'
+
+    if (needsTermsAcceptance && !agreedToTerms) {
+      e.agreedToTerms = 'You must agree to the Terms of Service and Privacy Policy to continue.'
+    }
     return e
   }
 
@@ -171,6 +180,9 @@ export default function Onboarding() {
       }
       if (needsDob) {
         payload.date_of_birth = `${form.dob_year}-${String(form.dob_month).padStart(2, '0')}-${String(form.dob_day).padStart(2, '0')}`
+      }
+      if (needsTermsAcceptance) {
+        payload.agreed_to_terms = agreedToTerms
       }
 
       const res = await api.post('/auth/onboarding/complete/', payload)
@@ -303,10 +315,40 @@ export default function Onboarding() {
               <p style={{ fontSize: '0.75rem', color: authTokens.error, marginTop: 6 }}>{errors.platform_used}</p>
             )}
           </div>
+
+          {needsTermsAcceptance && (
+            <div>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.8rem', color: '#8C89A8', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={agreedToTerms}
+                  onChange={(e) => {
+                    setAgreedToTerms(e.target.checked)
+                    setErrors((prev) => {
+                      if (!prev.agreedToTerms) return prev
+                      const next = { ...prev }
+                      delete next.agreedToTerms
+                      return next
+                    })
+                  }}
+                  style={{ marginTop: 2, flexShrink: 0 }}
+                />
+                <span>
+                  I agree to the{' '}
+                  <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: authTokens.focus, fontWeight: 600 }}>Terms of Service</a>
+                  {' '}and{' '}
+                  <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: authTokens.focus, fontWeight: 600 }}>Privacy Policy</a>
+                </span>
+              </label>
+              {errors.agreedToTerms && (
+                <p style={{ fontSize: '0.75rem', color: authTokens.error, marginTop: 6 }}>{errors.agreedToTerms}</p>
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ marginTop: '1.75rem' }}>
-          <AuthButton type="submit" disabled={loading}>
+          <AuthButton type="submit" disabled={loading || (needsTermsAcceptance && !agreedToTerms)}>
             {loading ? 'Setting up your account…' : 'Continue to LanceraOS'}
           </AuthButton>
         </div>

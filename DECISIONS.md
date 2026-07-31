@@ -633,3 +633,85 @@ Alternatives considered: Design a full parallel light-mode palette for the auth 
 a logged-out visitor has no established preference for a "theme" to reflect in the first place;
 the original fixed-palette design was deliberate and the bug was a genuine leak of stale global
 state, not evidence that a light variant was ever wanted here).
+
+---
+
+Date: July 2026
+Decision: Terms of Service / Privacy Policy acceptance is now recorded server-side
+(`User.terms_accepted_at`, `User.terms_version`), not just gated by a frontend checkbox.
+Reason: a checkbox that only exists in the UI isn't a real requirement — a direct API call to
+`POST /auth/register/` would bypass it entirely, and there would be no record that anyone had ever
+agreed to anything, which matters both for basic correctness and if terms are ever disputed.
+`terms_version` records which version of the terms was agreed to (`CURRENT_TERMS_VERSION` in
+`apps/users/constants.py`) — existing users are never forced to retroactively re-accept when this
+bumps, but the historical record of what they agreed to at the time is preserved.
+Also closes a related gap: OAuth signups (Google/Facebook) skip the registration wizard entirely
+and previously had no acceptance mechanism at all. Handled via the existing mandatory-onboarding
+flow — `OnboardingSerializer` requires `agreed_to_terms` only when `not user.terms_accepted_at`,
+so an OAuth user is asked exactly once, during onboarding, while an email/password user (already
+accepted at registration) is never asked again.
+One real bug caught during implementation, not left for later discovery: `UserSerializer` didn't
+expose `terms_accepted_at` at all, which would have made `Onboarding.jsx`'s `!user?.terms_accepted_at`
+check always evaluate true — showing the checkbox again to every user, including ones who'd
+already correctly accepted at registration. Fixed by adding the field to `UserSerializer.Meta.fields`
+before this could ship as a real, if minor, annoyance for the first email/password user to go
+through onboarding.
+Alternatives considered: Rely on the frontend checkbox alone (rejected — provides no actual legal
+or practical protection, since it's trivially bypassable via a direct API call).
+
+---
+
+Date: July 2026
+Decision: The `react-router-dom` `npm audit` finding (a CSRF-bypass vulnerability specific to RSC —
+React Server Components — mode) is left as-is, not downgraded.
+Reason: This app doesn't use RSC mode anywhere, so the actual exposure is very likely nil. The only
+available fix is downgrading to an older version, which carries a real risk of breaking working
+routing behavior that the entire frontend was built and tested against the current version for —
+a concrete cost to fix a vulnerability whose applicability here is doubtful. Reviewed and
+consciously accepted, not an oversight left unaddressed.
+Alternatives considered: Downgrade anyway to eliminate the finding regardless of applicability
+(rejected — the risk of introducing a real regression outweighs closing a finding that likely
+doesn't apply to this app's actual usage).
+
+---
+
+Date: July 2026
+Decision: Built the WebSocket authentication foundation — `apps/users/ws_auth.py`'s
+`CookieJWTAuthMiddleware`, wired into `config/asgi.py` alongside Channels' built-in
+`OriginValidator`. Any future module (Invoices' client-portal chat, live notifications, etc.) can
+now add its own consumer and inherit working, secure authentication for free, without needing to
+touch `apps.users` code — the exact concern that originally motivated building this now rather
+than deferring it to whenever the first real WebSocket feature arrives.
+Deliberately reuses `CookieJWTAuthentication.get_validated_token()`/`get_user()` directly rather
+than reimplementing token validation for the WebSocket context — this means a WebSocket connection
+has identical security properties to an HTTP request, including the password-change invalidation
+and session-revocation checks that already exist there, with no risk of a second implementation
+quietly drifting out of sync with the first.
+The middleware does not reject a connection outright when no valid token is present — it populates
+`scope['user']` with either the real user or `AnonymousUser`, mirroring how
+`CookieJWTAuthentication.authenticate()` returns `None` for the no-cookie HTTP case and lets
+downstream code decide. Individual consumers are responsible for checking
+`self.scope['user'].is_authenticated` themselves.
+A minimal, explicitly-labeled test/reference consumer (`core/ws_test_consumer.py`,
+`AuthEchoConsumer`) exists purely to prove this works end to end and to give whoever builds the
+first real consumer a working pattern to copy — not a real product feature, safe to delete once a
+genuine consumer exists.
+Verified rigorously, not just claimed: a real Daphne server, a real HTTP login producing a real
+cookie, that cookie reused over a real WebSocket connection with the echoed reply containing the
+actual authenticated user's email; a tampered/expired token proven to behave identically to no
+token at all (same rejection pattern, no crash); `OriginValidator` proven — via temporary
+instrumentation inside the middleware, not just inferred from code structure — to reject a
+mismatched-Origin connection *before* the auth middleware ever runs at all.
+One real bug found and fixed during this verification: the reference consumer's original code
+called `self.close(code=4001)` *before* `self.accept()` — per the ASGI spec, closing before
+accepting means the handshake itself never completes, so the specific close code collapses into a
+generic HTTP-level rejection rather than reaching the client as a real, readable WebSocket close
+event. Fixed by accepting first, then closing with the code — the security behavior (unauthenticated
+connections still get refused) was correct throughout; only the code's visibility to the client was
+wrong.
+Alternatives considered: Reimplement JWT validation independently for the WebSocket context
+(rejected — real risk of the two implementations silently drifting apart over time, exactly the
+kind of duplication this project has consistently avoided); reject unauthenticated connections at
+the middleware level rather than deferring to each consumer (rejected — inconsistent with how HTTP
+authentication already works in this codebase, where the authentication class itself never decides
+whether authentication is *required*, only *who's asking*).

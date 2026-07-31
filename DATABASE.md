@@ -47,6 +47,9 @@ deleted_at                                      DateTimeField, nullable
 deletion_requested_at                             DateTimeField, nullable
 deletion_scheduled_at                               DateTimeField, nullable
 anonymized_at                                         DateTimeField, nullable
+
+terms_accepted_at                                       DateTimeField, nullable
+terms_version                                             CharField(20), blank
 ```
 
 1. **Mutable?** Yes — this is a live account record, updated throughout its life (login
@@ -70,6 +73,16 @@ anonymized_at                                         DateTimeField, nullable
 updated on every login, but they are **not** what decides whether a login email fires anymore.
 That decision now runs through `TrustedDevice` (see below) — these two fields are legacy/display
 metadata only. See `DECISIONS.md` for the bug this distinction was introduced to fix.
+
+**`terms_accepted_at`/`terms_version`**: recorded server-side, not just gated by a frontend
+checkbox — a client-side-only requirement isn't a real requirement at all, since a direct API call
+bypasses it entirely with no record anything was ever agreed to. Set at registration for
+email/password signups; for OAuth signups (who skip the registration wizard entirely and would
+otherwise have no acceptance mechanism at all), set during onboarding instead, gated behind the
+same checkbox pattern as `needsDob`. `terms_version` records *which* version of the Terms/Privacy
+Policy was agreed to (see `apps/users/constants.py`'s `CURRENT_TERMS_VERSION`) — existing users are
+never retroactively required to re-accept when the version bumps, but this preserves a real record
+of what they actually agreed to at the time, which matters if terms are ever disputed.
 
 **Key methods**: `is_account_locked()`, `increment_failed_attempts()` (tiered lockout — 5 attempts
 → 15min, 11 → 60min, 16+ → 24h), `is_oauth_only()`, `anonymize()` (strips all PII on both `User`

@@ -9,16 +9,24 @@ from django.core.asgi import get_asgi_application  # noqa: E402
 django_asgi_app = get_asgi_application()
 
 from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
+from channels.security.websocket import OriginValidator  # noqa: E402
+from django.conf import settings  # noqa: E402
 
-# Empty for now — no module has WebSocket consumers yet (that arrives
-# with apps.invoices, for the client-portal message thread and live
-# notifications). When it does, that module's chat adds
-# `from apps.invoices.routing import websocket_urlpatterns` here and
-# passes it to URLRouter below, rather than this file being rewritten
-# from scratch.
-websocket_urlpatterns = []
+from apps.users.ws_auth import CookieJWTAuthMiddleware  # noqa: E402
+from config.ws_routing import websocket_urlpatterns  # noqa: E402
 
 application = ProtocolTypeRouter({
     'http': django_asgi_app,
-    'websocket': URLRouter(websocket_urlpatterns),
+    # OriginValidator reuses the same CORS_ALLOWED_ORIGINS already
+    # configured for HTTP — a single source of truth for "which
+    # frontend origins are trusted" rather than a second setting to
+    # keep in sync. This is the WebSocket equivalent of CORS: without
+    # it, a malicious site could open a connection using a logged-in
+    # user's browser (cookies are attached automatically), since
+    # WebSocket handshakes aren't subject to CSRF the same way a POST
+    # request is.
+    'websocket': OriginValidator(
+        CookieJWTAuthMiddleware(URLRouter(websocket_urlpatterns)),
+        settings.CORS_ALLOWED_ORIGINS,
+    ),
 })

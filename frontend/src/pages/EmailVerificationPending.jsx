@@ -1,5 +1,5 @@
 // src/pages/EmailVerificationPending.jsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Mail } from 'lucide-react'
 
@@ -18,6 +18,25 @@ export default function EmailVerificationPending() {
   const [sent, setSent] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  // Polls while this page is open so a user who verifies in a different
+  // tab/device gets redirected automatically, instead of sitting on
+  // "check your email" indefinitely until they manually come back.
+  useEffect(() => {
+    if (!email) return
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.get(`/auth/check-verification-status/?email=${encodeURIComponent(email)}`)
+        if (res.data.is_verified) {
+          clearInterval(interval)
+          navigate('/login', { replace: true, state: { message: 'Your email has been verified — you can sign in now.' } })
+        }
+      } catch {
+        /* keep polling */
+      }
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [email, navigate])
 
   const handleResend = async () => {
     if (!email) return setError('No email address found. Please go back and register again.')

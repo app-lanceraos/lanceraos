@@ -7,6 +7,7 @@ from django.middleware.csrf import get_token
 from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 
+from apps.users.constants import CURRENT_TERMS_VERSION
 from apps.users.models import User
 
 
@@ -19,6 +20,7 @@ class RegistrationTests(TestCase):
             'email': 'ali@example.com', 'username': 'aliamir',
             'password': 'Sup3r$ecret1', 'confirm_password': 'Sup3r$ecret1',
             'first_name': 'Ali', 'last_name': 'Amir', 'date_of_birth': '2000-01-01',
+            'agreed_to_terms': True,
         }
         self.csrf_token = self._csrf_token()
 
@@ -41,6 +43,35 @@ class RegistrationTests(TestCase):
         user = User.objects.get(email='ali@example.com')
         self.assertFalse(user.is_email_verified)
         mock_email.assert_called_once()
+
+    @patch('apps.users.views.auth.send_verification_email', return_value=True)
+    def test_register_happy_path_records_terms_acceptance(self, mock_email):
+        resp = self._post(reverse('users:register'), self.valid_payload)
+        self.assertEqual(resp.status_code, 201)
+        user = User.objects.get(email='ali@example.com')
+        self.assertIsNotNone(user.terms_accepted_at)
+        self.assertEqual(user.terms_version, CURRENT_TERMS_VERSION)
+
+    @patch('apps.users.views.auth.send_verification_email', return_value=True)
+    def test_register_terms_not_agreed_rejected(self, mock_email):
+        """
+        Server-side enforcement, not just a frontend checkbox — a direct
+        API call with agreed_to_terms: False must be rejected with a clear
+        400, and must not create the account.
+        """
+        payload = dict(self.valid_payload, agreed_to_terms=False)
+        resp = self._post(reverse('users:register'), payload)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('agreed_to_terms', resp.json())
+        self.assertFalse(User.objects.filter(email='ali@example.com').exists())
+
+    @patch('apps.users.views.auth.send_verification_email', return_value=True)
+    def test_register_terms_omitted_rejected(self, mock_email):
+        payload = {k: v for k, v in self.valid_payload.items() if k != 'agreed_to_terms'}
+        resp = self._post(reverse('users:register'), payload)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('agreed_to_terms', resp.json())
+        self.assertFalse(User.objects.filter(email='ali@example.com').exists())
 
     @patch('apps.users.views.auth.send_verification_email', return_value=True)
     def test_register_under_16_rejected(self, mock_email):

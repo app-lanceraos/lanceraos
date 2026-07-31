@@ -5,8 +5,10 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import RegexValidator
+from django.utils import timezone
 from rest_framework import serializers
 
+from .constants import CURRENT_TERMS_VERSION
 from .models import FreelancerProfile, Session
 
 User = get_user_model()
@@ -83,11 +85,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         )],
     )
     date_of_birth = serializers.DateField(required=True)
+    agreed_to_terms = serializers.BooleanField(write_only=True)
 
     class Meta:
         model = User
         fields = ['email', 'username', 'password', 'confirm_password',
-                  'first_name', 'last_name', 'date_of_birth']
+                  'first_name', 'last_name', 'date_of_birth', 'agreed_to_terms']
 
     def validate_email(self, value):
         value = value.lower().strip()
@@ -135,6 +138,11 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate_password(self, value):
         return validate_password_strength(value)
 
+    def validate_agreed_to_terms(self, value):
+        if not value:
+            raise serializers.ValidationError('You must agree to the Terms of Service and Privacy Policy.')
+        return value
+
     def validate(self, data):
         if data.get('password') != data.get('confirm_password'):
             raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
@@ -142,6 +150,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop('confirm_password')
+        validated_data.pop('agreed_to_terms')
         dob = validated_data.pop('date_of_birth')
         user = User.objects.create_user(
             username=validated_data['username'],
@@ -151,7 +160,9 @@ class RegisterSerializer(serializers.ModelSerializer):
             last_name=validated_data.get('last_name', ''),
         )
         user.date_of_birth = dob
-        user.save(update_fields=['date_of_birth'])
+        user.terms_accepted_at = timezone.now()
+        user.terms_version = CURRENT_TERMS_VERSION
+        user.save(update_fields=['date_of_birth', 'terms_accepted_at', 'terms_version'])
         user.add_to_password_history(user.password)
         return user
 
@@ -234,6 +245,10 @@ class UserSerializer(serializers.ModelSerializer):
             'last_login', 'last_login_ip', 'last_login_device',
             'is_deleted',
             'is_oauth_only',
+            # Required by Onboarding.jsx to decide whether to show the
+            # terms-acceptance checkbox (OAuth signups only — email/
+            # password users already accepted this at registration).
+            'terms_accepted_at',
             # Required by ChangeEmail.jsx / Profile.jsx to show the pending-change banner.
             'pending_email',
             # Required by the Login deletion modal and the Dashboard deletion banner.
@@ -412,6 +427,11 @@ class OnboardingSerializer(serializers.Serializer):
     profession = serializers.CharField(max_length=100, min_length=2)
     income_source = serializers.ChoiceField(choices=FreelancerProfile.INCOME_SOURCE_CHOICES)
     platform_used = serializers.ChoiceField(choices=FreelancerProfile.PLATFORM_CHOICES)
+    # Only required for users who haven't already accepted (OAuth signups —
+    # they skip the registration wizard entirely, so onboarding is the
+    # first and only chance to record this). Enforced conditionally in
+    # validate(), same pattern as date_of_birth above.
+    agreed_to_terms = serializers.BooleanField(required=False)
 
     def validate_username(self, value):
         value = value.strip().lower()
@@ -442,6 +462,11 @@ class OnboardingSerializer(serializers.Serializer):
             # own validation). Ignored even if a client sends one, as
             # defense in depth against silently overwriting it here.
             data.pop('date_of_birth', None)
+
+        if not user.terms_accepted_at and not data.get('agreed_to_terms'):
+            raise serializers.ValidationError(
+                {'agreed_to_terms': 'You must agree to the Terms of Service and Privacy Policy.'}
+            )
         return data
 
 # ══════════════════════════════════════════════════════════════════

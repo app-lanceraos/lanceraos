@@ -31,6 +31,7 @@ urlpatterns = [
     # ── Email verification ──────────────────────────────────────
     path('verify-email/<str:uid>/<str:token>/', auth.verify_email, name='verify_email'),
     path('resend-verification/', auth.resend_verification, name='resend_verification'),
+    path('check-verification-status/', auth.check_verification_status, name='check_verification_status'),
 
     # ── Password ─────────────────────────────────────────────────
     path('forgot-password/', auth.forgot_password, name='forgot_password'),

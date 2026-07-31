@@ -115,6 +115,7 @@ export default function Register() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [emailAvail, setEmailAvail] = useState(null)
   const [usernameAvail, setUsernameAvail] = useState(null)
+  const [agreedToTerms, setAgreedToTerms] = useState(false)
 
   const emailTimer = useRef(null)
   const usernameTimer = useRef(null)
@@ -217,6 +218,7 @@ export default function Register() {
     else if (!isPasswordValid(form.password)) e.password = 'Password does not meet all requirements below.'
     if (!form.confirm_password) e.confirm_password = 'Please confirm your password.'
     else if (form.password !== form.confirm_password) e.confirm_password = 'Passwords do not match.'
+    if (!agreedToTerms) e.agreedToTerms = 'You must agree to the Terms of Service and Privacy Policy to continue.'
     return e
   }
 
@@ -255,6 +257,7 @@ export default function Register() {
         username: form.username.trim().toLowerCase(),
         password: form.password,
         confirm_password: form.confirm_password,
+        agreed_to_terms: agreedToTerms,
       })
       navigate('/verify-email-pending', { state: { email: res.data.email } })
     } catch (err) {
@@ -426,9 +429,37 @@ export default function Register() {
               )}
             </div>
 
+            <div>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.8rem', color: '#8C89A8', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={agreedToTerms}
+                  onChange={(e) => {
+                    setAgreedToTerms(e.target.checked)
+                    setErrors((prev) => {
+                      if (!prev.agreedToTerms) return prev
+                      const next = { ...prev }
+                      delete next.agreedToTerms
+                      return next
+                    })
+                  }}
+                  style={{ marginTop: 2, flexShrink: 0 }}
+                />
+                <span>
+                  I agree to the{' '}
+                  <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: authTokens.focus, fontWeight: 600 }}>Terms of Service</a>
+                  {' '}and{' '}
+                  <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: authTokens.focus, fontWeight: 600 }}>Privacy Policy</a>
+                </span>
+              </label>
+              {errors.agreedToTerms && (
+                <p style={{ fontSize: '0.75rem', color: authTokens.error, marginTop: 6 }}>{errors.agreedToTerms}</p>
+              )}
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: 4 }}>
               <AuthButton variant="ghost" onClick={() => setStep((s) => s - 1)} disabled={loading}>← Back</AuthButton>
-              <AuthButton type="submit" disabled={loading}>{loading ? 'Creating…' : 'Create Account'}</AuthButton>
+              <AuthButton type="submit" disabled={loading || !agreedToTerms}>{loading ? 'Creating…' : 'Create Account'}</AuthButton>
             </div>
           </div>
         )}

@@ -40,6 +40,16 @@ class User(AbstractUser):
     is_email_verified = models.BooleanField(default=False)
     date_of_birth = models.DateField(null=True, blank=True)
 
+    # ── Terms of Service / Privacy Policy acceptance ─────────────
+    # Recorded server-side at whichever point actually satisfies it —
+    # registration for email/password signups, onboarding for OAuth
+    # signups (which skip the registration wizard entirely). Existing
+    # users are never retroactively required to re-accept a version bump;
+    # terms_version just records which version this particular user agreed
+    # to, in case it's ever disputed.
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+    terms_version = models.CharField(max_length=20, blank=True)
+
     # ── 2FA ──────────────────────────────────────────────────────
     two_fa_enabled = models.BooleanField(default=False)
     two_fa_code = models.CharField(max_length=6, blank=True)

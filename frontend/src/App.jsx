@@ -20,6 +20,8 @@ import DeletionReview from '@/pages/DeletionReview'
 import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
 import Onboarding from '@/pages/Onboarding'
+import PrivacyPolicy from '@/pages/PrivacyPolicy'
+import TermsOfService from '@/pages/TermsOfService'
 
 export default function App() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -45,6 +47,13 @@ export default function App() {
         <Route path="/2fa-verify" element={<TwoFAVerify />} />
         <Route path="/change-email/:ecr_uid/:token" element={<ChangeEmail />} />
         <Route path="/activate-email/:ecr_uid/:token" element={<ActivateEmail />} />
+
+        {/* Legal pages — auth-state-agnostic like the routes above: an
+            authenticated user shouldn't be redirected away from viewing
+            these (e.g. opened from the registration form's checkbox), and
+            they need no session either. */}
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<TermsOfService />} />
 
         {/* Shell-less standalone flow — deliberately not wrapped in
             AppShell or a route guard (see DeletionReview.jsx). */}

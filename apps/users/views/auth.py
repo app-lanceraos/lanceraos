@@ -673,6 +673,25 @@ def resend_verification(request):
     return Response({'message': 'If this email exists and is unverified, a new link has been sent.'})
 
 
+@api_view(['GET'])
+@authentication_classes(NO_AUTH)
+@permission_classes([AllowAny])
+def check_verification_status(request):
+    """
+    Polled by EmailVerificationPending.jsx while it's on screen, so a user
+    who verifies in a different tab/device gets redirected automatically
+    instead of the page sitting on "check your email" forever. Deliberately
+    returns only a boolean — never confirms/denies whether the email
+    exists at all, beyond what the caller already knows from being on this
+    exact page for this exact address.
+    """
+    email = request.query_params.get('email', '').strip().lower()
+    if not email:
+        return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    is_verified = User.objects.filter(email=email, is_email_verified=True).exists()
+    return Response({'is_verified': is_verified})
+
+
 # ══════════════════════════════════════════════════════════════════
 # PASSWORD RESET
 # ══════════════════════════════════════════════════════════════════

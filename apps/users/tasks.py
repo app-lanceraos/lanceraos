@@ -6,6 +6,8 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
+from core.observability import log_event
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,6 +43,17 @@ def anonymize_expired_accounts(self):
                 user.anonymize()
                 processed += 1
                 logger.info('[ANONYMIZE] Anonymized account: %s (id=%s)', email, user_id)
+                # Distinct from 'deletion_confirmed' (the earlier, user-initiated step 30
+                # days prior) — this is the final, system-triggered completion. No `request`
+                # object exists in this scheduled-task context, so ip_address/user_agent are
+                # left unset; `original_email` is kept in metadata specifically so a support
+                # question like "was this email actually deleted, and when?" has a real,
+                # searchable answer even after the User row itself no longer shows it.
+                log_event(
+                    'account_anonymized',
+                    user=user,
+                    metadata={'original_email': email},
+                )
 
             from .emails import send_account_deleted_email
             send_account_deleted_email(email)

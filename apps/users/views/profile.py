@@ -10,8 +10,11 @@ from rest_framework.response import Response
 
 from rest_framework import serializers
 
+from django.utils import timezone
+
 from core.observability import log_event
 
+from ..constants import CURRENT_TERMS_VERSION
 from ..cookies import clear_auth_cookies
 from ..models import FreelancerProfile
 from ..serializers import AccountUpdateSerializer, FreelancerProfileSerializer, UserSerializer, OnboardingSerializer, UnderageOnboardingError
@@ -183,6 +186,14 @@ def complete_onboarding(request):
     if 'date_of_birth' in data:
         user.date_of_birth = data['date_of_birth']
         user_update_fields.append('date_of_birth')
+    if not user.terms_accepted_at:
+        # OnboardingSerializer.validate() already enforced that
+        # agreed_to_terms was truthy to get this far — this is the user's
+        # first and only chance to record it, since OAuth signups skip
+        # registration (RegisterSerializer) entirely.
+        user.terms_accepted_at = timezone.now()
+        user.terms_version = CURRENT_TERMS_VERSION
+        user_update_fields += ['terms_accepted_at', 'terms_version']
     user.save(update_fields=user_update_fields)
 
     profile.profession = data['profession']
