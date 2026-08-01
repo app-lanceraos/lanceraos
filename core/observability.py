@@ -119,7 +119,7 @@ def redact_sensitive_fields(data):
 # AUDIT LOG WRITER
 # ══════════════════════════════════════════════════════════════════
 
-def log_event(event, user=None, request=None, ip_address=None, user_agent=None, metadata=None):
+def log_event(event, user=None, actor=None, request=None, ip_address=None, user_agent=None, metadata=None):
     """
     Writes a row to AuditLog. Never raises — an audit-logging failure
     must not take down the request that triggered it. Logs the failure
@@ -129,6 +129,11 @@ def log_event(event, user=None, request=None, ip_address=None, user_agent=None, 
     Pass `request` when available and it supplies ip/user_agent/request_id
     automatically; pass ip_address/user_agent directly for the cases with
     no request object (e.g. a Celery task running the deletion sweep).
+
+    Pass `actor` only when someone other than `user` performed the
+    action — an admin acting on someone else's account. Leave it unset
+    for every self-service event, where the actor and the subject are
+    already the same person captured in `user`.
     """
     request_id = None
     if request is not None:
@@ -139,6 +144,7 @@ def log_event(event, user=None, request=None, ip_address=None, user_agent=None, 
     try:
         return AuditLog.objects.create(
             user=user,
+            actor=actor,
             event=event,
             request_id=request_id,
             ip_address=ip_address or None,
@@ -146,5 +152,5 @@ def log_event(event, user=None, request=None, ip_address=None, user_agent=None, 
             metadata=metadata or {},
         )
     except Exception:
-        logger.exception('Failed to write AuditLog entry for event=%s user=%s', event, user)
+        logger.exception('Failed to write AuditLog entry for event=%s user=%s actor=%s', event, user, actor)
         return None

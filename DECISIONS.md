@@ -715,3 +715,112 @@ kind of duplication this project has consistently avoided); reject unauthenticat
 the middleware level rather than deferring to each consumer (rejected — inconsistent with how HTTP
 authentication already works in this codebase, where the authentication class itself never decides
 whether authentication is *required*, only *who's asking*).
+
+---
+
+Date: July 2026
+Decision: Built the actual admin login flow on top of the foundation from the previous entry —
+`admin_login`/`admin_verify_2fa`/`admin_logout`/`admin_refresh`/`admin_me` in `apps/admin_panel/`,
+plus `issue_admin_tokens_and_session`/`rotate_admin_session` in a new `admin_panel/token_service.py`
+mirroring the regular flow's exact shape.
+Mandatory 2FA is enforced with no exception — an account with `can_access_admin_panel=True` but
+`two_fa_enabled=False` is rejected outright at login, with a clear message to enable it via the
+main app first, rather than the admin panel building its own separate 2FA-enrollment flow.
+"Wrong password" and "not an admin account" deliberately return the identical error message and
+status code — a distinct message would let someone probe which accounts have admin access at all,
+independent of ever knowing the correct password for any of them.
+Verified rigorously: the full 7-step flow (2FA-required rejection, real OTP email dispatch via
+Resend's sandbox address, real `AdminSession` creation with no raw tokens ever in a JSON response
+body, real authenticated `/me/` call, identical-message confirmation for both failure modes, real
+session deletion on logout) — and, going beyond what was asked, a real regular-user access token
+was captured from an actual `/api/auth/login/` call and presented as the admin cookie, confirming
+`AdminCookieJWTAuthentication` genuinely rejects it via the missing `admin_sid` claim (not just a
+differently-named cookie failing to match) — the exact token-type-confusion risk this whole
+mechanism was designed to close.
+
+---
+
+Date: July 2026
+Decision / correction: `AuditLog.actor` — a field this project's own documentation has claimed
+existed since the notification-bell work — never actually existed anywhere in the codebase until
+now. It was designed then (a proposal in `ADMIN_PANEL_DESIGN.md`) and mistakenly treated as
+already-implemented in later documentation and instructions, including a direct instruction to
+modify `log_event()` to write to it. Applying that instruction as originally written would have
+made every single `log_event()` call in the entire application raise `TypeError` and silently fail
+to write any audit row at all — silently, because that failure sits inside `log_event()`'s own
+blanket exception handler, meaning this would have gone completely undetected in production.
+Caught correctly: rather than apply the diff on faith, the actual model and full migration history
+were checked first, confirmed the field had never existed, and it was added properly (new
+migration) before proceeding with the originally-requested `log_event()` change.
+This is being recorded here plainly as a real process failure, not smoothed over: a design
+proposal was mistaken for a shipped fact, that mistake propagated into `DATABASE.md` and at least
+one prior `DECISIONS.md` entry, and it was only caught because a later step happened to touch the
+same code and checked reality rather than trusting the accumulated record. `DATABASE.md` has been
+corrected to reflect the real history.
+The field is now genuinely real, backing the first actual admin action to use it: revoking a
+user's session from the admin panel now correctly logs `user=<affected account>`,
+`actor=<admin who did it>` — verified directly via database query, not just "a row exists."
+
+---
+
+Date: July 2026
+Decision: Built account suspension/reactivation — the one genuinely new admin capability, nothing
+like it existed anywhere before this. Deliberately a separate set of fields
+(`is_suspended`/`suspended_at`/`suspension_reason`) rather than reusing `is_active` (already used
+by permanent anonymization — reusing it would make a suspended account indistinguishable from a
+permanently deleted one) or `is_deleted` (the unrelated self-service deletion lifecycle).
+A suspension takes effect on the affected user's very next request, not just future logins —
+`CookieJWTAuthentication.get_user()` now checks `is_suspended` alongside its existing `pca`/`sid`
+checks, and `suspend_user` additionally deletes every live `Session` row as defense in depth, so
+there's genuinely nothing left to be "logged in" with, not just a check waiting to catch the next
+request.
+Verified with real rigor, not just the obvious path: an isolated test specifically proved the new
+`is_suspended` check in `get_user()` fires independently of the session-deletion side effect (a
+separate test user was suspended with their `Session` row deliberately left intact, and their
+still-valid, non-revoked token still correctly failed on its very next request) — confirming the
+new mechanism works on its own merits, not just riding along on an unrelated cleanup step.
+Every edge case (suspending an already-suspended account, reactivating a non-suspended one,
+suspending with no reason) returns a clean, explicit 400 rather than a silent no-op. Full existing
+auth regression suite (119 tests) confirmed passing unchanged, since this touches shared
+`authentication.py` code every login/refresh already depends on.
+
+---
+
+Date: July 2026
+Decision: Added a real two-tier admin permission model — `is_super_admin`, distinct from
+`can_access_admin_panel`. Any admin can use the panel (search users, suspend/reactivate, view the
+audit log); only a super-admin can grant or revoke someone else's admin access. Also enforces that
+admin access can only ever be granted to a `@lanceraos.com` email, checked independently in two
+places (at grant time, and again at every admin login) — so even if the flag were ever mistakenly
+set on the wrong account some other way, login itself would still reject it.
+Revoking access ends any of that person's live `AdminSession` rows immediately, and self-revocation
+is explicitly blocked (a super-admin cannot revoke their own access).
+There is deliberately no self-service path to create the first super-admin — `IsSuperAdmin` gates
+the only endpoints that could do it. The first one is a one-time manual database step (see the
+exact commands in this session's report), which itself still enforces the `@lanceraos.com` domain
+check — the bootstrap cannot bypass that rule either.
+Verified with real rigor at the most consequential action (revoke): confirmed at three independent
+levels — the live session count, an already-open admin token immediately failing its next request,
+and a fresh login attempt for the same account also being cleanly rejected — rather than trusting
+any single check alone.
+Alternatives considered: A self-registration flow for new admins (rejected — the actual process
+described is "one person who already knows and trusts the new admin decides to grant them access,"
+which the existing search-and-grant flow already covers; a separate signup system would be real,
+unneeded complexity for what is fundamentally a one-person decision).
+
+---
+
+Date: July 2026
+Decision: Completed the last backend piece from the original v1 admin panel scope —
+admin-triggered resend of the verification email, reusing the exact token-generation/dispatch
+path the user-facing endpoint already uses, logged with `actor` since it's admin-initiated.
+This closes out the **entire backend** for the admin panel's v1 scope, as originally defined in
+`ADMIN_PANEL_DESIGN.md`: foundation (separate session/cookie/auth-class), the full login+mandatory-
+2FA flow, user search/detail/session-management/revoke, suspend/reactivate, the audit log viewer,
+a real two-tier permission model, deletion-queue management, and this resend action. Every piece
+was verified end to end against a real running server, not just unit-tested in isolation — real
+tokens followed through real endpoints, real Celery dispatches confirmed via worker logs, real
+audit trail entries queried directly rather than assumed.
+What remains for the admin panel as a whole: the entire `admin.lanceraos.com` frontend, which does
+not exist in any form yet, and the fresh, admin-panel-scoped security pass that comes after it per
+the project roadmap.

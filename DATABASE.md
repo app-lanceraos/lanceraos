@@ -338,10 +338,17 @@ created_at
 6. **Cascade behavior?** `SET_NULL` on both `user` and `actor` — the log entry survives even if
    the account it describes (or the admin who performed the action) is later deleted.
 
-**`actor` — added for the admin-panel foundation**: every existing call site (self-service events)
-leaves this `null`, since the actor and the subject are already the same person captured in
-`user`. Only admin-initiated actions on someone else's account populate it, making "show me
-everything this admin has done" a real, indexed query rather than something buried in `metadata`.
+**`actor` — correction: this document previously claimed this field was added during the
+notification-bell work. That was wrong.** It was designed then (in `ADMIN_PANEL_DESIGN.md`, as a
+proposal) but never actually implemented — the field genuinely didn't exist in the database until
+the first real admin capability (user search/session management) was built, when a Claude Code
+session correctly caught that an earlier instruction assumed it already existed, checked the real
+model and migration history, found it didn't, and added it properly at that point instead of
+applying a diff that would have silently broken every `log_event()` call in the application.
+Every self-service call site leaves this `null`, since the actor and the subject are already the
+same person captured in `user`. Only admin-initiated actions on someone else's account populate
+it. **Unconfirmed**: whether the `(actor, created_at)` index listed above was actually created by
+that migration, or just the bare column — worth a direct check before treating that index as settled fact.
 
 **`event` is deliberately free-form, not an enum**: a fixed choices list here would mean editing
 `core/models.py` for every future module's events, or every module reinventing its own event log —

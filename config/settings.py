@@ -86,6 +86,7 @@ INSTALLED_APPS = [
     # LanceraOS
     'core',
     'apps.users',
+    'apps.admin_panel',
     # Future modules join this list as their own chats build them:
     # 'apps.invoices', 'apps.payments', 'apps.tax', 'apps.health',
     # 'apps.proposals', 'apps.contracts', 'apps.subscriptions',

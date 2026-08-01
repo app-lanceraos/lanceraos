@@ -77,6 +77,15 @@ class CookieJWTAuthentication(JWTAuthentication):
                 raise InvalidToken(
                     'Session has been revoked. Please sign in again.'
                 )
+
+        # A suspension must take effect on this user's very next request,
+        # not just block future logins — an already-open tab with a
+        # still-valid access token would otherwise keep working until it
+        # naturally expired.
+        if user.is_suspended:
+            raise InvalidToken(
+                'This account has been suspended. Please contact support.'
+            )
         return user
 
     def enforce_csrf(self, request):

@@ -33,6 +33,16 @@ class AuditLog(models.Model):
         help_text='Null when the event has no authenticated actor yet '
                    '(e.g. a failed login attempt against an unknown email).',
     )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='acted_audit_logs',
+        help_text='Only set when someone other than `user` performed the action — '
+                   'e.g. an admin acting on this account from the admin panel. Null '
+                   'for every self-service event, where the actor and the subject '
+                   'are already the same person captured in `user`.',
+    )
     event = models.CharField(max_length=60)
     request_id = models.CharField(
         max_length=36, blank=True, null=True,

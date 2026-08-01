@@ -15,6 +15,7 @@ from core.notifications import (
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/', include('apps.users.urls')),
+    path('api/admin/', include('apps.admin_panel.urls')),
     # Lives at the root, not under api/auth/ — matches what the frontend
     # (AppShell.jsx) already calls directly via api.get('/notifications/'),
     # which resolves against the API base URL, not through /auth/.

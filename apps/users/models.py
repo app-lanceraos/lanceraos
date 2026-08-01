@@ -84,6 +84,24 @@ class User(AbstractUser):
     deletion_scheduled_at = models.DateTimeField(null=True, blank=True)
     anonymized_at = models.DateTimeField(null=True, blank=True)
 
+    # ── Admin panel access ─────────────────────────────────────────
+    # Deliberately separate from Django's own is_staff/is_superuser,
+    # which stay reserved for the raw Django /admin/ interface. This
+    # flag gates the real, purpose-built admin panel at
+    # admin.lanceraos.com — someone could have one without the other.
+    can_access_admin_panel = models.BooleanField(default=False)
+
+    # Only a super-admin may grant/revoke can_access_admin_panel for
+    # someone else — a regular admin can do everything else (search,
+    # suspend, view the audit log) but not manage who else has access.
+    is_super_admin = models.BooleanField(default=False)
+
+    # ── Admin-initiated suspension — distinct from is_active (used by
+    # permanent anonymization) and is_deleted (self-service deletion) ──
+    is_suspended = models.BooleanField(default=False)
+    suspended_at = models.DateTimeField(null=True, blank=True)
+    suspension_reason = models.TextField(blank=True)
+
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username']
 

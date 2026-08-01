@@ -335,6 +335,9 @@ def login(request):
     if not user.is_active:
         return Response({'error': 'Your account has been disabled. Please contact support.'}, status=status.HTTP_403_FORBIDDEN)
 
+    if user.is_suspended:
+        return Response({'error': 'This account has been suspended. Please contact support.'}, status=status.HTTP_403_FORBIDDEN)
+
     if not user.is_email_verified:
         uid = encode_uid(user)
         token = email_verification_token.make_token(user)
