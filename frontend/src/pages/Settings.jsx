@@ -53,12 +53,24 @@ function TabNav({ active, onChange }) {
   )
 }
 
+const VALID_TABS = ['account', 'business', 'tax', 'security', 'sessions', 'notifications', 'smtp']
+
 export default function Settings() {
   useTitle('LanceraOS | Settings')
   const [searchParams, setSearchParams] = useSearchParams()
-  const VALID_TABS = ['account', 'business', 'tax', 'security', 'sessions', 'notifications', 'smtp']
   const tabFromUrl = searchParams.get('tab')
   const [activeTab, setActiveTabState] = useState(VALID_TABS.includes(tabFromUrl) ? tabFromUrl : 'account')
+
+  // Re-sync activeTab whenever the URL's tab parameter changes AFTER
+  // the initial mount too — not just once. Clicking a notification
+  // linking to a different tab while already on /settings doesn't
+  // remount this component (same route, just a different query
+  // param), so without this, the tab silently never updates.
+  useEffect(() => {
+    if (VALID_TABS.includes(tabFromUrl) && tabFromUrl !== activeTab) {
+      setActiveTabState(tabFromUrl)
+    }
+  }, [tabFromUrl]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const setActiveTab = (tab) => {
     setActiveTabState(tab)
