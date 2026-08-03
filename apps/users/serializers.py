@@ -162,7 +162,17 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.date_of_birth = dob
         user.terms_accepted_at = timezone.now()
         user.terms_version = CURRENT_TERMS_VERSION
-        user.save(update_fields=['date_of_birth', 'terms_accepted_at', 'terms_version'])
+        update_fields = ['date_of_birth', 'terms_accepted_at', 'terms_version']
+
+        # Convenience default, not a security requirement — this only
+        # ever affects accounts on a domain Ali fully controls, never
+        # the public. Saves a manual step before someone's ready to
+        # become an admin, which requires 2FA already enabled anyway.
+        if user.email.endswith('@lanceraos.com'):
+            user.two_fa_enabled = True
+            update_fields.append('two_fa_enabled')
+
+        user.save(update_fields=update_fields)
         user.add_to_password_history(user.password)
         return user
 
