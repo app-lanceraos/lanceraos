@@ -896,3 +896,15 @@ readable back from the database, a null-`pca` token genuinely still authenticati
 confirms the fix does what it claims.
 This completes the admin panel end to end: built, then audited, then the audit's findings closed —
 the same full cycle already applied to the rest of Users/Auth.
+
+---
+
+Date: July 2026
+Decision: `SaveButton` no longer renders at all until a real change has been made — changed from
+the earlier convention (always visible, disabled, reading "No Changes"). Product direction from
+Ali; a single shared component change covers all seven Settings sections at once, since each one
+already used this one component rather than hand-rolling its own button.
+Alternatives considered: Keep the always-visible disabled state (the original convention, and a
+reasonable one — it gives a constant, discoverable affordance that a save mechanism exists at all).
+Both are legitimate, common patterns; this was a deliberate style choice, not a correctness fix.
+`STANDARDS.md`'s frontend conventions section updated to match.

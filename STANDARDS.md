@@ -117,9 +117,10 @@ orbit palette, is a sign something's been copy-pasted from the wrong context.
 
 Every editable section (an Account tab, a Settings section, Profile) tracks its own dirty state
 independently against a `useRef` snapshot of the last-saved values, and its own `saving`/error state — no
-single page-wide "Save All" button covering unrelated sections. The Save button itself reads "No Changes"
-and is disabled until something is actually edited, and doesn't flip back to that until the server
-confirms the save succeeded (never optimistically on click).
+single page-wide "Save All" button covering unrelated sections. The Save button itself is not rendered
+at all until something is actually edited — changed from an earlier "always visible, disabled, reads
+'No Changes'" convention; see `DECISIONS.md` for the reasoning — and doesn't disappear again until the
+server confirms the save succeeded (never optimistically on click).
 
 ### Field-specific errors land on the field, not a generic banner
 
