@@ -117,7 +117,9 @@ default_currency, default_payment_terms
 bank_name, bank_account_number, jazzcash_number, easypaisa_number,
 payoneer_email, wise_profile_id, wise_access_token, wise_refresh_token
 
-# Onboarding (collected once, editable afterward via Settings > Business)
+# Onboarding — collected once, then locked (see LOCKED_FIELDS on
+# FreelancerProfileSerializer); no longer editable anywhere afterward,
+# including Settings > Business, which used to expose them
 onboarding_completed, profession, income_source, platform_used
 
 # Preferences
