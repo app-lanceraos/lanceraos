@@ -16,6 +16,7 @@ import EmailVerificationPending from '@/pages/EmailVerificationPending'
 import TwoFAVerify from '@/pages/TwoFAVerify'
 import ChangeEmail from '@/pages/ChangeEmail'
 import ActivateEmail from '@/pages/ActivateEmail'
+import AddPassword from '@/pages/AddPassword'
 import DeletionReview from '@/pages/DeletionReview'
 import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
@@ -47,6 +48,7 @@ export default function App() {
         <Route path="/2fa-verify" element={<TwoFAVerify />} />
         <Route path="/change-email/:ecr_uid/:token" element={<ChangeEmail />} />
         <Route path="/activate-email/:ecr_uid/:token" element={<ActivateEmail />} />
+        <Route path="/add-password/:uidb64/:token" element={<AddPassword />} />
 
         {/* Legal pages — auth-state-agnostic like the routes above: an
             authenticated user shouldn't be redirected away from viewing

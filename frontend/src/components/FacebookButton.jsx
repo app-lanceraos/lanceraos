@@ -40,7 +40,7 @@ function loadFacebookSdk() {
  * "fail predictably" philosophy as the backend's
  * apps/users/oauth/facebook.py.
  */
-export default function FacebookButton({ onError, onSuccess, disabled = false }) {
+export default function FacebookButton({ onError, onSuccess, disabled = false, credentialOnly = false }) {
   const loginSuccess = useAuthStore((s) => s.loginSuccess)
   const [loading, setLoading] = useState(false)
   const configured = Boolean(FB_APP_ID)
@@ -54,6 +54,17 @@ export default function FacebookButton({ onError, onSuccess, disabled = false })
   // async work happens inside it instead.
   const handleFacebookResponse = async (response) => {
     if (response.authResponse?.accessToken) {
+      // Re-authentication flows (e.g. OAuth-only account deletion) need
+      // just the raw credential to verify against the CURRENT session's
+      // identity — never a full login. Going through /auth/facebook/ here
+      // would silently swap the browser's session to whichever account
+      // that Facebook identity resolves to (existing or newly created),
+      // defeating the whole point of "confirm you're still this account."
+      if (credentialOnly) {
+        onSuccess?.({ access_token: response.authResponse.accessToken })
+        setLoading(false)
+        return
+      }
       try {
         const res = await api.post('/auth/facebook/', {
           access_token: response.authResponse.accessToken,

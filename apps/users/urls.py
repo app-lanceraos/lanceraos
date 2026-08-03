@@ -1,7 +1,7 @@
 # apps/users/urls.py
 from django.urls import path
 
-from .views import auth, deletion, oauth, profile, security, sessions, smtp
+from .views import add_password, auth, deletion, oauth, profile, security, sessions, smtp
 
 app_name = 'users'
 
@@ -38,6 +38,11 @@ urlpatterns = [
     path('reset-password/<str:uid>/<str:token>/', auth.reset_password, name='reset_password'),
     path('change-password/', security.change_password, name='change_password'),
 
+    # ── Add password (OAuth-only accounts) ──────────────────────────
+    path('security/add-password/request/', add_password.request_add_password, name='request_add_password'),
+    path('security/add-password/validate/<str:uidb64>/<str:token>/', add_password.validate_add_password_token, name='validate_add_password_token'),
+    path('security/add-password/complete/<str:uidb64>/<str:token>/', add_password.complete_add_password, name='complete_add_password'),
+
     # ── Profile / account ────────────────────────────────────────
     path('profile/', profile.profile, name='profile'),
     path('profile/upload-logo/', profile.upload_logo, name='upload_logo'),
@@ -59,6 +64,7 @@ urlpatterns = [
 
     # ── Account deletion (password -> OTP -> confirm, 30-day recovery window) ──
     path('deletion/initiate/', deletion.initiate_deletion, name='deletion_initiate'),
+    path('deletion/initiate-oauth/', deletion.initiate_deletion_oauth, name='deletion_initiate_oauth'),
     path('deletion/verify-otp/', deletion.verify_deletion_otp, name='deletion_verify_otp'),
     path('deletion/confirm/', deletion.confirm_deletion, name='deletion_confirm'),
     path('deletion/cancel/', deletion.cancel_deletion, name='deletion_cancel'),

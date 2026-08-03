@@ -21,10 +21,20 @@ function GoogleG({ size = 16 }) {
   )
 }
 
-export default function GoogleButton({ onError, onSuccess, disabled = false }) {
+export default function GoogleButton({ onError, onSuccess, disabled = false, credentialOnly = false }) {
   const loginSuccess = useAuthStore((s) => s.loginSuccess)
 
   const completeLogin = async (accessToken) => {
+    // Re-authentication flows (e.g. OAuth-only account deletion) need
+    // just the raw credential to verify against the CURRENT session's
+    // identity — never a full login. Going through /auth/google/ here
+    // would silently swap the browser's session to whichever account
+    // that Google identity resolves to (existing or newly created),
+    // defeating the whole point of "confirm you're still this account."
+    if (credentialOnly) {
+      onSuccess?.({ access_token: accessToken })
+      return
+    }
     try {
       const res = await api.post('/auth/google/', { access_token: accessToken })
       loginSuccess(res.data.user)

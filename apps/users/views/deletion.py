@@ -14,7 +14,11 @@ from core.observability import log_event
 
 from ..cookies import clear_auth_cookies
 from ..emails import send_account_deletion_confirmed_email, send_account_deletion_otp_email
-from ..models import Session
+from ..models import Session, UserSocialAccount
+from ..oauth.facebook import OAuthVerificationError as FacebookError
+from ..oauth.facebook import verify_facebook_token
+from ..oauth.google import OAuthVerificationError as GoogleError
+from ..oauth.google import verify_google_token
 from .auth import _generate_otp, _generate_token, _mask_email
 
 
@@ -59,6 +63,75 @@ def initiate_deletion(request):
         )
 
     log_event('deletion_requested', user=user, request=request)
+
+    return Response({
+        'message': 'A 6-digit verification code has been sent to your email.',
+        'session_id': session_id,
+        'masked_email': _mask_email(user.email),
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def initiate_deletion_oauth(request):
+    """
+    OAuth-only equivalent of initiate_deletion — re-authenticates via
+    the SAME linked provider as proof of identity, instead of a
+    password (which doesn't exist for these accounts). Deliberately
+    does NOT require adding a password first — deletion shouldn't be
+    gated behind an unrelated feature someone may not want at all.
+    Verifies the returned identity is actually linked to the CURRENTLY
+    LOGGED-IN user specifically, not just "any valid Google account" —
+    this confirms "you are still this exact account's owner," it isn't
+    a general login.
+    """
+    user = request.user
+    if not user.is_oauth_only():
+        return Response({'error': 'This account has a password — use the standard deletion flow.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    provider = request.data.get('provider', '')
+    credential = request.data.get('credential', '')
+    access_token = request.data.get('access_token', '')
+    if provider not in ('google', 'facebook'):
+        return Response({'error': 'Invalid provider.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        if provider == 'google':
+            identity = verify_google_token(credential=credential or None, access_token=access_token or None)
+        else:
+            identity = verify_facebook_token(access_token)
+    except (GoogleError, FacebookError) as exc:
+        return Response({'error': f'Re-authentication failed: {exc}'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    is_linked = UserSocialAccount.objects.filter(
+        user=user, provider=provider, provider_uid=identity['provider_uid'],
+    ).exists()
+    if not is_linked:
+        return Response(
+            {'error': 'This account is not linked to your LanceraOS account.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    key = f'deletion_req_{user.pk}'
+    count = cache.get(key, 0)
+    if count >= 3:
+        return Response({'error': 'Too many deletion requests. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
+
+    otp = _generate_otp()
+    session_id = str(uuid.uuid4())
+    cache.set(f'deletion_session_{session_id}', {
+        'otp_hash': make_password(otp),
+        'user_id': str(user.pk),
+        'attempt_count': 0,
+        'created_at': timezone.now().isoformat(),
+    }, timeout=600)
+
+    if not send_account_deletion_otp_email(user, otp):
+        cache.delete(f'deletion_session_{session_id}')
+        return Response({'error': 'Failed to send verification email. Please try again shortly.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    log_event('deletion_requested', user=user, request=request, metadata={'method': 'oauth_reauth', 'provider': provider})
 
     return Response({
         'message': 'A 6-digit verification code has been sent to your email.',

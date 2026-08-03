@@ -8,6 +8,8 @@ import useTimedMessage from '@/hooks/useTimedMessage'
 import Card from '@/components/Card'
 import FormField from '@/components/FormField'
 import FosAlert from '@/components/FosAlert'
+import GoogleButton from '@/components/GoogleButton'
+import FacebookButton from '@/components/FacebookButton'
 
 export default function SecuritySection() {
   const user = useAuthStore((s) => s.user)
@@ -116,6 +118,46 @@ export default function SecuritySection() {
     }
   }
 
+  // ── Deletion re-authentication (OAuth-only accounts) ─────────────
+  // Replaces handleDelInitiate's password step for OAuth-only accounts —
+  // everything from delStep === 1 onward (OTP entry, handleDelVerifyOtp)
+  // is shared as-is with the password path above.
+  const [delReauthErr, setDelReauthErr] = useState('')
+
+  const handleDelInitiateOAuth = async (provider, credentialData) => {
+    setDelSaving(true)
+    setDelReauthErr('')
+    try {
+      const res = await api.post('/auth/deletion/initiate-oauth/', {
+        provider,
+        access_token: credentialData.access_token,
+      })
+      setDelSessionId(res.data.session_id)
+      setDelMasked(res.data.masked_email)
+      setDelStep(1)
+    } catch (err) {
+      setDelReauthErr(err.response?.data?.error || 'Re-authentication failed.')
+    } finally {
+      setDelSaving(false)
+    }
+  }
+
+  // ── Add password (OAuth-only accounts) ───────────────────────────
+  const [addPwSaving, setAddPwSaving] = useState(false)
+  const addPwMsg = useTimedMessage()
+
+  const handleRequestAddPassword = async () => {
+    setAddPwSaving(true)
+    try {
+      await api.post('/auth/security/add-password/request/')
+      addPwMsg.show('success', 'A confirmation link has been sent to your email. Click it to add a password.')
+    } catch (err) {
+      addPwMsg.show('error', err.response?.data?.error || 'Failed to send confirmation link.')
+    } finally {
+      setAddPwSaving(false)
+    }
+  }
+
   if (isOAuthOnly) {
     // linked_providers is a list (e.g. ['google']) — a user could
     // theoretically have more than one linked, though today's UI never
@@ -129,12 +171,98 @@ export default function SecuritySection() {
       : 'Google or Facebook'
 
     return (
-      <Card title="Security">
-        <FosAlert type="info">
-          Your account is managed by {providerLabel}. To manage your password or two-factor authentication,
-          visit your provider's account settings directly.
-        </FosAlert>
-      </Card>
+      <>
+        <Card title="Add a Password">
+          {addPwMsg.message && (
+            <div style={{ marginBottom: 16 }}>
+              <FosAlert type={addPwMsg.message.type} onDismiss={addPwMsg.clear}>{addPwMsg.message.text}</FosAlert>
+            </div>
+          )}
+          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.55 }}>
+            Your account currently signs in through {providerLabel} only. Add a password to also sign in
+            with your email address — this also unlocks two-factor authentication below.
+          </p>
+          <button onClick={handleRequestAddPassword} disabled={addPwSaving} className="fos-btn fos-btn-accent">
+            {addPwSaving ? <><span className="fos-spinner" /> Sending…</> : 'Add a Password'}
+          </button>
+        </Card>
+
+        <Card title="Two-Factor Authentication" subtitle="Unavailable">
+          <FosAlert type="info">
+            Add a password first to enable two-factor authentication — 2FA protects email/password sign-in
+            specifically, not your {providerLabel} sign-in.
+          </FosAlert>
+        </Card>
+
+        <Card title="Danger Zone">
+          <div style={{ border: '1px solid var(--error-border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', background: 'var(--error-bg)', borderBottom: '1px solid var(--error-border)' }}>
+              <p style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--error-text)' }}>Delete Account</p>
+            </div>
+            <div style={{ padding: 16 }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.6 }}>
+                Your account will be scheduled for permanent deletion after 30 days — you can cancel any time
+                before then by logging in.
+              </p>
+              {delStep === 0 && (
+                <div style={{ maxWidth: 360 }}>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: 10 }}>
+                    Re-authenticate with {providerLabel} to confirm it's really you.
+                  </p>
+                  {delReauthErr && (
+                    <div style={{ marginBottom: 10 }}>
+                      <FosAlert type="error">{delReauthErr}</FosAlert>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    {providers.includes('google') && (
+                      <GoogleButton
+                        credentialOnly
+                        disabled={delSaving}
+                        onSuccess={(data) => handleDelInitiateOAuth('google', data)}
+                        onError={setDelReauthErr}
+                      />
+                    )}
+                    {providers.includes('facebook') && (
+                      <FacebookButton
+                        credentialOnly
+                        disabled={delSaving}
+                        onSuccess={(data) => handleDelInitiateOAuth('facebook', data)}
+                        onError={setDelReauthErr}
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+              {delStep === 1 && (
+                <div style={{ maxWidth: 360 }}>
+                  <div style={{ marginBottom: 12 }}>
+                    <FosAlert type="info">
+                      A 6-digit code was sent to <strong>{delMasked}</strong>. Enter it below.
+                    </FosAlert>
+                  </div>
+                  <FormField
+                    label="Verification Code"
+                    value={delOtp}
+                    onChange={(e) => { setDelOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setDelOtpErr('') }}
+                    error={delOtpErr}
+                    placeholder="000000"
+                    autoFocus
+                  />
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                    <button onClick={() => { setDelStep(0); setDelOtp(''); setDelOtpErr('') }} className="fos-btn fos-btn-ghost" style={{ flex: 1 }}>
+                      Back
+                    </button>
+                    <button onClick={handleDelVerifyOtp} disabled={delOtp.length < 6 || delSaving} className="fos-btn fos-btn-danger" style={{ flex: 1 }}>
+                      {delSaving ? <><span className="fos-spinner" /> Verifying…</> : 'Verify and Continue'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+      </>
     )
   }
 
