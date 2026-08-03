@@ -70,6 +70,11 @@ export default function Onboarding() {
   // DOB was already collected at registration for email/password users —
   // only ask for it here if it's genuinely missing (OAuth signups).
   const needsDob = !user?.date_of_birth
+  // Same underlying signal as needsDob — email/password users already
+  // chose their own username at registration; only OAuth signups (whose
+  // username was auto-generated, never actually chosen) need to review
+  // or change it here.
+  const needsUsername = needsDob
   // Same reasoning: email/password users already accepted the Terms of
   // Service / Privacy Policy at registration — OAuth signups skip that
   // wizard entirely, so onboarding is the first and only chance to ask.
@@ -134,11 +139,13 @@ export default function Onboarding() {
 
   const validate = () => {
     const e = {}
-    if (!form.username.trim()) e.username = 'Username is required.'
-    else if (form.username.length < 3) e.username = 'At least 3 characters.'
-    else if (!/^[a-zA-Z0-9_]+$/.test(form.username)) e.username = 'Letters, numbers, and _ only.'
-    else if (usernameAvail === 'taken') e.username = errors.username || 'This username is already taken.'
-    else if (usernameAvail === 'checking') e.username = 'Please wait — checking…'
+    if (needsUsername) {
+      if (!form.username.trim()) e.username = 'Username is required.'
+      else if (form.username.length < 3) e.username = 'At least 3 characters.'
+      else if (!/^[a-zA-Z0-9_]+$/.test(form.username)) e.username = 'Letters, numbers, and _ only.'
+      else if (usernameAvail === 'taken') e.username = errors.username || 'This username is already taken.'
+      else if (usernameAvail === 'checking') e.username = 'Please wait — checking…'
+    }
 
     if (needsDob) {
       if (!form.dob_day || !form.dob_month || !form.dob_year) {
@@ -173,10 +180,12 @@ export default function Onboarding() {
     setServerError('')
     try {
       const payload = {
-        username: form.username.trim().toLowerCase(),
         profession: form.profession.trim(),
         income_source: form.income_source,
         platform_used: form.platform_used,
+      }
+      if (needsUsername) {
+        payload.username = form.username.trim().toLowerCase()
       }
       if (needsDob) {
         payload.date_of_birth = `${form.dob_year}-${String(form.dob_month).padStart(2, '0')}-${String(form.dob_day).padStart(2, '0')}`
@@ -229,19 +238,21 @@ export default function Onboarding() {
 
       <form onSubmit={handleSubmit} noValidate>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div>
-            <AuthField
-              label="Username"
-              value={form.username}
-              onChange={(e) => handleChange('username', e.target.value)}
-              error={errors.username}
-              autoComplete="username"
-              rightElement={<AvailDot status={usernameAvail} />}
-            />
-            <p style={{ fontSize: '0.75rem', color: authTokens.placeholder, marginTop: 6 }}>
-              We generated this for you — change it if you'd like something different.
-            </p>
-          </div>
+          {needsUsername && (
+            <div>
+              <AuthField
+                label="Username"
+                value={form.username}
+                onChange={(e) => handleChange('username', e.target.value)}
+                error={errors.username}
+                autoComplete="username"
+                rightElement={<AvailDot status={usernameAvail} />}
+              />
+              <p style={{ fontSize: '0.75rem', color: authTokens.placeholder, marginTop: 6 }}>
+                We generated this for you — change it if you'd like something different.
+              </p>
+            </div>
+          )}
 
           {needsDob && (
             <div>

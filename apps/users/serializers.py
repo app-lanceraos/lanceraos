@@ -331,6 +331,10 @@ class FreelancerProfileSerializer(serializers.ModelSerializer):
             'custom_smtp_enabled', 'custom_smtp_host', 'custom_smtp_port',
             'custom_smtp_username', 'custom_smtp_use_tls', 'custom_smtp_use_ssl',
             'custom_smtp_from_name', 'custom_smtp_verified', 'custom_smtp_verified_at',
+            # Write-once, via complete_onboarding only — no longer
+            # editable afterward, anywhere (Settings' "About Your Work"
+            # card, which exposed these, has been removed entirely).
+            'profession', 'income_source', 'platform_used',
         ]
 
     # Mirrors Meta.read_only_fields above. read_only_fields silently
@@ -344,7 +348,7 @@ class FreelancerProfileSerializer(serializers.ModelSerializer):
         'onboarding_completed', 'custom_smtp_enabled', 'custom_smtp_host',
         'custom_smtp_port', 'custom_smtp_username', 'custom_smtp_use_tls',
         'custom_smtp_use_ssl', 'custom_smtp_from_name', 'custom_smtp_verified',
-        'custom_smtp_verified_at',
+        'custom_smtp_verified_at', 'profession', 'income_source', 'platform_used',
     }
 
     def get_cnic(self, obj):
@@ -416,7 +420,14 @@ class UnderageOnboardingError(Exception):
 
 
 class OnboardingSerializer(serializers.Serializer):
+    # Only required for users who don't already have one they chose
+    # themselves (OAuth signups — theirs was auto-generated, never
+    # actually chosen). Enforced conditionally in validate(), same
+    # pattern as date_of_birth/agreed_to_terms below — email/password
+    # users already made this choice at registration and shouldn't be
+    # asked to reconsider it here.
     username = serializers.CharField(
+        required=False,
         min_length=3, max_length=30,
         validators=[RegexValidator(
             regex=r'^[a-zA-Z0-9_]+$',
@@ -449,6 +460,8 @@ class OnboardingSerializer(serializers.Serializer):
     def validate(self, data):
         user = self.context['user']
         if not user.date_of_birth:
+            if not data.get('username'):
+                raise serializers.ValidationError({'username': 'Username is required.'})
             dob = data.get('date_of_birth')
             if not dob:
                 raise serializers.ValidationError({'date_of_birth': 'Date of birth is required.'})

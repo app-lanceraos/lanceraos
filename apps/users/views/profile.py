@@ -181,8 +181,10 @@ def complete_onboarding(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     data = serializer.validated_data
-    user.username = data['username']
-    user_update_fields = ['username']
+    user_update_fields = []
+    if 'username' in data:
+        user.username = data['username']
+        user_update_fields.append('username')
     if 'date_of_birth' in data:
         user.date_of_birth = data['date_of_birth']
         user_update_fields.append('date_of_birth')

@@ -146,3 +146,69 @@ class PasswordUserOnboardingTermsTests(OnboardingTestBase):
         resp = client.get(reverse('users:me'))
         self.assertEqual(resp.status_code, 200)
         self.assertIsNotNone(resp.json()['terms_accepted_at'])
+
+
+class OnboardingUsernameOptionalityTests(OnboardingTestBase):
+    """
+    Username is only ever asked for (and required) during onboarding for
+    users who don't already have one they chose themselves — i.e. OAuth
+    signups, whose username was auto-generated. Email/password users
+    already chose theirs at registration and should never be asked again.
+    """
+
+    def test_password_user_onboarding_succeeds_without_username_in_payload(self):
+        user = self._make_password_user('noplatform@example.com')
+        original_username = user.username
+        client = self._authenticated_client(user)
+
+        payload = {k: v for k, v in VALID_ONBOARDING_PAYLOAD.items() if k != 'username'}
+        resp = self._post(client, reverse('users:onboarding_complete'), payload)
+        self.assertEqual(resp.status_code, 200)
+
+        user.refresh_from_db()
+        self.assertTrue(user.profile.onboarding_completed)
+        self.assertEqual(user.username, original_username)
+
+    def test_oauth_user_onboarding_without_username_rejected(self):
+        user = self._make_oauth_user('oauthnousername@example.com')
+        client = self._authenticated_client(user)
+
+        payload = dict(VALID_ONBOARDING_PAYLOAD, date_of_birth='2000-01-01', agreed_to_terms=True)
+        del payload['username']
+        resp = self._post(client, reverse('users:onboarding_complete'), payload)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('username', resp.json())
+        user.profile.refresh_from_db()
+        self.assertFalse(user.profile.onboarding_completed)
+
+    def test_oauth_user_onboarding_with_username_succeeds_and_sets_it(self):
+        user = self._make_oauth_user('oauthwithusername@example.com')
+        client = self._authenticated_client(user)
+
+        payload = dict(VALID_ONBOARDING_PAYLOAD, date_of_birth='2000-01-01', agreed_to_terms=True)
+        resp = self._post(client, reverse('users:onboarding_complete'), payload)
+        self.assertEqual(resp.status_code, 200)
+
+        user.refresh_from_db()
+        self.assertEqual(user.username, VALID_ONBOARDING_PAYLOAD['username'])
+
+
+class WorkFieldsLockedAfterOnboardingTests(OnboardingTestBase):
+    """
+    profession/income_source/platform_used are collected once, during
+    onboarding — same write-once pattern as onboarding_completed and the
+    custom-SMTP fields on this same serializer.
+    """
+
+    def test_profile_put_attempting_profession_returns_400(self):
+        user = self._make_password_user('lockedprofession@example.com')
+        client = self._authenticated_client(user)
+        csrf_token = self._csrf_token(client)
+        resp = client.put(
+            reverse('users:profile'),
+            data=json.dumps({'profession': 'Something else'}),
+            content_type='application/json',
+            HTTP_X_CSRFTOKEN=csrf_token,
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('profession', resp.json())
