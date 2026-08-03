@@ -102,42 +102,6 @@ export default function AccountSection() {
 
   return (
     <>
-      <Card title="Email Address">
-        {message && (
-          <div style={{ marginBottom: 16 }}>
-            <FosAlert type={message.type} onDismiss={clear}>{message.text}</FosAlert>
-          </div>
-        )}
-        {emailMsg.message && (
-          <div style={{ marginBottom: 16 }}>
-            <FosAlert type={emailMsg.message.type} onDismiss={emailMsg.clear}>{emailMsg.message.text}</FosAlert>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-          <Mail size={16} color="var(--text-tertiary)" />
-          <span style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 600 }}>{user?.email}</span>
-        </div>
-
-        {user?.pending_email ? (
-          <div style={{ marginTop: 14 }}>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: 10 }}>
-              A request to change your email to <strong style={{ color: 'var(--text-primary)' }}>{user.pending_email}</strong> is pending confirmation.
-            </p>
-            <button onClick={handleEmailChangeCancel} disabled={emailCancelling} className="fos-btn fos-btn-ghost">
-              {emailCancelling ? <><span className="fos-spinner" /> Cancelling…</> : 'Cancel Email Change'}
-            </button>
-          </div>
-        ) : (
-          <div style={{ marginTop: 14 }}>
-            <button onClick={handleEmailChangeRequest} disabled={emailSending} className="fos-btn fos-btn-ghost">
-              {emailSending ? <><span className="fos-spinner" /> Sending…</> : 'Change Email Address'}
-            </button>
-            <p className="fos-hint" style={{ marginTop: 8 }}>You can change your email once every 3 months.</p>
-          </div>
-        )}
-      </Card>
-
       <Card
         title="Personal Information"
         action={<SaveButton onClick={handleSave} disabled={!changed} saving={saving} />}
@@ -159,6 +123,44 @@ export default function AccountSection() {
           />
         </div>
       </Card>
+
+      {!user?.is_oauth_only && (
+        <Card title="Email Address">
+          {message && (
+            <div style={{ marginBottom: 16 }}>
+              <FosAlert type={message.type} onDismiss={clear}>{message.text}</FosAlert>
+            </div>
+          )}
+          {emailMsg.message && (
+            <div style={{ marginBottom: 16 }}>
+              <FosAlert type={emailMsg.message.type} onDismiss={emailMsg.clear}>{emailMsg.message.text}</FosAlert>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <Mail size={16} color="var(--text-tertiary)" />
+            <span style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 600 }}>{user?.email}</span>
+          </div>
+
+          {user?.pending_email ? (
+            <div style={{ marginTop: 14 }}>
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: 10 }}>
+                A request to change your email to <strong style={{ color: 'var(--text-primary)' }}>{user.pending_email}</strong> is pending confirmation.
+              </p>
+              <button onClick={handleEmailChangeCancel} disabled={emailCancelling} className="fos-btn fos-btn-ghost">
+                {emailCancelling ? <><span className="fos-spinner" /> Cancelling…</> : 'Cancel Email Change'}
+              </button>
+            </div>
+          ) : (
+            <div style={{ marginTop: 14 }}>
+              <button onClick={handleEmailChangeRequest} disabled={emailSending} className="fos-btn fos-btn-ghost">
+                {emailSending ? <><span className="fos-spinner" /> Sending…</> : 'Change Email Address'}
+              </button>
+              <p className="fos-hint" style={{ marginTop: 8 }}>You can change your email once every 3 months.</p>
+            </div>
+          )}
+        </Card>
+      )}
     </>
   )
 }
