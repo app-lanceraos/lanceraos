@@ -824,3 +824,75 @@ audit trail entries queried directly rather than assumed.
 What remains for the admin panel as a whole: the entire `admin.lanceraos.com` frontend, which does
 not exist in any form yet, and the fresh, admin-panel-scoped security pass that comes after it per
 the project roadmap.
+
+---
+
+Date: July 2026
+Note: `admin-frontend`'s user detail page conflated `can_access_admin_panel` and `is_super_admin`
+— the "Has admin access" display incorrectly read `user.is_super_admin` instead of
+`user.can_access_admin_panel`, and no "Revoke admin access" button existed in the UI at all
+(only "Grant"), despite the backend endpoint for it already existing. Fixed: the display now
+correctly reads `can_access_admin_panel`, and both grant and revoke actions are present. The
+backend's `_user_summary()` was also missing `can_access_admin_panel` entirely (only
+`is_super_admin` had been added to it in an earlier round) — added.
+Worth recording plainly: this is the fourth small mistake caught during the admin panel build
+specifically involving confusion between these two admin-related flags or their surrounding
+infrastructure (the `AuditLog.actor` false-premise, the missing admin-frontend CORS origin, the
+missing `is_super_admin` exposure on `UserSerializer`, and now this). Not a single root cause, but
+a real pattern worth being more deliberately careful about going forward — specifically
+double-checking which of the two flags a given piece of admin-related logic should actually
+reference, rather than assuming from context.
+
+---
+
+Date: July 2026
+Decision: Closed a real privilege-escalation-adjacent gap — any admin could suspend any other
+account, including a super-admin's. Fixed with two rules, enforced at the backend (not just hidden
+in the UI): nobody can suspend their own account, of any admin level, and only a super-admin can
+suspend another admin account of any kind — a regular admin can still suspend ordinary users.
+Verified at both layers deliberately: the UI hides the action with a clear explanation rather than
+showing a button that would just fail, and a direct API call bypassing the UI entirely was
+confirmed independently rejected with the same 403 — proving this is a real backend guard, not
+just a client-side courtesy.
+This also completes the entire v1 admin panel **frontend** — audit log viewer (filterable by user/
+actor/event/date range, paginated, real metadata inspection) and deletion-queue management
+(restore action, correct days-remaining computation) were built and verified this round, alongside
+the fix above. Combined with the backend work completed earlier, every screen and every action from
+the original `ADMIN_PANEL_DESIGN.md` v1 scope is now built and verified end to end against a real
+running application — login, mandatory 2FA, user search/detail/sessions/revoke, suspend/reactivate
+(now correctly protected), the two-tier grant/revoke admin-access model, the audit log, and the
+deletion queue.
+What remains for the admin panel as a whole: the fresh, admin-panel-scoped security pass that comes
+after it, per the project roadmap — nothing here has had a dedicated audit yet, since none of it
+existed when the first two passes ran.
+
+---
+
+Date: July 2026
+Decision: Closed out the admin-panel-scoped security audit — five real findings, all fixed and
+verified.
+Most significant: `admin_login` previously called the same `increment_failed_attempts()` counter
+the main app's regular login uses — meaning anyone who merely knew an admin's email (no password
+needed) could deliberately fail admin login repeatedly and lock that person out of their entire
+regular account too, and the reverse was equally true. Fixed by having admin login stop
+contributing to that shared counter entirely (an existing lock, from either surface, is still
+correctly respected) — its own separate, tighter IP-based rate limit is the real defense here, not
+a counter shared with an unrelated, more-public surface.
+`log_event()`'s `metadata` is now redacted before being written to `AuditLog` — extended beyond
+the original literal instruction (reusing the existing key-name-based redaction alone) once it
+became clear that approach wouldn't catch a secret embedded inside a free-text *value* under an
+innocuous key (e.g. a suspension reason containing "password=..." verbatim) — the same case the
+verification step was specifically designed to test. A content-scanning pass was added instead,
+reused by both `ApiRequestLog` and `AuditLog`. Deliberately does not touch `suspension_reason` on
+the `User` model itself — a legitimate business record, not a log entry, out of scope for this fix.
+Also closed: `user_sessions` now writes an audit entry (was the one read endpoint missing one,
+inconsistent with its siblings); `token_service.py` guards against a null `password_changed_at`
+defensively, matching every other read site for that field; `suspend_user`/`reactivate_user`/
+`grant_admin_access`/`revoke_admin_access` now have a 30/hour per-admin rate limit beyond the
+global DRF default, blunting how much damage a single compromised admin session could do quickly.
+Every fix verified against real, live behavior — not just that the code changed, but that the
+underlying database state (`failed_login_attempts` never moving, redacted metadata actually
+readable back from the database, a null-`pca` token genuinely still authenticating afterward)
+confirms the fix does what it claims.
+This completes the admin panel end to end: built, then audited, then the audit's findings closed —
+the same full cycle already applied to the rest of Users/Auth.

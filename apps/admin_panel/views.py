@@ -7,10 +7,13 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.cache import cache
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from core.observability import get_client_ip, log_event
 
@@ -39,6 +42,15 @@ def _generate_otp() -> str:
 
 def _finalize_admin_login_response(user):
     return Response({'user': UserSerializer(user).data})
+
+
+@method_decorator(ensure_csrf_cookie, name='dispatch')
+class AdminCsrfView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({'message': 'CSRF cookie set.'})
 
 
 @api_view(['POST'])
@@ -82,12 +94,22 @@ def admin_login(request):
     # Same generic message for "wrong password" and "not an admin
     # account" — a distinct message would let someone probe which
     # accounts have admin access, independent of the correct password.
+    #
+    # Deliberately does NOT call increment_failed_attempts() — that
+    # counter is shared with the main app's regular login. Writing to
+    # it here would mean a stranger who merely knows an admin's email
+    # (no password needed) could deliberately fail admin login
+    # repeatedly and lock that person out of their entire regular
+    # account too, and vice versa. Admin login's real brute-force
+    # defense is its own, separate, tighter IP rate limit above — an
+    # existing lock (from either surface) is still correctly respected
+    # by the is_account_locked() check above, this only stops NEW
+    # admin-login failures from contributing to it.
     if (
         not user.check_password(password)
         or not user.can_access_admin_panel
         or not user.email.endswith(f'@{ADMIN_EMAIL_DOMAIN}')
     ):
-        user.increment_failed_attempts()
         log_event('admin_login_failed', user=user, request=request)
         return Response({'error': 'Invalid credentials.'}, status=status.HTTP_401_UNAUTHORIZED)
 

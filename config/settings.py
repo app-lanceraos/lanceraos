@@ -156,6 +156,11 @@ CACHES = {
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    # admin-frontend — a separate Vite dev server on its own port, same
+    # reasoning as the main app above (cookies need CORS_ALLOW_CREDENTIALS
+    # to actually travel cross-origin, not just a matching origin).
+    'http://localhost:5174',
+    'http://127.0.0.1:5174',
 ])
 # Required because the frontend sends the JWT/CSRF cookies on every
 # request (withCredentials / credentials: 'include') — without this,
@@ -168,6 +173,8 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'http://localhost:5174',
+    'http://127.0.0.1:5174',
 ])
 
 # Shared across app.lanceraos.com and api.lanceraos.com in production

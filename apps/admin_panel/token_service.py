@@ -22,7 +22,7 @@ ADMIN_REFRESH_DAYS = 1  # matches AdminSession's short-lived-by-design lifetime
 def _build_admin_refresh_token(user):
     refresh = RefreshToken.for_user(user)
     refresh.set_exp(lifetime=timedelta(days=ADMIN_REFRESH_DAYS))
-    refresh['pca'] = int(user.password_changed_at.timestamp())
+    refresh['pca'] = int(user.password_changed_at.timestamp()) if user.password_changed_at else None
     return refresh
 
 

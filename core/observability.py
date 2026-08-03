@@ -96,13 +96,35 @@ SENSITIVE_KEYS = {
 }
 REDACTED_PLACEHOLDER = '***REDACTED***'
 
+# Key-based redaction (below) only catches sensitive values that arrive
+# under a sensitive KEY NAME. It does nothing for a secret typed into an
+# otherwise-innocuous free-text field — e.g. an admin's search query, or
+# a suspension reason, both logged verbatim into AuditLog.metadata by
+# core.observability.log_event. This pattern catches the common
+# "key=value" / "key: value" shape of an accidentally-pasted credential
+# inside such a string, independent of which dict key it's nested under.
+_SENSITIVE_VALUE_PATTERN = re.compile(
+    r'(?i)\b(' + '|'.join(re.escape(k) for k in SENSITIVE_KEYS) + r')\s*[:=]\s*\S+'
+)
+
+
+def _redact_value_content(value):
+    if isinstance(value, str):
+        return _SENSITIVE_VALUE_PATTERN.sub(
+            lambda m: f'{m.group(1)}={REDACTED_PLACEHOLDER}', value,
+        )
+    return value
+
 
 def redact_sensitive_fields(data):
     """
-    Recursively redacts sensitive keys from a dict/list structure before
-    it's written to ApiRequestLog.request_body. Returns a new structure —
-    never mutates the input, since the caller (middleware) still needs
-    the original, un-redacted data to actually process the request.
+    Recursively redacts sensitive dict keys (at any nesting depth) AND
+    sensitive-looking content inside string values (see
+    _redact_value_content) from a dict/list/string structure — used both
+    for ApiRequestLog.request_body (core.middleware) and AuditLog.metadata
+    (log_event, below). Returns a new structure — never mutates the
+    input, since request-body callers still need the original,
+    un-redacted data to actually process the request.
     """
     if isinstance(data, dict):
         return {
@@ -112,7 +134,7 @@ def redact_sensitive_fields(data):
         }
     if isinstance(data, list):
         return [redact_sensitive_fields(item) for item in data]
-    return data
+    return _redact_value_content(data)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -149,7 +171,7 @@ def log_event(event, user=None, actor=None, request=None, ip_address=None, user_
             request_id=request_id,
             ip_address=ip_address or None,
             user_agent=(user_agent or '')[:500],
-            metadata=metadata or {},
+            metadata=redact_sensitive_fields(metadata or {}),
         )
     except Exception:
         logger.exception('Failed to write AuditLog entry for event=%s user=%s actor=%s', event, user, actor)

@@ -1,5 +1,6 @@
 # apps/admin_panel/views_users.py
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
@@ -22,6 +23,24 @@ from .permissions import IsSuperAdmin
 User = get_user_model()
 
 
+def _admin_action_rate_limited(action, actor):
+    """
+    Per-admin, per-action cache-based limit for consequential admin
+    actions capable of fast, wide, hard-to-reverse damage if an admin
+    session is ever compromised (suspend/reactivate/grant/revoke).
+    Mirrors admin_login's IP-keyed pattern, keyed on the acting admin's
+    user ID instead — generous enough for real usage, tight enough to
+    blunt abuse of a stolen session. Returns True (and increments) if
+    the request should be rejected.
+    """
+    rl_key = f'ratelimit_admin_{action}_{actor.pk}'
+    rl_count = cache.get(rl_key, 0)
+    if rl_count >= 30:
+        return True
+    cache.set(rl_key, rl_count + 1, timeout=3600)
+    return False
+
+
 def _user_summary(user):
     return {
         'id': str(user.pk),
@@ -41,6 +60,7 @@ def _user_summary(user):
         'is_suspended': user.is_suspended,
         'suspended_at': user.suspended_at.isoformat() if user.suspended_at else None,
         'suspension_reason': user.suspension_reason,
+        'can_access_admin_panel': user.can_access_admin_panel,
         'is_super_admin': user.is_super_admin,
     }
 
@@ -84,6 +104,7 @@ def user_sessions(request, user_id):
         return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
 
     sessions = Session.objects.filter(user=user, expires_at__gt=timezone.now()).order_by('-last_used_at')
+    log_event('admin_user_sessions_viewed', user=user, actor=request.user, request=request)
     return Response(SessionSerializer(sessions, many=True, context={'current_session_id': None}).data)
 
 
@@ -113,6 +134,12 @@ def admin_revoke_session(request, user_id, session_id):
 @authentication_classes([AdminCookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def suspend_user(request, user_id):
+    if _admin_action_rate_limited('suspend', request.user):
+        return Response(
+            {'error': 'Too many suspension actions from this admin account. Please try again later.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     try:
         user = User.objects.get(pk=user_id)
     except (User.DoesNotExist, ValueError):
@@ -121,6 +148,15 @@ def suspend_user(request, user_id):
     reason = request.data.get('reason', '').strip()
     if not reason:
         return Response({'error': 'A reason is required to suspend an account.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if user.pk == request.user.pk:
+        return Response({'error': 'You cannot suspend your own account.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if user.can_access_admin_panel and not request.user.is_super_admin:
+        return Response(
+            {'error': 'Only a super-admin can suspend another admin account.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     if user.is_suspended:
         return Response({'error': 'This account is already suspended.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -148,6 +184,12 @@ def suspend_user(request, user_id):
 @authentication_classes([AdminCookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def reactivate_user(request, user_id):
+    if _admin_action_rate_limited('reactivate', request.user):
+        return Response(
+            {'error': 'Too many reactivation actions from this admin account. Please try again later.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     try:
         user = User.objects.get(pk=user_id)
     except (User.DoesNotExist, ValueError):
@@ -173,6 +215,12 @@ def reactivate_user(request, user_id):
 @authentication_classes([AdminCookieJWTAuthentication])
 @permission_classes([IsSuperAdmin])
 def grant_admin_access(request, user_id):
+    if _admin_action_rate_limited('grant', request.user):
+        return Response(
+            {'error': 'Too many admin-access-grant actions from this admin account. Please try again later.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     try:
         user = User.objects.get(pk=user_id)
     except (User.DoesNotExist, ValueError):
@@ -196,6 +244,12 @@ def grant_admin_access(request, user_id):
 @authentication_classes([AdminCookieJWTAuthentication])
 @permission_classes([IsSuperAdmin])
 def revoke_admin_access(request, user_id):
+    if _admin_action_rate_limited('revoke', request.user):
+        return Response(
+            {'error': 'Too many admin-access-revoke actions from this admin account. Please try again later.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     try:
         user = User.objects.get(pk=user_id)
     except (User.DoesNotExist, ValueError):

@@ -1,0 +1,41 @@
+/* src/styles/theme.css
+   Deliberately a single, fixed dark palette — not a light/dark toggle.
+   This is an internal tool for one or two people at this stage; theme
+   switching is real complexity worth skipping until there's an actual
+   need for it. Values reused directly from the main app's dark theme
+   for genuine brand consistency, not reinvented. */
+
+:root {
+  --accent: #00e5a0;
+  --bg-page: #0d0d16;
+  --bg-surface: #111118;
+  --bg-surface-2: #18181f;
+  --bg-surface-3: #222230;
+  --text-primary: #f0f0f8;
+  --text-secondary: #b8b8c8;
+  --text-tertiary: #8a8a9a;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --danger: #ef4444;
+  --radius: 12px;
+  --radius-sm: 8px;
+
+  /* Brand.jsx's LogoSVG/WordmarkSVG depend on these directly — the
+     same class of bug already found and fixed once on the main app's
+     auth pages (a shared component reading theme variables that
+     weren't defined in whichever context it's now used in). Values
+     match the main app's dark theme for genuine brand consistency. */
+  --logo-body: #8074c0;
+  --logo-mark: #050508;
+  --wordmark: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg-page);
+  color: var(--text-primary);
+}

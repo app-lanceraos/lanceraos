@@ -6,6 +6,7 @@ from . import views, views_audit, views_deletion, views_users
 app_name = 'admin_panel'
 
 urlpatterns = [
+    path('csrf/', views.AdminCsrfView.as_view(), name='admin_csrf'),
     path('login/', views.admin_login, name='admin_login'),
     path('2fa/verify/', views.admin_verify_2fa, name='admin_2fa_verify'),
     path('logout/', views.admin_logout, name='admin_logout'),

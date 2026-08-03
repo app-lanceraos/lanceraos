@@ -257,6 +257,10 @@ class UserSerializer(serializers.ModelSerializer):
             # Required by PrivateRoute.jsx to redirect to /onboarding until this is true.
             'onboarding_completed',
             'linked_providers',
+            # Required by admin-frontend's AdminDashboard.jsx to show the
+            # "(super-admin)" label — this serializer backs both the main
+            # app's /me/ and admin_panel's /me/ + login responses.
+            'is_super_admin',
         ]
         read_only_fields = fields
 
