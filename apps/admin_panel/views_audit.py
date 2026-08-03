@@ -31,6 +31,19 @@ def _audit_log_entry(log):
 def audit_log_list(request):
     qs = AuditLog.objects.select_related('user', 'actor').order_by('-created_at')
 
+    event_query = request.query_params.get('event', '').strip()
+    # Exclude the audit-log-viewing event from the DEFAULT view only —
+    # otherwise every admin's own "I looked at the log" action becomes
+    # the newest entry every single time they load this page, burying
+    # whatever they were actually trying to look at. Still fully
+    # visible if explicitly searched for.
+    if not event_query:
+        qs = qs.exclude(event='admin_audit_log_viewed')
+
+    admin_only = request.query_params.get('admin_only', '').strip().lower() == 'true'
+    if admin_only:
+        qs = qs.filter(actor__isnull=False)
+
     user_query = request.query_params.get('user', '').strip()
     if user_query:
         qs = qs.filter(Q(user__email__icontains=user_query) | Q(user__username__icontains=user_query))
@@ -39,7 +52,6 @@ def audit_log_list(request):
     if actor_query:
         qs = qs.filter(Q(actor__email__icontains=actor_query) | Q(actor__username__icontains=actor_query))
 
-    event_query = request.query_params.get('event', '').strip()
     if event_query:
         qs = qs.filter(event__icontains=event_query)
 

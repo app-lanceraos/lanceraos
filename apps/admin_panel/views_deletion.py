@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from core.observability import log_event
 
 from .authentication import AdminCookieJWTAuthentication
+from .views_users import _admin_action_rate_limited
 
 User = get_user_model()
 
@@ -48,6 +49,12 @@ def admin_restore_account(request, user_id):
     deletion_cancelled) so the audit trail correctly shows this was
     admin-initiated, not a self-service action, with actor recorded.
     """
+    if _admin_action_rate_limited('restore', request.user):
+        return Response(
+            {'error': 'Too many restore actions from this admin account. Please try again later.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     try:
         user = User.objects.get(pk=user_id)
     except (User.DoesNotExist, ValueError):

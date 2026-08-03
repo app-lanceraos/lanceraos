@@ -11,4 +11,12 @@ class IsSuperAdmin(BasePermission):
     but is rejected here specifically.
     """
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.is_super_admin)
+        if request.user and request.user.is_authenticated and request.user.is_super_admin:
+            return True
+        if request.user and request.user.is_authenticated:
+            from core.observability import log_event
+            log_event(
+                'admin_permission_denied', actor=request.user, request=request,
+                metadata={'required_permission': 'super_admin', 'path': request.path, 'method': request.method},
+            )
+        return False

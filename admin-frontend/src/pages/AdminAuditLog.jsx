@@ -13,6 +13,7 @@ const LIMIT = 25
 
 export default function AdminAuditLog() {
   const [filters, setFilters] = useState({ user: '', actor: '', event: '', from: '', to: '' })
+  const [adminOnly, setAdminOnly] = useState(false)
   const [eventTypes, setEventTypes] = useState([])
   const [results, setResults] = useState([])
   const [total, setTotal] = useState(0)
@@ -31,6 +32,7 @@ export default function AdminAuditLog() {
     try {
       const params = new URLSearchParams({ ...filters, limit: LIMIT, offset: newOffset })
       Object.keys(filters).forEach((k) => { if (!filters[k]) params.delete(k) })
+      if (adminOnly) params.set('admin_only', 'true')
       const res = await api.get(`/audit-log/?${params.toString()}`)
       setResults(res.data.results)
       setTotal(res.data.total)
@@ -62,6 +64,10 @@ export default function AdminAuditLog() {
         </datalist>
         <input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} style={inputStyle} />
         <input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} style={inputStyle} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={adminOnly} onChange={(e) => setAdminOnly(e.target.checked)} />
+          Admin actions only
+        </label>
         <button type="submit" style={{ padding: '8px 16px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'var(--accent)', color: '#04140f', fontWeight: 700, cursor: 'pointer', fontSize: '0.82rem' }}>
           Filter
         </button>

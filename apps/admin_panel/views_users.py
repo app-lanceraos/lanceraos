@@ -150,9 +150,11 @@ def suspend_user(request, user_id):
         return Response({'error': 'A reason is required to suspend an account.'}, status=status.HTTP_400_BAD_REQUEST)
 
     if user.pk == request.user.pk:
+        log_event('admin_action_denied', user=user, actor=request.user, request=request, metadata={'reason': 'self_suspension_blocked'})
         return Response({'error': 'You cannot suspend your own account.'}, status=status.HTTP_400_BAD_REQUEST)
 
     if user.can_access_admin_panel and not request.user.is_super_admin:
+        log_event('admin_action_denied', user=user, actor=request.user, request=request, metadata={'reason': 'not_super_admin_cannot_suspend_admin'})
         return Response(
             {'error': 'Only a super-admin can suspend another admin account.'},
             status=status.HTTP_403_FORBIDDEN,
@@ -275,6 +277,12 @@ def revoke_admin_access(request, user_id):
 @authentication_classes([AdminCookieJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def admin_resend_verification(request, user_id):
+    if _admin_action_rate_limited('resend_verification', request.user):
+        return Response(
+            {'error': 'Too many resend-verification actions from this admin account. Please try again later.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     try:
         user = User.objects.get(pk=user_id)
     except (User.DoesNotExist, ValueError):
