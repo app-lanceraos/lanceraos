@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Check, X, Eye, EyeOff } from 'lucide-react'
 
-import api from '@/lib/api'
+import api, { getRedirectPath } from '@/lib/api'
+import useAuthStore from '@/store/authStore'
 import useTitle from '@/hooks/useTitle'
 import AuthLayout, { authTokens } from '@/components/AuthLayout'
 import AuthField from '@/components/AuthField'
@@ -13,6 +14,7 @@ import AuthAlert from '@/components/AuthAlert'
 import PasswordStrength, { isPasswordValid } from '@/components/PasswordStrength'
 import GoogleButton from '@/components/GoogleButton'
 import FacebookButton from '@/components/FacebookButton'
+import DeletionModal from '@/components/DeletionModal'
 
 const STEPS = [
   { id: 1, label: 'Personal' },
@@ -100,6 +102,8 @@ function StepBar({ current }) {
 export default function Register() {
   useTitle('LanceraOS | Create Account')
   const navigate = useNavigate()
+  const setDeletionWarning = useAuthStore((s) => s.setDeletionWarning)
+  const logout = useAuthStore((s) => s.logout)
 
   const [step, setStep] = useState(1)
   const [form, setForm] = useState({
@@ -115,7 +119,11 @@ export default function Register() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [emailAvail, setEmailAvail] = useState(null)
   const [usernameAvail, setUsernameAvail] = useState(null)
+  const [usernameSuggestion, setUsernameSuggestion] = useState(null)
   const [agreedToTerms, setAgreedToTerms] = useState(false)
+  const [showEmailConfirm, setShowEmailConfirm] = useState(false)
+  const [deletionData, setDeletionData] = useState(null)
+  const [restoring, setRestoring] = useState(false)
 
   const emailTimer = useRef(null)
   const usernameTimer = useRef(null)
@@ -165,6 +173,7 @@ export default function Register() {
     const username = form.username.trim().toLowerCase()
     if (!username || username.length < 3 || !/^[a-zA-Z0-9_]+$/.test(username)) {
       setUsernameAvail(null)
+      setUsernameSuggestion(null)
       return
     }
     setUsernameAvail('checking')
@@ -172,10 +181,16 @@ export default function Register() {
       try {
         const res = await api.post('/auth/check-availability/', { field: 'username', value: username })
         setUsernameAvail(res.data.available ? 'available' : 'taken')
-        if (!res.data.available) setErrors((p) => ({ ...p, username: 'This username is already taken.' }))
-        else setErrors((p) => { const n = { ...p }; delete n.username; return n })
+        if (!res.data.available) {
+          setErrors((p) => ({ ...p, username: 'This username is already taken.' }))
+          setUsernameSuggestion(res.data.suggestion || null)
+        } else {
+          setErrors((p) => { const n = { ...p }; delete n.username; return n })
+          setUsernameSuggestion(null)
+        }
       } catch {
         setUsernameAvail(null)
+        setUsernameSuggestion(null)
       }
     }, 500)
     return () => clearTimeout(usernameTimer.current)
@@ -233,13 +248,17 @@ export default function Register() {
     setStep((s) => s + 1)
   }
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
     const e3 = validateStep3()
     if (Object.keys(e3).length > 0) {
       setErrors(e3)
       return
     }
+    setShowEmailConfirm(true)
+  }
+
+  const submitRegistration = async () => {
     setLoading(true)
     setServerError('')
 
@@ -288,201 +307,303 @@ export default function Register() {
     }
   }
 
-  const handleOAuthSuccess = () => navigate('/dashboard', { replace: true })
+  const handleRestoreAccount = async () => {
+    setRestoring(true)
+    try {
+      await api.post('/auth/deletion/cancel/')
+      setDeletionWarning(null)
+      setDeletionData(null)
+      navigate(getRedirectPath(), { replace: true })
+    } catch (err) {
+      setServerError(err.response?.data?.error || 'Failed to restore account. Please try again.')
+      setDeletionData(null)
+    } finally {
+      setRestoring(false)
+    }
+  }
+
+  const handleContinueWithDeletion = async () => {
+    const scheduledDate = deletionData?.deletion_scheduled_at
+    setDeletionData(null)
+    await logout() // revokes the session this login just created, clears cookies
+    navigate('/login', {
+      replace: true,
+      state: {
+        message: scheduledDate
+          ? `Your account will be deleted on ${new Date(scheduledDate).toLocaleDateString('en-PK', { dateStyle: 'long' })}. You can log in again anytime before then to restore it.`
+          : 'Your account deletion is still scheduled. You can log in again anytime before then to restore it.',
+      },
+    })
+  }
+
+  const handleOAuthSuccess = (data) => {
+    if (data.deletion_pending) {
+      setDeletionData(data)
+      return
+    }
+    navigate(getRedirectPath(), { replace: true })
+  }
 
   return (
-    <AuthLayout formMaxWidth="30rem">
-      <h1 style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 700, marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
-          Create your account
-      </h1>
-      <p style={{ color: '#8C89A8', fontSize: '0.9rem', marginBottom: 24 }}>
-          Start managing your freelance business
-      </p>
-      <StepBar current={step} />
-
-      {serverError && (
-        <div style={{ marginBottom: 16 }}>
-          <AuthAlert variant="error">{serverError}</AuthAlert>
-        </div>
+    <>
+      {deletionData && (
+        <DeletionModal
+          data={deletionData}
+          onRestore={handleRestoreAccount}
+          onContinue={handleContinueWithDeletion}
+          restoring={restoring}
+        />
       )}
 
-      <form onSubmit={handleSubmit} noValidate>
-        {step === 1 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <AuthField label="First Name" value={form.first_name} onChange={set_('first_name')} error={errors.first_name} autoComplete="given-name" />
-              <AuthField label="Last Name (optional)" value={form.last_name} onChange={set_('last_name')} error={errors.last_name} autoComplete="family-name" />
-            </div>
+      <AuthLayout formMaxWidth="30rem">
+        <h1 style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 700, marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
+            Create your account
+        </h1>
+        <p style={{ color: '#8C89A8', fontSize: '0.9rem', marginBottom: 24 }}>
+            Start managing your freelance business
+        </p>
+        <StepBar current={step} />
 
-            <div>
-              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 500, color: '#C7C7C7', marginBottom: 6 }}>
-                Date of Birth
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: '0.6rem' }}>
-                <AuthSelect
-                  value={form.dob_day}
-                  onChange={set_('dob_day')}
-                  placeholder="Day"
-                  error={errors.date_of_birth}
-                  options={Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: i + 1 }))}
-                />
-                <AuthSelect
-                  value={form.dob_month}
-                  onChange={set_('dob_month')}
-                  placeholder="Month"
-                  error={errors.date_of_birth}
-                  options={MONTHS.map((m, i) => ({ value: i + 1, label: m }))}
-                />
-                <AuthSelect
-                  value={form.dob_year}
-                  onChange={set_('dob_year')}
-                  placeholder="Year"
-                  error={errors.date_of_birth}
-                  options={years.map((y) => ({ value: y, label: y }))}
-                />
-              </div>
-              {errors.date_of_birth && (
-                <p style={{ fontSize: '0.75rem', color: authTokens.error, marginTop: 6 }}>{errors.date_of_birth}</p>
-              )}
-            </div>
-
-            <AuthButton onClick={handleNext}>Continue →</AuthButton>
+        {serverError && (
+          <div style={{ marginBottom: 16 }}>
+            <AuthAlert variant="error">{serverError}</AuthAlert>
           </div>
         )}
 
-        {step === 2 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <AuthField
-              label="Email Address"
-              type="email"
-              value={form.email}
-              onChange={set_('email')}
-              error={errors.email}
-              autoComplete="email"
-              rightElement={<AvailDot status={emailAvail} />}
-            />
-            <AuthField
-              label="Username"
-              value={form.username}
-              onChange={set_('username')}
-              error={errors.username}
-              autoComplete="username"
-              rightElement={<AvailDot status={usernameAvail} />}
-            />
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: 4 }}>
-              <AuthButton variant="ghost" onClick={() => setStep((s) => s - 1)}>← Back</AuthButton>
+        <form onSubmit={handleSubmit} noValidate>
+          {step === 1 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <AuthField label="First Name" value={form.first_name} onChange={set_('first_name')} error={errors.first_name} autoComplete="given-name" />
+                <AuthField label="Last Name (optional)" value={form.last_name} onChange={set_('last_name')} error={errors.last_name} autoComplete="family-name" />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 500, color: '#C7C7C7', marginBottom: 6 }}>
+                  Date of Birth
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: '0.6rem' }}>
+                  <AuthSelect
+                    value={form.dob_day}
+                    onChange={set_('dob_day')}
+                    placeholder="Day"
+                    error={errors.date_of_birth}
+                    options={Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: i + 1 }))}
+                  />
+                  <AuthSelect
+                    value={form.dob_month}
+                    onChange={set_('dob_month')}
+                    placeholder="Month"
+                    error={errors.date_of_birth}
+                    options={MONTHS.map((m, i) => ({ value: i + 1, label: m }))}
+                  />
+                  <AuthSelect
+                    value={form.dob_year}
+                    onChange={set_('dob_year')}
+                    placeholder="Year"
+                    error={errors.date_of_birth}
+                    options={years.map((y) => ({ value: y, label: y }))}
+                  />
+                </div>
+                {errors.date_of_birth && (
+                  <p style={{ fontSize: '0.75rem', color: authTokens.error, marginTop: 6 }}>{errors.date_of_birth}</p>
+                )}
+              </div>
+
               <AuthButton onClick={handleNext}>Continue →</AuthButton>
             </div>
-          </div>
-        )}
+          )}
 
-        {step === 3 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div>
+          {step === 2 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <AuthField
-                label="Password"
-                type={showPass ? 'text' : 'password'}
-                value={form.password}
-                onChange={set_('password')}
-                error={errors.password}
-                autoComplete="new-password"
-                rightElement={
-                  <button
-                    type="button"
-                    onClick={() => setShowPass((v) => !v)}
-                    tabIndex={-1}
-                    aria-label={showPass ? 'Hide password' : 'Show password'}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: authTokens.placeholder, padding: 0, display: 'flex' }}
-                  >
-                    {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                }
+                label="Email Address"
+                type="email"
+                value={form.email}
+                onChange={set_('email')}
+                error={errors.email}
+                autoComplete="email"
+                rightElement={<AvailDot status={emailAvail} />}
               />
-              <PasswordStrength password={form.password} />
-            </div>
-
-            <div>
-              <AuthField
-                label="Confirm Password"
-                type={showConfirm ? 'text' : 'password'}
-                value={form.confirm_password}
-                onChange={set_('confirm_password')}
-                error={errors.confirm_password}
-                autoComplete="new-password"
-                rightElement={
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirm((v) => !v)}
-                    tabIndex={-1}
-                    aria-label={showConfirm ? 'Hide password' : 'Show password'}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: authTokens.placeholder, padding: 0, display: 'flex' }}
-                  >
-                    {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                }
-              />
-              {form.confirm_password && (
-                <p style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', marginTop: 6, color: form.password === form.confirm_password ? authTokens.success : authTokens.error }}>
-                  {form.password === form.confirm_password ? <Check size={13} /> : <X size={13} />}
-                  {form.password === form.confirm_password ? 'Passwords match' : 'Passwords do not match'}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.8rem', color: '#8C89A8', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={agreedToTerms}
-                  onChange={(e) => {
-                    setAgreedToTerms(e.target.checked)
-                    setErrors((prev) => {
-                      if (!prev.agreedToTerms) return prev
-                      const next = { ...prev }
-                      delete next.agreedToTerms
-                      return next
-                    })
-                  }}
-                  style={{ marginTop: 2, flexShrink: 0 }}
+              <div>
+                <AuthField
+                  label="Username"
+                  value={form.username}
+                  onChange={set_('username')}
+                  error={errors.username}
+                  autoComplete="username"
+                  rightElement={<AvailDot status={usernameAvail} />}
                 />
-                <span>
-                  I agree to the{' '}
-                  <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: authTokens.focus, fontWeight: 600 }}>Terms of Service</a>
-                  {' '}and{' '}
-                  <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: authTokens.focus, fontWeight: 600 }}>Privacy Policy</a>
-                </span>
-              </label>
-              {errors.agreedToTerms && (
-                <p style={{ fontSize: '0.75rem', color: authTokens.error, marginTop: 6 }}>{errors.agreedToTerms}</p>
-              )}
+                {usernameAvail === 'taken' && usernameSuggestion && (
+                  <p style={{ fontSize: '0.78rem', color: '#8C89A8', marginTop: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => setForm((prev) => ({ ...prev, username: usernameSuggestion }))}
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: authTokens.focus, fontWeight: 600, fontSize: 'inherit' }}
+                    >
+                      {usernameSuggestion}
+                    </button>
+                    {' '}is available — use this instead?
+                  </p>
+                )}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: 4 }}>
+                <AuthButton variant="ghost" onClick={() => setStep((s) => s - 1)}>← Back</AuthButton>
+                <AuthButton onClick={handleNext}>Continue →</AuthButton>
+              </div>
             </div>
+          )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: 4 }}>
-              <AuthButton variant="ghost" onClick={() => setStep((s) => s - 1)} disabled={loading}>← Back</AuthButton>
-              <AuthButton type="submit" disabled={loading || !agreedToTerms}>{loading ? 'Creating…' : 'Create Account'}</AuthButton>
+          {step === 3 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <AuthField
+                  label="Password"
+                  type={showPass ? 'text' : 'password'}
+                  value={form.password}
+                  onChange={set_('password')}
+                  error={errors.password}
+                  autoComplete="new-password"
+                  rightElement={
+                    <button
+                      type="button"
+                      onClick={() => setShowPass((v) => !v)}
+                      tabIndex={-1}
+                      aria-label={showPass ? 'Hide password' : 'Show password'}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: authTokens.placeholder, padding: 0, display: 'flex' }}
+                    >
+                      {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  }
+                />
+                <PasswordStrength password={form.password} />
+              </div>
+
+              <div>
+                <AuthField
+                  label="Confirm Password"
+                  type={showConfirm ? 'text' : 'password'}
+                  value={form.confirm_password}
+                  onChange={set_('confirm_password')}
+                  error={errors.confirm_password}
+                  autoComplete="new-password"
+                  rightElement={
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirm((v) => !v)}
+                      tabIndex={-1}
+                      aria-label={showConfirm ? 'Hide password' : 'Show password'}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: authTokens.placeholder, padding: 0, display: 'flex' }}
+                    >
+                      {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  }
+                />
+                {form.confirm_password && (
+                  <p style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', marginTop: 6, color: form.password === form.confirm_password ? authTokens.success : authTokens.error }}>
+                    {form.password === form.confirm_password ? <Check size={13} /> : <X size={13} />}
+                    {form.password === form.confirm_password ? 'Passwords match' : 'Passwords do not match'}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.8rem', color: '#8C89A8', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={agreedToTerms}
+                    onChange={(e) => {
+                      setAgreedToTerms(e.target.checked)
+                      setErrors((prev) => {
+                        if (!prev.agreedToTerms) return prev
+                        const next = { ...prev }
+                        delete next.agreedToTerms
+                        return next
+                      })
+                    }}
+                    style={{ marginTop: 2, flexShrink: 0 }}
+                  />
+                  <span>
+                    I agree to the{' '}
+                    <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: authTokens.focus, fontWeight: 600 }}>Terms of Service</a>
+                    {' '}and{' '}
+                    <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: authTokens.focus, fontWeight: 600 }}>Privacy Policy</a>
+                  </span>
+                </label>
+                {errors.agreedToTerms && (
+                  <p style={{ fontSize: '0.75rem', color: authTokens.error, marginTop: 6 }}>{errors.agreedToTerms}</p>
+                )}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: 4 }}>
+                <AuthButton variant="ghost" onClick={() => setStep((s) => s - 1)} disabled={loading}>← Back</AuthButton>
+                <AuthButton type="submit" disabled={loading || !agreedToTerms}>{loading ? 'Creating…' : 'Create Account'}</AuthButton>
+              </div>
+            </div>
+          )}
+        </form>
+
+        <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#6C61A6', fontSize: '0.875rem' }}>
+            <span style={{ flex: 1, height: 1, background: '#6C61A6' }} />
+            or sign up with
+            <span style={{ flex: 1, height: 1, background: '#6C61A6' }} />
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <GoogleButton onSuccess={handleOAuthSuccess} onError={setServerError} />
+            <FacebookButton onSuccess={handleOAuthSuccess} onError={setServerError} />
+          </div>
+        </div>
+
+        <p style={{ textAlign: 'center', marginTop: 24, fontSize: '0.875rem', color: '#8C89A8' }}>
+          Already a user?{' '}
+          <Link to="/login" style={{ color: authTokens.focus, fontWeight: 600 }}>
+            Sign in
+          </Link>
+        </p>
+      </AuthLayout>
+
+      {showEmailConfirm && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+            zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}
+        >
+          <div style={{ background: authTokens.inputBg, border: `1px solid ${authTokens.inputBorder}`, borderRadius: 16, width: '100%', maxWidth: 420, overflow: 'hidden' }}>
+            <div style={{ padding: 24, borderBottom: `1px solid ${authTokens.inputBorder}` }}>
+              <h2 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff', margin: 0 }}>
+                Confirm your email
+              </h2>
+            </div>
+            <div style={{ padding: 24 }}>
+              <p style={{ fontSize: '0.875rem', color: '#C7C7C7', lineHeight: 1.55, marginBottom: 20 }}>
+                We'll send your verification link to <strong style={{ color: '#fff' }}>{form.email.trim().toLowerCase()}</strong>. Is this correct?
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <AuthButton
+                  variant="primary"
+                  onClick={() => {
+                    setShowEmailConfirm(false)
+                    submitRegistration()
+                  }}
+                >
+                  Yes, that's correct
+                </AuthButton>
+                <AuthButton
+                  variant="ghost"
+                  onClick={() => {
+                    setShowEmailConfirm(false)
+                    setStep(2)
+                  }}
+                >
+                  Edit email
+                </AuthButton>
+              </div>
             </div>
           </div>
-        )}
-      </form>
-
-      <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#6C61A6', fontSize: '0.875rem' }}>
-          <span style={{ flex: 1, height: 1, background: '#6C61A6' }} />
-          or sign up with
-          <span style={{ flex: 1, height: 1, background: '#6C61A6' }} />
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <GoogleButton onSuccess={handleOAuthSuccess} onError={setServerError} />
-          <FacebookButton onSuccess={handleOAuthSuccess} onError={setServerError} />
-        </div>
-      </div>
-
-      <p style={{ textAlign: 'center', marginTop: 24, fontSize: '0.875rem', color: '#8C89A8' }}>
-        Already a user?{' '}
-        <Link to="/login" style={{ color: authTokens.focus, fontWeight: 600 }}>
-          Sign in
-        </Link>
-      </p>
-    </AuthLayout>
+      )}
+    </>
   )
 }

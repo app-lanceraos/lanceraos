@@ -258,6 +258,20 @@ def register(request):
     }, status=status.HTTP_201_CREATED)
 
 
+def _suggest_available_username(base):
+    """
+    Called only when `base` itself is unavailable — tries base+2,
+    base+3, ... up to base+99 (truncated to fit the 30-char limit),
+    falling back to a short random suffix in the near-impossible case
+    none of those are free either.
+    """
+    for i in range(2, 100):
+        candidate = f'{base}{i}'[:30]
+        if candidate not in RESERVED_USERNAMES and not User.objects.filter(username=candidate).exists():
+            return candidate
+    return f'{base[:24]}_{secrets.token_hex(3)}'
+
+
 @api_view(['POST'])
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
@@ -291,8 +305,11 @@ def check_availability(request):
     if not re.match(r'^[a-zA-Z0-9_]{3,30}$', value):
         return Response({'field': 'username', 'available': None, 'error': 'Invalid username format'})
     if value in RESERVED_USERNAMES:
-        return Response({'field': 'username', 'available': False})
-    return Response({'field': 'username', 'available': not User.objects.filter(username=value).exists()})
+        return Response({'field': 'username', 'available': False, 'suggestion': _suggest_available_username(value)})
+    is_available = not User.objects.filter(username=value).exists()
+    if not is_available:
+        return Response({'field': 'username', 'available': False, 'suggestion': _suggest_available_username(value)})
+    return Response({'field': 'username', 'available': True})
 
 
 # ══════════════════════════════════════════════════════════════════
