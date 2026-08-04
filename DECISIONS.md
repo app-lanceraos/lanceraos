@@ -929,3 +929,20 @@ Also closed all five rate-limiting gaps identified in the prior audit: `save_cus
 trivially rotated), and `upload_logo` (real Cloudinary/Pillow cost per call).
 This closes the entire 12-item user/admin feedback plan — see `USER_ADMIN_FEEDBACK_PLAN.md` for
 the full original list and final disposition of each item.
+
+---
+
+Date: July 2026
+Correction: The `AddPassword.jsx` fix from the previous entry was itself wrong — attempting to
+refresh `/auth/me/` after success fails, because `complete_add_password` sets
+`password_changed_at`, which invalidates every existing token via the same `pca` mechanism
+`change_password` uses to log out other devices. Unlike `change_password`, this endpoint is
+unauthenticated by design (verified via the email token, not a session), so it has no way to
+identify and spare "the caller's own" session. The refresh attempt itself 401s, triggers the
+app's global silent-refresh-then-logout interceptor, and hard-redirects to `/login` before the
+success screen is ever visible.
+Corrected by removing the refresh attempt entirely and updating the success message to honestly
+state the person has been signed out and needs to sign in again with their new password — rather
+than trying to paper over a logout that's going to happen regardless.
+This closes the entire 12-item user/admin feedback plan, including this and the five rate-limiting
+gaps from the prior entry. See `USER_ADMIN_FEEDBACK_PLAN.md` for the complete final status.
