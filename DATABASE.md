@@ -50,6 +50,12 @@ anonymized_at                                         DateTimeField, nullable
 
 terms_accepted_at                                       DateTimeField, nullable
 terms_version                                             CharField(20), blank
+
+can_access_admin_panel                                      BooleanField, default False
+is_super_admin                                                BooleanField, default False
+is_suspended                                                    BooleanField, default False
+suspended_at                                                      DateTimeField, nullable
+suspension_reason                                                   TextField, blank
 ```
 
 1. **Mutable?** Yes — this is a live account record, updated throughout its life (login
@@ -88,6 +94,35 @@ of what they actually agreed to at the time, which matters if terms are ever dis
 → 15min, 11 → 60min, 16+ → 24h), `is_oauth_only()`, `anonymize()` (strips all PII on both `User`
 and its linked `FreelancerProfile`, sets `is_active=False`, deletes all `Session`/`TrustedDevice`/
 `UserSocialAccount` rows for the account).
+
+**`can_access_admin_panel` / `is_super_admin` / `is_suspended` / `suspended_at` /
+`suspension_reason`** — added for the admin panel (`apps.admin_panel`; see `ADMIN.md`). Exact
+reasoning comments from `apps/users/models.py`, verbatim:
+
+```
+# ── Admin panel access ─────────────────────────────────────────
+# Deliberately separate from Django's own is_staff/is_superuser,
+# which stay reserved for the raw Django /admin/ interface. This
+# flag gates the real, purpose-built admin panel at
+# admin.lanceraos.com — someone could have one without the other.
+can_access_admin_panel = models.BooleanField(default=False)
+
+# Only a super-admin may grant/revoke can_access_admin_panel for
+# someone else — a regular admin can do everything else (search,
+# suspend, view the audit log) but not manage who else has access.
+is_super_admin = models.BooleanField(default=False)
+
+# ── Admin-initiated suspension — distinct from is_active (used by
+# permanent anonymization) and is_deleted (self-service deletion) ──
+is_suspended = models.BooleanField(default=False)
+suspended_at = models.DateTimeField(null=True, blank=True)
+suspension_reason = models.TextField(blank=True)
+```
+
+None of these five fields carry their own database index — `can_access_admin_panel` and
+`is_suspended` are checked on the authenticated-user's own row (already fetched by primary key) or
+filtered in small admin-search result sets, not queried at table scale the way `is_deleted`/
+`deletion_scheduled_at` are by the daily anonymization sweep.
 
 ---
 
@@ -311,6 +346,64 @@ created_at, completed_at
 
 ---
 
+## `admin_sessions` (`AdminSession`, in `apps.admin_panel`)
+
+Backs admin-panel login sessions at `admin.lanceraos.com`. Genuinely independent from
+`apps.users.Session`, by design — quoting the model's own docstring verbatim:
+
+```
+Genuinely independent from apps.users.Session — an admin login must
+never compete for the regular app's 3-concurrent-session cap (logging
+into admin.lanceraos.com evicting a legitimate regular-app session
+would be a real, undesirable side effect of sharing a model). Same
+reasoning that gave TrustedDevice its own table rather than overloading
+Session with a second purpose.
+```
+
+**Schema**:
+```
+id                     UUIDField, primary key
+user                   FK to User, CASCADE
+refresh_token_hash     CharField(64), unique  — SHA-256 of the raw admin refresh token
+device_name            CharField(300), blank
+ip_address             GenericIPAddressField, nullable
+created_at             DateTimeField, auto_now_add
+last_used_at           DateTimeField, auto_now_add
+expires_at             DateTimeField
+```
+
+`MAX_ADMIN_SESSIONS_PER_USER = 2` (tighter than the regular app's 3 — "this is the
+highest-privilege surface in the system," per the model's own comment). Default session lifetime
+is 1 day (`ADMIN_REFRESH_DAYS` in `token_service.py`), deliberately short relative to the regular
+app's 30/90-day sessions — an admin being forced to re-authenticate more often is the accepted
+tradeoff for this privilege level.
+
+1. **Mutable?** Yes — `rotate()` updates `refresh_token_hash`/`expires_at`/`last_used_at` on every
+   token refresh (same row, not a new one, mirroring `apps.users.Session`); `touch()` bumps
+   `last_used_at` alone.
+2. **Soft deleted?** No — hard-deleted outright on logout, on admin-access revocation
+   (`revoke_admin_access` deletes every `AdminSession` for that user immediately, not just blocking
+   their next login), and via `cleanup_expired()`. A pure auth artifact with no retention value once
+   it's no longer live, same reasoning as `apps.users.Session`.
+3. **Audit trail?** Indirectly — `admin_login_success`, `admin_logout`, `admin_access_revoked`, etc.
+   are logged to `AuditLog` by the views that perform them, not by this model itself.
+4. **Indexed?** `(user, last_used_at)`, `refresh_token_hash`, `expires_at` — identical pattern to
+   `apps.users.Session`.
+5. **Encrypted?** No — `refresh_token_hash` is a plain SHA-256 hash of the raw refresh token, same
+   reasoning as `Session.refresh_token_hash`: the token's own JWT-signing entropy makes a
+   dictionary/HMAC concern moot, unlike CNIC/NTN/PSEB.
+6. **Cascade behavior?** `CASCADE` from `User` — pure auth artifact, no independent value once the
+   account is gone. (Deliberately not `SET_NULL` — unlike `AuditLog`, there's no reason for an
+   admin session to outlive the account it belongs to.)
+
+The `admin_sid` claim embedded on the admin access token (set only at admin-token-minting time,
+required — never optional — by `AdminCookieJWTAuthentication`) is what stops a stolen regular-app
+access token from being replayed against admin endpoints, or vice versa; see
+`apps/admin_panel/authentication.py`'s module docstring for the full token-type-confusion
+reasoning.
+
+---
+
 ## `audit_log` (`AuditLog`, in `core`)
 
 Shared across every module — not `apps.users`-specific. Immutable, append-only by design: "this
@@ -334,7 +427,9 @@ created_at
 2. **Soft deleted?** No deletion at all under normal operation.
 3. **Audit trail?** This *is* the audit trail for the whole application.
 4. **Indexed?** `(user, created_at)`, `(event, created_at)`, `(ip_address, created_at)`,
-   `(actor, created_at)`, `request_id`.
+   `request_id` — plus the single-column index Django creates automatically on every `ForeignKey`
+   (so `actor` alone is indexed too). See the correction below: there is **no** composite
+   `(actor, created_at)` index, despite the pattern used for `user`/`event`/`ip_address`.
 5. **Encrypted?** No — `metadata` should never contain raw secrets; sensitive request fields are
    redacted before logging (`core.observability.redact_sensitive_fields`).
 6. **Cascade behavior?** `SET_NULL` on both `user` and `actor` — the log entry survives even if
@@ -349,8 +444,15 @@ model and migration history, found it didn't, and added it properly at that poin
 applying a diff that would have silently broken every `log_event()` call in the application.
 Every self-service call site leaves this `null`, since the actor and the subject are already the
 same person captured in `user`. Only admin-initiated actions on someone else's account populate
-it. **Unconfirmed**: whether the `(actor, created_at)` index listed above was actually created by
-that migration, or just the bare column — worth a direct check before treating that index as settled fact.
+it. **Resolved** (this document previously flagged this as unconfirmed): checked directly against
+`core/migrations/0004_auditlog_actor.py` and `core/models.py`'s current `Meta.indexes` — the
+migration is a bare `AddField`, no `AddIndex`/`index_together` operation, and `Meta.indexes` lists
+only `user`, `event`, `ip_address`, and `request_id`. The composite `(actor, created_at)` index was
+never created; only the bare `actor` column exists, indexed solely via Django's automatic
+single-column FK index. Filtering the admin audit-log viewer by actor (`views_audit.py`) or by
+`admin_only=true` therefore does not benefit from a `created_at`-ordered composite index the way
+the other three filters do — worth adding one if that view's actor-filtered query ever shows up as
+slow at real data volume.
 
 **`event` is deliberately free-form, not an enum**: a fixed choices list here would mean editing
 `core/models.py` for every future module's events, or every module reinventing its own event log —
@@ -423,4 +525,5 @@ dismissed_at      DateTimeField, nullable
 
 Every table for Invoices, Clients, Payments, Tax, Health Score, Proposals, Contracts,
 Subscriptions — none of these modules exist yet. This document only covers what's actually in the
-database today (Users/Auth + the shared `core` tables).
+database today (`apps.users`' six tables, `apps.admin_panel`'s one table — seven tables spanning
+two apps — and the three shared `core` tables).

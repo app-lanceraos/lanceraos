@@ -339,6 +339,19 @@ lanceraos/                          <- Django project root
 │   └── permissions.py       ← Shared DRF permission classes [not yet built]
 ├── apps/
 │   ├── users/                      <- Auth, profile, settings — BUILT
+│   ├── admin_panel/                <- Admin panel backend (admin.lanceraos.com's API) — BUILT.
+│   │   │                              Separate session/cookie/auth-class stack from apps.users —
+│   │   │                              see Section 5, Module 1's admin-panel subsection.
+│   │   ├── models.py                <- AdminSession (own table, own concurrency cap)
+│   │   ├── authentication.py         <- AdminCookieJWTAuthentication (requires admin_sid claim)
+│   │   ├── permissions.py             <- IsSuperAdmin (gates grant/revoke admin access)
+│   │   ├── cookies.py                  <- Admin-only cookie names, distinct from apps.users.cookies
+│   │   ├── token_service.py             <- Mints AdminSession + admin JWT pair
+│   │   ├── constants.py                  <- ADMIN_EMAIL_DOMAIN
+│   │   ├── views.py                       <- Login (mandatory 2FA) / logout / refresh / me
+│   │   ├── views_users.py                  <- Search/detail/sessions/suspend/reactivate/grant/revoke
+│   │   ├── views_audit.py                   <- Audit log viewer (filterable)
+│   │   └── views_deletion.py                 <- Deletion-queue management
 │   ├── invoices/                   <- Invoice lifecycle + client CRM + portal
 │   ├── payments/                   <- Income, expenses, P&L, CSV import
 │   ├── tax/                        <- FBR tax, SRO 586, income certificate
@@ -346,11 +359,12 @@ lanceraos/                          <- Django project root
 │   ├── proposals/                  <- Proposals + AI writer
 │   ├── contracts/                  <- Contracts + digital signing
 │   └── subscriptions/              <- Free/Pro plans and enforcement
-├── frontend/                       <- React application
+├── frontend/                       <- React application (the main, freelancer-facing app)
 │   ├── src/
 │   │   ├── App.jsx                 <- Routing root (BrowserRouter + all routes)
 │   │   ├── components/
-│   │   │   ├── AppShell.jsx        <- Layout: header, nav, frame (placeholder — see rule 5)
+│   │   │   ├── AppShell.jsx        <- Layout: header, nav, frame — full, v1-faithful
+│   │   │   │                          implementation, see rule 5
 │   │   │   ├── PrivateRoute.jsx    <- Redirects to /login if not authenticated
 │   │   │   ├── PublicRoute.jsx     <- Redirects logged-in users away from Login/Register
 │   │   │   ├── Card.jsx, FormField.jsx, FormSelect.jsx,
@@ -371,6 +385,27 @@ lanceraos/                          <- Django project root
 │   │   └── styles/
 │   │       └── theme.css           <- All CSS custom properties
 │   └── index.html
+├── admin-frontend/                 <- Admin panel's React app — a fully separate Vite project
+│   │                                  from frontend/ (own package.json, own deployment target,
+│   │                                  own dev server), not a route inside the main app. Mirrors
+│   │                                  frontend/'s conventions (Zustand store, shared Axios
+│   │                                  instance, inline-style theming) rather than sharing code
+│   │                                  with it directly.
+│   ├── src/
+│   │   ├── App.jsx                 <- Routing root for admin.lanceraos.com
+│   │   ├── components/
+│   │   │   ├── AdminLayout.jsx     <- Admin shell (sidebar/header), admin_panel's AppShell analog
+│   │   │   ├── AdminPrivateRoute.jsx <- Redirects to admin login if not authenticated
+│   │   │   └── Brand.jsx
+│   │   ├── pages/                  <- AdminLogin, AdminTwoFAVerify, AdminUserSearch,
+│   │   │                              AdminUserDetail, AdminAuditLog, AdminDeletionQueue
+│   │   ├── store/
+│   │   │   └── adminAuthStore.js   <- Zustand auth state, separate from the main app's authStore
+│   │   ├── lib/
+│   │   │   └── api.js              <- Separate Axios instance, admin cookie-aware
+│   │   └── styles/
+│   │       └── theme.css
+│   └── index.html
 ├── CLAUDE.md                       <- Master context file (this document)
 ├── .env                            <- Environment variables (never committed)
 ├── .env.example                    <- Template with all required keys
@@ -382,14 +417,24 @@ lanceraos/                          <- Django project root
 ## 5. Modules — What Exists and What Each Does
 
 ### Module 1 — Users (Authentication + Profile + Settings)
-Status: Backend complete. Frontend complete (12 pages, 127 tests passing).
-App: apps/users/
+Status: Backend complete. Frontend complete (17 pages, 123 tests passing).
+Includes the admin panel (backend + its separate admin-frontend/ app — see
+its own subsection below) — the admin panel is part of this module's
+"Complete" status, not separately tracked.
+App: apps/users/ (+ apps/admin_panel/ for the admin panel — see below)
 
 Handles all authentication and user account management.
 
 Registration: 3-step wizard (name + birthdate -> email + username ->
 password), submitted as a single API call after the wizard completes.
 Age must be >= 16. Email verification required before login.
+check-availability suggests a real, available alternative username
+(base+2, base+3, ... up to base+99, then a random suffix) when the
+requested one is taken or reserved, not just "not available" — the
+suggestion is clickable in the wizard and re-validates. Immediately
+before that final submit, a confirm-your-email modal ("We'll send your
+verification link to X — is this correct?") catches typos before a
+wasted send; declining sends the user back to the email/username step.
 
 Auth providers: Email/password, Google OAuth, Facebook OAuth (hand-rolled,
 identical account-linking logic for both — see DECISIONS.md).
@@ -406,8 +451,35 @@ model (device, IP, refresh-token hash, timestamps) — 4th login evicts
 the least-recently-used session. Sessions listable/individually
 revocable at GET/DELETE /api/auth/sessions/ (frontend: Settings > Sessions).
 
-2FA: OTP via email. Optional but available. A trusted-device cookie
-(httpOnly, 30 days) can skip 2FA on a recognized device.
+2FA: OTP via email. Optional but available — requires a real password,
+so an OAuth-only account must add one first (see below) before 2FA can
+be enabled at all. A trusted-device cookie (httpOnly, 30 days) can skip
+2FA on a recognized device.
+
+OAuth-only accounts adding a password: an account that signed up via
+Google/Facebook and never set a password (is_oauth_only()) can add one
+from Settings > Security. Requires an email-confirmation step rather
+than setting the password directly from the already-authenticated
+session — if that session were ever hijacked (XSS, stolen cookie),
+setting a password directly would hand an attacker a persistent
+password-login backdoor surviving the OAuth session ending; email
+confirmation means they'd also need the real inbox. Completing this
+flow sets password_changed_at, which — via the same pca mechanism
+change_password uses — invalidates every existing token including the
+caller's own, so the person is signed out and must sign in again with
+the new password (the success screen says so honestly; an earlier
+attempt to silently refresh the session in place was reverted, since
+complete_add_password is deliberately unauthenticated-by-design and has
+no way to identify and spare "the caller's own" session — see
+DECISIONS.md). Adding a password unlocks 2FA and, per the deletion
+flow below, unlocks password+OTP-based deletion in place of the
+OAuth-only re-authentication path.
+
+Account deletion for OAuth-only accounts: since there's no password to
+confirm with, initiate-deletion-oauth re-authenticates via the OAuth
+provider itself (a fresh Google/Facebook sign-in) instead of a password
+prompt, then proceeds through the same OTP -> confirm -> 30-day-recovery
+pipeline as the password path below.
 
 Frontend information architecture — Profile and Settings are two
 separate pages, not one (v1 had a single monolithic Profile page mixing
@@ -419,7 +491,15 @@ product decision to split them — see DECISIONS.md):
   - Settings (/settings): 7 sections — Account (email/username/name/DOB),
     Business (address, currency, payment terms, bank/JazzCash/Easypaisa/
     Payoneer), Tax & PSEB (CNIC/NTN/PSEB), Security (password, 2FA,
-    danger-zone deletion), Sessions, Notifications, Email Sending (SMTP).
+    add-password for OAuth-only accounts, danger-zone deletion),
+    Sessions, Notifications, Email Sending (SMTP). Email-change is
+    hidden entirely (not shown-but-disabled) inside Account for an
+    OAuth-only account — with no password to confirm the change with,
+    the flow doesn't apply until a password exists.
+  - SaveButton (shared across all seven Settings sections) renders
+    nothing at all until a real change has been made, rather than the
+    earlier convention of always showing a disabled "No Changes" button
+    — see DECISIONS.md.
 
 Notification preferences: exactly 3 real per-category toggles (Invoice
 Events, Client Messages, Payments) — notif_invoice_events,
@@ -434,15 +514,17 @@ Account deletion: password -> OTP -> confirm -> 30-day recovery window
 retain a PROTECT relationship to the now-anonymized user, in anonymized
 form. Confirming deletion revokes every session and clears cookies
 immediately. Frontend: Settings > Security > Danger Zone initiates the
-password+OTP steps, then hands off to the standalone (shell-less)
-DeletionReview page with the resulting one-time token.
+password+OTP steps (or the OAuth-reauthentication step for an
+OAuth-only account, see above), then hands off to the standalone
+(shell-less) DeletionReview page with the resulting one-time token.
 
 Key API endpoints:
 - POST /api/auth/register/
 - POST /api/auth/check-availability/ (live email/username availability
-  during the registration wizard)
+  during the registration wizard; suggests an alternative when taken)
 - GET /api/auth/verify-email/<uid>/<token>/
 - POST /api/auth/resend-verification/
+- GET /api/auth/check-verification-status/
 - POST /api/auth/login/
 - POST /api/auth/logout/
 - POST /api/auth/token/refresh/
@@ -457,13 +539,72 @@ Key API endpoints:
 - POST /api/auth/profile/upload-logo/ (multipart; Cloudinary-backed)
 - GET/PUT /api/auth/settings/notifications/
 - GET /api/auth/sessions/ + DELETE /api/auth/sessions/<id>/
+  + POST /api/auth/sessions/<id>/rename/
 - POST /api/auth/2fa/verify/ + /api/auth/2fa/resend/ + /api/auth/2fa/toggle/
 - POST /api/auth/change-password/
 - POST /api/auth/forgot-password/ + /api/auth/reset-password/<uid>/<token>/
+- POST /api/auth/security/add-password/request/
+  + /security/add-password/validate/<uidb64>/<token>/ (GET)
+  + /security/add-password/complete/<uidb64>/<token>/ (OAuth-only accounts)
 - POST /api/auth/email-change/request/ + /validate/<ecr_uid>/<token>/ (GET)
   + /complete/<ecr_uid>/<token>/ + /activate/<ecr_uid>/<token>/ + /cancel/
-- POST /api/auth/deletion/initiate/ + /verify-otp/ + /confirm/ + /cancel/
+- POST /api/auth/deletion/initiate/ + /deletion/initiate-oauth/
+  + /verify-otp/ + /confirm/ + /cancel/
 - GET /api/auth/smtp/status/ + POST /api/auth/smtp/save/ + /disable/
+
+#### Admin panel (apps/admin_panel/ + admin-frontend/)
+
+A separate, purpose-built admin surface at admin.lanceraos.com — not
+Django's raw /admin/, which stays reserved for direct database
+administration. Built, audited, and had its audit findings closed (see
+DECISIONS.md's 02-04 August 2026 entries); see ADMIN.md for the living
+per-module coverage tracker and DATABASE.md for the admin_sessions
+schema entry.
+
+Architecture, deliberately independent from the main app's own
+auth/session stack end to end, not layered on top of it:
+- Access is gated by can_access_admin_panel on User — deliberately
+  separate from Django's own is_staff/is_superuser. A second field,
+  is_super_admin, gates the two most consequential actions (granting
+  and revoking someone else's admin access) behind a stricter check
+  than every other admin endpoint uses — a regular admin can search,
+  view, suspend/reactivate, and read the audit log, but only a
+  super-admin can change who else has admin access.
+- Sessions use their own model (AdminSession, apps/admin_panel/models.py)
+  and their own cookies (lanceraos_admin_access/lanceraos_admin_refresh
+  — names deliberately distinct from the main app's cookies, since both
+  sets travel to the same api.lanceraos.com), not apps.users.Session —
+  an admin login must never compete for the regular app's 3-session cap.
+  Capped at 2 concurrent admin sessions (tighter than the main app's 3),
+  1-day token lifetime (vs. 30/90 days).
+- AdminCookieJWTAuthentication requires an admin_sid claim, embedded
+  only by admin token minting — this is what stops a stolen regular
+  access token from being replayed against admin endpoints (or vice
+  versa), since without it a valid JWT for the same user ID would
+  otherwise be accepted by either surface.
+- 2FA is mandatory, not optional, for admin access: admin_login rejects
+  any account with two_fa_enabled=False outright, and login is always
+  two-step (email+password issues an emailed OTP; only verifying that
+  OTP actually mints an admin session).
+- admin_login's own IP-keyed rate limit is deliberately NOT the same
+  counter as the main app's increment_failed_attempts() — sharing it
+  would let anyone who merely knows an admin's email lock that person
+  out of their entire regular account with no password needed at all
+  (a real finding from the admin-panel security audit, since fixed).
+
+What's built (frontend + backend, verified end to end): login with
+mandatory 2FA; user search/detail; per-user session list + individual
+revoke; suspend/reactivate (protected — nobody can suspend their own
+account, and only a super-admin can suspend another admin account,
+enforced at the backend, not just hidden in the UI); the two-tier
+is_super_admin grant/revoke model; the audit log viewer (filterable by
+user/actor/event/date range, paginated, with self-view exclusion from
+the default view and an admin-only filter); deletion-queue management
+(restore action); resend-verification. Every consequential mutating
+admin action shares the _admin_action_rate_limited convention — 30/hour
+per acting admin, independent of admin_login's own limit.
+admin-frontend/ is its own Vite project (see Section 4), not a route
+inside the main frontend/ app.
 
 ---
 
@@ -803,8 +944,9 @@ as context. Answers questions about how to use the platform only.
 
 ## 6. Database Schema
 See DATABASE.md — the 6-question framework answered for every table
-that exists (core.AuditLog, core.ApiRequestLog, and all six
-apps.users tables as of this writing).
+that exists: core.AuditLog, core.ApiRequestLog, core.NotificationRead,
+all six apps.users tables, and apps.admin_panel's admin_sessions table
+(the users/admin tables being seven, spanning two apps) — as of this writing.
 
 ---
 
@@ -812,7 +954,7 @@ apps.users tables as of this writing).
 
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
-| Users / Auth         | Built   | Built    | 127 passing (frontend) | Complete |
+| Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
 | Invoices + Clients   | -       | -        | -     | Not started |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
