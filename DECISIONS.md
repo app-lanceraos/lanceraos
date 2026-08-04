@@ -613,7 +613,7 @@ technique — a non-secret hint cookie — was properly considered, rather than 
 
 ---
 
-Date: July 2026
+Date: 02 August 2026
 Decision: Fixed a real bug where toggling light mode anywhere in the app would corrupt the
 auth pages' wordmark (turning it near-black, invisible against the auth pages' permanently-black
 background) the next time a user landed on `/login` or similar.
@@ -636,7 +636,7 @@ state, not evidence that a light variant was ever wanted here).
 
 ---
 
-Date: July 2026
+Date: 02 August 2026
 Decision: Terms of Service / Privacy Policy acceptance is now recorded server-side
 (`User.terms_accepted_at`, `User.terms_version`), not just gated by a frontend checkbox.
 Reason: a checkbox that only exists in the UI isn't a real requirement — a direct API call to
@@ -661,7 +661,7 @@ or practical protection, since it's trivially bypassable via a direct API call).
 
 ---
 
-Date: July 2026
+Date: 02 August 2026
 Decision: The `react-router-dom` `npm audit` finding (a CSRF-bypass vulnerability specific to RSC —
 React Server Components — mode) is left as-is, not downgraded.
 Reason: This app doesn't use RSC mode anywhere, so the actual exposure is very likely nil. The only
@@ -675,7 +675,7 @@ doesn't apply to this app's actual usage).
 
 ---
 
-Date: July 2026
+Date: 02 August 2026
 Decision: Built the WebSocket authentication foundation — `apps/users/ws_auth.py`'s
 `CookieJWTAuthMiddleware`, wired into `config/asgi.py` alongside Channels' built-in
 `OriginValidator`. Any future module (Invoices' client-portal chat, live notifications, etc.) can
@@ -718,7 +718,7 @@ whether authentication is *required*, only *who's asking*).
 
 ---
 
-Date: July 2026
+Date: 03 August 2026
 Decision: Built the actual admin login flow on top of the foundation from the previous entry —
 `admin_login`/`admin_verify_2fa`/`admin_logout`/`admin_refresh`/`admin_me` in `apps/admin_panel/`,
 plus `issue_admin_tokens_and_session`/`rotate_admin_session` in a new `admin_panel/token_service.py`
@@ -740,7 +740,7 @@ mechanism was designed to close.
 
 ---
 
-Date: July 2026
+Date: 03 August 2026
 Decision / correction: `AuditLog.actor` — a field this project's own documentation has claimed
 existed since the notification-bell work — never actually existed anywhere in the codebase until
 now. It was designed then (a proposal in `ADMIN_PANEL_DESIGN.md`) and mistakenly treated as
@@ -763,7 +763,7 @@ user's session from the admin panel now correctly logs `user=<affected account>`
 
 ---
 
-Date: July 2026
+Date: 03 August 2026
 Decision: Built account suspension/reactivation — the one genuinely new admin capability, nothing
 like it existed anywhere before this. Deliberately a separate set of fields
 (`is_suspended`/`suspended_at`/`suspension_reason`) rather than reusing `is_active` (already used
@@ -786,7 +786,7 @@ auth regression suite (119 tests) confirmed passing unchanged, since this touche
 
 ---
 
-Date: July 2026
+Date: 03 August 2026
 Decision: Added a real two-tier admin permission model — `is_super_admin`, distinct from
 `can_access_admin_panel`. Any admin can use the panel (search users, suspend/reactivate, view the
 audit log); only a super-admin can grant or revoke someone else's admin access. Also enforces that
@@ -810,7 +810,7 @@ unneeded complexity for what is fundamentally a one-person decision).
 
 ---
 
-Date: July 2026
+Date: 03 August 2026
 Decision: Completed the last backend piece from the original v1 admin panel scope —
 admin-triggered resend of the verification email, reusing the exact token-generation/dispatch
 path the user-facing endpoint already uses, logged with `actor` since it's admin-initiated.
@@ -827,7 +827,7 @@ the project roadmap.
 
 ---
 
-Date: July 2026
+Date: 03 August 2026
 Note: `admin-frontend`'s user detail page conflated `can_access_admin_panel` and `is_super_admin`
 — the "Has admin access" display incorrectly read `user.is_super_admin` instead of
 `user.can_access_admin_panel`, and no "Revoke admin access" button existed in the UI at all
@@ -845,7 +845,7 @@ reference, rather than assuming from context.
 
 ---
 
-Date: July 2026
+Date: 03 August 2026
 Decision: Closed a real privilege-escalation-adjacent gap — any admin could suspend any other
 account, including a super-admin's. Fixed with two rules, enforced at the backend (not just hidden
 in the UI): nobody can suspend their own account, of any admin level, and only a super-admin can
@@ -868,7 +868,7 @@ existed when the first two passes ran.
 
 ---
 
-Date: July 2026
+Date: 03 August 2026
 Decision: Closed out the admin-panel-scoped security audit — five real findings, all fixed and
 verified.
 Most significant: `admin_login` previously called the same `increment_failed_attempts()` counter
@@ -899,7 +899,7 @@ the same full cycle already applied to the rest of Users/Auth.
 
 ---
 
-Date: July 2026
+Date: 04 August 2026
 Decision: `SaveButton` no longer renders at all until a real change has been made — changed from
 the earlier convention (always visible, disabled, reading "No Changes"). Product direction from
 Ali; a single shared component change covers all seven Settings sections at once, since each one
@@ -911,7 +911,7 @@ Both are legitimate, common patterns; this was a deliberate style choice, not a 
 
 ---
 
-Date: July 2026
+Date: 04 August 2026
 Decision: Comprehensive review of the full user/admin feedback plan (12 items) after all were
 implemented — verified each against the real repo, then did a dedicated analytical pass looking
 specifically for interaction bugs *between* the changes, not just re-checking each in isolation.
@@ -932,7 +932,7 @@ the full original list and final disposition of each item.
 
 ---
 
-Date: July 2026
+Date: 04 August 2026
 Correction: The `AddPassword.jsx` fix from the previous entry was itself wrong — attempting to
 refresh `/auth/me/` after success fails, because `complete_add_password` sets
 `password_changed_at`, which invalidates every existing token via the same `pca` mechanism
