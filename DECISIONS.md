@@ -908,3 +908,24 @@ Alternatives considered: Keep the always-visible disabled state (the original co
 reasonable one — it gives a constant, discoverable affordance that a save mechanism exists at all).
 Both are legitimate, common patterns; this was a deliberate style choice, not a correctness fix.
 `STANDARDS.md`'s frontend conventions section updated to match.
+
+---
+
+Date: July 2026
+Decision: Comprehensive review of the full user/admin feedback plan (12 items) after all were
+implemented — verified each against the real repo, then did a dedicated analytical pass looking
+specifically for interaction bugs *between* the changes, not just re-checking each in isolation.
+Found one genuine, previously-uncaught bug: `AddPassword.jsx` never refreshed the app's cached
+user state after successfully adding a password — someone completing this flow while already
+logged in (the common case, since it's requested from within Settings) would still see the old
+"OAuth-only" restricted view until a hard refresh or fresh login, even though the backend had
+already correctly unlocked their account. Fixed by refreshing `/auth/me/` and updating the store
+on success, silently no-op if not currently authenticated on that device.
+Also closed all five rate-limiting gaps identified in the prior audit: `save_custom_smtp`
+(highest priority — an arbitrary user-supplied SMTP host had no limit at all), `change_password`/
+`toggle_2fa` (shared limit, since both check the same underlying password), `google_login`/
+`facebook_login` (previously unthrottled despite being an equally valid auth entry point),
+`complete_email_change_step1` (keyed on the `EmailChangeRequest` itself rather than IP, which is
+trivially rotated), and `upload_logo` (real Cloudinary/Pillow cost per call).
+This closes the entire 12-item user/admin feedback plan — see `USER_ADMIN_FEEDBACK_PLAN.md` for
+the full original list and final disposition of each item.

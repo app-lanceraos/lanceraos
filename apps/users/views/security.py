@@ -73,6 +73,13 @@ def change_password(request):
     are by being logged in already.
     """
     user = request.user
+
+    key = f'password_check_{request.user.pk}'
+    count = cache.get(key, 0)
+    if count >= 10:
+        return Response({'error': 'Too many attempts. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
+
     old_password = request.data.get('old_password', '')
     new_password = request.data.get('new_password', '')
 
@@ -130,6 +137,13 @@ def change_password(request):
 @permission_classes([IsAuthenticated])
 def toggle_2fa(request):
     user = request.user
+
+    key = f'password_check_{request.user.pk}'
+    count = cache.get(key, 0)
+    if count >= 10:
+        return Response({'error': 'Too many attempts. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
+
     action = request.data.get('action', '')
     password = request.data.get('password', '')
 
@@ -260,6 +274,12 @@ def complete_email_change_step1(request, ecr_uid, token):
     ecr = _decode_ecr_uid(ecr_uid)
     if ecr is None:
         return Response({'error': 'Invalid link.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    key = f'email_change_complete_{ecr.pk}'
+    count = cache.get(key, 0)
+    if count >= 10:
+        return Response({'error': 'Too many attempts. Please request a new email change.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
 
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     if not hmac.compare_digest(ecr.step1_token, token_hash) or not ecr.is_step1_valid():

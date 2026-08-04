@@ -59,6 +59,15 @@ export default function AddPassword() {
     setFieldError('')
     try {
       await api.post(`/auth/security/add-password/complete/${uidb64}/${token}/`, form)
+      // Deliberately does NOT try to refresh/preserve the current
+      // session. complete_add_password sets password_changed_at, which
+      // invalidates every existing token via the same pca mechanism
+      // that makes change_password log out other devices — except
+      // this endpoint is unauthenticated by design (verified via the
+      // email token, not a session), so it has no way to identify and
+      // spare "the caller's own" session the way change_password can.
+      // The honest behavior is: this logs you out, and the UI should
+      // say so plainly rather than attempt a refresh that will 401.
       setStatus('success')
     } catch (err) {
       const data = err.response?.data
@@ -115,8 +124,9 @@ export default function AddPassword() {
             <CheckCircle2 size={28} />
           </div>
           <p style={{ color: '#C7C7C7', fontSize: '0.9rem', lineHeight: 1.6, marginBottom: 20 }}>
-            Password added. You can now sign in with your email and password, in addition to your
-            existing sign-in method.
+            Password added. For your security, you've been signed out of any active session —
+            please sign in with your new email and password, in addition to your existing
+            sign-in method.
           </p>
           <AuthButton onClick={() => navigate('/login')}>Sign In</AuthButton>
         </div>

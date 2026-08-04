@@ -5,6 +5,7 @@ import smtplib
 import socket
 import ssl
 
+from django.core.cache import cache
 from django.core.mail import EmailMultiAlternatives, get_connection
 from django.utils import timezone
 from rest_framework import status
@@ -39,6 +40,13 @@ def save_custom_smtp(request):
     different from LanceraOS sending one of its own platform emails.
     """
     user = request.user
+
+    key = f'smtp_save_{request.user.pk}'
+    count = cache.get(key, 0)
+    if count >= 5:
+        return Response({'error': 'Too many attempts. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
+
     data = request.data
 
     host = (data.get('host') or '').strip()

@@ -1,11 +1,12 @@
 # apps/users/views/oauth.py
+from django.core.cache import cache
 from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from core.observability import log_event
+from core.observability import get_client_ip, log_event
 
 from ..authentication import enforce_csrf_standalone
 from ..oauth.base import link_or_create_user
@@ -56,6 +57,14 @@ def _complete_oauth_login(provider, identity, request):
 @permission_classes([AllowAny])
 def google_login(request):
     enforce_csrf_standalone(request)
+
+    ip = get_client_ip(request)
+    key = f'oauth_login_{ip}'
+    count = cache.get(key, 0)
+    if count >= 20:
+        return Response({'error': 'Too many login attempts. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
+
     credential = request.data.get('credential', '').strip()
     access_token = request.data.get('access_token', '').strip()
 
@@ -76,6 +85,14 @@ def google_login(request):
 @permission_classes([AllowAny])
 def facebook_login(request):
     enforce_csrf_standalone(request)
+
+    ip = get_client_ip(request)
+    key = f'oauth_login_{ip}'
+    count = cache.get(key, 0)
+    if count >= 20:
+        return Response({'error': 'Too many login attempts. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
+
     access_token = request.data.get('access_token', '').strip()
 
     if not access_token:

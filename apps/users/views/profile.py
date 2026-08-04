@@ -3,6 +3,7 @@ import logging
 import os
 
 from PIL import Image, UnidentifiedImageError
+from django.core.cache import cache
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -103,6 +104,12 @@ def upload_logo(request):
     logo first (if any) so switching logos repeatedly doesn't accumulate
     orphaned images in the Cloudinary account indefinitely.
     """
+    key = f'logo_upload_{request.user.pk}'
+    count = cache.get(key, 0)
+    if count >= 10:
+        return Response({'error': 'Too many uploads. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
+
     file = request.FILES.get('logo')
     if not file:
         return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
