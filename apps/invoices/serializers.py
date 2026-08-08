@@ -128,6 +128,7 @@ class InvoiceListSerializer(serializers.ModelSerializer):
             'id', 'invoice_number', 'status', 'sent_via_platform', 'view_token',
             'client', 'client_name', 'client_email', 'client_company', 'client_address', 'client_phone',
             'currency', 'subtotal', 'tax_rate', 'tax_amount', 'discount_amount', 'total', 'amount_paid',
+            'refunded_amount',
             'rate_to_usd_at_issue', 'pdf_url', 'pdf_generated_at',
             'issue_date', 'due_date', 'paid_date', 'sent_at',
             'notes', 'terms',

@@ -111,11 +111,11 @@ class InvoiceCRUDTests(InvoicesAPITestCase):
         self.assertEqual(created.user, self.user)
 
     def test_cannot_set_lifecycle_fields_directly_through_create(self):
-        """status/invoice_number/sent_via_platform/pdf_url aren't on the write serializer at all."""
+        """status/invoice_number/sent_via_platform/pdf_url/refunded_amount aren't on the write serializer at all."""
         resp = self._post(reverse('invoices:invoice_list'), {
             'client_name': 'Acme', 'client_email': 'acme@example.com',
             'status': 'paid', 'invoice_number': 'INV-2020-9999', 'sent_via_platform': True,
-            'pdf_url': 'https://evil.example.com/fake.pdf',
+            'pdf_url': 'https://evil.example.com/fake.pdf', 'refunded_amount': '9999.00',
         })
         self.assertEqual(resp.status_code, 201)
         created = Invoice.objects.get(pk=resp.json()['id'])
@@ -123,6 +123,7 @@ class InvoiceCRUDTests(InvoicesAPITestCase):
         self.assertIsNone(created.invoice_number)
         self.assertFalse(created.sent_via_platform)
         self.assertEqual(created.pdf_url, '')
+        self.assertEqual(created.refunded_amount, Decimal('0'))
 
     def test_cannot_attach_another_users_client(self):
         other_user = User.objects.create_user(email='other@example.com', password='Sup3r$ecret1')
@@ -483,6 +484,14 @@ class CancelRefundBadDebtTests(InvoicesAPITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()['status'], 'refunded')
 
+    def test_refund_persists_refunded_amount(self):
+        """The actual fix — previously this amount only existed in the emitted event's payload."""
+        invoice = self._invoice(status='paid', total=Decimal('100.00'), amount_paid=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {'amount': '30.00'})
+        self.assertEqual(Decimal(resp.json()['refunded_amount']), Decimal('30.00'))
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.refunded_amount, Decimal('30.00'))
+
     def test_refund_rejects_amount_exceeding_amount_paid(self):
         invoice = self._invoice(status='paid', amount_paid=Decimal('50.00'))
         resp = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {'amount': '999.00'})
@@ -492,6 +501,25 @@ class CancelRefundBadDebtTests(InvoicesAPITestCase):
         invoice = self._invoice(status='sent', sent_at=timezone.now())
         resp = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {'amount': '10.00'})
         self.assertEqual(resp.status_code, 400)
+
+    def test_second_refund_call_rejected_once_already_refunded(self):
+        """
+        The accumulate-vs-reject judgment call: refund is one-shot and
+        terminal, matching invoice_cancel/invoice_mark_bad_debt. A second
+        call gets a specific, explicit "already refunded" message, not
+        just an incidental fallthrough to the generic status-eligibility
+        rejection.
+        """
+        invoice = self._invoice(status='paid', total=Decimal('100.00'), amount_paid=Decimal('100.00'))
+        first = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {'amount': '30.00'})
+        self.assertEqual(first.status_code, 200)
+
+        second = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {'amount': '20.00'})
+        self.assertEqual(second.status_code, 400)
+        self.assertIn('already been refunded', second.json()['error'])
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.refunded_amount, Decimal('30.00'))  # unchanged by the rejected second call
 
     def test_mark_bad_debt(self):
         invoice = self._invoice(status='partially_paid')
@@ -587,79 +615,142 @@ class TimelineTests(InvoicesAPITestCase):
 # ══════════════════════════════════════════════════════════════════
 
 class DashboardSummaryRulesTests(InvoicesAPITestCase):
+    """
+    One test per rule from the real decisions-document Section 6, supplied
+    explicitly in the Step 5 review — not the guessed, unconditional
+    version this endpoint originally shipped with.
+    """
     def _summary(self):
         return self._get(reverse('invoices:invoice_summary')).json()
 
-    def test_draft_excluded_from_outstanding(self):
-        self._invoice(status='draft', total=Decimal('100'))
+    # ── Outstanding: sent_via_platform=True AND status in ACTIVE_STATUSES ──
+
+    def test_outstanding_requires_sent_via_platform_true(self):
+        """The core correction: a sent-but-not-platform-sent invoice must NOT count."""
+        self._invoice(status='sent', sent_via_platform=False, sent_at=timezone.now(), total=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
-    def test_created_excluded_from_outstanding(self):
-        self._invoice(status='created', total=Decimal('100'))
-        self.assertEqual(self._summary()['outstanding']['count'], 0)
-
-    def test_sent_counted_in_outstanding(self):
-        self._invoice(status='sent', sent_at=timezone.now(), total=Decimal('100'))
+    def test_outstanding_counts_sent_via_platform_true_invoices(self):
+        self._invoice(status='sent', sent_via_platform=True, sent_at=timezone.now(), total=Decimal('100'))
         summary = self._summary()
         self.assertEqual(summary['outstanding']['count'], 1)
         self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('100'))
 
-    def test_partially_paid_counted_in_outstanding_at_remaining_balance(self):
-        self._invoice(status='partially_paid', total=Decimal('100'), amount_paid=Decimal('40'))
+    def test_outstanding_counts_remaining_balance_not_full_total(self):
+        self._invoice(
+            status='partially_paid', sent_via_platform=True, total=Decimal('100'), amount_paid=Decimal('40'),
+        )
         summary = self._summary()
         self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('60'))
 
-    def test_paid_excluded_from_outstanding(self):
-        self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'))
+    def test_outstanding_excludes_draft(self):
+        self._invoice(status='draft', sent_via_platform=True, total=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
-    def test_cancelled_excluded_from_outstanding(self):
-        self._invoice(status='cancelled', total=Decimal('100'))
+    def test_outstanding_excludes_created(self):
+        self._invoice(status='created', sent_via_platform=True, total=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
-    def test_refunded_excluded_from_outstanding(self):
-        self._invoice(status='refunded', total=Decimal('100'), amount_paid=Decimal('100'))
+    def test_outstanding_excludes_paid(self):
+        self._invoice(status='paid', sent_via_platform=True, total=Decimal('100'), amount_paid=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
-    def test_bad_debt_excluded_from_outstanding(self):
-        self._invoice(status='bad_debt', total=Decimal('100'))
+    def test_outstanding_excludes_cancelled(self):
+        """Cancelled has no remaining balance owed, even with sent_via_platform=True."""
+        self._invoice(status='cancelled', sent_via_platform=True, total=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
-    def test_paid_this_month_counts_paid_invoices_with_paid_date_this_month(self):
-        today = timezone.now().date()
-        self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'), paid_date=today)
+    def test_outstanding_excludes_bad_debt(self):
+        """Identical treatment to cancelled, per the restated rules."""
+        self._invoice(status='bad_debt', sent_via_platform=True, total=Decimal('100'))
+        self.assertEqual(self._summary()['outstanding']['count'], 0)
+
+    def test_outstanding_excludes_refunded(self):
+        self._invoice(status='refunded', sent_via_platform=True, total=Decimal('100'), amount_paid=Decimal('100'))
+        self.assertEqual(self._summary()['outstanding']['count'], 0)
+
+    # ── Total Paid: sum(amount_paid) all invoices (any sent_via_platform), minus sum(refunded_amount) ──
+
+    def test_total_paid_counts_regardless_of_sent_via_platform(self):
+        self._invoice(status='paid', sent_via_platform=False, total=Decimal('100'), amount_paid=Decimal('100'))
         summary = self._summary()
-        self.assertEqual(summary['total_paid_this_month']['count'], 1)
-        self.assertEqual(Decimal(summary['total_paid_this_month']['total']), Decimal('100'))
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('100'))
 
-    def test_paid_last_month_excluded_from_total_paid_this_month(self):
-        last_month = (timezone.now().date().replace(day=1) - timedelta(days=1))
-        self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'), paid_date=last_month)
-        self.assertEqual(self._summary()['total_paid_this_month']['count'], 0)
+    def test_total_paid_subtracts_refunded_amount(self):
+        self._invoice(
+            status='refunded', total=Decimal('100'), amount_paid=Decimal('100'), refunded_amount=Decimal('30'),
+        )
+        summary = self._summary()
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('70'))
 
-    def test_cancelled_excluded_from_total_paid_even_with_a_paid_date(self):
-        today = timezone.now().date()
-        self._invoice(status='cancelled', total=Decimal('100'), amount_paid=Decimal('100'), paid_date=today)
-        self.assertEqual(self._summary()['total_paid_this_month']['count'], 0)
+    def test_total_paid_includes_cancelled_invoices_amount_paid(self):
+        """Money already received isn't erased by a later cancellation."""
+        self._invoice(status='cancelled', total=Decimal('100'), amount_paid=Decimal('40'))
+        summary = self._summary()
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('40'))
 
-    def test_draft_excluded_from_past_due(self):
-        self._invoice(status='draft', due_date=date(2020, 1, 1))
+    def test_total_paid_includes_bad_debt_invoices_amount_paid(self):
+        self._invoice(status='bad_debt', total=Decimal('100'), amount_paid=Decimal('25'))
+        summary = self._summary()
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('25'))
+
+    def test_total_paid_excludes_draft_and_created(self):
+        self._invoice(status='draft', amount_paid=Decimal('0'))
+        self._invoice(status='created', amount_paid=Decimal('0'))
+        summary = self._summary()
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('0'))
+
+    def test_total_paid_sums_across_multiple_invoices(self):
+        self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'))
+        self._invoice(status='partially_paid', total=Decimal('50'), amount_paid=Decimal('20'))
+        summary = self._summary()
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('120'))
+
+    # ── Past-Due Amount: same filter as Outstanding, further filtered to days_overdue > 0 ──
+
+    def test_past_due_requires_sent_via_platform_true(self):
+        self._invoice(
+            status='sent', sent_via_platform=False, sent_at=timezone.now(),
+            due_date=date(2020, 1, 1), total=Decimal('100'),
+        )
         self.assertEqual(self._summary()['past_due']['count'], 0)
 
-    def test_sent_past_due_date_counted_in_past_due(self):
-        self._invoice(status='sent', sent_at=timezone.now(), due_date=date(2020, 1, 1), total=Decimal('100'))
+    def test_past_due_counts_sent_via_platform_true_and_overdue(self):
+        self._invoice(
+            status='sent', sent_via_platform=True, sent_at=timezone.now(),
+            due_date=date(2020, 1, 1), total=Decimal('100'),
+        )
         summary = self._summary()
         self.assertEqual(summary['past_due']['count'], 1)
         self.assertEqual(Decimal(summary['past_due']['total']), Decimal('100'))
 
-    def test_sent_not_yet_due_excluded_from_past_due(self):
+    def test_past_due_excludes_not_yet_due(self):
         future = timezone.now().date() + timedelta(days=10)
-        self._invoice(status='sent', sent_at=timezone.now(), due_date=future, total=Decimal('100'))
+        self._invoice(status='sent', sent_via_platform=True, sent_at=timezone.now(), due_date=future, total=Decimal('100'))
         self.assertEqual(self._summary()['past_due']['count'], 0)
 
-    def test_paid_excluded_from_past_due_even_if_due_date_passed(self):
-        self._invoice(status='paid', due_date=date(2020, 1, 1), total=Decimal('100'), amount_paid=Decimal('100'))
+    def test_past_due_excludes_paid_even_with_a_past_due_date(self):
+        self._invoice(
+            status='paid', sent_via_platform=True, due_date=date(2020, 1, 1),
+            total=Decimal('100'), amount_paid=Decimal('100'),
+        )
         self.assertEqual(self._summary()['past_due']['count'], 0)
+
+    # ── Draft/Created excluded from every figure, unconditionally ──
+
+    def test_draft_excluded_from_every_figure(self):
+        self._invoice(status='draft', sent_via_platform=True, total=Decimal('100'), due_date=date(2020, 1, 1))
+        summary = self._summary()
+        self.assertEqual(summary['outstanding']['count'], 0)
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('0'))
+        self.assertEqual(summary['past_due']['count'], 0)
+
+    def test_created_excluded_from_every_figure(self):
+        self._invoice(status='created', sent_via_platform=True, total=Decimal('100'), due_date=date(2020, 1, 1))
+        summary = self._summary()
+        self.assertEqual(summary['outstanding']['count'], 0)
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('0'))
+        self.assertEqual(summary['past_due']['count'], 0)
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -177,6 +177,12 @@ class Invoice(models.Model):
     discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    # Added in the Step 5 review — invoice_refund had nowhere to persist
+    # the refunded amount before this existed (it only appeared in the
+    # emitted event's payload, not queryable from the row itself). Same
+    # shape as `total`. See invoice_refund's own docstring for why this
+    # is set once per invoice, not accumulated across repeated calls.
+    refunded_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
 
     # Anchor-currency design — replaces v1's pkr_at_issue/rate_at_issue.
     rate_to_usd_at_issue = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)

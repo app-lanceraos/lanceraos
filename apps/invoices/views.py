@@ -416,18 +416,32 @@ def invoice_cancel(request, pk):
 @permission_classes([IsAuthenticated])
 def invoice_refund(request, pk):
     """
-    amount required, supports partial, sets status=refunded. Only from
-    paid/partially_paid (only real money already received can be
-    refunded). Note: the partial refund amount is recorded in the emitted
-    event's payload only — Step 4's schema has no refunded_amount field,
-    so it isn't queryable later from the Invoice row itself. Flagged
-    plainly rather than silently adding a new column outside this step's
-    scope.
+    amount required, supports partial (an amount up to, not necessarily
+    equal to, amount_paid), sets status=refunded and persists the amount
+    to refunded_amount (added in the Step 5 review — this field didn't
+    exist when this view was first written, so the amount previously had
+    nowhere to go except an emitted event's payload).
+
+    Refund is a one-shot, terminal transition, deliberately — once
+    status is 'refunded', a second refund call on the same invoice is
+    rejected with a clear, explicit message rather than silently falling
+    through to the generic "only paid/partially_paid" rejection (which
+    would technically also catch it, but without saying why). The
+    alternative — accumulating multiple partial refunds while the
+    invoice stays paid/partially_paid, only becoming 'refunded' once the
+    accumulated amount reaches amount_paid — is a materially bigger
+    feature than what was actually asked for (a single call that sets
+    status=refunded) and wasn't requested here either; rejecting repeats
+    matches how invoice_cancel/invoice_mark_bad_debt already behave (also
+    one-shot terminal transitions with no "call again" concept). See
+    DECISIONS.md.
     """
     if _check_moderate_rate_limit('refund', request.user):
         return _too_many_requests('Too many actions. Please try again later.')
 
     invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    if invoice.status == 'refunded':
+        return Response({'error': 'This invoice has already been refunded.'}, status=status.HTTP_400_BAD_REQUEST)
     if invoice.status not in ('paid', 'partially_paid'):
         return Response({'error': 'Only paid or partially paid invoices can be refunded.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -445,7 +459,8 @@ def invoice_refund(request, pk):
         )
 
     invoice.status = 'refunded'
-    invoice.save(update_fields=['status', 'updated_at'])
+    invoice.refunded_amount = amount
+    invoice.save(update_fields=['status', 'refunded_amount', 'updated_at'])
 
     emit('InvoiceRefunded', invoice_id=str(invoice.pk), user_id=str(request.user.pk), amount=str(amount))
     logger.info('[INVOICES] Refunded %s on invoice %s.', amount, invoice.invoice_number)
@@ -608,51 +623,59 @@ def invoice_timeline(request, pk):
 @permission_classes([IsAuthenticated])
 def invoice_summary(request):
     """
-    Dashboard KPIs: Outstanding / Total Paid (this month) / Past-Due.
+    Dashboard KPIs: Outstanding / Total Paid / Past-Due Amount.
 
-    The "decisions doc Section 6" this endpoint was asked to match
-    "exactly" is a separate document from INVOICES_CLIENTS_TECHNICAL_SPEC.md
-    that isn't present in this repo/session — confirmed directly: the
-    technical spec's own Section 6 is "Notification entries," not
-    dashboard rules. Built as fully unconditional (not sent_via_platform-
-    gated) instead, on the one piece of concrete, verified evidence
-    available: Invoice.sent_via_platform's own field help_text explicitly
-    scopes that flag's effect to "reminders only." Flagged here and in
-    DECISIONS.md as worth double-checking if the original document ever
-    surfaces.
+    Rewritten against the real rules from the original decisions
+    document's Section 6, supplied explicitly after the first version of
+    this endpoint had to guess (that version was built unconditional,
+    not sent_via_platform-gated, since INVOICES_CLIENTS_TECHNICAL_SPEC.md's
+    own Section 6 turned out to be "Notification entries," not dashboard
+    rules — a documentation cross-reference bug on record in DECISIONS.md,
+    not a code bug). The rules, verbatim in spirit, each covered by its
+    own dedicated test:
 
-    Rules, pinned down explicitly (each covered by its own test):
-      - Outstanding: sum(outstanding_amount) + count, over invoices with
-        status in ACTIVE_STATUSES (sent/viewed/partially_paid) — a client
-        can't owe money on an invoice they haven't received (draft/
-        created excluded), and paid/cancelled/refunded/bad_debt aren't
-        real outstanding money.
-      - Total Paid (this month): sum(amount_paid) + count, over invoices
-        with status='paid' and paid_date within the current calendar
-        month. Filtering directly on status='paid' rather than an
-        exclude-list — paid_date is only ever set by the 'paid' branch of
-        update_paid_status() in the first place, so cancelled/refunded/
-        bad_debt invoices naturally have no paid_date to match anyway.
-      - Past-Due: sum(outstanding_amount) + count, over ACTIVE_STATUSES
-        invoices whose due_date has passed — identical eligibility to
-        Invoice.days_overdue.
+      - Outstanding: sum(total - amount_paid) over invoices where
+        sent_via_platform=True AND status in ACTIVE_STATUSES
+        (sent/viewed/partially_paid). Structurally excludes draft/created.
+        In practice this is currently always zero — no code path sets
+        sent_via_platform=True yet, since only the real /send/ action
+        does (Step 10, not built) — genuinely zero, not faked, the same
+        honest-placeholder pattern used elsewhere in this project.
+      - Total Paid: sum(amount_paid) across ALL invoices except
+        draft/created, regardless of sent_via_platform, MINUS
+        sum(refunded_amount) across the same set. Cancelled and bad_debt
+        invoices' amount_paid still counts — money already received
+        isn't erased by a later status change.
+      - Past-Due Amount: the exact same filter as Outstanding
+        (sent_via_platform=True AND status in ACTIVE_STATUSES), further
+        filtered to due_date in the past — equivalent to
+        Invoice.days_overdue > 0 for this specific status set, since none
+        of ACTIVE_STATUSES overlap with NON_OVERDUE_STATUSES.
+      - Draft/Created: excluded from every figure above, unconditionally
+        — enforced once, up front, via the shared `qs` queryset every
+        figure below is derived from, rather than repeated per-figure.
+
+    See invoice_aging_report's own docstring for why that endpoint
+    deliberately does NOT share the sent_via_platform restriction with
+    Outstanding above, despite both filtering on ACTIVE_STATUSES — two
+    intentionally different rules, not drift between them.
     """
-    qs = Invoice.objects.filter(user=request.user)
+    qs = Invoice.objects.filter(user=request.user).exclude(status__in=('draft', 'created'))
     today = timezone.now().date()
-    month_start = today.replace(day=1)
 
-    outstanding_qs = qs.filter(status__in=ACTIVE_STATUSES)
+    outstanding_qs = qs.filter(sent_via_platform=True, status__in=ACTIVE_STATUSES)
     outstanding_total = sum((inv.outstanding_amount for inv in outstanding_qs), Decimal('0'))
 
-    paid_qs = qs.filter(status='paid', paid_date__gte=month_start, paid_date__lte=today)
-    total_paid_this_month = paid_qs.aggregate(s=Sum('amount_paid'))['s'] or Decimal('0')
+    total_paid = qs.aggregate(s=Sum('amount_paid'))['s'] or Decimal('0')
+    total_refunded = qs.aggregate(s=Sum('refunded_amount'))['s'] or Decimal('0')
+    net_total_paid = total_paid - total_refunded
 
-    past_due_qs = qs.filter(status__in=ACTIVE_STATUSES, due_date__lt=today)
+    past_due_qs = outstanding_qs.filter(due_date__lt=today)
     past_due_total = sum((inv.outstanding_amount for inv in past_due_qs), Decimal('0'))
 
     return Response({
         'outstanding': {'count': outstanding_qs.count(), 'total': str(outstanding_total)},
-        'total_paid_this_month': {'count': paid_qs.count(), 'total': str(total_paid_this_month)},
+        'total_paid': {'count': qs.filter(amount_paid__gt=0).count(), 'total': str(net_total_paid)},
         'past_due': {'count': past_due_qs.count(), 'total': str(past_due_total)},
     })
 
@@ -668,6 +691,18 @@ def invoice_aging_report(request):
     re-decided here): everything the freelancer believes is unpaid,
     regardless of sent_via_platform, not restricted to platform-sent
     invoices only.
+
+    Deliberately does NOT filter on sent_via_platform, even though
+    invoice_summary's Outstanding figure (also built on ACTIVE_STATUSES)
+    now does, per the real Section 6 rules supplied in the Step 5
+    review. Checked directly, not assumed: these are two intentionally
+    different rules for two different purposes — the aging report shows
+    the freelancer everything they believe is unpaid (the confirmed
+    "broader version" leaning); the dashboard's Outstanding KPI counts
+    only real, platform-verified money. The shared ACTIVE_STATUSES
+    constant is the actual single source of truth between the two;
+    the sent_via_platform filter is where they're meant to diverge, not
+    a duplication that drifted out of sync.
     """
     qs = Invoice.objects.filter(user=request.user, status__in=ACTIVE_STATUSES)
 

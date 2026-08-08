@@ -1256,3 +1256,74 @@ exists but isn't yours" apart from "this ID doesn't exist at all."
 Verified: two migrations applied against the real local Postgres database (`invoice_number`
 nullable, `issue_date` default fix) — both single-field `AlterField` operations, no new tables this
 step. Full test suite (368 tests, 114 new) passing; `manage.py check` clean.
+
+---
+
+Date: 08 August 2026
+Decision: Closed two real issues found in the Step 5 review — a code gap (`refunded_amount` never
+persisted) and a documentation bug (the prior entry above cited "the spec's Section 6" when it
+actually meant a different, unavailable document).
+
+**The Section 6 ambiguity, recorded plainly as a documentation cross-reference bug, not a code
+bug**: the previous entry's `invoice_summary` writeup said the rules "supposed to be matched
+exactly" came from "the spec's Section 6," and separately noted that `INVOICES_CLIENTS_TECHNICAL_SPEC.md`'s
+own Section 6 is "Notification entries." Both statements were true, but sitting next to each other
+they read as "the spec contradicts itself," when the real situation is that two *different*
+documents were both being called "the spec" in different places: `INVOICES_CLIENTS_TECHNICAL_SPEC.md`
+(present in this repo) and the original decisions document it was built from (per its own intro:
+"built from `INVOICES_MODULE_KICKOFF.md`'s 32 questions, the final-decisions document, and the
+follow-up resolution of Section 15's open items" — that middle document, never present in this
+repo or session). The actual Section 6 rules lived in the *latter*, unavailable document the whole
+time; `invoice_summary` was built unconditional not because the rules were genuinely absent, but
+because this session had no way to read them. Worth naming explicitly for future prompts: when a
+prompt says "per the spec's Section N," ask which document — the checked-in technical spec, or the
+original decisions document it summarizes — since section numbers aren't unique across the two and
+guessing wrong reads as an internal contradiction rather than a missing source.
+
+**`refunded_amount`** — a new `DecimalField` on `Invoice` (`max_digits=12, decimal_places=2,
+default=Decimal('0')`, matching `total`'s exact shape), added because `invoice_refund` had nowhere
+to persist the refund amount when it was first built — it only ever appeared in the emitted
+`InvoiceRefunded` event's payload, which `core.events` doesn't store. Real migration
+(`0004_invoice_refunded_amount`), applied against the real database, `AddField` only.
+
+**Accumulate vs. reject on a second refund call — chose reject**: `invoice_refund` now explicitly
+rejects a second call once `status == 'refunded'`, with its own clear message ("This invoice has
+already been refunded"), rather than accumulating multiple partial refunds into `refunded_amount`
+while the invoice stays in `paid`/`partially_paid`. Reasoning: refund was originally specified as
+"amount required, supports partial, sets status=refunded" — a single call, unconditionally
+terminal — matching how `invoice_cancel`/`invoice_mark_bad_debt` already behave (also one-shot
+terminal transitions with no "call again" concept anywhere in this module). Accumulating refunds
+across multiple calls while a non-terminal status persists is a materially different, bigger
+feature (effectively a running refund ledger) that was never actually requested. `refunded_amount`
+is therefore set once, directly to the single call's amount, not incremented via `F('refunded_amount')
++ amount`.
+Alternatives considered: accumulate across repeated calls, only flipping to `refunded` once the
+running total reaches `amount_paid` (rejected — bigger feature than asked for, and the original
+Step 5 wording already committed to "sets status=refunded" unconditionally on one call); silently
+let a second call fall through to the existing generic "only paid/partially_paid" rejection with no
+dedicated message (rejected — indistinguishable from a genuine wrong-status error to whoever reads
+the response, when the real reason is specifically "already done, not eligible again").
+
+**`invoice_summary` rewritten against the real Section 6 rules**, supplied in full this round:
+Outstanding requires `sent_via_platform=True` AND an active status (`sent`/`viewed`/
+`partially_paid`) — currently always zero in practice, since no code path sets
+`sent_via_platform=True` yet (only the real `/send/`, Step 10, would). Total Paid sums `amount_paid`
+across every non-draft/created invoice regardless of `sent_via_platform`, minus summed
+`refunded_amount` — cancelled and bad_debt invoices' `amount_paid` still counts, since money already
+received isn't erased by a later status change. Past-Due Amount reuses Outstanding's exact filter,
+further restricted to a past due date. Draft/created are excluded from all three via one shared
+`exclude()` on the base queryset rather than repeated per-figure. One dedicated test per bullet, per
+the original Step 5 instruction re-emphasized this round specifically because this was the part that
+was wrong the first time.
+
+**`invoice_aging_report` checked against the corrected Outstanding definition, not assumed
+independent**: both endpoints filter on the same `ACTIVE_STATUSES` constant (the genuine shared
+source of truth), but the aging report deliberately does NOT add the `sent_via_platform=True`
+filter Outstanding now has. This is intentional divergence, not drift — the aging report implements
+the confirmed "broader version" (everything the freelancer believes is unpaid, regardless of
+platform tracking); the dashboard's Outstanding KPI counts only platform-verified money. Both
+functions now carry an explicit cross-reference comment pointing at each other and explaining why
+they differ on this one dimension, so a future reader doesn't "fix" this as an inconsistency.
+
+Verified: one migration (`0004_invoice_refunded_amount`) applied against the real local Postgres
+database. Full test suite (376 tests, 8 net new/changed) passing; `manage.py check` clean.
