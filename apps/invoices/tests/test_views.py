@@ -85,10 +85,39 @@ class InvoiceCRUDTests(InvoicesAPITestCase):
         self.assertTrue(body['view_token'])
         self.assertTrue(body['is_editable'])
 
-    def test_create_requires_client_name(self):
-        resp = self._post(reverse('invoices:invoice_list'), {'client_name': '  ', 'client_email': 'a@example.com'})
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn('client_name', resp.json())
+    def test_create_allows_bare_empty_draft(self):
+        """
+        Step 6 rework — Gmail-compose-style autosave: opening "New Invoice"
+        must create a real, minimal record with a bare POST, before the
+        user has typed anything. Superseded the old
+        test_create_requires_client_name, which asserted the opposite
+        (blank client_name rejected) — that was the exact restriction this
+        rework removes.
+        """
+        resp = self._post(reverse('invoices:invoice_list'), {})
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertEqual(body['status'], 'draft')
+        self.assertEqual(body['client_name'], '')
+        self.assertEqual(body['client_email'], '')
+        self.assertEqual(body['items'], [])
+
+    def test_update_allows_clearing_client_name_back_to_blank(self):
+        """A permissive draft save state includes clearing a field back to blank, not just filling it in."""
+        invoice = self._invoice(client_name='Had A Name', client_email='had@example.com', status='draft')
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {
+            'client_name': '', 'client_email': '',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['client_name'], '')
+
+    def test_finalise_does_not_require_client_name(self):
+        """Documents the real, currently-unchanged finalise validation gap — see invoice_finalise's own docstring."""
+        invoice = self._invoice(client_name='', client_email='', status='draft')
+        InvoiceItem.objects.create(invoice=invoice, description='Item', quantity=1, unit_price=Decimal('10'))
+        resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['status'], 'created')
 
     def test_create_with_items(self):
         resp = self._post(reverse('invoices:invoice_list'), {

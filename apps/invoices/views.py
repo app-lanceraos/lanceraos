@@ -207,7 +207,19 @@ def invoice_detail(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def invoice_finalise(request, pk):
-    """draft -> created. Assigns invoice_number if not already assigned; locks the exchange rate via the latest ExchangeRateSnapshot."""
+    """
+    draft -> created. Assigns invoice_number if not already assigned; locks
+    the exchange rate via the latest ExchangeRateSnapshot.
+
+    Validation actually enforced today: status must be draft, and at least
+    one line item must exist. It does NOT check client_name/client_email —
+    a real mismatch against the intuitive expectation that finalising
+    requires "a client or one-time-client info", surfaced while relaxing
+    InvoiceSerializer's client_name/client_email to allow_blank for
+    autosave (Step 6 rework). Not tightened here — deliberately out of
+    scope for that rework, recorded rather than silently assumed either
+    way. A finalised invoice with a blank client name is possible today.
+    """
     if _check_moderate_rate_limit('finalise', request.user):
         return _too_many_requests('Too many finalise actions. Please try again later.')
 

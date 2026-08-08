@@ -60,8 +60,28 @@ class InvoiceSerializer(serializers.ModelSerializer):
     absent from `fields` — they only ever change via their own dedicated
     action endpoints (finalise/send/mark-paid/etc.), never through this
     general-purpose create/update path.
+
+    `client_name`/`client_email` are explicitly overridden to
+    `required=False, allow_blank=True` — the model fields themselves have
+    no `blank=True` (a real, non-blank CharField/EmailField is still the
+    right shape for a *finalised* invoice), but this serializer is also
+    what backs autosave on a still-draft invoice (Step 6 rework, the
+    Gmail-compose-style flow): opening "New Invoice" creates a genuinely
+    empty draft before the user has typed anything, and every field
+    edit — including clearing the client fields back to blank — autosaves
+    through this same path. A draft with no client info yet is a valid,
+    permissive save state, the same way an empty Gmail draft is valid.
+    Only `invoice_finalise` (apps/invoices/views.py) gates on real
+    content being present, and today it only checks for at least one
+    line item, not client info — see that view's own docstring for the
+    now-recorded mismatch between what finalise arguably *should* check
+    and what it *actually* checks; deliberately not changed here, since
+    tightening finalise's validation is a separate decision from this
+    autosave rework.
     """
     items = InvoiceItemSerializer(many=True, required=False)
+    client_name = serializers.CharField(required=False, allow_blank=True, default='')
+    client_email = serializers.EmailField(required=False, allow_blank=True, default='')
 
     class Meta:
         model = Invoice
@@ -78,12 +98,6 @@ class InvoiceSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request is not None:
             self.fields['client'].queryset = Client.objects.filter(user=request.user)
-
-    def validate_client_name(self, value):
-        value = value.strip()
-        if not value:
-            raise serializers.ValidationError('Client name is required.')
-        return value
 
     def validate_currency(self, value):
         return validate_currency_code(value)

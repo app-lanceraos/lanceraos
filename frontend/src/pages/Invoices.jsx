@@ -25,11 +25,9 @@ import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import FosAlert from '@/components/FosAlert'
 import InvoiceDetailPanel from '@/components/InvoiceDetailPanel'
-import InvoiceFormFields from '@/components/InvoiceFormFields'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
   STATUS_FILTER_OPTIONS, SORT_OPTIONS, formatAggregate, daysOverdueLabel,
-  blankInvoiceForm, formToPayload,
 } from './invoiceHelpers'
 
 const LIMIT = 60
@@ -57,7 +55,10 @@ export default function Invoices() {
   const [aging, setAging] = useState(null)
   const [agingLoading, setAgingLoading] = useState(false)
 
-  const [showCreate, setShowCreate] = useState(false)
+  const [creatingInvoice, setCreatingInvoice] = useState(false)
+  const [createError, setCreateError] = useState(null)
+  const [showPresetPicker, setShowPresetPicker] = useState(false)
+  const [presetBusyId, setPresetBusyId] = useState(null)
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
 
   const searchTimer = useRef(null)
@@ -143,10 +144,42 @@ export default function Invoices() {
     refreshAfterChange()
   }
 
-  function handleCreated(invoice) {
-    setShowCreate(false)
-    refreshAfterChange()
-    setSelectedInvoiceId(invoice.id)
+  // "New Invoice" creates a real, minimal draft record immediately —
+  // Gmail-compose-style (Step 6 rework): the record exists in the DB the
+  // moment this resolves, before the user has typed anything, so every
+  // lifecycle action in the detail panel operates on something real from
+  // the first render. No blank-invoice form/submit step exists anymore —
+  // the panel itself is where the (now-continuously-autosaving) editing
+  // happens. A bare `{}` POST works because InvoiceSerializer's
+  // client_name/client_email are now allow_blank for exactly this reason
+  // (apps/invoices/serializers.py).
+  async function handleNewInvoice() {
+    setCreatingInvoice(true)
+    setCreateError(null)
+    try {
+      const { data } = await api.post('/invoices/', {})
+      setSelectedInvoiceId(data.id)
+      refreshAfterChange()
+    } catch {
+      setCreateError('Failed to create a new invoice. Please try again.')
+    } finally {
+      setCreatingInvoice(false)
+    }
+  }
+
+  async function handlePickPreset(preset) {
+    setPresetBusyId(preset.id)
+    setCreateError(null)
+    try {
+      const { data } = await api.post(`/invoices/presets/${preset.id}/create-invoice/`)
+      setShowPresetPicker(false)
+      setSelectedInvoiceId(data.id)
+      refreshAfterChange()
+    } catch {
+      setCreateError('Failed to create an invoice from this preset. Please try again.')
+    } finally {
+      setPresetBusyId(null)
+    }
   }
 
   return (
@@ -161,10 +194,19 @@ export default function Invoices() {
             </p>
           )}
         </div>
-        <button className="fos-btn fos-btn-accent header-add-btn" onClick={() => setShowCreate(true)}>
-          <Plus size={15} /> New Invoice
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="fos-btn fos-btn-ghost header-preset-btn" onClick={() => setShowPresetPicker(true)}>
+            <BookmarkPlus size={15} /> From Preset
+          </button>
+          <button className="fos-btn fos-btn-accent header-add-btn" onClick={handleNewInvoice} disabled={creatingInvoice}>
+            {creatingInvoice ? <span className="fos-spinner" /> : <Plus size={15} />} New Invoice
+          </button>
+        </div>
       </div>
+
+      {createError && (
+        <FosAlert type="error" onDismiss={() => setCreateError(null)} style={{ marginBottom: 16 }}>{createError}</FosAlert>
+      )}
 
       {/* ── Dashboard KPI strip ── */}
       <SummaryStrip summary={summary} />
@@ -263,7 +305,7 @@ export default function Invoices() {
       )}
 
       {!loading && !error && invoices.length === 0 && (
-        <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={() => setShowCreate(true)} />
+        <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={handleNewInvoice} />
       )}
 
       {!loading && !error && invoices.length > 0 && (
@@ -285,22 +327,22 @@ export default function Invoices() {
       )}
 
       {/* ── Mobile FAB ── */}
-      <button className="page-fab" onClick={() => setShowCreate(true)} aria-label="New invoice" style={{
+      <button className="page-fab" onClick={handleNewInvoice} disabled={creatingInvoice} aria-label="New invoice" style={{
         display: 'none', position: 'fixed', bottom: 24, right: 24, width: 56, height: 56,
         borderRadius: '50%', background: 'var(--accent)', color: '#000', border: 'none',
         boxShadow: '0 4px 20px var(--accent-glow-lg)', alignItems: 'center', justifyContent: 'center',
         cursor: 'pointer', zIndex: 90,
       }}>
-        <Plus size={24} />
+        {creatingInvoice ? <span className="fos-spinner" /> : <Plus size={24} />}
       </button>
 
-      {/* ── Create invoice panel ── */}
-      {showCreate && (
-        <CreateInvoicePanel
-          clients={clients}
+      {/* ── Preset picker modal ── */}
+      {showPresetPicker && (
+        <PresetPickerModal
           presets={presets}
-          onClose={() => setShowCreate(false)}
-          onCreated={handleCreated}
+          busyId={presetBusyId}
+          onPick={handlePickPreset}
+          onClose={() => setShowPresetPicker(false)}
         />
       )}
 
@@ -318,6 +360,7 @@ export default function Invoices() {
         @media (max-width: 768px) {
           .page-fab { display: flex !important; }
           .header-add-btn { display: none !important; }
+          .header-preset-btn { display: none !important; }
         }
       `}</style>
     </>
@@ -409,7 +452,7 @@ function InvoiceCard({ invoice, onOpen }) {
             {invoice.invoice_number || '(unnumbered draft)'}
           </p>
           <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {invoice.client_name}
+            {invoice.client_name || 'No client yet'}
           </p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end', flexShrink: 0 }}>
@@ -473,92 +516,27 @@ function EmptyState({ search, statusFilter, overdueOnly, onCreate }) {
   )
 }
 
-// ── CreateInvoicePanel ────────────────────────────────────────────
-function CreateInvoicePanel({ clients, presets, onClose, onCreated }) {
-  const [tab, setTab] = useState('blank')
-  const [form, setForm] = useState(blankInvoiceForm)
-  const [errors, setErrors] = useState({})
-  const [saving, setSaving] = useState(false)
-  const [presetBusyId, setPresetBusyId] = useState(null)
-
-  async function handleSubmit() {
-    setSaving(true)
-    setErrors({})
-    try {
-      const { data } = await api.post('/invoices/', formToPayload(form))
-      onCreated(data)
-    } catch (e) {
-      const body = e.response?.data
-      if (body && typeof body === 'object') {
-        setErrors(Object.fromEntries(Object.entries(body).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])))
-      } else {
-        setErrors({ general: 'Failed to create invoice.' })
-      }
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function handleFromPreset(preset) {
-    setPresetBusyId(preset.id)
-    try {
-      const { data } = await api.post(`/invoices/presets/${preset.id}/create-invoice/`)
-      onCreated(data)
-    } catch {
-      setErrors({ general: 'Failed to create invoice from this preset.' })
-    } finally {
-      setPresetBusyId(null)
-    }
-  }
-
+// ── PresetPickerModal ─────────────────────────────────────────────
+// A compact centered modal, not a big slide-in panel — "Start from
+// Preset" is a secondary, deliberate entry point now (Step 6 rework:
+// "New Invoice" itself always means "create and open an empty draft
+// immediately", matching Gmail's Compose; picking a preset is the one
+// remaining case where a real record is created via a user choice
+// first, since preset_create_invoice already creates a real, fully
+// populated invoice server-side in one call — no separate blank-form
+// step ever existed for presets, so nothing changes there but the
+// surrounding chrome).
+function PresetPickerModal({ presets, busyId, onPick, onClose }) {
   return (
-    <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)', zIndex: 100 }} />
-      <div style={{
-        position: 'fixed', top: 'var(--header-h)', right: 0, bottom: 0, width: '100%', maxWidth: 600,
-        background: 'var(--bg-surface)', boxShadow: '-8px 0 32px rgba(0,0,0,0.2)', zIndex: 101,
-        overflowY: 'auto', animation: 'panel-slide-in 0.2s cubic-bezier(0.22,1,0.36,1)',
-      }}>
-        <div style={{ padding: '20px 24px 40px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>New Invoice</h2>
-            <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 8 }}><X size={16} /></button>
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, marginBottom: 20, borderBottom: '1px solid var(--border-subtle)' }}>
-            <button
-              onClick={() => setTab('blank')}
-              style={{ padding: '10px 4px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: tab === 'blank' ? 600 : 500, color: tab === 'blank' ? 'var(--text-primary)' : 'var(--text-tertiary)', borderBottom: tab === 'blank' ? '2px solid var(--accent)' : '2px solid transparent' }}
-            >
-              Blank Invoice
-            </button>
-            <button
-              onClick={() => setTab('preset')}
-              style={{ padding: '10px 4px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: tab === 'preset' ? 600 : 500, color: tab === 'preset' ? 'var(--text-primary)' : 'var(--text-tertiary)', borderBottom: tab === 'preset' ? '2px solid var(--accent)' : '2px solid transparent' }}
-            >
-              Start from Preset
-            </button>
-          </div>
-
-          {errors.general && <FosAlert type="error" style={{ marginBottom: 16 }}>{errors.general}</FosAlert>}
-
-          {tab === 'blank' ? (
-            <>
-              <InvoiceFormFields form={form} setForm={setForm} errors={errors} clients={clients} />
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 24 }}>
-                <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
-                <button className="fos-btn fos-btn-accent" onClick={handleSubmit} disabled={saving}>
-                  {saving ? <span className="fos-spinner" /> : <Plus size={14} />}
-                  {saving ? 'Creating…' : 'Create Draft'}
-                </button>
-              </div>
-            </>
-          ) : (
-            <PresetPicker presets={presets} busyId={presetBusyId} onPick={handleFromPreset} />
-          )}
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '24px 28px', width: '100%', maxWidth: 440, maxHeight: '80vh', overflowY: 'auto', animation: 'modal-in 0.2s cubic-bezier(0.22,1,0.36,1)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+          <h3 style={{ margin: 0, fontSize: '1.02rem', fontWeight: 700, color: 'var(--text-primary)' }}>Start from Preset</h3>
+          <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
         </div>
+        <PresetPicker presets={presets} busyId={busyId} onPick={onPick} />
       </div>
-    </>
+    </div>
   )
 }
 
