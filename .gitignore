@@ -58,3 +58,5 @@ coverage.xml
 
 # MyPy
 .mypy_cache/
+
+v1-reference/

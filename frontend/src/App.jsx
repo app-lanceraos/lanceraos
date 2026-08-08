@@ -20,6 +20,7 @@ import AddPassword from '@/pages/AddPassword'
 import DeletionReview from '@/pages/DeletionReview'
 import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
+import Clients from '@/pages/Clients'
 import Onboarding from '@/pages/Onboarding'
 import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
@@ -77,6 +78,10 @@ export default function App() {
         <Route
           path="/settings"
           element={<PrivateRoute><AppShell><Settings /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/clients"
+          element={<PrivateRoute><AppShell><Clients /></AppShell></PrivateRoute>}
         />
 
         {/* No dedicated landing page yet (separate future work) — send

@@ -504,6 +504,17 @@ html.app-shell-active {
 @keyframes fos-spin { to { transform: rotate(360deg); } }
 
 /* ══════════════════════════════════════════════════════════════
+   SHARED PAGE-LEVEL KEYFRAMES — DESIGN.md Section 7 recipes.
+   Global (not per-page) so every page reuses the same name instead
+   of inventing a new one. First real consumer: Clients.jsx /
+   ClientDetailPanel.jsx.
+   ══════════════════════════════════════════════════════════════ */
+@keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes panel-slide-in { from { transform: translateX(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes modal-in { from { transform: scale(0.95) translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ══════════════════════════════════════════════════════════════
    ALERT / STATUS BANNERS
    ══════════════════════════════════════════════════════════════ */
 
