@@ -1160,3 +1160,99 @@ initially lacked an explicit UUID primary key (defaulting to Django's `BigAutoFi
 generated migration file rather than trusting `makemigrations`' summary output, exactly as this
 step's own instructions required ("don't just trust makemigrations blindly, inspect the generated
 migration file").
+
+---
+
+Date: 08 August 2026
+Decision: Built `apps/invoices/`'s CRUD + lifecycle endpoint surface (serializers.py, views.py,
+urls.py) — Step 5 of `INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 7, everything on the spec's
+endpoint list that doesn't depend on `send_email()` (real `/send/`, Step 10) or `InvoiceDesign`
+rendering (`/pdf/`, Step 7). Neither is stubbed — they simply don't exist yet.
+
+**Two real, latent model bugs found by writing this step's own required tests, neither caught by
+Step 4's own test suite**:
+1. `invoice_number`'s uniqueness needed to move from a bare field-level constraint to
+   `Meta.unique_together = [('user', 'invoice_number')]` (already recorded in the 08 August 2026
+   entry above from Step 4) — but Step 5 additionally discovered that a *draft* invoice should have
+   **no** `invoice_number` at all until `invoice_finalise()` assigns one, confirmed directly against
+   the spec's own `invoice_duplicate` behavior (which explicitly resets `invoice_number` on the copy
+   it creates — nonsensical unless drafts are expected to be number-less). This required actually
+   changing the field to `null=True, blank=True` this round; Postgres allows multiple `NULL`s in a
+   unique index by standard SQL semantics, so this doesn't reopen the original bug.
+2. `issue_date = models.DateField(default=timezone.now)` — ported verbatim from v1, present in Step
+   4 unnoticed. `timezone.now()` returns a `datetime`; Step 4's own tests never caught this because
+   they always called `refresh_from_db()` before asserting anything, and Postgres silently truncates
+   a datetime written into a `date` column on the way in. The first time Step 5 serialized a
+   freshly-created (`.objects.create()`, no refresh) `Invoice` directly through `InvoiceListSerializer`,
+   DRF's strict `DateField` representation logic raised immediately
+   (`AssertionError: Expected a 'date', but got a 'datetime'`). Fixed with a real function
+   (`_today()`) as the default. Recorded plainly as a genuine gap in Step 4's own verification, not
+   smoothed over — the fix belongs with the field, so it's applied directly to `models.py` rather
+   than worked around in the serializer.
+
+**The referenced "decisions doc Section 6" (dashboard tracking rules) is not available in this
+session** — verified directly: `INVOICES_CLIENTS_TECHNICAL_SPEC.md`'s own Section 6 is "Notification
+entries," not dashboard rules, confirming this refers to a separate document (the "final-decisions
+document" the technical spec's own intro mentions) that was never present in this repo, the same
+situation as Step 2's unavailable v1 flag-type choices. `invoice_summary`'s three KPIs
+(Outstanding/Total Paid this month/Past-Due) were built fully **unconditional** — not gated by
+`sent_via_platform` at all — on the strength of the one piece of concrete, verified evidence
+available: `Invoice.sent_via_platform`'s own field `help_text` explicitly scopes its effect to
+"Gates reminders only." Exact rules implemented, each with its own test:
+  - Outstanding: invoices with status in `sent`/`viewed`/`partially_paid` only — a client can't owe
+    money on an invoice they haven't received (draft/created excluded); paid/cancelled/refunded/
+    bad_debt aren't real outstanding money.
+  - Total Paid (this month): `status='paid'` with `paid_date` in the current calendar month.
+  - Past-Due: same eligible-status set as Outstanding, filtered to `due_date` in the past —
+    identical eligibility to `Invoice.days_overdue`.
+Flagged plainly as worth double-checking against the original document if it ever surfaces, rather
+than silently presenting this as verified against "the spec... exactly," which it isn't.
+
+**`invoice_aging_report` implements the spec's stated "leaning toward the broader version"
+literally, not as an independent decision**: everything with an eligible status and a past due date
+counts, regardless of `sent_via_platform` — not restricted to platform-sent invoices only. The
+"decisions doc Section 13 #3" this leaning is attributed to is the same unavailable document
+referenced above; implementing the explicitly-stated leaning from this prompt's own text is the
+correct move regardless, since no more authoritative source is available to consult.
+
+**`invoice_undo_payment`'s "old payment" threshold is set at >7 days**, this endpoint's own
+judgment call — the spec didn't pin a number, and confirmation-strictness scaling by payment age is
+explicitly a Step 6 (frontend) concern, not this endpoint's. 7 days was chosen as a reasonable
+"probably already reconciled elsewhere (bank statement, accounting records) by now" line for a
+freelancer's own undo action, not derived from any cited source. Tested at the boundary with a
+one-minute safety margin on the "not yet old" side (not literally 7 days exactly) — real wall-clock
+time elapses between setting a test fixture's `recorded_at` and the view computing
+`timezone.now() - recorded_at`, so an exact-instant boundary fixture would nondeterministically land
+on the wrong side of `age > 7 days` depending on test execution speed.
+
+**`invoice_resume_recurring` was added alongside `invoice_pause_recurring`**, which is all the spec's
+endpoint table actually lists. Pausing a recurring invoice with no corresponding way to un-pause it
+isn't a real, usable feature — this is a small, obviously-necessary completion of what the spec
+named, not scope creep beyond it.
+
+**Rate limiting deliberately replicates `apps.clients.views`'s `_check_moderate_rate_limit`/
+`_too_many_requests` shape rather than importing them** — same cache-based check, same 30/hour
+threshold, same return-value contract, but with an `"invoices"`-scoped cache key prefix
+(`ratelimit_invoices_{action}_{user.pk}`) instead of reusing `apps.clients`'s
+`ratelimit_clients_{action}_{user.pk}`. Importing directly would mean invoice actions either share a
+budget with any client action that happens to use the same action-string name, or get mislabeled
+under a `"clients"`-prefixed cache key that has nothing to do with clients. Behavior is identical;
+only the key namespace differs.
+
+**`invoice_refund`'s partial-refund amount is not persisted anywhere on the `Invoice` row** — Step
+4's schema has no `refunded_amount` field (not in the spec's Section 5 field table), so a partial
+refund's exact amount only ever appears in the emitted `InvoiceRefunded` event's payload, which
+`core.events` doesn't persist. This is a real, known limitation for whoever needs refund-amount
+reporting later, not silently papered over — flagged here rather than adding an undiscussed new
+column to close it in this step.
+
+**`InvoiceSerializer`/`InvoicePresetSerializer` scope their `client` field's queryset to the
+requesting user's own clients** (`Client.objects.filter(user=request.user)`, set in `__init__` from
+`self.context['request']`) rather than accepting any client ID and validating ownership afterward.
+This means a foreign client ID gets the exact same DRF "does not exist" rejection a genuinely
+nonexistent ID would get — no separate error message exists that could tell an attacker "this ID
+exists but isn't yours" apart from "this ID doesn't exist at all."
+
+Verified: two migrations applied against the real local Postgres database (`invoice_number`
+nullable, `issue_date` default fix) — both single-field `AlterField` operations, no new tables this
+step. Full test suite (368 tests, 114 new) passing; `manage.py check` clean.

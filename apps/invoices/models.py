@@ -27,6 +27,12 @@ from django.utils import timezone
 from apps.clients.models import Client
 from apps.payments.models import ExchangeRateSnapshot
 
+
+def _today():
+    """A real function, not `timezone.now` — see Invoice.issue_date's field comment for why that distinction matters here."""
+    return timezone.now().date()
+
+
 # Statuses that should be restored when all partial payments are removed.
 # 'overdue' deliberately excluded — v1 included it here (see v1-reference
 # line 12), which is how a stale 'overdue' status could survive a
@@ -50,6 +56,14 @@ RECURRING_INTERVAL_CHOICES = [
     (7, 'Weekly'), (14, 'Bi-weekly'), (30, 'Monthly'),
     (60, 'Every 2 months'), (90, 'Quarterly'), (365, 'Annually'),
 ]
+
+# Shared by Invoice.days_overdue and Step 5's view-layer queries (invoice_list's
+# ?overdue=true filter, invoice_summary, invoice_aging_report) that need the
+# identical "is this invoice even eligible to be overdue" rule at the database
+# level rather than re-deriving it in Python per row. Single source of truth,
+# per STANDARDS.md — extracted here rather than left duplicated inline in
+# views.py.
+NON_OVERDUE_STATUSES = ('paid', 'cancelled', 'refunded', 'draft', 'created', 'bad_debt')
 
 
 class Invoice(models.Model):
@@ -122,7 +136,17 @@ class Invoice(models.Model):
     # design ("sequential per user per year" — every user's year starts
     # its own INV-YYYY-0001, so the same string is expected to recur
     # across different users).
-    invoice_number = models.CharField(max_length=30)
+    #
+    # null=True (added in Step 5, not Step 4): a draft invoice has no
+    # real invoice_number at all until invoice_finalise() assigns one —
+    # confirmed by invoice_duplicate's own spec, which explicitly resets
+    # invoice_number on the new draft copy it creates. Multiple drafts
+    # for the same user therefore all have invoice_number=None
+    # simultaneously; Postgres's unique index treats every NULL as
+    # distinct from every other NULL (standard SQL semantics, verified
+    # against this project's actual Postgres, not assumed), so this
+    # doesn't collide with Meta.unique_together above.
+    invoice_number = models.CharField(max_length=30, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     sent_via_platform = models.BooleanField(
         default=False,
@@ -170,7 +194,16 @@ class Invoice(models.Model):
     pdf_generated_at = models.DateTimeField(null=True, blank=True)
 
     # ── Dates ──────────────────────────────────────────────────────
-    issue_date = models.DateField(default=timezone.now)
+    # default=_today (not timezone.now, which v1 used verbatim on a
+    # DateField — a real bug, ported unnoticed until Step 5's own
+    # serializer tests caught it): timezone.now() returns a datetime, so
+    # a freshly-created, not-yet-refreshed Invoice held a full datetime
+    # in a DateField attribute in memory. Postgres silently truncated it
+    # on write, so every test that round-tripped through the DB
+    # (refresh_from_db) never noticed — DRF's DateField serializer is
+    # strict about datetime-vs-date and raised loudly the first time
+    # Step 5 serialized a just-created instance directly. See DECISIONS.md.
+    issue_date = models.DateField(default=_today)
     due_date = models.DateField(null=True, blank=True)
     paid_date = models.DateField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
@@ -245,7 +278,8 @@ class Invoice(models.Model):
         ]
 
     def __str__(self):
-        return f'{self.invoice_number} — {self.client_name} [{self.status}]'
+        number = self.invoice_number or '(unnumbered draft)'
+        return f'{number} — {self.client_name} [{self.status}]'
 
     def save(self, *args, **kwargs):
         if not self.view_token:
@@ -272,7 +306,7 @@ class Invoice(models.Model):
         entire point of the spec's fix. A terminal or not-yet-sent
         status is never "overdue" by definition.
         """
-        if self.status in ('paid', 'cancelled', 'refunded', 'draft', 'created', 'bad_debt'):
+        if self.status in NON_OVERDUE_STATUSES:
             return 0
         if not self.due_date:
             return 0

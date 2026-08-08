@@ -356,11 +356,12 @@ lanceraos/                          <- Django project root
 │   │   ├── views_users.py                  <- Search/detail/sessions/suspend/reactivate/grant/revoke
 │   │   ├── views_audit.py                   <- Audit log viewer (filterable)
 │   │   └── views_deletion.py                 <- Deletion-queue management
-│   ├── invoices/                   <- BUILT so far: models.py only (Invoice/InvoiceItem/
+│   ├── invoices/                   <- BUILT: models.py (10 tables — Invoice/InvoiceItem/
 │   │                                  InvoicePartialPayment/InvoiceReminder/InvoiceViewEvent/
 │   │                                  InvoiceComment/PaymentClaim/InvoiceDesign/InvoicePreset/
-│   │                                  InvoicePresetItem — 10 tables). Views/serializers/URLs/
-│   │                                  PDF/email/portal — NOT YET BUILT.
+│   │                                  InvoicePresetItem) + serializers.py/views.py/urls.py
+│   │                                  (CRUD + lifecycle endpoints — /send/ and /pdf/ excluded,
+│   │                                  see Module 2). PDF/email/portal — NOT YET BUILT.
 │   ├── clients/                    <- Client CRM — BUILT. Client/ClientNote/ClientTag,
 │   │                                  scoring.py (reliability-score formula, pure/testable
 │   │                                  independent of Invoice — see DECISIONS.md)
@@ -624,10 +625,12 @@ inside the main frontend/ app.
 ### Module 2 — Invoices + Client CRM + Client Portal
 Status: In progress. Foundations (`core/events.py`, `core/money.py`, `apps/payments/`'s
 `ExchangeRateSnapshot` + daily fetch task), the Client CRM backend (`apps/clients/`), and now the
-Invoice Core data layer (`apps/invoices/` — see its own subsection below; models only, 10 tables) are
-built and tested. Invoice lifecycle *endpoints*, PDF generation, email delivery, the client portal,
-payment claims *workflow*, recurring invoices, and reminder *tasks* do not exist yet — the tables
-those features need are already there, but nothing calls them yet. No frontend for this module yet
+Invoice Core — both the data layer AND its CRUD + lifecycle endpoints (`apps/invoices/` — see its own
+subsection below) — are built and tested. Two endpoints are deliberately excluded, not stubbed: the
+real `/send/` (needs `core.email.send_email()`, Step 10) and `/pdf/` (needs `InvoiceDesign`
+rendering, Step 7). The client portal, payment claims *workflow* (confirm/reject), comments
+*delivery*, and recurring/reminder *background tasks* also don't exist yet — their tables/fields do,
+but nothing calls them on a schedule or serves them publicly yet. No frontend for this module yet
 either. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design this is being built against, and
 `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
@@ -635,45 +638,72 @@ currency-conversion anchor both depend on)
 
 The most important module. Two closely related features in one app.
 
-Invoice Generator — models built (apps/invoices/), no endpoints/PDF/email yet:
-Invoice creation in any currency with no hardcoded choices (validated against apps.payments'
-ExchangeRateSnapshot, same pattern as Client.default_currency — that validation itself belongs to
-the serializer layer, which doesn't exist yet). Line items (InvoiceItem) with quantity and unit
-price; `recalculate_totals()` derives subtotal/tax/total from them, ported directly from v1. Tax
-rate and discount at invoice level, with total clamped to never go negative if a discount exceeds
-subtotal+tax. Anchor-currency conversion (`rate_to_usd_at_issue` + a snapshot FK) replaces v1's
-PKR-specific rate tracking — conversions are computed live from ExchangeRateSnapshot history, never
-stored at payment time. Three PDF templates and WeasyPrint rendering are NOT built yet — `pdf_url`/
-`pdf_generated_at` exist on the model (the frozen-at-send artifact fields) but nothing populates
-them.
+Invoice Generator — built (apps/invoices/), no PDF/email yet:
+Invoice creation in any currency with no hardcoded choices (validated in the serializer layer via
+apps.clients.serializers.validate_currency_code, reused directly rather than duplicated). Line items
+(InvoiceItem) with quantity and unit price; `recalculate_totals()` derives subtotal/tax/total from
+them, ported directly from v1. Tax rate and discount at invoice level, with total clamped to never
+go negative if a discount exceeds subtotal+tax. Anchor-currency conversion (`rate_to_usd_at_issue` +
+a snapshot FK, locked in by `invoice_finalise`/`invoice_mark_sent`) replaces v1's PKR-specific rate
+tracking — conversions are computed live from ExchangeRateSnapshot history, never stored at payment
+time. Three PDF templates and WeasyPrint rendering are NOT built yet — `pdf_url`/`pdf_generated_at`
+exist on the model (the frozen-at-send artifact fields) but nothing populates them; the real
+`/send/` action and the manual `mark-sent` dropdown flip both exist now, but only the latter is
+built (the former needs the email engine).
+
+Invoices start as a draft with NO invoice number at all — `invoice_finalise` (draft -> created) is
+what assigns the real INV-YYYY-NNNN, confirmed against `invoice_duplicate`'s own behavior (which
+resets invoice_number on the copy it makes). Editing (PUT) and hard-deleting (DELETE) are only
+permitted on draft (edit) or draft/created (delete) invoices — enforced server-side with a 403, not
+frontend-trusted, and covered by a dedicated regression-test category per status value.
 
 Invoice status lifecycle: draft -> created -> sent -> viewed -> partially_paid -> paid, with
-cancelled/refunded/bad_debt as terminal states reachable from most of those. There is deliberately
-NO stored `overdue` status — a real v1 bug (a nightly task that overwrote status to `'overdue'`,
-destroying the real underlying status) is fixed by never writing that value anywhere; `days_overdue`
-is a pure read-time property layered on top instead. `Invoice.update_paid_status()` (ported from v1,
-fix applied) enforces every payment-driven transition. Cancelled, refunded, and bad_debt invoices are
+cancelled/refunded/bad_debt as terminal states reachable from most of those (cancel/bad-debt only
+from sent-or-beyond; refund only from paid/partially_paid). There is deliberately NO stored
+`overdue` status — a real v1 bug (a nightly task that overwrote status to `'overdue'`, destroying
+the real underlying status) is fixed by never writing that value anywhere; `days_overdue` is a pure
+read-time property layered on top instead. `Invoice.update_paid_status()` (ported from v1, fix
+applied) enforces every payment-driven transition. Cancelled, refunded, and bad_debt invoices are
 never modified by payment operations — verified directly with tests, including for `refunded`, a
 status v1 never had at all so its own guards never covered it.
+The manual "mark as sent" dropdown flip (`invoice_mark_sent`) requires an explicit confirm plus a
+reminders on/off choice, and deliberately never sets `sent_via_platform` — that flag is reserved for
+the real `/send/` action alone (Step 10) and only gates automated reminders, confirmed against its
+own field documentation.
 
 Partial payments (InvoicePartialPayment): multiple partial payments per invoice, each tracked with
 amount, currency, an anchor-currency rate_to_usd, source, and date. Status updates automatically via
-update_paid_status() as payments are recorded or removed (the removal path is the "undo" mechanism,
-restoring the exact pre-payment status). A `payment` FK to a future `apps.payments.Payment` model is
-NOT yet added — that model doesn't exist, and Django rejects a FK to a nonexistent model outright
-(verified empirically); it'll be a real migration once Module 3 builds `Payment`.
+update_paid_status() as payments are recorded or removed. "Mark paid" pre-fills the full outstanding
+balance as a real payment record (never a bare status edit) via the same flow. Undo removes exactly
+the most-recently-recorded payment and restores the exact pre-payment status — repeatable, walking
+back through multiple payments one at a time; undoing a payment recorded more than 7 days ago
+requires an explicit confirmation flag (this app's own judgment call, not spec-pinned). A `payment`
+FK to a future `apps.payments.Payment` model is NOT yet added — that model doesn't exist, and Django
+rejects a FK to a nonexistent model outright (verified empirically); it'll be a real migration once
+Module 3 builds `Payment`.
+
+Dashboard KPIs (`GET /api/invoices/summary/`) — Outstanding / Total Paid this month / Past-Due —
+and the AR aging report (Current/1-30/31-60/61-90/90+ days, the "broader version": every unpaid
+invoice regardless of how it was sent) are both built. The summary endpoint's exact
+sent_via_platform-gating rules couldn't be verified against their original source document (not
+present in this repo); built fully unconditional instead, on the one piece of concrete evidence
+available (`sent_via_platform`'s own field docs say it only gates reminders) — see DECISIONS.md.
 
 Recurring invoices: model fields exist (is_recurring, recurring_interval_days — 6 options kept from
-v1, recurring_auto_send, recurring_paused, parent_invoice, next_recurring_date) but the Celery Beat
-generation task does NOT exist yet.
+v1, recurring_auto_send, parent_invoice, next_recurring_date) and pause/resume actions are built, but
+the Celery Beat generation task does NOT exist yet.
 
 Payment reminders: InvoiceReminder table exists (ported directly from v1, unique per invoice per
-reminder number) but the escalating-reminder Celery task does NOT exist yet.
+reminder number), toggle-reminders is built, but the escalating-reminder Celery task does NOT exist
+yet.
 
 Public invoice page: `view_token` exists on Invoice (unique, indexed, unguessable) but the actual
-public page/endpoint does NOT exist yet. InvoiceViewEvent (view tracking) and InvoiceComment (new —
-the unified two-way message thread replacing v1's complete absence of messaging) and PaymentClaim
-(ported directly from v1) all exist as tables with no view layer yet either.
+public page/endpoint does NOT exist yet (needs the client portal, Step 11). InvoiceViewEvent (view
+tracking) and InvoiceComment (new — the unified two-way message thread replacing v1's complete
+absence of messaging) and PaymentClaim (ported directly from v1) all exist as tables with no
+comment-posting/claim-confirm view layer yet either — invoice_timeline (built) surfaces views,
+reminders, and payments today, and will pick up comments/claims additively once those steps land,
+with no change to entries already there.
 
 Client CRM — backend built (apps/clients/), no frontend yet:
 Client records with name, email, company, address, phone, country, default currency (no hardcoded
@@ -731,20 +761,27 @@ Key API endpoints — apps/clients/ (built, real):
 - GET/POST /api/clients/tags/
 - POST /api/clients/{id}/tags/{tag_id}/attach/ + DELETE /api/clients/{id}/tags/{tag_id}/
 
-Key API endpoints — apps/invoices/ (not built yet):
-- CRUD /api/invoices/
-- POST /api/invoices/{id}/send/
-- POST /api/invoices/{id}/mark-paid/
-- GET /api/invoices/{id}/pdf/
-- POST /api/invoices/{id}/payments/ (partial payment)
-- GET /api/invoices/public/{token}/ (unauthenticated)
-- POST /api/invoices/public/{token}/claim/ (payment claim)
-- GET /api/clients/{id}/statement/pdf/ (needs real invoice data)
-- GET/POST /api/clients/{id}/messages/
-- POST /api/portal/{token}/pin/verify/
-- POST /api/portal/{token}/pin/resend/
-- GET /api/portal/{token}/messages/
-- POST /api/portal/{token}/messages/
+Key API endpoints — apps/invoices/ (built, real):
+- GET/POST /api/invoices/
+- GET/PUT/DELETE /api/invoices/{id}/ (PUT: draft only; DELETE: draft/created only — both 403 otherwise)
+- POST /api/invoices/{id}/finalise/ + /mark-sent/ + /mark-paid/
+- POST /api/invoices/{id}/payments/ + DELETE /api/invoices/{id}/payments/undo/
+- POST /api/invoices/{id}/cancel/ + /refund/ + /bad-debt/ + /duplicate/
+- POST /api/invoices/{id}/toggle-reminders/ + /pause-recurring/ + /resume-recurring/
+- GET /api/invoices/{id}/timeline/
+- GET /api/invoices/summary/ + /aging-report/ + /exchange-rate/
+- GET/POST /api/invoices/presets/ + GET/PUT/DELETE /api/invoices/presets/{id}/
+- POST /api/invoices/presets/{id}/set-default/ + /create-invoice/
+
+Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not stubbed):
+- POST /api/invoices/{id}/send/ (real send — needs core.email.send_email(), Step 10)
+- GET /api/invoices/{id}/pdf/ (needs InvoiceDesign rendering, Step 7)
+- POST /api/invoices/{id}/acknowledge/, GET/POST .../comments/, GET/POST .../claims/ + confirm/reject,
+  designs CRUD, signature upload, WebSocket endpoints, all public/* portal endpoints, email/incoming
+  webhook — each needs a later step (portal auth Step 11, comments Step 13, claims Step 14, design
+  system Steps 7-9) that hasn't landed yet.
+- GET /api/clients/{id}/statement/pdf/ (needs real invoice data + WeasyPrint, later step)
+- GET/POST /api/clients/{id}/messages/, portal PIN endpoints — client portal, Step 11.
 
 ---
 
@@ -1018,7 +1055,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | Foundations + apps/clients/ + apps/invoices/ data layer (models only, 10 tables) built | - | 127 passing (`core`/`apps.payments`/`apps.clients`/`apps.invoices`) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints; /send/ and /pdf/ excluded pending Steps 10/7) built | - | 368 passing (`core`/`apps.payments`/`apps.clients`/`apps.invoices`) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

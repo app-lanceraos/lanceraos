@@ -676,8 +676,11 @@ as a hex value via `RegexValidator`). `unique_together = [('user', 'name')]`.
 The Invoice Core, per `INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 5 — ported from
 `v1-reference/apps/invoices/models.py` where v1 already had a correct, working implementation
 (invoice numbering, `recalculate_totals()`, the core shape of `update_paid_status()`), adjusted for
-the anchor-currency design and the no-stored-`overdue` fix. This step is models-only — no views,
-serializers, URLs, PDF, email, or portal yet.
+the anchor-currency design and the no-stored-`overdue` fix. Step 4 built the models only; Step 5
+added the CRUD + lifecycle endpoint surface (create/edit/finalise/mark-sent/mark-paid/payments/
+undo/cancel/refund/bad-debt/duplicate/toggle-reminders/pause-resume-recurring/timeline/summary/
+aging-report/exchange-rate/presets) — real `/send/` (needs `send_email()`, Step 10) and `/pdf/`
+(needs `InvoiceDesign` rendering, Step 7) remain deliberately unbuilt, not stubbed.
 
 **Schema** (grouped by purpose): `id` (UUID PK), `user` (FK, `CASCADE`), `client` (FK →
 `clients.Client`, `SET_NULL`, nullable), `invoice_number` (see uniqueness note below), `status`
@@ -728,10 +731,29 @@ actually means: the same number string is expected to recur across different use
 `rate_to_usd_at_issue` + `exchange_rate_snapshot`), `autosaved_at`/`is_autosave` (not in the spec's
 field table).
 
-**`currency` has no `choices=`**, same reasoning as `Client.default_currency` — validation against
-`ExchangeRateSnapshot`'s current keys belongs in the serializer layer, which doesn't exist yet in
-this models-only step (a comment in the model points whoever builds that step at
-`apps.clients.serializers.validate_currency_code` to reuse rather than reinvent).
+**`currency` has no `choices=`**, same reasoning as `Client.default_currency` — validated in
+`InvoiceSerializer`/`InvoicePresetSerializer`/`InvoicePartialPaymentSerializer` (Step 5) by directly
+reusing `apps.clients.serializers.validate_currency_code`, exactly as Step 4's model comment pointed
+whoever built this step to do.
+
+**`invoice_number` is nullable (`null=True, blank=True`), added in Step 5, not Step 4**: a draft
+invoice has no real invoice number at all until `invoice_finalise()` assigns one — confirmed by the
+spec's own `invoice_duplicate` behavior, which explicitly resets `invoice_number` on the new draft
+copy it creates. Multiple drafts for the same user therefore all have `invoice_number=None`
+simultaneously; Postgres's unique index treats every `NULL` as distinct from every other `NULL`
+(standard SQL semantics, not merely assumed — this project verifies against its actual Postgres
+rather than trusting general knowledge), so this doesn't collide with the `(user, invoice_number)`
+constraint above.
+
+**A second real bug found while writing Step 5's tests, inherited from v1 and carried into Step 4
+unnoticed**: `issue_date` was `models.DateField(default=timezone.now)` — `timezone.now()` returns a
+`datetime`, not a `date`. A freshly-created, not-yet-refreshed `Invoice` held a full datetime in a
+`DateField` Python attribute; Postgres silently truncated it on write, so every Step 4 test that
+round-tripped through the database (`refresh_from_db()`) never noticed. DRF's `DateField` serializer
+is strict about datetime-vs-date and raised loudly (`AssertionError: Expected a 'date', but got a
+'datetime'`) the first time Step 5 serialized a just-created instance directly, without a DB round
+trip in between. Fixed with a real function (`_today()`, returning `timezone.now().date()`) as the
+default instead of the bare `timezone.now` callable.
 
 **`update_paid_status()`** — ported from v1 with the spec's core fix: `_RESTORABLE_STATUSES` no
 longer includes `'overdue'` (v1's did), so a payment-undo round trip can never restore a stale

@@ -1,0 +1,969 @@
+# apps/invoices/tests/test_views.py
+import json
+from datetime import date, timedelta
+from decimal import Decimal
+
+from django.core.cache import cache
+from django.test import Client as DjangoTestClient
+from django.test import RequestFactory, TestCase
+from django.middleware.csrf import get_token
+from django.urls import reverse
+from django.utils import timezone
+
+from apps.clients.models import Client as ClientModel
+from apps.invoices.models import Invoice, InvoiceItem, InvoicePartialPayment, InvoicePreset
+from apps.invoices.tests.test_models import make_invoice
+from apps.users.models import User
+
+
+class InvoicesAPITestCase(TestCase):
+    """Shared login/CSRF plumbing — identical pattern to apps/clients/tests/test_views.py's ClientsAPITestCase."""
+
+    def setUp(self):
+        cache.clear()
+        self.rf = RequestFactory()
+        self.client = DjangoTestClient(enforce_csrf_checks=True)
+        self.user = User.objects.create_user(email='freelancer@example.com', password='Sup3r$ecret1')
+        self.user.is_email_verified = True
+        self.user.is_active = True
+        self.user.save()
+        self._login()
+
+    def _csrf_token(self):
+        dummy = self.rf.get('/')
+        token = get_token(dummy)
+        self.client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        return token
+
+    def _login(self, email='freelancer@example.com', password='Sup3r$ecret1'):
+        csrf_token = self._csrf_token()
+        resp = self.client.post(reverse('users:login'), data=json.dumps({
+            'login': email, 'password': password,
+        }), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token)
+        assert resp.status_code == 200, resp.content
+
+    def _get(self, url):
+        return self.client.get(url)
+
+    def _post(self, url, data=None):
+        csrf_token = self._csrf_token()
+        return self.client.post(
+            url, data=json.dumps(data or {}), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token,
+        )
+
+    def _put(self, url, data=None):
+        csrf_token = self._csrf_token()
+        return self.client.put(
+            url, data=json.dumps(data or {}), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token,
+        )
+
+    def _delete(self, url, data=None):
+        csrf_token = self._csrf_token()
+        kwargs = {'HTTP_X_CSRFTOKEN': csrf_token}
+        if data is not None:
+            kwargs['data'] = json.dumps(data)
+            kwargs['content_type'] = 'application/json'
+        return self.client.delete(url, **kwargs)
+
+    def _invoice(self, **overrides):
+        return make_invoice(self.user, **overrides)
+
+
+# ══════════════════════════════════════════════════════════════════
+# CRUD + SERIALIZER ALLOWLIST
+# ══════════════════════════════════════════════════════════════════
+
+class InvoiceCRUDTests(InvoicesAPITestCase):
+    def test_create_draft_invoice(self):
+        resp = self._post(reverse('invoices:invoice_list'), {
+            'client_name': 'Acme Co', 'client_email': 'acme@example.com', 'currency': 'USD',
+        })
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertEqual(body['status'], 'draft')
+        self.assertIsNone(body['invoice_number'])  # unassigned until finalise
+        self.assertTrue(body['view_token'])
+        self.assertTrue(body['is_editable'])
+
+    def test_create_requires_client_name(self):
+        resp = self._post(reverse('invoices:invoice_list'), {'client_name': '  ', 'client_email': 'a@example.com'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('client_name', resp.json())
+
+    def test_create_with_items(self):
+        resp = self._post(reverse('invoices:invoice_list'), {
+            'client_name': 'Acme', 'client_email': 'acme@example.com',
+            'items': [{'description': 'Design work', 'quantity': '2', 'unit_price': '50.00'}],
+        })
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertEqual(len(body['items']), 1)
+        self.assertEqual(Decimal(body['subtotal']), Decimal('100.00'))
+
+    def test_mass_assignment_of_user_field_is_ignored(self):
+        """Same category of test as Step 2's client mass-assignment regression."""
+        other_user = User.objects.create_user(email='victim@example.com', password='Sup3r$ecret1')
+        resp = self._post(reverse('invoices:invoice_list'), {
+            'client_name': 'Acme', 'client_email': 'acme@example.com', 'user': str(other_user.pk),
+        })
+        self.assertEqual(resp.status_code, 201)
+        created = Invoice.objects.get(pk=resp.json()['id'])
+        self.assertEqual(created.user, self.user)
+
+    def test_cannot_set_lifecycle_fields_directly_through_create(self):
+        """status/invoice_number/sent_via_platform/pdf_url aren't on the write serializer at all."""
+        resp = self._post(reverse('invoices:invoice_list'), {
+            'client_name': 'Acme', 'client_email': 'acme@example.com',
+            'status': 'paid', 'invoice_number': 'INV-2020-9999', 'sent_via_platform': True,
+            'pdf_url': 'https://evil.example.com/fake.pdf',
+        })
+        self.assertEqual(resp.status_code, 201)
+        created = Invoice.objects.get(pk=resp.json()['id'])
+        self.assertEqual(created.status, 'draft')
+        self.assertIsNone(created.invoice_number)
+        self.assertFalse(created.sent_via_platform)
+        self.assertEqual(created.pdf_url, '')
+
+    def test_cannot_attach_another_users_client(self):
+        other_user = User.objects.create_user(email='other@example.com', password='Sup3r$ecret1')
+        their_client = ClientModel.objects.create(user=other_user, name='Theirs', email='theirs@example.com')
+        resp = self._post(reverse('invoices:invoice_list'), {
+            'client_name': 'Acme', 'client_email': 'acme@example.com', 'client': str(their_client.pk),
+        })
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('client', resp.json())
+
+    def test_can_attach_own_client(self):
+        my_client = ClientModel.objects.create(user=self.user, name='Mine', email='mine@example.com')
+        resp = self._post(reverse('invoices:invoice_list'), {
+            'client_name': 'Mine', 'client_email': 'mine@example.com', 'client': str(my_client.pk),
+        })
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['client'], str(my_client.pk))
+
+    def test_list_and_detail(self):
+        invoice = self._invoice()
+        resp = self._get(reverse('invoices:invoice_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['total'], 1)
+
+        resp = self._get(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['id'], str(invoice.pk))
+
+    def test_cannot_view_another_users_invoice(self):
+        other_user = User.objects.create_user(email='other2@example.com', password='Sup3r$ecret1')
+        their_invoice = make_invoice(other_user)
+        resp = self._get(reverse('invoices:invoice_detail', kwargs={'pk': their_invoice.pk}))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_filter_by_status(self):
+        self._invoice(status='draft')
+        self._invoice(status='sent', sent_at=timezone.now())
+        resp = self._get(reverse('invoices:invoice_list') + '?status=sent')
+        self.assertEqual(resp.json()['total'], 1)
+
+    def test_filter_by_client(self):
+        my_client = ClientModel.objects.create(user=self.user, name='Mine', email='mine@example.com')
+        self._invoice(client=my_client)
+        self._invoice()
+        resp = self._get(reverse('invoices:invoice_list') + f'?client={my_client.pk}')
+        self.assertEqual(resp.json()['total'], 1)
+
+    def test_search_by_invoice_number(self):
+        self._invoice(invoice_number='INV-2026-0042')
+        self._invoice(invoice_number='INV-2026-0099')
+        resp = self._get(reverse('invoices:invoice_list') + '?search=0042')
+        self.assertEqual(resp.json()['total'], 1)
+
+    def test_overdue_filter(self):
+        self._invoice(status='sent', sent_at=timezone.now(), due_date=date(2020, 1, 1))
+        self._invoice(status='draft', due_date=date(2020, 1, 1))
+        resp = self._get(reverse('invoices:invoice_list') + '?overdue=true')
+        self.assertEqual(resp.json()['total'], 1)
+
+
+# ══════════════════════════════════════════════════════════════════
+# IS_EDITABLE ENFORCEMENT — second most important regression category
+# ══════════════════════════════════════════════════════════════════
+
+class IsEditableEnforcementTests(InvoicesAPITestCase):
+    def test_put_allowed_on_draft(self):
+        invoice = self._invoice(status='draft')
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {
+            'client_name': 'Renamed', 'client_email': invoice.client_email,
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['client_name'], 'Renamed')
+
+    def test_put_rejected_once_created(self):
+        invoice = self._invoice(status='created')
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {
+            'client_name': 'Should Not Apply', 'client_email': invoice.client_email,
+        })
+        self.assertEqual(resp.status_code, 403)
+        invoice.refresh_from_db()
+        self.assertNotEqual(invoice.client_name, 'Should Not Apply')
+
+    def test_put_rejected_for_every_non_draft_status(self):
+        for status_value in ('created', 'sent', 'viewed', 'partially_paid', 'paid', 'cancelled', 'refunded', 'bad_debt'):
+            invoice = self._invoice(status=status_value)
+            resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {
+                'client_name': 'X', 'client_email': invoice.client_email,
+            })
+            self.assertEqual(resp.status_code, 403, f'status={status_value} should reject PUT')
+
+    def test_delete_allowed_on_draft_and_created(self):
+        for status_value in ('draft', 'created'):
+            invoice = self._invoice(status=status_value)
+            resp = self._delete(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}))
+            self.assertEqual(resp.status_code, 204, f'status={status_value} should allow delete')
+
+    def test_delete_rejected_once_sent_or_beyond(self):
+        for status_value in ('sent', 'viewed', 'partially_paid', 'paid', 'cancelled', 'refunded', 'bad_debt'):
+            invoice = self._invoice(status=status_value)
+            resp = self._delete(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}))
+            self.assertEqual(resp.status_code, 403, f'status={status_value} should reject delete')
+            self.assertTrue(Invoice.objects.filter(pk=invoice.pk).exists())
+
+
+# ══════════════════════════════════════════════════════════════════
+# FINALISE
+# ══════════════════════════════════════════════════════════════════
+
+class FinaliseTests(InvoicesAPITestCase):
+    def test_finalise_assigns_invoice_number_when_unassigned(self):
+        invoice = self._invoice(status='draft', invoice_number=None)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body['status'], 'created')
+        self.assertIsNotNone(body['invoice_number'])
+        self.assertTrue(body['invoice_number'].startswith('INV-'))
+
+    def test_finalise_does_not_reassign_an_existing_number(self):
+        invoice = self._invoice(status='draft', invoice_number='INV-2026-0007')
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.json()['invoice_number'], 'INV-2026-0007')
+
+    def test_finalise_requires_at_least_one_item(self):
+        invoice = self._invoice(status='draft', invoice_number=None)
+        resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_finalise_only_from_draft(self):
+        invoice = self._invoice(status='created')
+        resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_finalise_locks_exchange_rate_for_non_usd(self):
+        from apps.payments.models import ExchangeRateSnapshot
+        ExchangeRateSnapshot.objects.create(
+            date=timezone.now().date(), rates_to_usd={'USD': 1.0, 'EUR': 1.08},
+            source='test', fetched_at=timezone.now(),
+        )
+        invoice = self._invoice(status='draft', invoice_number=None, currency='EUR')
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        invoice.refresh_from_db()
+        self.assertIsNotNone(invoice.rate_to_usd_at_issue)
+        self.assertIsNotNone(invoice.exchange_rate_snapshot)
+
+
+# ══════════════════════════════════════════════════════════════════
+# MARK SENT — sent_via_platform must NEVER be set here
+# ══════════════════════════════════════════════════════════════════
+
+class MarkSentTests(InvoicesAPITestCase):
+    def test_requires_explicit_confirm(self):
+        invoice = self._invoice(status='created')
+        resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'send_reminders': True})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_mark_sent_never_sets_sent_via_platform(self):
+        """Direct assertion, not inference — the single most important check on this endpoint."""
+        invoice = self._invoice(status='created')
+        resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {
+            'confirm': True, 'send_reminders': True,
+        })
+        self.assertEqual(resp.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertFalse(invoice.sent_via_platform)
+        self.assertEqual(invoice.status, 'sent')
+
+    def test_send_reminders_false_disables_reminders(self):
+        invoice = self._invoice(status='created', reminders_enabled=True)
+        self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {
+            'confirm': True, 'send_reminders': False,
+        })
+        invoice.refresh_from_db()
+        self.assertFalse(invoice.reminders_enabled)
+
+    def test_mark_sent_assigns_invoice_number_from_draft(self):
+        invoice = self._invoice(status='draft', invoice_number=None)
+        self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+        invoice.refresh_from_db()
+        self.assertIsNotNone(invoice.invoice_number)
+
+    def test_mark_sent_only_from_draft_or_created(self):
+        invoice = self._invoice(status='paid')
+        resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp.status_code, 400)
+
+
+# ══════════════════════════════════════════════════════════════════
+# MARK PAID / ADD PAYMENT / UNDO
+# ══════════════════════════════════════════════════════════════════
+
+class MarkPaidTests(InvoicesAPITestCase):
+    def test_mark_paid_creates_a_real_payment_record(self):
+        invoice = self._invoice(status='sent', sent_at=timezone.now(), total=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_mark_paid', kwargs={'pk': invoice.pk}), {'source': 'wise'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['status'], 'paid')
+        self.assertEqual(InvoicePartialPayment.objects.filter(invoice=invoice).count(), 1)
+        payment = InvoicePartialPayment.objects.get(invoice=invoice)
+        self.assertEqual(payment.amount, Decimal('100.00'))
+        self.assertEqual(payment.source, 'wise')
+
+    def test_mark_paid_rejected_with_no_outstanding_balance(self):
+        invoice = self._invoice(status='sent', sent_at=timezone.now(), total=Decimal('100.00'), amount_paid=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_mark_paid', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_mark_paid_rejected_for_draft(self):
+        invoice = self._invoice(status='draft')
+        resp = self._post(reverse('invoices:invoice_mark_paid', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+
+class AddPaymentTests(InvoicesAPITestCase):
+    def test_add_partial_payment(self):
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_add_payment', kwargs={'pk': invoice.pk}), {
+            'amount': '40.00', 'currency': 'USD', 'source': 'bank', 'payment_date': str(date.today()),
+        })
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['status'], 'partially_paid')
+
+    def test_add_payment_rejects_zero_amount(self):
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_add_payment', kwargs={'pk': invoice.pk}), {
+            'amount': '0', 'payment_date': str(date.today()),
+        })
+        self.assertEqual(resp.status_code, 400)
+
+    def test_add_payment_rejected_on_cancelled_invoice(self):
+        invoice = self._invoice(status='cancelled', total=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_add_payment', kwargs={'pk': invoice.pk}), {
+            'amount': '40.00', 'payment_date': str(date.today()),
+        })
+        self.assertEqual(resp.status_code, 400)
+
+
+class UndoPaymentTests(InvoicesAPITestCase):
+    def test_undo_removes_most_recent_payment(self):
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        InvoicePartialPayment.objects.create(invoice=invoice, amount=Decimal('40.00'), payment_date=date.today())
+        invoice.update_paid_status()
+
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(InvoicePartialPayment.objects.filter(invoice=invoice).count(), 0)
+        self.assertEqual(resp.json()['status'], 'created')
+
+    def test_repeatable_walk_back_through_multiple_payments(self):
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        for amount in ('20.00', '30.00', '50.00'):
+            InvoicePartialPayment.objects.create(invoice=invoice, amount=Decimal(amount), payment_date=date.today())
+            invoice.update_paid_status()
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'paid')
+
+        # Undo #1: back to partially_paid with 50 outstanding.
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.json()['status'], 'partially_paid')
+        self.assertEqual(Decimal(resp.json()['amount_paid']), Decimal('50.00'))
+
+        # Undo #2.
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}))
+        self.assertEqual(Decimal(resp.json()['amount_paid']), Decimal('20.00'))
+
+        # Undo #3 — back to the original pre-payment status.
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.json()['status'], 'created')
+        self.assertEqual(Decimal(resp.json()['amount_paid']), Decimal('0'))
+
+    def test_undo_with_no_payments_rejected(self):
+        invoice = self._invoice(status='created')
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_undo_recent_payment_does_not_require_confirmation(self):
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        payment = InvoicePartialPayment.objects.create(invoice=invoice, amount=Decimal('40.00'), payment_date=date.today())
+        invoice.update_paid_status()
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+
+    def test_undo_old_payment_requires_confirmation(self):
+        """The >7-day gate — this endpoint's own judgment call (see DECISIONS.md)."""
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        payment = InvoicePartialPayment.objects.create(invoice=invoice, amount=Decimal('40.00'), payment_date=date.today())
+        invoice.update_paid_status()
+        payment.recorded_at = timezone.now() - timedelta(days=8)
+        payment.save(update_fields=['recorded_at'])
+
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(resp.json().get('requires_confirmation'))
+        self.assertEqual(InvoicePartialPayment.objects.filter(invoice=invoice).count(), 1)
+
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}), {'confirmed_old': True})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(InvoicePartialPayment.objects.filter(invoice=invoice).count(), 0)
+
+    def test_undo_just_under_seven_days_old_does_not_require_confirmation(self):
+        """
+        A one-minute safety margin under the 7-day line, not exactly 7
+        days — real wall-clock time elapses between setting recorded_at
+        and the view computing `timezone.now() - recorded_at`, so an
+        "exactly 7 days" fixture would nondeterministically land a few
+        milliseconds on the wrong side of `age > 7 days` depending on
+        test execution speed. This margin tests the same boundary
+        meaningfully without that flakiness.
+        """
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        payment = InvoicePartialPayment.objects.create(invoice=invoice, amount=Decimal('40.00'), payment_date=date.today())
+        invoice.update_paid_status()
+        payment.recorded_at = timezone.now() - timedelta(days=7) + timedelta(minutes=1)
+        payment.save(update_fields=['recorded_at'])
+
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+
+
+# ══════════════════════════════════════════════════════════════════
+# CANCEL / REFUND / BAD DEBT
+# ══════════════════════════════════════════════════════════════════
+
+class CancelRefundBadDebtTests(InvoicesAPITestCase):
+    def test_cancel_from_sent(self):
+        invoice = self._invoice(status='sent', sent_at=timezone.now())
+        resp = self._post(reverse('invoices:invoice_cancel', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['status'], 'cancelled')
+
+    def test_cancel_preserves_existing_payments(self):
+        invoice = self._invoice(status='partially_paid', total=Decimal('100.00'), amount_paid=Decimal('40.00'))
+        InvoicePartialPayment.objects.create(invoice=invoice, amount=Decimal('40.00'), payment_date=date.today())
+        self._post(reverse('invoices:invoice_cancel', kwargs={'pk': invoice.pk}))
+        self.assertEqual(InvoicePartialPayment.objects.filter(invoice=invoice).count(), 1)
+
+    def test_cancel_rejected_from_draft(self):
+        invoice = self._invoice(status='draft')
+        resp = self._post(reverse('invoices:invoice_cancel', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_cancel_rejected_from_paid(self):
+        invoice = self._invoice(status='paid')
+        resp = self._post(reverse('invoices:invoice_cancel', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_refund_requires_amount(self):
+        invoice = self._invoice(status='paid', amount_paid=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_refund_partial(self):
+        invoice = self._invoice(status='paid', total=Decimal('100.00'), amount_paid=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {'amount': '30.00'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['status'], 'refunded')
+
+    def test_refund_rejects_amount_exceeding_amount_paid(self):
+        invoice = self._invoice(status='paid', amount_paid=Decimal('50.00'))
+        resp = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {'amount': '999.00'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_refund_only_from_paid_or_partially_paid(self):
+        invoice = self._invoice(status='sent', sent_at=timezone.now())
+        resp = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {'amount': '10.00'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_mark_bad_debt(self):
+        invoice = self._invoice(status='partially_paid')
+        resp = self._post(reverse('invoices:invoice_mark_bad_debt', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['status'], 'bad_debt')
+
+    def test_mark_bad_debt_rejected_from_draft(self):
+        invoice = self._invoice(status='draft')
+        resp = self._post(reverse('invoices:invoice_mark_bad_debt', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+
+# ══════════════════════════════════════════════════════════════════
+# DUPLICATE / TOGGLE REMINDERS / RECURRING
+# ══════════════════════════════════════════════════════════════════
+
+class DuplicateTests(InvoicesAPITestCase):
+    def test_duplicate_resets_lifecycle_fields(self):
+        original = self._invoice(
+            status='sent', sent_at=timezone.now(), sent_via_platform=True,
+            pdf_url='https://example.com/x.pdf', pdf_generated_at=timezone.now(),
+        )
+        InvoiceItem.objects.create(invoice=original, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+
+        resp = self._post(reverse('invoices:invoice_duplicate', kwargs={'pk': original.pk}))
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+
+        self.assertEqual(body['status'], 'draft')
+        self.assertIsNone(body['invoice_number'])
+        self.assertEqual(body['pdf_url'], '')
+        self.assertIsNone(body['pdf_generated_at'])
+        self.assertFalse(body['sent_via_platform'])
+        self.assertNotEqual(body['view_token'], original.view_token)
+        self.assertEqual(len(body['items']), 1)
+
+    def test_duplicate_copies_client_snapshot(self):
+        original = self._invoice(client_name='Copy Me', client_email='copy@example.com')
+        resp = self._post(reverse('invoices:invoice_duplicate', kwargs={'pk': original.pk}))
+        self.assertEqual(resp.json()['client_name'], 'Copy Me')
+
+
+class ToggleAndRecurringTests(InvoicesAPITestCase):
+    def test_toggle_reminders(self):
+        invoice = self._invoice(reminders_enabled=True)
+        resp = self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))
+        self.assertFalse(resp.json()['reminders_enabled'])
+        resp = self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))
+        self.assertTrue(resp.json()['reminders_enabled'])
+
+    def test_pause_and_resume_recurring(self):
+        invoice = self._invoice(is_recurring=True, recurring_interval_days=30)
+        resp = self._post(reverse('invoices:invoice_pause_recurring', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['recurring_paused'])
+
+        resp = self._post(reverse('invoices:invoice_resume_recurring', kwargs={'pk': invoice.pk}))
+        self.assertFalse(resp.json()['recurring_paused'])
+
+    def test_pause_recurring_rejected_for_non_recurring_invoice(self):
+        invoice = self._invoice(is_recurring=False)
+        resp = self._post(reverse('invoices:invoice_pause_recurring', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+
+# ══════════════════════════════════════════════════════════════════
+# TIMELINE
+# ══════════════════════════════════════════════════════════════════
+
+class TimelineTests(InvoicesAPITestCase):
+    def test_timeline_includes_views_reminders_and_payments(self):
+        from apps.invoices.models import InvoiceReminder, InvoiceViewEvent
+
+        invoice = self._invoice(status='partially_paid', total=Decimal('100.00'))
+        InvoiceViewEvent.objects.create(invoice=invoice, source='link_click')
+        InvoiceReminder.objects.create(invoice=invoice, reminder_number=1, template_used='reminder_1')
+        InvoicePartialPayment.objects.create(invoice=invoice, amount=Decimal('40.00'), payment_date=date.today())
+
+        resp = self._get(reverse('invoices:invoice_timeline', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        types = {entry['type'] for entry in resp.json()['results']}
+        self.assertEqual(types, {'view', 'reminder', 'payment'})
+
+    def test_timeline_empty_for_a_fresh_draft(self):
+        invoice = self._invoice(status='draft')
+        resp = self._get(reverse('invoices:invoice_timeline', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.json()['results'], [])
+
+
+# ══════════════════════════════════════════════════════════════════
+# DASHBOARD RULES MATRIX — one test per rule, per the prompt's request
+# ══════════════════════════════════════════════════════════════════
+
+class DashboardSummaryRulesTests(InvoicesAPITestCase):
+    def _summary(self):
+        return self._get(reverse('invoices:invoice_summary')).json()
+
+    def test_draft_excluded_from_outstanding(self):
+        self._invoice(status='draft', total=Decimal('100'))
+        self.assertEqual(self._summary()['outstanding']['count'], 0)
+
+    def test_created_excluded_from_outstanding(self):
+        self._invoice(status='created', total=Decimal('100'))
+        self.assertEqual(self._summary()['outstanding']['count'], 0)
+
+    def test_sent_counted_in_outstanding(self):
+        self._invoice(status='sent', sent_at=timezone.now(), total=Decimal('100'))
+        summary = self._summary()
+        self.assertEqual(summary['outstanding']['count'], 1)
+        self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('100'))
+
+    def test_partially_paid_counted_in_outstanding_at_remaining_balance(self):
+        self._invoice(status='partially_paid', total=Decimal('100'), amount_paid=Decimal('40'))
+        summary = self._summary()
+        self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('60'))
+
+    def test_paid_excluded_from_outstanding(self):
+        self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'))
+        self.assertEqual(self._summary()['outstanding']['count'], 0)
+
+    def test_cancelled_excluded_from_outstanding(self):
+        self._invoice(status='cancelled', total=Decimal('100'))
+        self.assertEqual(self._summary()['outstanding']['count'], 0)
+
+    def test_refunded_excluded_from_outstanding(self):
+        self._invoice(status='refunded', total=Decimal('100'), amount_paid=Decimal('100'))
+        self.assertEqual(self._summary()['outstanding']['count'], 0)
+
+    def test_bad_debt_excluded_from_outstanding(self):
+        self._invoice(status='bad_debt', total=Decimal('100'))
+        self.assertEqual(self._summary()['outstanding']['count'], 0)
+
+    def test_paid_this_month_counts_paid_invoices_with_paid_date_this_month(self):
+        today = timezone.now().date()
+        self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'), paid_date=today)
+        summary = self._summary()
+        self.assertEqual(summary['total_paid_this_month']['count'], 1)
+        self.assertEqual(Decimal(summary['total_paid_this_month']['total']), Decimal('100'))
+
+    def test_paid_last_month_excluded_from_total_paid_this_month(self):
+        last_month = (timezone.now().date().replace(day=1) - timedelta(days=1))
+        self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'), paid_date=last_month)
+        self.assertEqual(self._summary()['total_paid_this_month']['count'], 0)
+
+    def test_cancelled_excluded_from_total_paid_even_with_a_paid_date(self):
+        today = timezone.now().date()
+        self._invoice(status='cancelled', total=Decimal('100'), amount_paid=Decimal('100'), paid_date=today)
+        self.assertEqual(self._summary()['total_paid_this_month']['count'], 0)
+
+    def test_draft_excluded_from_past_due(self):
+        self._invoice(status='draft', due_date=date(2020, 1, 1))
+        self.assertEqual(self._summary()['past_due']['count'], 0)
+
+    def test_sent_past_due_date_counted_in_past_due(self):
+        self._invoice(status='sent', sent_at=timezone.now(), due_date=date(2020, 1, 1), total=Decimal('100'))
+        summary = self._summary()
+        self.assertEqual(summary['past_due']['count'], 1)
+        self.assertEqual(Decimal(summary['past_due']['total']), Decimal('100'))
+
+    def test_sent_not_yet_due_excluded_from_past_due(self):
+        future = timezone.now().date() + timedelta(days=10)
+        self._invoice(status='sent', sent_at=timezone.now(), due_date=future, total=Decimal('100'))
+        self.assertEqual(self._summary()['past_due']['count'], 0)
+
+    def test_paid_excluded_from_past_due_even_if_due_date_passed(self):
+        self._invoice(status='paid', due_date=date(2020, 1, 1), total=Decimal('100'), amount_paid=Decimal('100'))
+        self.assertEqual(self._summary()['past_due']['count'], 0)
+
+
+# ══════════════════════════════════════════════════════════════════
+# AGING REPORT — boundary-day tests
+# ══════════════════════════════════════════════════════════════════
+
+class AgingReportTests(InvoicesAPITestCase):
+    def _report(self):
+        return self._get(reverse('invoices:invoice_aging_report')).json()
+
+    def _overdue_invoice(self, days_overdue, total=Decimal('100')):
+        due_date = timezone.now().date() - timedelta(days=days_overdue)
+        return self._invoice(status='sent', sent_at=timezone.now(), due_date=due_date, total=total)
+
+    def test_not_yet_due_is_current(self):
+        self._overdue_invoice(-5)
+        self.assertEqual(self._report()['current']['count'], 1)
+
+    def test_exactly_zero_days_is_current(self):
+        self._overdue_invoice(0)
+        self.assertEqual(self._report()['current']['count'], 1)
+
+    def test_one_day_overdue_is_1_30_bucket(self):
+        self._overdue_invoice(1)
+        self.assertEqual(self._report()['1_30']['count'], 1)
+
+    def test_exactly_30_days_is_1_30_bucket(self):
+        self._overdue_invoice(30)
+        self.assertEqual(self._report()['1_30']['count'], 1)
+
+    def test_exactly_31_days_is_31_60_bucket(self):
+        self._overdue_invoice(31)
+        self.assertEqual(self._report()['31_60']['count'], 1)
+
+    def test_exactly_60_days_is_31_60_bucket(self):
+        self._overdue_invoice(60)
+        self.assertEqual(self._report()['31_60']['count'], 1)
+
+    def test_exactly_61_days_is_61_90_bucket(self):
+        self._overdue_invoice(61)
+        self.assertEqual(self._report()['61_90']['count'], 1)
+
+    def test_exactly_90_days_is_61_90_bucket(self):
+        self._overdue_invoice(90)
+        self.assertEqual(self._report()['61_90']['count'], 1)
+
+    def test_exactly_91_days_is_over_90_bucket(self):
+        self._overdue_invoice(91)
+        self.assertEqual(self._report()['over_90']['count'], 1)
+
+    def test_draft_excluded_entirely_from_aging_report(self):
+        self._invoice(status='draft', due_date=date(2020, 1, 1))
+        report = self._report()
+        total_count = sum(bucket['count'] for bucket in report.values())
+        self.assertEqual(total_count, 0)
+
+    def test_bucket_totals_use_outstanding_amount_not_full_total(self):
+        invoice = self._overdue_invoice(1, total=Decimal('100'))
+        invoice.amount_paid = Decimal('30')
+        invoice.status = 'partially_paid'
+        invoice.save()
+        report = self._report()
+        self.assertEqual(Decimal(report['1_30']['total']), Decimal('70'))
+
+
+# ══════════════════════════════════════════════════════════════════
+# EXCHANGE RATE LOOKUP
+# ══════════════════════════════════════════════════════════════════
+
+class ExchangeRateLookupTests(InvoicesAPITestCase):
+    def test_latest_snapshot(self):
+        from apps.payments.models import ExchangeRateSnapshot
+        ExchangeRateSnapshot.objects.create(
+            date=timezone.now().date(), rates_to_usd={'USD': 1.0, 'EUR': 1.08},
+            source='test', fetched_at=timezone.now(),
+        )
+        resp = self._get(reverse('invoices:exchange_rate_lookup'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('EUR', resp.json()['rates_to_usd'])
+
+    def test_no_snapshots_returns_404(self):
+        resp = self._get(reverse('invoices:exchange_rate_lookup'))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_specific_date_lookup(self):
+        from apps.payments.models import ExchangeRateSnapshot
+        target_date = date(2026, 1, 1)
+        ExchangeRateSnapshot.objects.create(
+            date=target_date, rates_to_usd={'USD': 1.0}, source='test', fetched_at=timezone.now(),
+        )
+        resp = self._get(reverse('invoices:exchange_rate_lookup') + '?date=2026-01-01')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['date'], '2026-01-01')
+
+    def test_invalid_date_param_rejected(self):
+        resp = self._get(reverse('invoices:exchange_rate_lookup') + '?date=not-a-date')
+        self.assertEqual(resp.status_code, 400)
+
+
+# ══════════════════════════════════════════════════════════════════
+# PRESETS
+# ══════════════════════════════════════════════════════════════════
+
+class PresetTests(InvoicesAPITestCase):
+    def test_create_and_list_preset(self):
+        resp = self._post(reverse('invoices:preset_list'), {
+            'name': 'Web Dev', 'currency': 'USD', 'payment_terms': 14,
+            'items': [{'description': 'Design', 'unit_price': '500.00'}],
+        })
+        self.assertEqual(resp.status_code, 201)
+        resp = self._get(reverse('invoices:preset_list'))
+        self.assertEqual(len(resp.json()), 1)
+
+    def test_preset_requires_name(self):
+        resp = self._post(reverse('invoices:preset_list'), {'name': '  '})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_update_preset(self):
+        preset = InvoicePreset.objects.create(user=self.user, name='Original')
+        resp = self._put(reverse('invoices:preset_detail', kwargs={'pk': preset.pk}), {'name': 'Renamed'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['name'], 'Renamed')
+
+    def test_delete_preset(self):
+        preset = InvoicePreset.objects.create(user=self.user, name='Gone')
+        resp = self._delete(reverse('invoices:preset_detail', kwargs={'pk': preset.pk}))
+        self.assertEqual(resp.status_code, 204)
+        self.assertFalse(InvoicePreset.objects.filter(pk=preset.pk).exists())
+
+    def test_set_default_unsets_previous_default(self):
+        first = InvoicePreset.objects.create(user=self.user, name='First', is_default=True)
+        second = InvoicePreset.objects.create(user=self.user, name='Second')
+        resp = self._post(reverse('invoices:preset_set_default', kwargs={'pk': second.pk}))
+        self.assertEqual(resp.status_code, 200)
+        first.refresh_from_db()
+        self.assertFalse(first.is_default)
+        self.assertTrue(resp.json()['is_default'])
+
+    def test_create_invoice_from_preset(self):
+        preset = InvoicePreset.objects.create(
+            user=self.user, name='Web Dev', currency='USD', tax_rate=Decimal('10'), payment_terms=14,
+            client_name='Preset Client', client_email='preset@example.com',
+        )
+        from apps.invoices.models import InvoicePresetItem
+        InvoicePresetItem.objects.create(preset=preset, description='Design', quantity=Decimal('1'), unit_price=Decimal('500.00'))
+
+        resp = self._post(reverse('invoices:preset_create_invoice', kwargs={'pk': preset.pk}))
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertEqual(body['status'], 'draft')
+        self.assertEqual(body['client_name'], 'Preset Client')
+        self.assertEqual(len(body['items']), 1)
+        self.assertEqual(Decimal(body['subtotal']), Decimal('500.00'))
+        self.assertEqual(Decimal(body['total']), Decimal('550.00'))
+
+    def test_cannot_access_another_users_preset(self):
+        other_user = User.objects.create_user(email='other3@example.com', password='Sup3r$ecret1')
+        theirs = InvoicePreset.objects.create(user=other_user, name='Theirs')
+        resp = self._get(reverse('invoices:preset_detail', kwargs={'pk': theirs.pk}))
+        self.assertEqual(resp.status_code, 404)
+
+
+# ══════════════════════════════════════════════════════════════════
+# RATE LIMITING — every mutating endpoint
+# ══════════════════════════════════════════════════════════════════
+
+class RateLimitTests(InvoicesAPITestCase):
+    """
+    invoice_create is exercised with the full, real 30-request ramp-up
+    (matching apps.clients' established precedent) to prove the counter
+    itself actually increments correctly end to end. Every other mutating
+    endpoint pre-sets the same cache key _check_moderate_rate_limit reads
+    (count=30) and makes exactly one real request — still a real
+    end-to-end check that each endpoint's specific action-key string is
+    actually wired to the shared helper, just without repeating the
+    30-request ramp-up 19 more times.
+    """
+
+    def test_create_rate_limited_after_thirty_per_hour(self):
+        for i in range(30):
+            resp = self._post(reverse('invoices:invoice_list'), {
+                'client_name': f'Client {i}', 'client_email': f'c{i}@example.com',
+            })
+            self.assertEqual(resp.status_code, 201)
+        resp = self._post(reverse('invoices:invoice_list'), {'client_name': 'X', 'client_email': 'x@example.com'})
+        self.assertEqual(resp.status_code, 429)
+
+    def _drain(self, action_key):
+        cache.set(f'ratelimit_invoices_{action_key}_{self.user.pk}', 30, timeout=3600)
+
+    def test_update_rate_limited(self):
+        invoice = self._invoice(status='draft')
+        self._drain('update')
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {
+            'client_name': 'X', 'client_email': invoice.client_email,
+        })
+        self.assertEqual(resp.status_code, 429)
+
+    def test_delete_rate_limited(self):
+        invoice = self._invoice(status='draft')
+        self._drain('delete')
+        resp = self._delete(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_finalise_rate_limited(self):
+        invoice = self._invoice(status='draft')
+        self._drain('finalise')
+        resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_mark_sent_rate_limited(self):
+        invoice = self._invoice(status='created')
+        self._drain('mark_sent')
+        resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp.status_code, 429)
+
+    def test_mark_paid_rate_limited(self):
+        invoice = self._invoice(status='sent', sent_at=timezone.now())
+        self._drain('mark_paid')
+        resp = self._post(reverse('invoices:invoice_mark_paid', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_add_payment_rate_limited(self):
+        invoice = self._invoice(status='created')
+        self._drain('add_payment')
+        resp = self._post(reverse('invoices:invoice_add_payment', kwargs={'pk': invoice.pk}), {
+            'amount': '10.00', 'payment_date': str(date.today()),
+        })
+        self.assertEqual(resp.status_code, 429)
+
+    def test_undo_payment_rate_limited(self):
+        invoice = self._invoice(status='created')
+        InvoicePartialPayment.objects.create(invoice=invoice, amount=Decimal('10.00'), payment_date=date.today())
+        self._drain('undo_payment')
+        resp = self._delete(reverse('invoices:invoice_undo_payment', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_cancel_rate_limited(self):
+        invoice = self._invoice(status='sent', sent_at=timezone.now())
+        self._drain('cancel')
+        resp = self._post(reverse('invoices:invoice_cancel', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_refund_rate_limited(self):
+        invoice = self._invoice(status='paid', amount_paid=Decimal('50'))
+        self._drain('refund')
+        resp = self._post(reverse('invoices:invoice_refund', kwargs={'pk': invoice.pk}), {'amount': '10'})
+        self.assertEqual(resp.status_code, 429)
+
+    def test_bad_debt_rate_limited(self):
+        invoice = self._invoice(status='sent', sent_at=timezone.now())
+        self._drain('bad_debt')
+        resp = self._post(reverse('invoices:invoice_mark_bad_debt', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_duplicate_rate_limited(self):
+        invoice = self._invoice(status='draft')
+        self._drain('duplicate')
+        resp = self._post(reverse('invoices:invoice_duplicate', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_toggle_reminders_rate_limited(self):
+        invoice = self._invoice(status='draft')
+        self._drain('toggle_reminders')
+        resp = self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_pause_recurring_rate_limited(self):
+        invoice = self._invoice(status='draft', is_recurring=True, recurring_interval_days=30)
+        self._drain('pause_recurring')
+        resp = self._post(reverse('invoices:invoice_pause_recurring', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_resume_recurring_rate_limited(self):
+        invoice = self._invoice(status='draft', is_recurring=True, recurring_interval_days=30, recurring_paused=True)
+        self._drain('resume_recurring')
+        resp = self._post(reverse('invoices:invoice_resume_recurring', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_preset_create_rate_limited(self):
+        self._drain('preset_create')
+        resp = self._post(reverse('invoices:preset_list'), {'name': 'X'})
+        self.assertEqual(resp.status_code, 429)
+
+    def test_preset_update_rate_limited(self):
+        preset = InvoicePreset.objects.create(user=self.user, name='X')
+        self._drain('preset_update')
+        resp = self._put(reverse('invoices:preset_detail', kwargs={'pk': preset.pk}), {'name': 'Y'})
+        self.assertEqual(resp.status_code, 429)
+
+    def test_preset_delete_rate_limited(self):
+        preset = InvoicePreset.objects.create(user=self.user, name='X')
+        self._drain('preset_delete')
+        resp = self._delete(reverse('invoices:preset_detail', kwargs={'pk': preset.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_preset_set_default_rate_limited(self):
+        preset = InvoicePreset.objects.create(user=self.user, name='X')
+        self._drain('preset_set_default')
+        resp = self._post(reverse('invoices:preset_set_default', kwargs={'pk': preset.pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_preset_create_invoice_rate_limited(self):
+        preset = InvoicePreset.objects.create(user=self.user, name='X')
+        self._drain('preset_create_invoice')
+        resp = self._post(reverse('invoices:preset_create_invoice', kwargs={'pk': preset.pk}))
+        self.assertEqual(resp.status_code, 429)
