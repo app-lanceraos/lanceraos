@@ -17,85 +17,11 @@ import { ChevronDown, ChevronUp, Plus, Search, Trash2, X } from 'lucide-react'
 
 import FormField from './FormField'
 import FormSelect from './FormSelect'
-import { CURRENCY_OPTIONS, formatMoney, RECURRING_INTERVAL_OPTIONS } from '@/pages/invoiceHelpers'
+import {
+  CURRENCY_OPTIONS, formatMoney, RECURRING_INTERVAL_OPTIONS, computeTotals,
+} from '@/pages/invoiceHelpers'
 
 const BLANK_ITEM = { description: '', quantity: '1', unit_price: '' }
-
-export function blankInvoiceForm() {
-  return {
-    clientMode: 'onetime',
-    client: null,
-    client_name: '', client_email: '', client_company: '', client_address: '', client_phone: '',
-    is_one_time_client: true,
-    currency: 'USD',
-    tax_rate: '0', discount_amount: '0',
-    due_date: '',
-    notes: '', terms: '',
-    reminders_enabled: true,
-    late_fee_enabled: false, late_fee_rate: '2.00',
-    is_recurring: false, recurring_interval_days: 30, recurring_auto_send: false,
-    items: [{ ...BLANK_ITEM }],
-  }
-}
-
-export function invoiceToForm(invoice) {
-  return {
-    clientMode: invoice.client ? 'existing' : 'onetime',
-    client: invoice.client || null,
-    client_name: invoice.client_name || '', client_email: invoice.client_email || '',
-    client_company: invoice.client_company || '', client_address: invoice.client_address || '',
-    client_phone: invoice.client_phone || '',
-    is_one_time_client: invoice.is_one_time_client ?? !invoice.client,
-    currency: invoice.currency || 'USD',
-    tax_rate: String(invoice.tax_rate ?? '0'), discount_amount: String(invoice.discount_amount ?? '0'),
-    due_date: invoice.due_date || '',
-    notes: invoice.notes || '', terms: invoice.terms || '',
-    reminders_enabled: invoice.reminders_enabled ?? true,
-    late_fee_enabled: invoice.late_fee_enabled ?? false, late_fee_rate: String(invoice.late_fee_rate ?? '2.00'),
-    is_recurring: invoice.is_recurring ?? false,
-    recurring_interval_days: invoice.recurring_interval_days || 30,
-    recurring_auto_send: invoice.recurring_auto_send ?? false,
-    items: invoice.items?.length > 0
-      ? invoice.items.map((it) => ({ description: it.description, quantity: String(it.quantity), unit_price: String(it.unit_price) }))
-      : [{ ...BLANK_ITEM }],
-  }
-}
-
-export function formToPayload(form) {
-  return {
-    client: form.clientMode === 'existing' ? form.client : null,
-    client_name: form.client_name, client_email: form.client_email,
-    client_company: form.client_company, client_address: form.client_address, client_phone: form.client_phone,
-    currency: form.currency,
-    tax_rate: parseFloat(form.tax_rate) || 0,
-    discount_amount: parseFloat(form.discount_amount) || 0,
-    due_date: form.due_date || null,
-    notes: form.notes, terms: form.terms,
-    reminders_enabled: form.reminders_enabled,
-    late_fee_enabled: form.late_fee_enabled,
-    late_fee_rate: parseFloat(form.late_fee_rate) || 0,
-    is_recurring: form.is_recurring,
-    recurring_interval_days: form.is_recurring ? Number(form.recurring_interval_days) : null,
-    recurring_auto_send: form.recurring_auto_send,
-    is_one_time_client: form.clientMode === 'onetime',
-    items: form.items
-      .filter((it) => it.description.trim())
-      .map((it, i) => ({
-        description: it.description,
-        quantity: parseFloat(it.quantity) || 1,
-        unit_price: parseFloat(it.unit_price) || 0,
-        sort_order: i + 1,
-      })),
-  }
-}
-
-export function computeTotals(form) {
-  const subtotal = form.items.reduce((s, it) => s + (parseFloat(it.quantity) || 0) * (parseFloat(it.unit_price) || 0), 0)
-  const tax = subtotal * (parseFloat(form.tax_rate) || 0) / 100
-  const discount = parseFloat(form.discount_amount) || 0
-  const total = Math.max(0, subtotal + tax - discount)
-  return { subtotal, tax, discount, total }
-}
 
 export default function InvoiceFormFields({ form, setForm, errors = {}, clients = [] }) {
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))

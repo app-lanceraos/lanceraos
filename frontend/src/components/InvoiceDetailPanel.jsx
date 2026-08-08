@@ -22,10 +22,10 @@ import api from '@/lib/api'
 import FormField from './FormField'
 import FormSelect from './FormSelect'
 import FosAlert from './FosAlert'
-import InvoiceFormFields, { formToPayload, invoiceToForm } from './InvoiceFormFields'
+import InvoiceFormFields from './InvoiceFormFields'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
-  PAYMENT_SOURCE_OPTIONS, UNDO_CONFIRMATION_AGE_DAYS, daysSince,
+  PAYMENT_SOURCE_OPTIONS, UNDO_CONFIRMATION_AGE_DAYS, daysSince, formToPayload, invoiceToForm,
 } from '@/pages/invoiceHelpers'
 
 const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']

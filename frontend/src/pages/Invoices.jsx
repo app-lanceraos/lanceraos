@@ -25,10 +25,11 @@ import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import FosAlert from '@/components/FosAlert'
 import InvoiceDetailPanel from '@/components/InvoiceDetailPanel'
-import InvoiceFormFields, { blankInvoiceForm, formToPayload } from '@/components/InvoiceFormFields'
+import InvoiceFormFields from '@/components/InvoiceFormFields'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
   STATUS_FILTER_OPTIONS, SORT_OPTIONS, formatAggregate, daysOverdueLabel,
+  blankInvoiceForm, formToPayload,
 } from './invoiceHelpers'
 
 const LIMIT = 60

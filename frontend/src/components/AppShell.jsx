@@ -23,7 +23,7 @@
 // The AI assistant widget from v1 is NOT included — no AssistantWidget
 // source was provided and it wasn't requested for this pass.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import ReactDOM from 'react-dom'
 import {
   Bell, CheckCircle2, CheckCheck, CheckSquare, Clock, CreditCard, DollarSign,
@@ -560,7 +560,7 @@ export default function AppShell({ children }) {
           alignItems: 'center', gap: 10,
           height: '100%', padding: '0 16px', flexShrink: 0,
         }}>
-          <a href="/profile" style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <Link to="/profile" style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
             <div style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <LogoSVG size={32} />
             </div>
@@ -573,7 +573,7 @@ export default function AppShell({ children }) {
             }}>
               <WordmarkSVG width={107} height={16} />
             </div>
-          </a>
+          </Link>
           <button
             onClick={toggleSidebar}
             data-tooltip={collapsed ? 'Open sidebar' : 'Close sidebar'}
@@ -597,11 +597,11 @@ export default function AppShell({ children }) {
         </div>
 
         {isMobile && (
-          <a href="/profile">
+          <Link to="/profile">
             <div style={{ display: 'flex', alignItems: 'center', padding: '0 8px 0 14px', height: '100%', flexShrink: 0 }}>
               <LogoSVG size={30} />
             </div>
-          </a>
+          </Link>
         )}
 
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px 0 18px', minWidth: 0 }}>
@@ -697,14 +697,14 @@ export default function AppShell({ children }) {
         }}
       >
         {isMobile && (
-          <a href="/profile">
+          <Link to="/profile">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', height: 'var(--header-h)', flexShrink: 0 }}>
               <LogoSVG size={30} />
               <div style={{ display: 'flex', alignItems: 'center', height: 20 }}>
                 <WordmarkSVG width={107} height={16} />
               </div>
             </div>
-          </a>
+          </Link>
         )}
 
         <nav
