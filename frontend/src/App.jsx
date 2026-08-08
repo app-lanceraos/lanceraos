@@ -21,6 +21,7 @@ import DeletionReview from '@/pages/DeletionReview'
 import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
 import Clients from '@/pages/Clients'
+import Invoices from '@/pages/Invoices'
 import Onboarding from '@/pages/Onboarding'
 import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
@@ -82,6 +83,10 @@ export default function App() {
         <Route
           path="/clients"
           element={<PrivateRoute><AppShell><Clients /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/invoices"
+          element={<PrivateRoute><AppShell><Invoices /></AppShell></PrivateRoute>}
         />
 
         {/* No dedicated landing page yet (separate future work) — send
