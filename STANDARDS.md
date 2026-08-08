@@ -19,6 +19,11 @@ apply the same conventions to every module built after this one.
 - **Celery task names**: verb_noun_frequency style where it aids clarity in the beat schedule
   (`anonymize_expired_accounts`, `cleanup_expired_sessions`), matched by a beat-schedule key describing
   the same thing plus cadence (`'anonymize-expired-accounts-daily'`).
+- **Event names** (`core.events.on()`/`emit()`): PascalCase, past-tense (`InvoiceCreated`,
+  `InvoicePaid`), deliberately distinct from the existing snake_case convention used for
+  `AuditLog`/`log_event()` event strings (`account_anonymized`, `session_revoked`) — the two systems
+  serve different purposes (a business event other code can react to, vs. a security-audit record)
+  and the naming difference makes it visually obvious at a glance which one a given string belongs to.
 
 ## File headers
 

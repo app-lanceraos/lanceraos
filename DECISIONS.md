@@ -946,3 +946,51 @@ state the person has been signed out and needs to sign in again with their new p
 than trying to paper over a logout that's going to happen regardless.
 This closes the entire 12-item user/admin feedback plan, including this and the five rate-limiting
 gaps from the prior entry. See `USER_ADMIN_FEEDBACK_PLAN.md` for the complete final status.
+
+---
+
+Date: 08 August 2026
+Decision: Built the Module 2 foundations step (`core/events.py`, `core/money.py`, `apps/payments/`'s
+`ExchangeRateSnapshot` + its daily-fetch Celery task) per `INVOICES_CLIENTS_TECHNICAL_SPEC.md`
+Section 1/2/4 — the first prompt of the Invoices/Clients build, with no HTTP surface at all.
+
+**Event system scope**: `core/events.py`'s `on()`/`emit()` is deliberately minimal — no class
+hierarchy, no async dispatch, no persistence/replay — and `apps/invoices` (via a later prompt in
+this same module) is its first real consumer. `apps/users` deliberately stays on its existing
+inline `send_email()`/`log_event()` calls rather than being retrofitted onto this registry now.
+Reason: nothing in Users/Auth currently needs multiple independent subscribers reacting to the same
+action — every side effect there is already a direct, single-purpose call. Retrofitting it now would
+mean touching a large, already-built-and-audited surface for no functional gain. This is a known,
+deliberate, deferred cost, not something to be "discovered" as an inconsistency later — recorded
+here explicitly so it reads as intentional. Alternatives considered: retrofit `apps/users` onto
+`core/events.py` in this same pass for consistency (rejected — real risk to an already-audited
+surface, for zero behavior change); build a fuller event framework (persistence, async dispatch) now
+since Invoices will have many event types (rejected — speculative; the spec's 20-entry event catalog
+doesn't need any of that, per-function `try`/`except` + synchronous, in-order dispatch is enough).
+
+**Anchor-currency `ExchangeRateSnapshot` design, replacing v1's PKR-hardcoded approach**: stores
+`rates_to_usd[X]` (value of 1 unit of currency X in USD) for every currency the upstream API
+(`open.er-api.com`) returns, not just PKR/EUR/GBP. `core.money.Money.convert()` routes any
+currency pair through USD as the anchor. Reason: v1 hardcoded which currencies existed and needed a
+migration to add one; capturing the full API response and validating currencies against the
+snapshot's own keys at the serializer layer (per the spec's `Client.default_currency` design) means
+adding a currency later is a data change, not a migration — the next day's fetch just includes it.
+The daily fetch task inverts the API's USD→X rates into X→USD (`1 / api_rate`) — verified with a
+manual sanity check before shipping (PKR at `api_rate≈278.5` inverts to `≈0.0036` USD/PKR; EUR at
+`api_rate≈0.92` inverts to `≈1.09` USD/EUR — both correct), since getting this backwards would
+silently corrupt every downstream conversion with no obvious symptom.
+Alternatives considered: keep v1's PKR/EUR/GBP-only, hardcoded-choices approach (rejected — the
+exact migration-coupling problem this design avoids); a fixed `choices=` list on currency fields
+(rejected for the same reason, and specifically avoided on `Client.default_currency`/`Invoice.currency`
+too, per the spec).
+
+**A real Celery-retry nuance found while testing, not assumed**: `fetch_exchange_rates` mirrors
+`anonymize_expired_accounts`'s `try: raise self.retry(exc=exc, ...) except self.MaxRetriesExceededError`
+shape, per instruction. Checking Celery 5.6.3's actual `Task.retry()` source (rather than assuming)
+shows that because `exc` is passed, Celery re-raises that *original* exception once `max_retries` is
+exhausted (`raise_with_context(exc)`) — `MaxRetriesExceededError` is only raised when `retry()` is
+called with no `exc` at all. That `except` branch is therefore normally unreachable here, and
+equally so in the pre-existing `anonymize_expired_accounts` it mirrors — kept for defensive symmetry
+with that sibling task rather than removed, since fixing the older task's shape is out of scope for
+this pass. `apps/payments/tests.py` asserts the real, verified behavior (the original exception
+propagating after 4 total attempts via `.apply()`) rather than the originally-assumed one.

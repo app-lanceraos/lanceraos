@@ -521,9 +521,57 @@ dismissed_at      DateTimeField, nullable
 
 ---
 
+## `exchange_rate_snapshots` (`ExchangeRateSnapshot`, in `apps.payments`)
+
+One row per day, capturing the full USD-anchored rate table from `open.er-api.com` — the minimal
+foundational slice of Module 3 (Payments + Expenses + P&L) built ahead of that module's real scope,
+specifically so Module 2 (Invoices/Clients) has a real currency-conversion anchor to build against.
+See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 4.
+
+**Schema**:
+```
+id             UUIDField, primary key
+date           DateField, unique, db_index=True
+rates_to_usd   JSONField — value of 1 unit of that currency in USD, e.g.
+                {"PKR": 0.0036, "EUR": 1.08, "GBP": 1.27, "USD": 1.0}
+source         CharField — 'open.er-api.com'
+fetched_at     DateTimeField
+```
+
+1. **Mutable?** No — append-only, one row per date. The daily `fetch_exchange_rates` Celery task
+   checks for an existing row for today's date before creating a new one; it never updates an
+   existing row in place.
+2. **Soft deleted?** No — reference data with no deletion path at all.
+3. **Audit trail?** N/A — fetched by a scheduled task, not a user action, so there's no actor for
+   `core.AuditLog` to attribute it to.
+4. **Indexed?** `date` — both the daily-fetch idempotency check and every "most recent snapshot"
+   lookup filter on this field.
+5. **Encrypted?** No — exchange rates aren't sensitive data.
+6. **Cascade behavior?** N/A as of this table's creation — nothing FKs to it yet. The spec's planned
+   `Invoice.exchange_rate_snapshot` FK (Module 2) will use `SET_NULL`, since an invoice must survive
+   a snapshot row being pruned long after the fact.
+
+**Anchor-currency design, not v1's PKR-hardcoded approach**: `rates_to_usd[X]` is the value of one
+unit of currency X in USD, so any currency pair converts by routing through USD (via
+`core.money.Money.convert()`) rather than needing a direct rate for every pair, and adding a new
+currency later is a data change (the next day's fetch just includes it) — never a migration. The
+daily fetch task (`apps.payments.tasks.fetch_exchange_rates`, Celery Beat at 8:00 AM PKT) captures
+the API's full rate table, not just PKR/EUR/GBP, at no extra API cost.
+
+**Inversion direction — the one thing worth double-checking here**: `open.er-api.com` returns
+USD→X rates (1 USD = `api_rate` units of X). This table stores the opposite direction (1 unit of X
+= `rates_to_usd[X]` USD), so the fetch task inverts every rate (`1 / api_rate`) before storing.
+Getting this backwards would silently corrupt every downstream conversion — verified with a manual
+sanity check before shipping (PKR at `api_rate≈278.5` inverts to `≈0.0036` USD/PKR; EUR at
+`api_rate≈0.92` inverts to `≈1.09` USD/EUR — both the right order of magnitude) and covered by
+`apps/payments/tests.py`.
+
+---
+
 ## Not yet built
 
-Every table for Invoices, Clients, Payments, Tax, Health Score, Proposals, Contracts,
-Subscriptions — none of these modules exist yet. This document only covers what's actually in the
-database today (`apps.users`' six tables, `apps.admin_panel`'s one table — seven tables spanning
-two apps — and the three shared `core` tables).
+Every table for Invoices, Clients, Tax, Health Score, Proposals, Contracts, Subscriptions, and the
+rest of Payments (income tracking, expense tracking, P&L) — none of these exist yet. This document
+only covers what's actually in the database today (`apps.users`' six tables, `apps.admin_panel`'s
+one table, `apps.payments`'s one table — nine tables spanning three apps — and the three shared
+`core` tables).

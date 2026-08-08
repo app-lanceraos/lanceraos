@@ -609,7 +609,11 @@ inside the main frontend/ app.
 ---
 
 ### Module 2 — Invoices + Client CRM + Client Portal
-Status: [updated as built]
+Status: In progress — foundations built. `core/events.py` (minimal on()/emit() registry),
+`core/money.py` (Money value object), and `apps/payments/`'s `ExchangeRateSnapshot` model + daily
+Celery Beat fetch task exist and are tested. No `apps/clients/` or `apps/invoices/` code yet, and no
+HTTP surface at all for this module yet — see `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full
+design this is being built against, and `DECISIONS.md` (08 August 2026) for this step's reasoning.
 App: apps/invoices/
 
 The most important module. Two closely related features in one app.
@@ -955,7 +959,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | -       | -        | -     | Not started |
+| Invoices + Clients   | Foundations only | -        | 16 passing (`core`/`apps.payments`) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
