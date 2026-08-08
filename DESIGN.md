@@ -804,8 +804,11 @@ Do not create a local `inputStyle` object.
 DO use `var(--status-green/amber/red/blue/gray)` and their `-bg` / `-text`
 variants for all status colors. Never hardcode a status hex.
 
-DO use `var(--teal)` instead of `#00c896` when you need the teal accent
-in page content. This was the v1 failure point — `--teal` is now defined.
+DO use `var(--accent)` instead of `#00c896` when you need the teal accent
+in page content. This was the v1 failure point — v1 used `var(--teal, #00c896)`
+but never defined `--teal` at all, causing a silent fallback everywhere. v2's
+real, defined token for this color is `--accent`, not `--teal` — verified
+directly against `theme.css`, which defines no `--teal` custom property.
 
 DO render all status/category badges as:
 `border-radius: var(--radius-full); padding: 3px 8px; font-size: 0.72rem;

@@ -705,7 +705,7 @@ Key API endpoints — apps/clients/ (built, real):
 - GET/POST /api/clients/ (filter/search/sort per the Client CRM section above)
 - GET/PUT /api/clients/{id}/
 - POST /api/clients/{id}/archive/ + /restore/ + /flag/
-- GET/POST /api/clients/{id}/notes/ + DELETE /api/clients/{id}/notes/{note_id}/
+- GET/POST /api/clients/{id}/notes/ + PUT/DELETE /api/clients/{id}/notes/{note_id}/
 - GET /api/clients/{id}/analytics/ (payment_stats + reliability breakdown)
 - GET/POST /api/clients/tags/
 - POST /api/clients/{id}/tags/{tag_id}/attach/ + DELETE /api/clients/{id}/tags/{tag_id}/

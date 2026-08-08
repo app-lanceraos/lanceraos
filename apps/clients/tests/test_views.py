@@ -8,7 +8,7 @@ from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
 from apps.clients.models import Client as ClientModel
-from apps.clients.models import ClientTag
+from apps.clients.models import ClientNote, ClientTag
 from apps.users.models import User
 
 
@@ -291,7 +291,7 @@ class NotesTests(ClientsAPITestCase):
         note_resp = self._post(reverse('clients:client_notes', kwargs={'pk': created['id']}), {'content': 'Note.'})
         note_id = note_resp.json()['id']
 
-        resp = self._delete(reverse('clients:client_note_delete', kwargs={'pk': created['id'], 'note_id': note_id}))
+        resp = self._delete(reverse('clients:client_note_detail', kwargs={'pk': created['id'], 'note_id': note_id}))
         self.assertEqual(resp.status_code, 204)
 
         resp = self._get(reverse('clients:client_notes', kwargs={'pk': created['id']}))
@@ -303,7 +303,36 @@ class NotesTests(ClientsAPITestCase):
         note_resp = self._post(reverse('clients:client_notes', kwargs={'pk': client_a['id']}), {'content': 'Note.'})
         note_id = note_resp.json()['id']
 
-        resp = self._delete(reverse('clients:client_note_delete', kwargs={'pk': client_b['id'], 'note_id': note_id}))
+        resp = self._delete(reverse('clients:client_note_detail', kwargs={'pk': client_b['id'], 'note_id': note_id}))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_update_note_success(self):
+        created = self._create_client()
+        note_resp = self._post(reverse('clients:client_notes', kwargs={'pk': created['id']}), {'content': 'Original.'})
+        note_id = note_resp.json()['id']
+
+        resp = self._put(reverse('clients:client_note_detail', kwargs={'pk': created['id'], 'note_id': note_id}), {'content': 'Edited.'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['content'], 'Edited.')
+
+        resp = self._get(reverse('clients:client_notes', kwargs={'pk': created['id']}))
+        self.assertEqual(resp.json()[0]['content'], 'Edited.')
+
+    def test_update_note_rejects_empty_content(self):
+        created = self._create_client()
+        note_resp = self._post(reverse('clients:client_notes', kwargs={'pk': created['id']}), {'content': 'Original.'})
+        note_id = note_resp.json()['id']
+
+        resp = self._put(reverse('clients:client_note_detail', kwargs={'pk': created['id'], 'note_id': note_id}), {'content': '   '})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_update_note_from_wrong_client_404s(self):
+        client_a = self._create_client(name='A', email='a@example.com')
+        client_b = self._create_client(name='B', email='b@example.com')
+        note_resp = self._post(reverse('clients:client_notes', kwargs={'pk': client_a['id']}), {'content': 'Note.'})
+        note_id = note_resp.json()['id']
+
+        resp = self._put(reverse('clients:client_note_detail', kwargs={'pk': client_b['id'], 'note_id': note_id}), {'content': 'Hijacked.'})
         self.assertEqual(resp.status_code, 404)
 
 
@@ -389,4 +418,19 @@ class RateLimitTests(ClientsAPITestCase):
             self.assertEqual(resp.status_code, 200)
 
         resp = self._post(reverse('clients:client_archive', kwargs={'pk': clients[30].pk}))
+        self.assertEqual(resp.status_code, 429)
+
+    def test_update_note_rate_limited_after_thirty_per_hour(self):
+        # Note created directly via the ORM, not via client_notes' POST —
+        # this test is about the update action's own budget, not the
+        # separate note_create limit.
+        created = self._create_client()
+        note = ClientNote.objects.create(client_id=created['id'], author=self.user, content='Original.')
+        url = reverse('clients:client_note_detail', kwargs={'pk': created['id'], 'note_id': note.pk})
+
+        for i in range(30):
+            resp = self._put(url, {'content': f'Edit {i}.'})
+            self.assertEqual(resp.status_code, 200)
+
+        resp = self._put(url, {'content': 'One too many.'})
         self.assertEqual(resp.status_code, 429)

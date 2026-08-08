@@ -261,18 +261,42 @@ def client_notes(request, pk):
     return Response(ClientNoteSerializer(note).data, status=status.HTTP_201_CREATED)
 
 
-@api_view(['DELETE'])
+@api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
-def client_note_delete(request, pk, note_id):
-    """Permanently deletes a private note. Hard delete — no soft-delete/legal significance for this data."""
-    if _check_moderate_rate_limit('note_delete', request.user):
-        return _too_many_requests('Too many note deletions. Please try again later.')
+def client_note_detail(request, pk, note_id):
+    """
+    Updates or permanently deletes a private note. Hard delete — no
+    soft-delete/legal significance for this data.
+
+    The update path was missing from Step 2's original scope — a real
+    gap, not a deliberate immutability choice: unlike InvoiceComment
+    (deliberately immutable per the spec, no updated_at at all),
+    ClientNote has always carried a real updated_at field and was never
+    designed as append-only. See DECISIONS.md for the record of this gap
+    and why it's being closed here rather than left queued.
+    """
+    action = 'note_delete' if request.method == 'DELETE' else 'note_update'
+    if _check_moderate_rate_limit(action, request.user):
+        message = (
+            'Too many note deletions. Please try again later.' if request.method == 'DELETE'
+            else 'Too many note updates. Please try again later.'
+        )
+        return _too_many_requests(message)
 
     client = get_object_or_404(Client, pk=pk, user=request.user)
     note = get_object_or_404(ClientNote, pk=note_id, client=client)
-    note.delete()
-    logger.info('[CLIENTS] Note %s deleted from client %s.', note_id, client.pk)
-    return Response(status=status.HTTP_204_NO_CONTENT)
+
+    if request.method == 'DELETE':
+        note.delete()
+        logger.info('[CLIENTS] Note %s deleted from client %s.', note_id, client.pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    serializer = ClientNoteSerializer(note, data=request.data, context={'request': request})
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    serializer.save()
+    logger.info('[CLIENTS] Note %s updated on client %s.', note_id, client.pk)
+    return Response(ClientNoteSerializer(note).data)
 
 
 # ══════════════════════════════════════════════════════════════════

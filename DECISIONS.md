@@ -1055,3 +1055,31 @@ for-tests machinery for no benefit over a plain object, since the formula never 
 Django ORM behavior, just five attributes); deferring these tests until `apps.invoices` exists
 (rejected — the formula is the single most novel, error-prone piece of logic in this prompt and the
 one most worth verifying now, not on faith until a much later module).
+
+---
+
+Date: 08 August 2026
+Decision: Closed a real scope gap found while building the Step 3 frontend: `ClientNote` had no
+PATCH/PUT endpoint at all. This was a genuine Step 2 omission, not a deliberate immutability
+choice — unlike `InvoiceComment` (deliberately immutable per the spec, no `updated_at` field at
+all), `ClientNote` has always carried a real `updated_at` column and was never designed as
+append-only. The gap only surfaced because the frontend build tried to wire an edit UI to an
+endpoint that turned out not to exist.
+Fixed now rather than left queued, since it was small: `client_note_delete` (DELETE-only) became
+`client_note_detail` (`PUT` + `DELETE` on the same `<pk>/notes/<note_id>/` path — Django/DRF route
+one URL to one callable, so this project's existing `client_detail`-style combined-method pattern
+was reused rather than adding a second path). Reuses the existing `ClientNoteSerializer` unchanged
+(`content` was already its only writable field). Rate-limited under a new `note_update` action key,
+keeping the existing `note_delete` key's behavior on the DELETE branch unchanged. This is a real
+addition to `apps/clients/urls.py` outside that file's originally-scoped Step 2 work — noted here
+per that step's own instruction to flag exactly this kind of drift. 4 new tests added (update
+success, empty-content rejection, wrong-client 404, rate-limit exhaustion) — full suite (203 tests)
+confirmed passing after the change.
+Deliberately NOT done in this pass: wiring the frontend's `NotesTab` (built in Step 3) to actually
+call this new endpoint — that UI still only supports add/list/delete. The backend gap is closed;
+the "notes are add/list/delete-only in the UI" statement in the Step 3 summary is now only true on
+the frontend side, not because the backend still lacks the capability. A future small pass should
+add an edit affordance to `NotesTab` now that there's a real endpoint to wire it to.
+Alternatives considered: leave it explicitly queued for Step 13 (Comments) to pick up alongside
+`InvoiceComment` (rejected for this instance — small enough to fix immediately, and leaving a known,
+findable gap open invites the exact rediscovery cost this entry is meant to prevent).
