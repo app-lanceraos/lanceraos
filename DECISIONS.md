@@ -994,3 +994,64 @@ equally so in the pre-existing `anonymize_expired_accounts` it mirrors — kept 
 with that sibling task rather than removed, since fixing the older task's shape is out of scope for
 this pass. `apps/payments/tests.py` asserts the real, verified behavior (the original exception
 propagating after 4 total attempts via `.apply()`) rather than the originally-assumed one.
+
+---
+
+Date: 08 August 2026
+Decision: Built `apps/clients/` — `Client`, `ClientNote`, `ClientTag`, full CRUD + archive/restore/
+flag/notes/tags/analytics, per `INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 3. No `apps/invoices/`
+code exists yet; this is the client-side-only slice.
+
+**Reliability-score formula — a real, deliberate change from v1**, now the model's own
+`payment_stats` property (via `apps.clients.scoring.compute_reliability_stats`):
+  - paid on or before its due date: **+5**
+  - paid 1-30 days late: **-3**
+  - paid 31+ days late: **-10**
+  - `bad_debt` outcome: **-20**
+  - `cancelled`/`refunded` invoices: **excluded entirely** from scoring — not scored zero, not
+    counted in the denominator or in `total_invoiced`/`total_paid` either, since they were never a
+    real completed transaction.
+  - the score is the **normalized average** of points across qualifying invoices (`paid` or
+    `bad_debt` outcomes only), never a raw sum — a client with one bad invoice out of fifty must not
+    score the same as a client with one bad invoice out of one.
+Reason: a raw sum rewards volume over reliability (fifty perfect payments plus one bad-debt invoice
+would swamp a client who has only ever sent one bad invoice, even though the second client is
+objectively less reliable per-invoice) and gives a new client with few invoices no way to be scored
+meaningfully relative to an established one. The normalized average fixes both. Recorded here
+plainly since it's a real formula change, not a port — v1's original file wasn't available in this
+session (see the note below), so v1's exact prior bands couldn't be diffed against; this formula was
+built directly from the decisions doc's explicit point values given at kickoff.
+Alternatives considered: a raw sum (rejected — the volume-reward and new-client problems above); a
+0-100 rescaled score instead of a raw point average (not implemented — no product requirement
+specified a particular display scale yet; the raw average is simpler and just as transparent, and
+rescaling can be a pure presentation-layer decision later without touching this formula).
+
+**A real gap, surfaced rather than worked around**: v1's original `apps/clients` (or equivalent)
+source file — referenced by `INVOICES_MODULE_KICKOFF.md`/`INVOICES_CLIENTS_TECHNICAL_SPEC.md` as
+"uploaded to project knowledge" for porting `Client.payment_stats` and the exact v1 flag-type
+choices — was not present anywhere in this actual repository or available to this session. Per
+`INVOICES_MODULE_KICKOFF.md`'s own explicit warning ("before asserting that anything already exists
+... search for it and confirm. If it can't be found, say so plainly rather than proceeding on an
+assumption"), this is recorded plainly rather than invented and presented as a port: `flag_type`'s
+three choices (`payment_risk`/`communication`/`other`) were reconstructed fresh for v2, not carried
+over from a v1 file this session never had access to. Kept deliberately small and easy to extend via
+migration later, rather than guessing at a larger v1 set that can't be verified.
+
+**Testing the reliability-score formula without a real Invoice model — a real judgment call, not a
+mechanical one.** The prompt that requested this work offered two explicit options: a lightweight
+local test-only stand-in Django model, or deferring these specific tests until `apps.invoices`
+exists. A third option was used instead: the scoring formula was extracted into
+`apps.clients.scoring.compute_reliability_stats()`, a pure function operating on any object exposing
+`.status`/`.total`/`.amount_paid`/`.paid_date`/`.due_date` — real `Invoice` rows once that model
+exists, or a plain `SimpleNamespace` today. `Client.payment_stats` calls it with
+`self._invoices_for_scoring()` (which returns `None`, safely, until `apps.invoices` adds its reverse
+relation — see `DATABASE.md`'s `clients` entry). This let the formula be written AND thoroughly,
+directly tested this round (every point band, the cancelled/refunded exclusion, the
+normalized-average-not-raw-sum behavior with a concrete 10-invoice example) with zero dependency on
+Invoice, a fake Django model, or a database table that doesn't need to exist for this specific logic
+to be correct.
+Alternatives considered: a test-only stand-in Django model (rejected — extra migration/model-only-
+for-tests machinery for no benefit over a plain object, since the formula never actually needs
+Django ORM behavior, just five attributes); deferring these tests until `apps.invoices` exists
+(rejected — the formula is the single most novel, error-prone piece of logic in this prompt and the
+one most worth verifying now, not on faith until a much later module).

@@ -16,6 +16,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/', include('apps.users.urls')),
     path('api/admin/', include('apps.admin_panel.urls')),
+    path('api/clients/', include('apps.clients.urls')),
     # Lives at the root, not under api/auth/ — matches what the frontend
     # (AppShell.jsx) already calls directly via api.get('/notifications/'),
     # which resolves against the API base URL, not through /auth/.
@@ -26,8 +27,8 @@ urlpatterns = [
     path('api/notifications/<uuid:notification_id>/read/', mark_notification_read, name='notification_read'),
     # Future modules add their own include() here as they're built:
     # path('api/invoices/', include('apps.invoices.urls')),
-    # path('api/payments/', include('apps.payments.urls')),
-    # etc.
+    # etc. (apps.payments has no HTTP surface of its own — it's consumed
+    # internally by other modules, e.g. apps.clients' currency validation.)
 ]
 
 if settings.DEBUG:

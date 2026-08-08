@@ -568,10 +568,114 @@ sanity check before shipping (PKR at `api_rate≈278.5` inverts to `≈0.0036` U
 
 ---
 
+## `clients` (`Client`, in `apps.clients`)
+
+The Client CRM, built ahead of `apps.invoices` (which doesn't exist yet — see
+`INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 3). No FK to Invoice exists here at all; the future
+`Invoice.client` FK will point at this table with `SET_NULL`.
+
+**Schema**:
+```
+id                          UUIDField, primary key
+user                        FK → User, CASCADE
+name / email / company / address / phone / country
+default_currency            CharField(3), no choices= — see note below
+default_payment_terms       PositiveIntegerField, default=30
+notes                       TextField, blank — a single freeform field on the client card itself,
+                              distinct from the structured ClientNote model below
+is_active                   BooleanField, default=True — archive flag
+is_flagged / flag_reason / flag_type / flagged_at   — manual flagging only
+auto_flagged                BooleanField, default=False — reserved, no logic fires yet
+portal_token                CharField(32), unique, db_index=True — persistent magic-link credential
+tags                        ManyToManyField(ClientTag, blank=True)
+created_at / updated_at
+```
+
+1. **Mutable?** Yes — a live CRM record, edited from the client detail page.
+2. **Soft deleted?** No — archived via `is_active`, not deleted. Deletion is a separate, explicit,
+   invoice-preserving-by-default action (matching v1's `keep_invoices` choice) that belongs to a
+   later prompt once `apps.invoices` exists to actually offer that choice.
+3. **Audit trail?** Via `core.events` (`ClientCreated`/`ClientArchived`/`ClientFlagged`), not a
+   bespoke log — no handlers are subscribed yet (see `core/events.py`'s own docstring); a no-op
+   `emit()` today is correct, not a bug. Turning these into real `core.AuditLog` rows happens when
+   this module's notification/audit-log integration is built.
+4. **Indexed?** `(user, is_active)`, `(user, email)`, `portal_token` (implicit via `unique=True`).
+5. **Encrypted?** No — no CNIC/NTN-class data lives on this model.
+6. **Cascade behavior?** `CASCADE` from `User` (a deleted/anonymized user's clients have no
+   independent meaning). The future `Invoice.client` FK will be `SET_NULL` in the other direction.
+
+**`default_currency` has no `choices=`, deliberately** — the same fix already applied to
+`ExchangeRateSnapshot`. Validated at write time in `apps.clients.serializers.validate_currency_code`
+against the most recent `ExchangeRateSnapshot.rates_to_usd` keys (plus `'USD'`, always valid even
+before a single snapshot exists), so adding a currency later is a data change, never a migration.
+
+**`portal_token`** is generated in `Client.save()` (via `secrets.token_urlsafe(16)`, uniqueness
+checked in a loop against real collisions) only when blank — an explicitly-supplied value is never
+overwritten. This is the actual magic-link credential for the future client portal ("view all
+invoices with this freelancer"), not a session token — it's persistent and non-expiring by design.
+
+**`payment_stats` (property, not a column)** — computes reliability-score stats by calling
+`apps.clients.scoring.compute_reliability_stats()` with `self._invoices_for_scoring()`, which
+returns `None` (not an exception) when `apps.invoices` hasn't added its reverse relation to this
+model yet — this is what makes `GET /api/clients/<pk>/analytics/` callable today, correctly
+returning a zero/`None`-shaped response rather than a 500. See the `client_analytics` endpoint and
+`DECISIONS.md` for the reliability-score formula itself and the reasoning behind testing it via a
+model-agnostic pure function rather than a fake Invoice stand-in.
+
+**`flag_type` choices** — `payment_risk`/`communication`/`other`. Reconstructed for v2; v1's
+original flag-type choice set wasn't available in this session (see `DECISIONS.md`). Kept
+deliberately small; extend via migration if a real business need for finer-grained categories
+emerges.
+
+---
+
+## `client_notes` (`ClientNote`, in `apps.clients`)
+
+Structured, authored notes — distinct from `Client.notes` (the single freeform field on the client
+card itself above). Private, never client-visible.
+
+**Schema**: `id`, `client` (FK, `CASCADE`), `author` (FK → `User`, `CASCADE`), `content`,
+`created_at`, `updated_at`.
+
+1. **Mutable?** Yes — `content`/`updated_at` change on edit.
+2. **Soft deleted?** No — a real, immediate hard delete; no business/legal significance to
+   preserving a dead private note.
+3. **Audit trail?** No dedicated `AuditLog` rows — low-stakes freelancer-private scratch notes, not
+   the class of action `CLAUDE.md`'s audit rules target.
+4. **Indexed?** `(client, created_at)` — the note list is always scoped to one client, by recency.
+5. **Encrypted?** No.
+6. **Cascade behavior?** `CASCADE` from both `Client` and `User` — a note has no meaning independent
+   of the client it's about or the freelancer who wrote it.
+
+---
+
+## `client_tags` (`ClientTag`, in `apps.clients`)
+
+Minimal, user-scoped label. Named as owned by `apps/clients/` in the decisions doc but never fully
+designed there; this is the real implementation.
+
+**Schema**: `id`, `user` (FK, `CASCADE`), `name` (CharField(40)), `color` (CharField(7), validated
+as a hex value via `RegexValidator`). `unique_together = [('user', 'name')]`.
+
+1. **Mutable?** Yes — name/color editable by their owner.
+2. **Soft deleted?** No — a tag with no clients attached has no residual meaning; hard delete is
+   correct.
+3. **Audit trail?** No — a cosmetic organizational label, not a security- or finance-relevant action.
+4. **Indexed?** Implicit via the `unique_together(user, name)` constraint — also serves as the
+   lookup index for "does this user already have a tag with this name" (enforced at both the
+   serializer layer, for a clean 400, and the database layer — verified directly with a real
+   `IntegrityError` test, not just assumed from the serializer check).
+5. **Encrypted?** No.
+6. **Cascade behavior?** `CASCADE` from `User`. Removing a tag detaches it from every `Client`
+   automatically via the M2M table — no separate cleanup needed.
+
+---
+
 ## Not yet built
 
-Every table for Invoices, Clients, Tax, Health Score, Proposals, Contracts, Subscriptions, and the
-rest of Payments (income tracking, expense tracking, P&L) — none of these exist yet. This document
-only covers what's actually in the database today (`apps.users`' six tables, `apps.admin_panel`'s
-one table, `apps.payments`'s one table — nine tables spanning three apps — and the three shared
-`core` tables).
+Every table for Invoices (the app itself — `Client`/`ClientNote`/`ClientTag` above are
+`apps.clients`, not `apps.invoices`), Tax, Health Score, Proposals, Contracts, Subscriptions, and
+the rest of Payments (income tracking, expense tracking, P&L) — none of these exist yet. This
+document only covers what's actually in the database today (`apps.users`' six tables,
+`apps.admin_panel`'s one table, `apps.payments`'s one table, `apps.clients`' three tables — twelve
+tables spanning four apps — and the three shared `core` tables).

@@ -333,6 +333,10 @@ lanceraos/                          <- Django project root
 │   ├── ai.py              ← Shared Groq API utility (call_groq) [not yet built]
 │   ├── email.py            ← Resend HTTP API sender (send_email)
 │   ├── encryption.py        ← Fernet + HMAC blind-index helpers
+│   ├── events.py             ← Minimal on()/emit() event registry — apps.clients is its first
+│   │                            real consumer; apps.users deliberately not retrofitted (see
+│   │                            DECISIONS.md, 08 August 2026)
+│   ├── money.py               ← Immutable Money value object (USD-anchored currency conversion)
 │   ├── middleware.py        ← Request ID injection + API request logging
 │   ├── models.py            ← AuditLog, ApiRequestLog
 │   ├── observability.py     ← Logging/request-metadata helpers used by all modules
@@ -352,8 +356,13 @@ lanceraos/                          <- Django project root
 │   │   ├── views_users.py                  <- Search/detail/sessions/suspend/reactivate/grant/revoke
 │   │   ├── views_audit.py                   <- Audit log viewer (filterable)
 │   │   └── views_deletion.py                 <- Deletion-queue management
-│   ├── invoices/                   <- Invoice lifecycle + client CRM + portal
-│   ├── payments/                   <- Income, expenses, P&L, CSV import
+│   ├── invoices/                   <- Invoice lifecycle + client portal — NOT YET BUILT
+│   ├── clients/                    <- Client CRM — BUILT. Client/ClientNote/ClientTag,
+│   │                                  scoring.py (reliability-score formula, pure/testable
+│   │                                  independent of Invoice — see DECISIONS.md)
+│   ├── payments/                   <- BUILT so far: ExchangeRateSnapshot + daily fetch task
+│   │                                  only (the currency-conversion anchor). Income tracking,
+│   │                                  expenses, P&L, CSV import — NOT YET BUILT.
 │   ├── tax/                        <- FBR tax, SRO 586, income certificate
 │   ├── health/                     <- Financial health score
 │   ├── proposals/                  <- Proposals + AI writer
@@ -609,12 +618,14 @@ inside the main frontend/ app.
 ---
 
 ### Module 2 — Invoices + Client CRM + Client Portal
-Status: In progress — foundations built. `core/events.py` (minimal on()/emit() registry),
-`core/money.py` (Money value object), and `apps/payments/`'s `ExchangeRateSnapshot` model + daily
-Celery Beat fetch task exist and are tested. No `apps/clients/` or `apps/invoices/` code yet, and no
-HTTP surface at all for this module yet — see `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full
-design this is being built against, and `DECISIONS.md` (08 August 2026) for this step's reasoning.
-App: apps/invoices/
+Status: In progress. Foundations (`core/events.py`, `core/money.py`, `apps/payments/`'s
+`ExchangeRateSnapshot` + daily fetch task) and the Client CRM backend (`apps/clients/` — see its own
+subsection below) are built and tested. `apps/invoices/` itself — invoice lifecycle, PDF generation,
+email delivery, the client portal, payment claims, recurring invoices, reminders — does not exist
+yet, and neither does any frontend for this module. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the
+full design this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
+App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
+currency-conversion anchor both depend on)
 
 The most important module. Two closely related features in one app.
 
@@ -643,13 +654,32 @@ Configurable per invoice. Maximum 3 reminders.
 Public invoice page: unique token-based URL (never guessable).
 Client views invoice, submits payment confirmation, sees payment history.
 
-Client CRM:
-Client records with name, email, company, address, default currency.
-Auto-populate invoice fields when client is selected.
-Payment history per client. Reliability score based on payment speed,
-consistency, and total value - weighted, transparent, shown with breakdown.
-Flag problematic clients with reason. Archive inactive clients.
-Client statement PDF (WeasyPrint) covering all transactions in a period.
+Client CRM — backend built (apps/clients/), no frontend yet:
+Client records with name, email, company, address, phone, country, default currency (no hardcoded
+choices — validated against apps.payments' ExchangeRateSnapshot instead, so a new currency is a
+data change, never a migration), default payment terms, and a freeform notes field. A separate
+ClientNote model holds structured, timestamped, freelancer-authored notes (private, never
+client-visible) — distinct from the single freeform field on the client record itself. ClientTag is
+a minimal user-scoped label (name + hex color), many-to-many with Client.
+Archive (is_active=False) instead of delete — deletion is a separate, later, invoice-preserving-by-
+default action that needs apps/invoices to actually have that choice. Flag problematic clients
+manually, with a reason and one of three flag types (payment_risk/communication/other); an
+auto_flagged field is reserved on the model for a future score-threshold-derived version of this,
+but no logic fires it yet.
+Reliability score: computed via Client.payment_stats, weighted and transparent, shown with a
+breakdown by outcome — +5 paid on/before the due date, -3 paid 1-30 days late, -10 paid 31+ days
+late, -20 bad_debt; cancelled/refunded invoices excluded entirely (not counted at all, not scored
+zero); the score itself is the NORMALIZED AVERAGE across qualifying invoices (paid or bad_debt
+outcomes only), never a raw sum. Every number in this is genuinely zero/None today, honestly, not
+faked — apps/invoices doesn't exist yet, so there are no real invoices to score. See DECISIONS.md
+(08 August 2026) for the full formula reasoning.
+List/search/filter/sort: filter by active/flagged/archived/all/new_this_month (with_overdue exists
+as a filter option but returns empty until apps/invoices exists — there's no overdue data yet, and
+returning "all clients" instead would be misleading); search by name/email/company; sort by
+name/recent now, total_invoiced/overdue fall back to name-sort until apps/invoices exists (both need
+real invoice data to mean anything).
+Client statement PDF (WeasyPrint) and one-time-client conversion are NOT built yet — both need real
+invoice data and are scoped to a later step in this module's build order.
 
 Client Portal (secure, PIN-authenticated):
 Clients access a dedicated portal via token link in invoice emails.
@@ -671,7 +701,16 @@ freelancer. If unread after exactly 1 hour: one reminder email + one
 in-app notification. No further reminders. Freelancer replies from
 within the app. Messages stored with sender, timestamp, read status.
 
-Key API endpoints:
+Key API endpoints — apps/clients/ (built, real):
+- GET/POST /api/clients/ (filter/search/sort per the Client CRM section above)
+- GET/PUT /api/clients/{id}/
+- POST /api/clients/{id}/archive/ + /restore/ + /flag/
+- GET/POST /api/clients/{id}/notes/ + DELETE /api/clients/{id}/notes/{note_id}/
+- GET /api/clients/{id}/analytics/ (payment_stats + reliability breakdown)
+- GET/POST /api/clients/tags/
+- POST /api/clients/{id}/tags/{tag_id}/attach/ + DELETE /api/clients/{id}/tags/{tag_id}/
+
+Key API endpoints — apps/invoices/ (not built yet):
 - CRUD /api/invoices/
 - POST /api/invoices/{id}/send/
 - POST /api/invoices/{id}/mark-paid/
@@ -679,8 +718,7 @@ Key API endpoints:
 - POST /api/invoices/{id}/payments/ (partial payment)
 - GET /api/invoices/public/{token}/ (unauthenticated)
 - POST /api/invoices/public/{token}/claim/ (payment claim)
-- CRUD /api/clients/
-- GET /api/clients/{id}/statement/pdf/
+- GET /api/clients/{id}/statement/pdf/ (needs real invoice data)
 - GET/POST /api/clients/{id}/messages/
 - POST /api/portal/{token}/pin/verify/
 - POST /api/portal/{token}/pin/resend/
@@ -959,7 +997,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | Foundations only | -        | 16 passing (`core`/`apps.payments`) | In progress |
+| Invoices + Clients   | Foundations + apps/clients/ built; apps/invoices/ not started | - | 76 passing (`core`/`apps.payments`/`apps.clients`) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
