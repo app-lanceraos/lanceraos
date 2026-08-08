@@ -1,0 +1,260 @@
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Sans'; src: url('fonts/IBMPlexSans-Regular.ttf'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('fonts/IBMPlexSans-SemiBold.ttf'); font-weight: 600; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('fonts/IBMPlexMono-Regular.ttf'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('fonts/IBMPlexMono-SemiBold.ttf'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 20mm 18mm 16mm;
+    @bottom-left {
+      content: "{{ freelancer.business_name|default:freelancer.display_name }}{% if invoice.user.email %} · {{ invoice.user.email }}{% endif %}";
+      font-family: 'IBM Plex Mono';
+      font-size: 7pt;
+      color: #a3a099;
+    }
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: 'IBM Plex Mono';
+      font-size: 7pt;
+      color: #a3a099;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'IBM Plex Sans', sans-serif;
+    color: #171614;
+    background: #fdfdfb;
+    font-size: 9.5pt;
+    line-height: 1.55;
+  }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7.5pt;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: #6b8570;
+    margin: 0 0 3mm;
+  }
+
+  header.top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10mm;
+  }
+  .brand { display: flex; gap: 4.5mm; align-items: center; }
+  .brand img.logo { width: 12mm; height: 12mm; }
+  .brand h1 {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 19pt;
+    font-weight: 600;
+    margin: 0 0 1mm;
+    letter-spacing: -0.01em;
+  }
+  .brand .tagline { font-size: 8.5pt; color: #78756c; }
+
+  .meta {
+    text-align: right;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8.5pt;
+    color: #78756c;
+  }
+  .meta .num { font-size: 10pt; font-weight: 600; color: #171614; margin-bottom: 2mm; }
+  .meta .row { white-space: nowrap; margin-top: 1mm; }
+  .meta .row b { color: #171614; font-weight: 400; margin-left: 3mm; }
+
+  hr.rule { border: none; border-top: 0.3mm solid #171614; margin: 0 0 8mm; }
+
+  .parties { display: flex; justify-content: space-between; margin-bottom: 10mm; }
+  .party { width: 46%; }
+  .party .label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7.5pt; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #6b8570; margin-bottom: 2.5mm;
+  }
+  .party .name { font-size: 11pt; font-weight: 600; margin-bottom: 1mm; }
+  .party .line { color: #4b4941; font-size: 9pt; }
+
+  table.items { width: 100%; border-collapse: collapse; margin-bottom: 2mm; }
+  table.items thead { display: table-header-group; }
+  table.items thead th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7.5pt; letter-spacing: 0.14em; text-transform: uppercase;
+    color: #78756c; text-align: left;
+    padding: 0 0 3.5mm;
+    border-bottom: 0.4mm solid #171614;
+  }
+  table.items thead th.num { text-align: right; }
+  table.items tbody td {
+    padding: 4mm 0;
+    border-bottom: 0.2mm solid #e8e6de;
+    font-size: 9pt;
+    vertical-align: top;
+  }
+  table.items tbody td.num { text-align: right; font-family: 'IBM Plex Mono', monospace; }
+  table.items tbody td.desc { padding-right: 6mm; }
+
+  .totals { width: 62mm; margin-left: auto; margin-top: 6mm; }
+  .totals .row { display: flex; justify-content: space-between; font-size: 9pt; color: #4b4941; padding: 1.4mm 0; }
+
+  .total-due-block { margin: 12mm 0 14mm; text-align: right; }
+  .total-due-block .lbl {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8pt; letter-spacing: 0.16em; text-transform: uppercase;
+    color: #6b8570; margin-bottom: 1mm;
+  }
+  .total-due-block .amt {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 34pt; font-weight: 600; color: #171614; line-height: 1;
+  }
+  .total-due-block .pkr { font-size: 7.5pt; color: #a3a099; margin-top: 2mm; }
+
+  .lower { display: flex; justify-content: space-between; gap: 10mm; margin-top: 4mm; }
+  .notes-block { width: 56%; }
+  .notes-block .label, .pay-block .label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7.5pt; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #6b8570; margin-bottom: 2.5mm;
+  }
+  .notes-block p { font-size: 8.5pt; color: #4b4941; margin: 0 0 3mm; }
+
+  .pay-block { width: 40%; }
+  .pay-block .method {
+    display: flex; justify-content: space-between;
+    font-size: 8.5pt; padding: 1.6mm 0; border-bottom: 0.2mm solid #e8e6de;
+  }
+  .pay-block .method span:first-child {
+    font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; color: #a3a099; text-transform: uppercase;
+  }
+
+  .sign-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 16mm; }
+  .pay-online { display: flex; align-items: center; gap: 4mm; }
+  .pay-online img.qr { width: 18mm; height: 18mm; }
+  .pay-online .label {
+    font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; letter-spacing: 0.14em;
+    text-transform: uppercase; color: #6b8570; margin-bottom: 1.5mm;
+  }
+  .pay-online .link { font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; color: #4b4941; white-space: nowrap; }
+
+  .sign-block { width: 55mm; text-align: right; }
+  .sign-block img.sig { height: 15mm; margin-bottom: -2mm; }
+  .sign-block .line {
+    border-top: 0.3mm solid #171614; padding-top: 2.5mm;
+    font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt;
+    letter-spacing: 0.12em; text-transform: uppercase; color: #a3a099;
+  }
+</style>
+</head>
+<body>
+
+  <header class="top">
+    <div class="brand">
+      {% if freelancer.logo %}<img class="logo" src="{{ freelancer.logo }}" alt="">{% endif %}
+      <div>
+        <div class="eyebrow">Invoice</div>
+        <h1>{{ freelancer.business_name|default:freelancer.display_name }}</h1>
+        <div class="tagline">{% if freelancer.profession %}{{ freelancer.profession }}{% if freelancer.city %} · {% endif %}{% endif %}{{ freelancer.city }}{% if freelancer.city %}, {% endif %}{{ freelancer.country }}</div>
+      </div>
+    </div>
+    <div class="meta">
+      <div class="num">{{ invoice.invoice_number|default:"DRAFT" }}</div>
+      <div class="row">Issue <b>{{ invoice.issue_date|date:"d M Y" }}</b></div>
+      <div class="row">Due <b>{% if invoice.due_date %}{{ invoice.due_date|date:"d M Y" }}{% else %}—{% endif %}</b></div>
+    </div>
+  </header>
+
+  <hr class="rule">
+
+  <div class="parties">
+    <div class="party">
+      <div class="label">Bill to</div>
+      <div class="name">{{ invoice.client_name|default:"No client yet" }}</div>
+      {% if invoice.client_company %}<div class="line">{{ invoice.client_company }}</div>{% endif %}
+      {% if invoice.client_address %}<div class="line">{{ invoice.client_address|linebreaksbr }}</div>{% endif %}
+      {% if invoice.client_email %}<div class="line">{{ invoice.client_email }}</div>{% endif %}
+    </div>
+    <div class="party" style="text-align:right;">
+      <div class="label">From</div>
+      <div class="name">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+      <div class="line">{{ freelancer.display_name }}</div>
+      {% if freelancer.address_line1 %}<div class="line">{{ freelancer.address_line1 }}</div>{% endif %}
+      <div class="line">{{ invoice.user.email }}</div>
+    </div>
+  </div>
+
+  <table class="items">
+    <thead>
+      <tr>
+        <th style="width:52%;">Description</th>
+        <th class="num" style="width:12%;">Qty</th>
+        <th class="num" style="width:18%;">Rate</th>
+        <th class="num" style="width:18%;">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in invoice.items.all %}
+      <tr>
+        <td class="desc">{{ item.description }}</td>
+        <td class="num">{{ item.quantity|floatformat:"-2" }}</td>
+        <td class="num">{{ invoice.currency_symbol }}{{ item.unit_price|floatformat:2|intcomma }}</td>
+        <td class="num">{{ invoice.currency_symbol }}{{ item.total|floatformat:2|intcomma }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <div class="row"><span>Subtotal</span><span>{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</span></div>
+    <div class="row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>
+    {% if invoice.discount_amount %}<div class="row"><span>Discount</span><span>−{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+  </div>
+
+  <div class="total-due-block">
+    <div class="lbl">Total due</div>
+    <div class="amt">{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</div>
+    {% if invoice.client_currency_conversion %}<div class="pkr">≈ {{ invoice.client_currency_conversion.symbol }}{{ invoice.client_currency_conversion.converted_total|floatformat:2|intcomma }} at rate {{ invoice.client_currency_conversion.rate }}</div>{% endif %}
+  </div>
+
+  <div class="lower">
+    <div class="notes-block">
+      {% if invoice.notes %}
+      <div class="label">Notes</div>
+      <p>{{ invoice.notes|linebreaksbr }}</p>
+      {% endif %}
+      {% if invoice.terms %}
+      <div class="label" style="margin-top:6mm;">Terms</div>
+      <p>{{ invoice.terms|linebreaksbr }}</p>
+      {% endif %}
+    </div>
+    <div class="pay-block">
+      <div class="label">Payment methods</div>
+      {% if freelancer.bank_name %}<div class="method"><span>Bank transfer</span><span>{{ freelancer.bank_name }} — {{ freelancer.bank_account_number }}</span></div>{% endif %}
+      {% if freelancer.payoneer_email %}<div class="method"><span>Payoneer</span><span>{{ freelancer.payoneer_email }}</span></div>{% endif %}
+      {% if freelancer.jazzcash_number %}<div class="method"><span>JazzCash</span><span>{{ freelancer.jazzcash_number }}</span></div>{% endif %}
+      {% if freelancer.easypaisa_number %}<div class="method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
+    </div>
+  </div>
+
+  <div class="sign-row">
+    <div class="pay-online">
+      {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+      <div>
+        <div class="label">Pay online</div>
+        <div class="link">{{ invoice.payment_page_url }}</div>
+      </div>
+    </div>
+    <div class="sign-block">
+      {% if signature_url %}<img class="sig" src="{{ signature_url }}" alt="">{% endif %}
+      <div class="line">Authorised signature</div>
+    </div>
+  </div>
+
+</body>
+</html>

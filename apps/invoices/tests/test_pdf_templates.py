@@ -1,0 +1,215 @@
+# apps/invoices/tests/test_pdf_templates.py
+"""
+Step 7 — standalone template-render tests for the three PDF templates
+(professional/minimal/modern.html), using Django's own template engine
+only (render_to_string). Deliberately does NOT invoke WeasyPrint — the
+actual HTML->PDF render call/endpoint is Step 7b's job, and WeasyPrint
+isn't a project dependency yet (see requirements.txt's own comment).
+This only proves the *data wiring* is correct: real fields bind where
+placeholders used to be, the line-items loop holds up for few and many
+items, and the client-currency-conversion line shows/hides correctly.
+
+A separate, throwaway WeasyPrint-based render (multi-page stress test,
+repeating header/sidebar, the new @page footer on professional.html) was
+run manually against these same fixtures during this step's build — see
+DECISIONS.md for what that confirmed. Not committed here on purpose.
+"""
+from datetime import date, datetime
+from decimal import Decimal
+
+from django.template.loader import render_to_string
+from django.test import TestCase
+
+from apps.clients.models import Client
+from apps.invoices.models import Invoice, InvoiceItem
+from apps.payments.models import ExchangeRateSnapshot
+from apps.users.models import User
+
+TEMPLATES = ['invoices/professional.html', 'invoices/minimal.html', 'invoices/modern.html']
+
+
+def make_freelancer(email='freelancer@example.com'):
+    user = User.objects.create_user(email=email, password='Sup3r$ecret1')
+    profile = user.profile
+    profile.display_name = 'Fahad Ali'
+    profile.business_name = 'Horizon Studio'
+    profile.profession = 'Brand & Product Design'
+    profile.city = 'Lahore'
+    profile.country = 'Pakistan'
+    profile.logo = 'https://res.cloudinary.com/demo/image/upload/logo.png'
+    profile.bank_name = 'Meezan Bank'
+    profile.bank_account_number = '0110109887'
+    profile.payoneer_email = 'hello@horizonstudio.pk'
+    profile.save()
+    return user
+
+
+def make_snapshot(**rates):
+    # rates_to_usd is a plain JSON dict of floats (see ExchangeRateSnapshot's
+    # own help_text) — capture_issue_rate() and client_currency_conversion
+    # both do Decimal(str(rate)) on the way out, not on the way in.
+    base = {'USD': 1.0}
+    base.update({k: float(v) for k, v in rates.items()})
+    return ExchangeRateSnapshot.objects.create(
+        date=date(2026, 8, 1), rates_to_usd=base,
+        source='test', fetched_at=datetime(2026, 8, 1, 6, 0, 0),
+    )
+
+
+def make_invoice_with_items(user, n_items=3, **overrides):
+    defaults = {
+        'user': user, 'invoice_number': None, 'status': 'created',
+        'client_name': 'Callahan & Reyes LLP', 'client_email': 'accounts@callahanreyes.com',
+        'client_address': '412 Marlowe Ave, Suite 6\nAustin, TX, United States',
+        'currency': 'USD', 'due_date': date(2026, 8, 19), 'notes': 'Thanks for the business.',
+        'terms': 'Due within 14 days.', 'tax_rate': Decimal('5'),
+    }
+    defaults.update(overrides)
+    invoice = Invoice.objects.create(**defaults)
+    for i in range(n_items):
+        InvoiceItem.objects.create(
+            invoice=invoice, description=f'Line item {i + 1}',
+            quantity=Decimal('1'), unit_price=Decimal('100.00'), sort_order=i + 1,
+        )
+    invoice.recalculate_totals()
+    invoice.save()
+    return invoice
+
+
+class PdfTemplateRenderTests(TestCase):
+    """Every template must render, for every currency-line scenario, without raising."""
+
+    def setUp(self):
+        self.user = make_freelancer()
+
+    def render_all(self, invoice):
+        return {t: render_to_string(t, {'invoice': invoice, 'freelancer': self.user.profile}) for t in TEMPLATES}
+
+    def test_renders_with_few_items(self):
+        invoice = make_invoice_with_items(self.user, n_items=2)
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertIn('Line item 1', html, template)
+            self.assertIn('Line item 2', html, template)
+            self.assertEqual(html.count('Line item'), 2, f'{template}: expected exactly 2 item rows')
+
+    def test_renders_with_many_items(self):
+        """The whole point of the two-zone design (handoff notes) is that this must hold up at any count."""
+        invoice = make_invoice_with_items(self.user, n_items=25)
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertEqual(html.count('Line item'), 25, f'{template}: expected exactly 25 item rows')
+
+    def test_renders_with_zero_items(self):
+        """A draft with no items yet is a valid, permissive state — must not raise."""
+        invoice = make_invoice_with_items(self.user, n_items=0)
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertNotIn('Line item', html, template)
+
+    def test_client_name_falls_back_when_blank(self):
+        invoice = make_invoice_with_items(self.user, n_items=1, client_name='', client_email='')
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertIn('No client yet', html, template)
+
+    # ── Currency conversion line — the part that must actually be exercised ──
+
+    def test_currency_line_shown_for_different_currency_client(self):
+        snapshot = make_snapshot(EUR=Decimal('1.08'), PKR=Decimal('0.0036'))
+        client = Client.objects.create(user=self.user, name='Callahan', email='c@example.com', default_currency='PKR')
+        invoice = make_invoice_with_items(
+            self.user, n_items=1, client=client, currency='EUR',
+            rate_to_usd_at_issue=Decimal('1.08'), exchange_rate_snapshot=snapshot,
+        )
+        conversion = invoice.client_currency_conversion
+        self.assertIsNotNone(conversion)
+        self.assertEqual(conversion['currency'], 'PKR')
+        # 1.08 / 0.0036 = 300.00
+        self.assertEqual(conversion['rate'], Decimal('300.00'))
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertIn('at rate 300.00', html, template)
+
+    def test_currency_line_omitted_for_same_currency_client(self):
+        snapshot = make_snapshot(PKR=Decimal('0.0036'))
+        client = Client.objects.create(user=self.user, name='Callahan', email='c@example.com', default_currency='USD')
+        invoice = make_invoice_with_items(
+            self.user, n_items=1, client=client, currency='USD',
+            rate_to_usd_at_issue=Decimal('1'), exchange_rate_snapshot=snapshot,
+        )
+        self.assertIsNone(invoice.client_currency_conversion)
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertNotIn('at rate', html, template)
+
+    def test_currency_line_omitted_for_one_time_client(self):
+        """No Client record at all — Invoice has no client-currency snapshot field to fall back to, so omit entirely."""
+        snapshot = make_snapshot(PKR=Decimal('0.0036'))
+        invoice = make_invoice_with_items(
+            self.user, n_items=1, client=None, is_one_time_client=True, currency='EUR',
+            rate_to_usd_at_issue=Decimal('1.08'), exchange_rate_snapshot=snapshot,
+        )
+        self.assertIsNone(invoice.client_currency_conversion)
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertNotIn('at rate', html, template)
+
+    def test_currency_line_omitted_when_usd_anchor_has_no_snapshot(self):
+        """
+        Documents the real, found gap (see DECISIONS.md): capture_issue_rate()
+        never attaches an exchange_rate_snapshot for a USD invoice (USD is
+        the anchor, no conversion needed for its OWN rate), so there's
+        nothing here to source a *different* currency's rate from either,
+        even though the client's currency genuinely differs. Not fixed in
+        this step — this test pins the current, honest behavior so a
+        future fix is a deliberate test change, not an accidental one.
+        """
+        client = Client.objects.create(user=self.user, name='Callahan', email='c@example.com', default_currency='PKR')
+        invoice = make_invoice_with_items(
+            self.user, n_items=1, client=client, currency='USD',
+            rate_to_usd_at_issue=Decimal('1'), exchange_rate_snapshot=None,
+        )
+        self.assertIsNone(invoice.client_currency_conversion)
+
+    def test_currency_line_omitted_when_client_currency_missing_from_snapshot(self):
+        """Defensive: the day's fetch didn't happen to include the client's currency."""
+        snapshot = make_snapshot(EUR=Decimal('1.08'))  # no PKR key
+        client = Client.objects.create(user=self.user, name='Callahan', email='c@example.com', default_currency='PKR')
+        invoice = make_invoice_with_items(
+            self.user, n_items=1, client=client, currency='EUR',
+            rate_to_usd_at_issue=Decimal('1.08'), exchange_rate_snapshot=snapshot,
+        )
+        self.assertIsNone(invoice.client_currency_conversion)
+
+    def test_currency_symbol_property(self):
+        invoice = make_invoice_with_items(self.user, n_items=1, currency='PKR')
+        self.assertEqual(invoice.currency_symbol, 'Rs. ')
+        invoice2 = make_invoice_with_items(self.user, n_items=1, currency='AUD')
+        self.assertEqual(invoice2.currency_symbol, 'AUD ')
+
+    def test_payment_page_url_property(self):
+        invoice = make_invoice_with_items(self.user, n_items=1)
+        self.assertIn(f'/pay/{invoice.view_token}', invoice.payment_page_url)
+
+    def test_logo_and_signature_and_qr_slots_are_conditional_not_hardcoded(self):
+        """No template should reference the old local test asset filenames anymore."""
+        invoice = make_invoice_with_items(self.user, n_items=1)
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertNotIn('logo_placeholder.png', html, template)
+            self.assertNotIn('logo_on_dark.png', html, template)
+            self.assertNotIn('payment_qr.png', html, template)
+            self.assertNotIn('signature_clean.png', html, template)
+
+    def test_logo_renders_when_present(self):
+        invoice = make_invoice_with_items(self.user, n_items=1)
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertIn(self.user.profile.logo, html, template)
+
+    def test_signature_omitted_when_no_field_available(self):
+        """Real, found gap: no signature URL field exists anywhere yet (see DECISIONS.md) — must degrade gracefully, not error."""
+        invoice = make_invoice_with_items(self.user, n_items=1)
+        html = render_to_string('invoices/minimal.html', {'invoice': invoice, 'freelancer': self.user.profile})
+        self.assertNotIn('class="sig"', html)

@@ -77,6 +77,9 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # intcomma/floatformat for money formatting in invoice PDF templates
+    # (Step 7) — thousands-separator display only, no models/migrations.
+    'django.contrib.humanize',
     # Third party
     'rest_framework',
     'rest_framework_simplejwt',

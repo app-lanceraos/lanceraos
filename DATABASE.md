@@ -175,6 +175,11 @@ client_onboarding_enabled, client_onboarding_message, income_type
 last_email_changed_at, created_at, updated_at
 ```
 
+**No signature-image field exists** (checked directly while wiring the invoice PDF templates,
+Step 7 — see this document's own `invoices` section and DECISIONS.md, 09 August 2026). `logo` is
+the only stored Cloudinary URL here; a signature equivalent, if added later, would plausibly live
+alongside it in the Business group above.
+
 1. **Mutable?** Yes — this is a live profile record, edited via Settings.
 2. **Soft deleted?** N/A — deleted alongside `User` via `anonymize()`, never independently.
 3. **Audit trail?** No dedicated audit rows for profile edits themselves — the security-relevant
@@ -762,6 +767,19 @@ undo-restore branches) also now excludes `'refunded'` — a status v1 never had 
 never needed to name it; extending the same protection to it is this step's own necessary addition,
 not a v1 behavior change. `_capture_payment_rate()` and its PKR fields are dropped entirely — no
 rate is stored at payment time, per the anchor-currency design.
+
+**Step 7 additions — three `@property` methods, no schema change, no migration**: `currency_symbol`,
+`payment_page_url`, and `client_currency_conversion`, added to back the three PDF templates
+(`apps/invoices/templates/invoices/*.html`). See DECISIONS.md (09 August 2026) for the full
+conversion-line design. Two real gaps surfaced while wiring these, neither fixed here:
+- `capture_issue_rate()` never attaches `exchange_rate_snapshot` for a USD invoice (USD is the
+  anchor, needs no rate for its own currency) — so `client_currency_conversion` can never produce a
+  line for a USD invoice even when the client's currency differs, since there's no snapshot to pull
+  a *different* currency's rate from.
+- There is no signature-image URL field anywhere (`FreelancerProfile`, `InvoiceDesign`, and
+  `Invoice` all checked directly) — `FreelancerProfile.logo` exists, a signature equivalent doesn't.
+  The PDF templates' signature `<img>` is gated behind a context variable (`signature_url`) no
+  current field backs, so it simply never renders yet.
 
 ---
 

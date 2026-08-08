@@ -1325,5 +1325,117 @@ platform tracking); the dashboard's Outstanding KPI counts only platform-verifie
 functions now carry an explicit cross-reference comment pointing at each other and explaining why
 they differ on this one dimension, so a future reader doesn't "fix" this as an inconsistency.
 
+Date: 09 August 2026
+Decision: Step 7 — wired the three real, WeasyPrint-tested PDF templates (Professional/Minimal/
+Modern, handed off as static HTML with hardcoded sample data) to real `Invoice`/`Client`/
+`InvoiceItem`/`FreelancerProfile` fields. Data-wiring only, per that step's explicit scope — the
+actual WeasyPrint render endpoint, font sourcing, and `InvoiceDesign.design_data` decomposition are
+still not built (Steps 7b/8).
+
+**Template location**: the handoff notes described `backend/templates/invoices/*.html`, but this
+project's Django root has no literal `backend/` directory (the repo root itself is the project
+root, per this document's own structure listing) — placed at the Django-idiomatic equivalent
+instead: `apps/invoices/templates/invoices/{professional,minimal,modern}.html`. `TEMPLATES[0]` in
+`config/settings.py` already has `APP_DIRS: True` and an empty `DIRS: []`, so this needed zero
+settings changes; referenced as `'invoices/professional.html'` etc., matching Django's own
+app-template-dirs convention (namespaced by app label to avoid collision with a future app's own
+`invoices/` folder — there isn't one, but the convention exists for exactly this reason).
+
+**Client-currency-conversion line — final implemented design**: added
+`Invoice.client_currency_conversion` (a property, no migration) rather than a template
+filter/tag or a separate context-builder module, since the templates already receive `invoice`
+directly and a property keeps the one piece of real arithmetic (division) in one testable place
+each of the three templates can reach identically. Returns `None` — meaning the template omits the
+"≈ {symbol}{converted_total} at rate {rate}" line entirely — whenever there's genuinely nothing
+correct to show, rather than guessing a default:
+  - `invoice.client` is null (a one-time client). `Invoice` has no client-currency snapshot field
+    at all (only `client_name`/`client_email`/`client_company`/`client_address`/`client_phone` are
+    frozen at creation) — verified directly against the model, not assumed — so there is truly no
+    currency info to convert to for a one-time client. Chose to omit the line entirely rather than
+    inventing a fallback currency, per the room this step's prompt explicitly left for that choice.
+  - The client's `default_currency` matches the invoice's own `currency` — never shows "≈ $100 at
+    rate 1.00".
+  - No `exchange_rate_snapshot` is attached to the invoice.
+  - The client's currency isn't a key in that snapshot's `rates_to_usd` (an obscure currency the
+    day's upstream fetch didn't happen to include).
+`rate` is computed as `rate_to_usd_at_issue / rates_to_usd[client_currency]` (units of the client's
+currency per 1 unit of the invoice's currency) and `converted_total = invoice.total * rate` — this
+is the same arithmetic direction the original hardcoded placeholder text implied ("≈ Rs. 1,384,220
+at rate 279.08" for a $4,960.00 USD invoice: 1,384,220 / 4,960 ≈ 279.08), just generalized to any
+currency pair instead of being PKR-specific. Verified with real fixture data via both a committed
+Django-only render test and a throwaway WeasyPrint render: a €3,465.00 invoice
+(`rate_to_usd_at_issue=1.08`) to a PKR client (`rates_to_usd['PKR']=0.0036`) produced `rate=300.00`
+and `converted_total=Rs. 1,039,500.00` — exact arithmetic match (3,465 × 300 = 1,039,500).
+
+**Real, found gap — `capture_issue_rate()` never attaches a snapshot for a USD invoice**: `Invoice.
+capture_issue_rate()` (Step 5) returns early for `currency == 'USD'` (USD is the anchor currency,
+`rate_to_usd_at_issue = 1`, no conversion needed for USD's own rate) *without* setting
+`exchange_rate_snapshot`. That means `client_currency_conversion` can never show a conversion line
+for a USD-currency invoice, even when the client's currency genuinely differs — there's no snapshot
+attached to source the client's currency's rate from at all. Confirmed directly (not assumed) via a
+dedicated test (`test_currency_line_omitted_when_usd_anchor_has_no_snapshot`) that pins this as the
+current, honest behavior. Not fixed here — `capture_issue_rate()` is Step 5/6 lifecycle code, out of
+this step's data-wiring-only scope; flagging for whoever picks this up next, likely by having it
+attach the latest snapshot even for USD so a *different* currency's rate is always reachable.
+
+**Real, found gap — no signature URL field exists anywhere**: `FreelancerProfile` has `logo` (a
+Cloudinary URL `CharField`, confirmed directly) but no equivalent signature field, and neither does
+`InvoiceDesign` or `Invoice` itself — checked directly across all three models, not assumed. The
+handoff templates' `signature_clean.png` (`minimal.html`/`modern.html` only — `professional.html`
+never had a signature image, only the "Authorised signature" text line) is now gated behind
+`{% if signature_url %}`, a context variable no current model field backs — the `<img>` simply
+never renders until a future step adds a real field (most likely on `FreelancerProfile`, alongside
+`logo`) and a render view that passes it in. Not invented here. Same treatment for the QR code:
+`{% if qr_code_data_uri %}` — the actual QR *image* generation (matching v1's `generate_qr_image`
+in `v1-reference/apps/invoices/pdf_generator.py`, which encoded the invoice's payment-page URL) is
+Step 7b's job once the render endpoint exists; this step only added
+`Invoice.payment_page_url` (a property, `f'{FRONTEND_URL}/pay/{view_token}'`, mirroring v1's
+`get_payment_page_url()`) for the "Pay online" link text and for whatever Step 7b's QR generator
+will encode.
+
+**`modern.html`'s sidebar logo**: the handoff HTML referenced a separate `logo_on_dark.png` (a
+presumed light-on-dark logo variant for its dark purple sidebar) distinct from the other two
+templates' `logo_placeholder.png`. `FreelancerProfile` only stores one logo URL — bound both to the
+same `freelancer.logo`. A logo with dark colors of its own may not read well against Modern's dark
+sidebar; not solved here (would need a second stored variant, a real product decision, not a
+data-wiring one).
+
+**`professional.html` didn't have the `@page` counter footer** the other two do (predates that
+test, per the handoff notes) — added, using the identical `@bottom-left`/`@bottom-right` /
+`counter(page)`/`counter(pages)` technique already proven in `minimal.html`/`modern.html`, not a new
+approach. The page margin is deliberately asymmetric (`margin: 0 0 16mm 0` — zero on top/right/left,
+16mm bottom only) rather than matching Minimal's all-sides margin, specifically so the decorative
+full-bleed "ledger spine" (a `position:absolute` element reaching the true left/top page edge) keeps
+bleeding correctly — confirmed with a real WeasyPrint render plus a raw pixel check at the page's
+left edge (`RGB(168,128,59)` from x=0 through the spine's 3mm width, matching its declared
+`#a8813c` almost exactly), not assumed safe. The old static, absolutely-positioned `footer.pagefoot`
+(hardcoded "Page 1 of 1") was removed entirely in favor of the real margin-box counters; verified via
+a 22-item stress invoice producing a real 3-page PDF with "Page 1 of 3" / "Page 2 of 3" / "Page 3 of
+3" each appearing on the correct page.
+
+**`django.contrib.humanize` added to `INSTALLED_APPS`**: needed for the `intcomma` filter
+(thousands-separator money formatting, e.g. `€3,300.00` not `€3300.00`) — a standard Django contrib
+app, no models/migrations, not part of "the render pipeline" this step was told not to build.
+
+**NTN deliberately not wired onto the "From" party block**: `FreelancerProfile.ntn_encrypted` is
+Fernet-encrypted with only a `set_ntn()` method — no corresponding decrypt-for-display getter exists
+yet (confirmed directly, not assumed). Displaying it on an invoice PDF would mean writing new
+decryption-calling code, which is a materially different, bigger change than binding an existing
+plaintext field; the "From" block's NTN line was dropped rather than left showing fake placeholder
+text. Wise wasn't added to the conditional payment-methods list for the same reason in spirit —
+`FreelancerProfile.wise_profile_id`/`wise_access_token`/`wise_refresh_token` are OAuth plumbing, not
+a client-facing payment identifier, so there's no field that means what the old hardcoded "Wise —
+fahad.horizon" row implied.
+
+Verified: `apps.invoices` test suite (189 tests, 14 net new, in `test_pdf_templates.py`) passing
+using Django's own `render_to_string` only — deliberately no WeasyPrint dependency in the committed
+suite, since WeasyPrint isn't a project dependency yet (Step 7b). Additionally, and not committed:
+WeasyPrint + PyMuPDF were installed into the venv temporarily for this session only (never added to
+`requirements.txt`) to actually render all three templates against fixture data, including a
+22-item multi-page stress case, confirming real computed page counts, the repeating table header
+(`minimal.html`), the repeating sidebar (`modern.html`), the new `professional.html` footer, and the
+currency-conversion arithmetic end-to-end against a rendered PDF — then uninstalled afterward,
+restoring the venv to its prior state. `manage.py check` clean.
+
 Verified: one migration (`0004_invoice_refunded_amount`) applied against the real local Postgres
 database. Full test suite (376 tests, 8 net new/changed) passing; `manage.py check` clean.

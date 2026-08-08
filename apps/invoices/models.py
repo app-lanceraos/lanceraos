@@ -65,6 +65,15 @@ RECURRING_INTERVAL_CHOICES = [
 # views.py.
 NON_OVERDUE_STATUSES = ('paid', 'cancelled', 'refunded', 'draft', 'created', 'bad_debt')
 
+# Display symbols for the PDF templates (Step 7) — not exhaustive, since
+# ExchangeRateSnapshot.rates_to_usd can hold any currency the upstream API
+# returns, not just these four. Falls back to the bare currency code for
+# anything not listed here. Same short list already used frontend-side
+# (frontend/src/pages/clientHelpers.js's CURRENCY_OPTIONS, v1's
+# getCurrencySymbol in v1-reference/frontend/src/pages/Invoices.jsx) —
+# kept in sync deliberately, not redesigned independently.
+CURRENCY_SYMBOLS = {'USD': '$', 'EUR': '€', 'GBP': '£', 'PKR': 'Rs. '}
+
 
 class Invoice(models.Model):
     """
@@ -333,6 +342,83 @@ class Invoice(models.Model):
     def is_editable(self):
         """Only draft invoices can be edited. Ported from v1 — not in the spec's field table (it's a property, not a column) but real, correct, unchanged logic worth keeping."""
         return self.status == 'draft'
+
+    # ── PDF template properties (Step 7 — data-wiring only) ─────────
+
+    @property
+    def currency_symbol(self):
+        """`{{ invoice.currency_symbol }}` in the PDF templates. See CURRENCY_SYMBOLS above."""
+        return CURRENCY_SYMBOLS.get(self.currency, self.currency + ' ')
+
+    @property
+    def payment_page_url(self):
+        """
+        The public "pay online" URL the PDF's QR code should encode —
+        same construction v1's get_payment_page_url() used
+        (v1-reference/apps/invoices/pdf_generator.py), just as a property
+        instead of a free function so the templates can reference it
+        directly. The actual QR *image* is intentionally NOT generated
+        here — that image-generation call is Step 7b's job, once the real
+        render endpoint exists; this only computes the URL the image
+        would encode. Templates should treat the QR `<img>` itself as
+        conditional on a `qr_code_data_uri` context variable Step 7b will
+        supply (there's nothing to compute that image from yet).
+        """
+        return f'{settings.FRONTEND_URL}/pay/{self.view_token}'
+
+    @property
+    def client_currency_conversion(self):
+        """
+        Backs the PDF's "≈ {symbol}{converted_total} at rate {rate}" line
+        — the freelancer's own informational cross-check of what this
+        invoice is worth in their client's preferred currency. Frozen at
+        issue time (rate_to_usd_at_issue + exchange_rate_snapshot), not a
+        live conversion — consistent with this model's anchor-currency
+        design elsewhere (capture_issue_rate(), update_paid_status()).
+
+        Returns None — meaning the template shows no conversion line at
+        all — in every case where there's genuinely nothing correct to
+        show, rather than guessing:
+          - `client` is null (a one-time client). Invoice has no
+            client-currency snapshot field at all (only client_name/
+            client_email/client_company/client_address/client_phone are
+            snapshotted), so there is truly no currency info to convert
+            to. Documented in DECISIONS.md rather than inventing one.
+          - The client's currency matches the invoice's own currency —
+            never show "≈ $100 at rate 1.0".
+          - No exchange_rate_snapshot is attached to this invoice. Real,
+            found gap, recorded in DECISIONS.md: capture_issue_rate()
+            (Step 5) returns early for a USD invoice (USD is the anchor
+            currency, rate_to_usd_at_issue=1) WITHOUT setting
+            exchange_rate_snapshot, since converting USD-to-USD needs no
+            snapshot — but that means a USD invoice has no snapshot to
+            source a *different* currency's rate from either, so this
+            property can never show a conversion line for a USD invoice,
+            even when the client's currency differs. Not fixed here —
+            capture_issue_rate() is Step 5/6 lifecycle code, out of this
+            step's data-wiring scope.
+          - The client's currency isn't a key in that snapshot's
+            rates_to_usd (e.g. an obscure currency the upstream fetch
+            didn't include that day).
+        """
+        if not self.client:
+            return None
+        client_currency = self.client.default_currency
+        if client_currency == self.currency:
+            return None
+        if self.rate_to_usd_at_issue is None or not self.exchange_rate_snapshot:
+            return None
+        client_rate_to_usd = self.exchange_rate_snapshot.rates_to_usd.get(client_currency)
+        if not client_rate_to_usd:
+            return None
+        rate = (self.rate_to_usd_at_issue / Decimal(str(client_rate_to_usd))).quantize(Decimal('0.01'))
+        converted_total = (self.total * rate).quantize(Decimal('0.01'))
+        return {
+            'currency': client_currency,
+            'symbol': CURRENCY_SYMBOLS.get(client_currency, client_currency + ' '),
+            'converted_total': converted_total,
+            'rate': rate,
+        }
 
     # ── Class methods ──────────────────────────────────────────────
 

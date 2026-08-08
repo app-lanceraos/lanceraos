@@ -646,10 +646,17 @@ them, ported directly from v1. Tax rate and discount at invoice level, with tota
 go negative if a discount exceeds subtotal+tax. Anchor-currency conversion (`rate_to_usd_at_issue` +
 a snapshot FK, locked in by `invoice_finalise`/`invoice_mark_sent`) replaces v1's PKR-specific rate
 tracking — conversions are computed live from ExchangeRateSnapshot history, never stored at payment
-time. Three PDF templates and WeasyPrint rendering are NOT built yet — `pdf_url`/`pdf_generated_at`
-exist on the model (the frozen-at-send artifact fields) but nothing populates them; the real
-`/send/` action and the manual `mark-sent` dropdown flip both exist now, but only the latter is
-built (the former needs the email engine).
+time. The three PDF templates (`apps/invoices/templates/invoices/{professional,minimal,modern}.html`)
+are built and wired to real Invoice/Client/InvoiceItem/FreelancerProfile data (Step 7) — line items
+loop and render-tested at both very few and very many items (a real 22-item/3-page WeasyPrint stress
+render, not just Django's own render_to_string), the client-currency-conversion line is real
+(`Invoice.client_currency_conversion`), and `professional.html` now has the same real `@page` page-
+counter footer the other two already had. Font sourcing and the actual WeasyPrint render call/
+endpoint are NOT built yet (Step 7b) — `pdf_url`/`pdf_generated_at` exist on the model (the
+frozen-at-send artifact fields) but nothing populates them; QR-code image generation and any
+signature-image field are also still missing (see DECISIONS.md, 09 August 2026). The real `/send/`
+action and the manual `mark-sent` dropdown flip both exist now, but only the latter is built (the
+former needs the email engine).
 
 Invoices start as a draft with NO invoice number at all — `invoice_finalise` (draft -> created) is
 what assigns the real INV-YYYY-NNNN, confirmed against `invoice_duplicate`'s own behavior (which
