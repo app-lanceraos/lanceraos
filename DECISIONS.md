@@ -1083,3 +1083,80 @@ add an edit affordance to `NotesTab` now that there's a real endpoint to wire it
 Alternatives considered: leave it explicitly queued for Step 13 (Comments) to pick up alongside
 `InvoiceComment` (rejected for this instance — small enough to fix immediately, and leaving a known,
 findable gap open invites the exact rediscovery cost this entry is meant to prevent).
+
+---
+
+Date: 08 August 2026
+Decision: Built `apps/invoices/` — Invoice Core, models only (Invoice, InvoiceItem,
+InvoicePartialPayment, InvoiceReminder, InvoiceViewEvent, InvoiceComment, PaymentClaim,
+InvoiceDesign, InvoicePreset, InvoicePresetItem — 10 tables), per
+`INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 5, ported from `v1-reference/apps/invoices/models.py`
+where v1 already had a correct, working implementation. No views/serializers/URLs/PDF/email/portal
+in this step.
+
+**A real, serious bug found by writing this step's own required tests, not by inspection**: v1's
+`invoice_number` field was a bare `unique=True` CharField — globally unique across every user — even
+though `generate_invoice_number()`'s numbering query only ever scopes by `(user, year)`. Two
+different users' first invoice of the same calendar year both compute the identical string
+`INV-2026-0001`. Under v1's schema this is a live production bug: whichever user's invoice saves
+first claims that string, and the very next different user to create their year's first invoice
+hits a real `IntegrityError` on save — not a rare edge case, but something that happens to nearly
+every second-and-later user of the product, every January. Caught here specifically because the
+prompt asked for a numbering test "across two different users," and running that test against a
+real Postgres unique constraint failed loudly (`UniqueViolation: duplicate key value violates
+unique constraint "invoices_invoice_number_key"`) rather than silently passing. Fixed by moving the
+constraint from a bare field-level `unique=True` to `Meta.unique_together = [('user',
+'invoice_number')]` — which is what "sequential per user per year" was always supposed to mean.
+Alternatives considered: keep the global uniqueness and prefix invoice numbers with something
+tenant-specific to guarantee global uniqueness incidentally (rejected — changes the visible
+`INV-YYYY-NNNN` format the spec and v1 both specify, to fix a constraint that was simply wrong,
+not a real product requirement for global uniqueness); leave the bug and just avoid writing a
+cross-user test that would expose it (rejected — the whole point of the requested test was to
+catch exactly this).
+
+**`InvoicePartialPayment.payment` (FK to `payments.Payment`) is NOT included**, despite the prompt
+explicitly asking for it as a field "ready for Module 3." Verified empirically before writing any
+model code: Django's system checks (`fields.E300`/`fields.E307`) reject a `ForeignKey` string
+reference to an app.model that doesn't exist at all — confirmed by deliberately writing a throwaway
+model with exactly this shape and running `manage.py check` against it, which failed with both error
+codes. This is different from the same-file forward reference `Invoice.design` uses (`'InvoiceDesign'`
+resolves fine because that class exists elsewhere in the same already-loaded module) — a reference to
+a model in an app that has genuinely never defined it can't be deferred the same way. `apps.payments`
+has no `Payment` model as of this step. The field will be added via its own migration whenever Module
+3 actually builds `apps.payments.Payment`; documented in both this entry and `DATABASE.md` so nobody
+has to rediscover the same empirical check.
+Alternatives considered: a plain non-FK `payment_id` UUID placeholder column, converted to a real FK
+later (rejected — adds a column that looks like a foreign key but enforces nothing, exactly the kind
+of "looks load-bearing but isn't" trap STANDARDS.md warns against); skip the field silently with no
+note (rejected — the prompt explicitly asked for it, so silently dropping it without explanation
+would misrepresent what was actually built).
+
+**`update_paid_status()`'s terminal-status guards extended to cover `'refunded'`**, a status that
+does not exist anywhere in v1 (v1's only terminal statuses were `cancelled`/`bad_debt`, and its
+guards only ever named those two). This isn't a behavior change from v1 — v1 had no `'refunded'`
+guard to change — it's this step's own necessary extension of the same protection principle to a
+genuinely new terminal status the spec adds, so a payment add/remove cycle can't silently flip a
+refunded invoice back to `paid`/`partially_paid`. Verified with dedicated tests (`refunded` invoice
+resists both a full payment and a payment-removal restore attempt).
+
+**The discount-exceeding-subtotal clamping question the build prompt flagged as a possible gap
+turned out not to be one**: v1's `recalculate_totals()` already clamps `total` to `0` when it would
+go negative (`if self.total < Decimal('0'): self.total = Decimal('0')`), ported directly and
+verified with a dedicated test. No judgment call was actually needed here — recorded plainly rather
+than inventing a decision that wasn't real.
+
+**`is_editable` (a v1 property, not a spec field-table entry) was ported anyway** — real, correct,
+unchanged v1 logic (`status == 'draft'`) with no v2-specific change needed, and no reason to leave
+correct logic behind just because the spec's field table (which lists columns, not every computed
+property) doesn't separately call it out. `autosaved_at`/`is_autosave`/`show_pkr_to_client`/
+`include_payment_methods`/`template` were excluded for the opposite reason: genuinely absent from
+the spec's field table, with no clear v2-era purpose, rather than carried forward on faith.
+
+Verified: migration applied against a real local Postgres database (all 10 tables confirmed present
+via direct SQL query); full test suite (254 tests, 51 new) passing; `manage.py check` clean.
+Also caught mid-build and fixed before any migration was generated: every one of these 10 models
+initially lacked an explicit UUID primary key (defaulting to Django's `BigAutoField` per
+`apps.invoices.apps.InvoicesConfig`), violating CLAUDE.md rule 13 — caught by re-reading the
+generated migration file rather than trusting `makemigrations`' summary output, exactly as this
+step's own instructions required ("don't just trust makemigrations blindly, inspect the generated
+migration file").

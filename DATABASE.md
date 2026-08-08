@@ -671,11 +671,238 @@ as a hex value via `RegexValidator`). `unique_together = [('user', 'name')]`.
 
 ---
 
+## `invoices` (`Invoice`, in `apps.invoices`)
+
+The Invoice Core, per `INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 5 — ported from
+`v1-reference/apps/invoices/models.py` where v1 already had a correct, working implementation
+(invoice numbering, `recalculate_totals()`, the core shape of `update_paid_status()`), adjusted for
+the anchor-currency design and the no-stored-`overdue` fix. This step is models-only — no views,
+serializers, URLs, PDF, email, or portal yet.
+
+**Schema** (grouped by purpose): `id` (UUID PK), `user` (FK, `CASCADE`), `client` (FK →
+`clients.Client`, `SET_NULL`, nullable), `invoice_number` (see uniqueness note below), `status`
+(9 choices — see below), `sent_via_platform`, `design` (FK → `InvoiceDesign`, `SET_NULL`,
+nullable), `view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
+`client_address`/`client_phone` (immutable snapshot at creation), `currency` (CharField(3), no
+`choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`,
+`rate_to_usd_at_issue` (Decimal(10,6), nullable), `exchange_rate_snapshot` (FK →
+`payments.ExchangeRateSnapshot`, `SET_NULL`, nullable), `pdf_url`/`pdf_generated_at`,
+`issue_date`/`due_date`/`paid_date`/`sent_at`, `notes`/`terms`, `reminders_enabled`/
+`reminder_count`/`last_reminder_sent_at`, `late_fee_enabled`/`late_fee_rate`, `is_recurring`/
+`recurring_interval_days`/`recurring_auto_send`/`recurring_paused`, `parent_invoice` (self FK,
+`SET_NULL`), `next_recurring_date`, `escalation_required`/`escalation_dismissed`,
+`is_one_time_client`, `pre_payment_status`, `client_acknowledged`/`client_acknowledged_at`,
+`created_at`/`updated_at`.
+
+**`status` choices** (exactly 9, no `overdue`): `draft`, `created`, `sent`, `viewed`,
+`partially_paid`, `paid`, `cancelled`, `refunded`, `bad_debt`. `days_overdue` stays a pure
+read-time `@property` layered on top — never a stored value.
+
+1. **Mutable?** Yes — the most actively-updated table in this module.
+2. **Soft deleted?** No — `cancelled`/`refunded`/`bad_debt` are real terminal statuses, not
+   soft-delete. Hard delete only permitted pre-Sent, enforced at the view layer (a later step).
+3. **Audit trail?** Every status transition and payment action emits an event via `core.events`
+   (handler wiring is a later step — see `core/events.py`'s own docstring).
+4. **Indexed?** `(user, status)`, `(user, due_date)`, `(status, due_date)`, `next_recurring_date`,
+   `view_token` (implicit via `unique=True`), `(user, invoice_number)` (implicit via
+   `unique_together` — see the bug note below).
+5. **Encrypted?** No.
+6. **Cascade behavior?** `CASCADE` from `User`; `SET_NULL` from `Client`, `InvoiceDesign`, and
+   `ExchangeRateSnapshot`; self-referential `parent_invoice` is `SET_NULL`.
+
+**A real bug found while writing this step's own tests, not carried forward from v1 on faith**: v1's
+`invoice_number` was a bare `unique=True` CharField — globally unique across every user, even though
+`generate_invoice_number()` only ever checks for collisions within one user's own invoices. Two
+different users' first invoice of the same year both compute the identical string
+`INV-2026-0001`; in v1's schema, whichever one saved first would succeed and every other user
+creating their year's first invoice would hit a real `IntegrityError`. Caught here by writing the
+"two different users" numbering test the spec asked for and watching it fail against a real
+Postgres unique constraint — not by inspection. Fixed by moving the constraint to
+`Meta.unique_together = [('user', 'invoice_number')]`, matching what "sequential per user per year"
+actually means: the same number string is expected to recur across different users.
+
+**Fields intentionally NOT ported from v1**: `template` (superseded by `design`), `show_pkr_to_client`
+/ `include_payment_methods` (not in the spec's field table — plausibly absorbed into
+`InvoiceDesign.design_data` now), `pkr_at_issue`/`pkr_at_payment`/`rate_at_issue`/`rate_at_payment`/
+`exchange_rate_gain_loss` (the whole PKR-specific payment-time-rate concept, replaced by
+`rate_to_usd_at_issue` + `exchange_rate_snapshot`), `autosaved_at`/`is_autosave` (not in the spec's
+field table).
+
+**`currency` has no `choices=`**, same reasoning as `Client.default_currency` — validation against
+`ExchangeRateSnapshot`'s current keys belongs in the serializer layer, which doesn't exist yet in
+this models-only step (a comment in the model points whoever builds that step at
+`apps.clients.serializers.validate_currency_code` to reuse rather than reinvent).
+
+**`update_paid_status()`** — ported from v1 with the spec's core fix: `_RESTORABLE_STATUSES` no
+longer includes `'overdue'` (v1's did), so a payment-undo round trip can never restore a stale
+`'overdue'` value into `status`. Every "never flip a terminal status" guard (paid/partially_paid/
+undo-restore branches) also now excludes `'refunded'` — a status v1 never had at all, so its guards
+never needed to name it; extending the same protection to it is this step's own necessary addition,
+not a v1 behavior change. `_capture_payment_rate()` and its PKR fields are dropped entirely — no
+rate is stored at payment time, per the anchor-currency design.
+
+---
+
+## `invoice_items` (`InvoiceItem`, in `apps.invoices`)
+
+Ported directly from v1 — no changes.
+
+**Schema**: `id`, `invoice` (FK, `CASCADE`), `description`, `quantity`, `unit_price`, `total`
+(computed on `save()`), `sort_order`.
+
+1. **Mutable?** Yes — edited while an invoice is a draft. 2. **Soft deleted?** No — hard delete.
+3. **Audit trail?** No dedicated rows — covered by the parent `Invoice`'s own transition events.
+4. **Indexed?** None beyond the implicit FK index. 5. **Encrypted?** No.
+6. **Cascade behavior?** `CASCADE` from `Invoice`.
+
+---
+
+## `invoice_partial_payments` (`InvoicePartialPayment`, in `apps.invoices`)
+
+**Schema**: `id`, `invoice` (FK, `CASCADE`), `amount`, `currency`, `rate_to_usd` (Decimal(10,6),
+nullable — anchor-currency replacement for v1's `amount_pkr`/`exchange_rate`), `source` (7
+choices, unchanged from v1), `payment_date`, `notes`, `recorded_at`.
+
+1. **Mutable?** No — append-only; record/undo creates or deletes a row, never edits in place.
+2. **Soft deleted?** No — deletion IS the undo mechanism (see `Invoice.update_paid_status()`'s
+   `pre_payment_status` restore path). 3. **Audit trail?** Record/undo emits events at the view
+   layer (a later step); this table is itself the detailed record. 4. **Indexed?** None beyond the
+   implicit FK index. 5. **Encrypted?** No. 6. **Cascade behavior?** `CASCADE` from `Invoice`.
+
+**The spec's `payment` FK (→ `payments.Payment`, `SET_NULL`, "field ready for Module 3") is
+deliberately NOT included yet.** `apps.payments` has no `Payment` model as of this step (verified
+directly), and Django's system checks (`fields.E300`/`E307`, confirmed empirically before writing
+this file) reject a `ForeignKey` to a model that doesn't exist at all — this isn't a lazy reference
+Django tolerates, unlike a same-app forward string reference. Adding this FK is a real migration for
+whichever step actually builds `apps.payments.Payment` (Module 3).
+
+---
+
+## `invoice_reminders` (`InvoiceReminder`, in `apps.invoices`)
+
+Ported directly from v1 — no changes.
+
+**Schema**: `id`, `invoice` (FK, `CASCADE`), `reminder_number`, `template_used` (4 choices),
+`sent_at`, `delivered`, `days_overdue_at_send`. `unique_together = [('invoice', 'reminder_number')]`.
+
+1. **Mutable?** No — append-only, one row per reminder actually sent. 2. **Soft deleted?** No.
+3. **Audit trail?** The row itself is the record. 4. **Indexed?** Implicit via `unique_together`.
+5. **Encrypted?** No. 6. **Cascade behavior?** `CASCADE` from `Invoice`.
+
+---
+
+## `invoice_view_events` (`InvoiceViewEvent`, in `apps.invoices`)
+
+Ported directly from v1 — no changes.
+
+**Schema**: `id`, `invoice` (FK, `CASCADE`), `viewed_at`, `ip_address`, `user_agent`, `source`
+(4 choices).
+
+1. **Mutable?** No — append-only. 2. **Soft deleted?** No. 3. **Audit trail?** The row itself is
+   the record. 4. **Indexed?** None beyond the implicit FK index yet — worth revisiting if public
+   invoice-page view volume ever demands it. 5. **Encrypted?** No.
+6. **Cascade behavior?** `CASCADE` from `Invoice`.
+
+Every write here must run through the freelancer-own-session guard (decisions doc Section 4) so a
+freelancer viewing their own sent invoice never counts as a client view — that guard lives at the
+view layer (a later step), not on this model.
+
+---
+
+## `invoice_comments` (`InvoiceComment`, in `apps.invoices`)
+
+New — no v1 equivalent (v1 has no messaging at all, confirmed in an earlier session). The unified
+two-way message thread (portal + email-reply + in-app) per the spec.
+
+**Schema**: `id`, `invoice` (FK, `CASCADE`), `author_type` (`freelancer`/`client`), `author_user`
+(FK → `User`, `SET_NULL`, nullable — set when `author_type='freelancer'`), `client_name`/
+`client_email` (snapshot, blank — set when `author_type='client'`), `source` (`portal`/
+`email_reply`/`app`), `body_text`, `body_html` (blank, only for `email_reply`), `attachment_url`,
+`created_at`, `read_by_freelancer_at`/`read_by_client_at`. **No `updated_at`** — deliberately
+different from `ClientNote` (which IS mutable): comments are immutable, never edited or deleted,
+per the decisions doc.
+
+1. **Mutable?** No, append-only, except the two `read_by_*_at` timestamps. 2. **Soft deleted?**
+   No — permanent record by design. 3. **Audit trail?** The row itself is the record; posting also
+   emits `CommentPosted` (handler wiring is a later step). 4. **Indexed?** `(invoice, created_at)`.
+5. **Encrypted?** No. 6. **Cascade behavior?** `CASCADE` from `Invoice`; `SET_NULL` from `User` (a
+   comment survives its author's account being anonymized — verified directly with a test using a
+   commenter distinct from the invoice's own owner, since deleting the invoice's owner would
+   CASCADE the invoice itself first).
+
+---
+
+## `payment_claims` (`PaymentClaim`, in `apps.invoices`)
+
+Ported directly from v1 — no changes. Kept as a separate, structured flow per the decisions doc,
+not merged into `InvoiceComment`.
+
+**Schema**: `id`, `invoice` (FK, `CASCADE`), `client_email`, `client_name`, `amount_claimed`,
+`currency`, `payment_source` (7 choices), `payment_date`, `client_note`, `status` (`pending`/
+`confirmed`/`rejected`), `submitted_at`, `reviewed_at`.
+
+1. **Mutable?** Yes — `status`/`reviewed_at` change once, on confirm/reject. 2. **Soft deleted?**
+   No. 3. **Audit trail?** Confirm/reject emits events at the view layer (a later step); this row is
+   itself the detailed record. 4. **Indexed?** None beyond the implicit FK index yet. 5.
+   **Encrypted?** No. 6. **Cascade behavior?** `CASCADE` from `Invoice`.
+
+---
+
+## `invoice_designs` (`InvoiceDesign`, in `apps.invoices`)
+
+New — no v1 equivalent (v1's PDF generation was reportlab code, not user-editable data). The
+visual PDF/portal template system (decisions doc Section 9/10).
+
+**Schema**: `id`, `user` (FK, `CASCADE`), `name`, `base_template` (`professional`/`minimal`/
+`modern`), `source` (`builtin`/`custom`/`ai_seeded`), `color_variant` (blank, builtin-path only),
+`design_data` (JSONField), `is_default`, `created_at`/`updated_at`.
+
+1. **Mutable?** Yes — edited via the design editor (a later step). 2. **Soft deleted?** No — hard
+   delete; `Invoice.design` is `SET_NULL`, so a deleted design never breaks an invoice that already
+   rendered against it (the frozen `pdf_url` survives regardless). 3. **Audit trail?** No dedicated
+   events — a design edit isn't a security/finance-relevant action. 4. **Indexed?** None beyond the
+   implicit FK index yet. 5. **Encrypted?** No. 6. **Cascade behavior?** `CASCADE` from `User`.
+
+**`is_default` enforcement** (one per user) is ported structurally from v1's
+`InvoiceTemplate.save()` — same pattern, applied to this new model, verified directly with a test
+creating two defaults for the same user and confirming the first is unset.
+
+---
+
+## `invoice_presets` / `invoice_preset_items` (`InvoicePreset` / `InvoicePresetItem`, in `apps.invoices`)
+
+Renamed from v1's `InvoiceTemplate`/`InvoiceTemplateItem` per the spec's explicit naming decision
+(avoids colliding with `InvoiceDesign` — flagged and approved two rounds ago, not reverted here).
+"Quick-create defaults" — unrelated to visual design.
+
+**`InvoicePreset` schema**: `id`, `user` (FK, `CASCADE`), `name`, `description`, `include_client`,
+`client` (FK → `clients.Client`, `SET_NULL`, nullable), `client_name`/`client_email`/
+`client_company` (snapshot), `currency` (no `choices=`), `tax_rate`, `discount_amount`,
+`payment_terms`, `notes`/`terms`, `late_fee_enabled`/`late_fee_rate`, `is_default`,
+`created_at`/`updated_at`. Per the spec's explicit field list for this model, v1's `template`/
+`show_pkr_to_client`/`include_payment_methods` are dropped — same reasoning as `Invoice`'s own
+dropped fields.
+
+**`InvoicePresetItem` schema**: `id`, `preset` (FK, `CASCADE`), `description`, `quantity`,
+`unit_price`, `sort_order`. Direct port of `InvoiceTemplateItem`, renamed FK target only.
+
+1. **Mutable?** Yes. 2. **Soft deleted?** No — hard delete; no downstream financial record
+   references a preset. 3. **Audit trail?** No — a personal productivity shortcut, not a
+   security/finance action. 4. **Indexed?** None beyond the implicit FK indexes. 5. **Encrypted?**
+   No. 6. **Cascade behavior?** `CASCADE` from `User`/`InvoicePreset`; `SET_NULL` from `Client`.
+
+`is_default` enforcement (one per user) uses the identical pattern as `InvoiceDesign.save()` above.
+
+---
+
 ## Not yet built
 
-Every table for Invoices (the app itself — `Client`/`ClientNote`/`ClientTag` above are
-`apps.clients`, not `apps.invoices`), Tax, Health Score, Proposals, Contracts, Subscriptions, and
-the rest of Payments (income tracking, expense tracking, P&L) — none of these exist yet. This
-document only covers what's actually in the database today (`apps.users`' six tables,
-`apps.admin_panel`'s one table, `apps.payments`'s one table, `apps.clients`' three tables — twelve
-tables spanning four apps — and the three shared `core` tables).
+Tax, Health Score, Proposals, Contracts, Subscriptions, and the rest of Payments (income tracking,
+expense tracking, P&L) — none of these exist yet. Within `apps.invoices` itself, this step was
+models-only: no views, serializers, URLs, PDF generation, email delivery, the client portal,
+payment claims *workflow* (the table exists; confirm/reject actions don't), comments *delivery*
+(the table exists; posting/WebSocket endpoints don't), or recurring/reminder *tasks* (the fields and
+`InvoiceReminder` table exist; the Celery Beat generation/escalation logic doesn't). This document
+only covers what's actually in the database today (`apps.users`' six tables, `apps.admin_panel`'s
+one table, `apps.payments`'s one table, `apps.clients`' three tables, `apps.invoices`' ten tables —
+twenty-two tables spanning five apps — and the three shared `core` tables).
