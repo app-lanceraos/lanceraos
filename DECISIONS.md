@@ -1779,3 +1779,152 @@ directions, toggled the pairing checkbox and watched the live status message upd
 design successfully (confirmed via a follow-up real API GET that the persisted name and design_data
 matched), and confirmed dark mode renders the gallery correctly. Zero console errors across every
 run except the one, expected 400 from the deliberately-forced overlap-save test.
+
+Date: 09 August 2026
+Decision: Step 9 — AI-seeded designs (Path 3) and the signature tool. `core/ai.py` (new — genuinely
+built now; was a `[not yet built]` placeholder comment in CLAUDE.md's tree since the Users/Auth
+build), `apps/invoices/ai_design.py`, `apps/invoices/signature_tool.py`,
+`POST /api/invoices/designs/ai-seed/`, `POST /api/invoices/signature/`.
+
+**Classify, not generate — recorded explicitly so this doesn't get relitigated later.** A separate,
+real proof of concept (`~/Downloads/invoice_template_poc/backend/main.py`) explored full HTML
+generation with an iterative "nudge and regenerate" loop: upload a reference image, extract a
+design-spec, then have a text/vision model generate a complete standalone HTML invoice document
+from scratch, re-generating on each user nudge. That approach was evaluated directly (its real code
+was read, not assumed) and rejected for this system, for two separate reasons, not one:
+1. It defeats the actual point of Step 8's `InvoiceDesign` system — one shared `design_data`
+   structure that the editor, the portal, and WeasyPrint all render from. A one-off generated HTML
+   blob is a dead end nothing else in the system can open, edit, or reuse; it would need its own
+   parallel storage/rendering path, permanently disconnected from everything Step 8/8b already
+   built.
+2. Full-HTML-generation-under-token-constraints was already shown to be fragile, by the POC's own
+   code: its `generate_invoice` prompt spends several paragraphs defensively instructing the model
+   never to use absolute positioning for the totals block because "every previous attempt... caused
+   the text to overlap and become unreadable," and manually hand-holds the model through an exact
+   SVG wave-banner pattern to copy because free-form generation kept failing to produce one
+   correctly. That's not a fixable prompt-engineering problem for THIS system specifically — it's
+   the generic HTML-generation approach's actual failure mode, live in the reference code, not
+   speculation about it.
+
+What DID carry over from the POC, ported directly rather than reinvented, because it's genuinely
+good and entirely orthogonal to the classify-vs-generate question:
+- Image compression before the API call (`compress_image` — downscale to 700px wide, re-encode as
+  JPEG). Verified again directly in this step, not just re-trusted: a synthetic 3000x4000 test
+  image with real per-channel noise (a flat/solid-color test image would have compressed trivially
+  well under PNG anyway, making the comparison meaningless) went from several MB to well under
+  100KB after compression, and the result still decodes as a normal, correctly-proportioned image.
+- `<think>`-tag and markdown-fence stripping (`core.ai.strip_model_reply_wrapper`, verbatim from the
+  POC's `strip_fences`) — genuinely necessary, confirmed by this step's own live testing below, not
+  just carried over on faith.
+- 429 retry-with-backoff parsing the real "try again in Ns" Groq error message (`core.ai.call_groq`,
+  ported from the POC's own `call_groq`).
+
+**The classify schema is deliberately narrower than the POC's `DESIGN_SPEC_SCHEMA`** — that schema
+had 10 free-text fields (layout/table_style/corner_style/header_treatment/etc.) scoped for
+generating arbitrary HTML from scratch. This system can only ever start from one of 3 fixed
+templates, so the real schema here is `{base_template, primary_color, secondary_color,
+layout_density, reasoning}` — nothing the seeding logic can't actually use gets asked for.
+
+**Overlap-safety is a real mathematical property of the adjustment, not a hope the validator
+catches problems.** Colors only ever touch `style` dict values (never coordinates), so they can
+never cause an overlap. Proportions apply a single uniform scale factor to every zone_1 element's
+x/y/width/height together, from the shared origin — the axis-aligned overlap test
+(`design_schema.py`'s `_boxes_overlap`) is a linear inequality, and multiplying every term in it by
+the same positive constant preserves its direction, so a seed with no overlaps (guaranteed — every
+seed already passes `validate_design_data_schema`) cannot develop one from a uniform scale. This
+step's own test suite proves the contrast directly, not just the safe path: a "naive" independent
+per-element nudge (deliberately NOT what `apply_ai_adjustments` does) genuinely produces a real
+overlap on the same fixture where the uniform scale doesn't — see
+`test_a_naive_independent_nudge_WOULD_overlap...` in `test_ai_design.py`. `layout_density` is 3
+fixed discrete choices (compact/balanced/spacious -> 0.92/1.0/1.08), not an arbitrary model-returned
+float, partly for robustness against a creative reply and partly because the real seeds' own
+margins were checked directly per template at the extreme end (1.08x) and confirmed to still fit
+inside the fixed canvas bounds without even needing the defensive clamp `_clamp_zone1_bounds`
+provides as a second, currently-inert layer.
+
+**GROQ_MODEL_VISION is env-overridable with a real default** (`qwen/qwen3.6-27b`, the model the POC
+was actually tested against) — noted directly in settings.py's own comment: this is NOT actually
+"the same pattern as GROQ_MODEL_FAST/QUALITY" a naive reading might assume, since those two are
+checked directly and are plain hardcoded strings, not env reads, despite the naming symmetry
+suggesting otherwise. Env-overridable felt like the right call for a model id Groq could deprecate;
+not silently "fixing" FAST/QUALITY to match, since that wasn't asked for.
+
+**A real bug, found only by testing against the live Groq API, not by reasoning about the code**:
+the first version of `classify_design_image` called `call_groq(..., max_tokens=500)`, reasoning
+that this schema's own final JSON answer is tiny. A real end-to-end test (a synthetic navy-sidebar-
+plus-lime-accent reference image, uploaded through the real running frontend, hitting the real
+Groq API) failed every time with "returned non-JSON reply" — the actual raw reply, visible in the
+server log, was qwen/qwen3.6-27b's own `<think>...</think>` reasoning block, truncated mid-thought,
+with the real JSON answer never reached at all. `max_tokens` budgets the ENTIRE reply including a
+thinking model's internal reasoning tokens, not just the final answer — 500 was being consumed
+entirely by reasoning before any output. Fixed by raising it to 2000 (the POC's own
+`analyze_design` used 4000 for a bigger schema, for the exact same underlying reason). Re-tested
+live immediately after the fix: the same reference image was correctly classified as `"modern"`
+(matching its real navy-sidebar-plus-accent-color design), the resulting `InvoiceDesign` saved
+successfully, and opened correctly in Step 8b's real editor. This is exactly the kind of failure
+that mocked tests alone cannot catch — the committed test suite's own mocked `call_groq` calls
+never exercise the real model's actual reasoning-token behavior; only hitting the live API surfaced
+it. The committed tests intentionally still mock Groq (per this project's own external-service
+convention), so this bug now lives fixed in the code with the reasoning documented here, not
+re-provable by the test suite itself.
+
+**`_instantiate_design_from_builtin`** (`apps/invoices/views.py`) is the one real "create an
+`InvoiceDesign` row from a builtin seed" code path, extracted out of `design_duplicate`'s own body —
+`design_ai_seed` calls the exact same function with its own AI-adjusted `design_data` and
+`source='ai_seeded'` rather than growing a second row-creation path, per the task's own explicit
+instruction.
+
+**AI-seed rate limiting is separate and stricter than every other design endpoint** — 5/hour
+(`AI_SEED_RATE_LIMIT`), its own cache-key prefix, independent of `_check_moderate_rate_limit`'s
+30/hour used by every CRUD design action — because this is the one design endpoint with a real
+external API cost per call, not a free database operation.
+
+**The reference image is never persisted** — read into memory (`image.read()`) for the one Groq
+call and never written to Cloudinary or disk anywhere in the view or in `ai_design.py`, per the
+spec's real liability/copyright reasoning (a reference image is often someone else's licensed
+template design). Verified directly, not just by absence of an obvious upload call:
+`test_reference_image_is_never_persisted_anywhere` mocks `cloudinary.uploader.upload` and asserts
+it's never called at all during a full successful AI-seed request.
+
+**Signature tool: classical image processing, not AI** — per the spec's own reasoning (a narrow,
+well-defined problem classical thresholding solves reliably and for free; no reason to spend a Groq
+call on it). `remove_signature_background` uses `Image.point()` with a 256-entry lookup table (built
+once from a `threshold`/`feather` pair, applied via Pillow's C internals) rather than a per-pixel
+Python loop, for real performance regardless of the photo's resolution — confirmed correct against
+a realistic synthetic fixture (off-white paper with a shadow gradient AND per-pixel noise, not a
+flat two-tone test pattern — a hard threshold with no feathering would have visibly aliased the
+stroke edges, confirmed by testing the feathered version against corners, a shadowed-but-still-
+background area, and real ink-stroke pixels separately).
+
+**Preview-then-commit via a `commit` flag on the same endpoint, not a separate confirm endpoint with
+server-side staged state.** Background removal is a cheap, deterministic, non-AI operation — the
+same input bytes always produce the same output — so re-running it on the confirm call costs
+nothing meaningful. There's no reason to hold processed bytes in a cache/session between the preview
+and commit calls just to avoid a second, near-instant Pillow pass; the frontend simply re-submits
+the same file with `commit=true` once the user approves the preview. (Contrast with the AI-seed
+path above, where re-calling would mean a second real Groq charge — that asymmetry is exactly why
+the two features use different patterns here rather than forcing one "confirm" convention onto
+both.)
+
+**Signature tool frontend UI is NOT built this step** — backend endpoint only
+(`POST /api/invoices/signature/`), matching this project's established incremental build order
+(backend first, frontend flagged and built in an announced later step, the same pattern Client
+CRM/admin panel/etc. already followed). `FreelancerProfile.signature_url`/`signature_public_id`
+(Step 7b) already had a real writer gap noted; this step closes the *backend* half of that gap only.
+Path 3 (AI-seeded designs) DID get its frontend entry point built this step, per the task's own
+explicit, separate instruction to confirm that wiring specifically — the two aren't symmetric asks
+and weren't treated as if they were.
+
+Verified: `core/tests/test_ai.py` (12 tests — retry/backoff against the real "try again in Ns"
+message format, missing-key/network/non-200/malformed-response error paths, `<think>`/fence
+stripping), `apps/invoices/tests/test_ai_design.py` (compression against real noisy synthetic
+images, classify parsing/error-paths mocked, the overlap-safety proof across all 3 real seeds at
+every density including a direct naive-vs-safe contrast, no-persistence, view-level rate limiting),
+`apps/invoices/tests/test_signature_tool.py` (background removal against a realistic synthetic
+photo fixture, content-validation, preview/commit/replace-and-destroy behavior, rate limiting) — all
+mocking the real Groq API, per this project's established external-service test convention. Full
+backend suite: 504 tests passing (up from 454 before this step). Frontend: 18 tests still passing
+(unchanged by this step's frontend addition, which is upload-flow UI wired to a real endpoint, not
+a data-layer change). Real, live end-to-end browser verification against the actual Groq API (not
+mocked) as described above — the max_tokens bug and its fix were found and confirmed this way, not
+through the mocked test suite.

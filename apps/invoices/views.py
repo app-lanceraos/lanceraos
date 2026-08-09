@@ -13,10 +13,15 @@ prefix across two unrelated resources would either collide on matching
 action names or mislabel invoice actions as "ratelimit_clients_...".
 Replicated with an "invoices"-scoped key instead; behavior is identical.
 """
+import base64
+import io
 import logging
+import os
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
+from PIL import Image as PILImage
+from PIL import UnidentifiedImageError
 from django.core.cache import cache
 from django.db.models import Q, Sum
 from django.http import HttpResponse, HttpResponseRedirect
@@ -30,7 +35,10 @@ from rest_framework.response import Response
 
 from core.events import emit
 from apps.payments.models import ExchangeRateSnapshot
+from apps.users.models import FreelancerProfile
+from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
 
+from .ai_design import seed_design_data_from_image
 from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
 from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset,
@@ -41,6 +49,14 @@ from .serializers import (
     InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer, InvoicePresetSerializer,
     InvoiceSerializer,
 )
+from .signature_tool import remove_signature_background
+
+# Reference images for AI design seeding — a narrower set than logo uploads
+# (screenshots/photos of an existing design, not decorative image formats):
+# no .gif/.bmp/.tiff, same SVG exclusion reasoning as ALLOWED_LOGO_EXTENSIONS
+# (stored-XSS risk) even though this image is never persisted anyway.
+ALLOWED_REFERENCE_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
+MAX_REFERENCE_IMAGE_SIZE_BYTES = 8 * 1024 * 1024  # 8MB
 
 logger = logging.getLogger(__name__)
 
@@ -1023,16 +1039,204 @@ def design_duplicate(request):
     color_variant = request.data.get('color_variant', '') or ''
     name = request.data.get('name') or f'{base_template.title()} (copy)'
 
-    design = InvoiceDesign.objects.create(
-        user=request.user,
-        name=name,
-        base_template=base_template,
-        source='builtin',
-        color_variant=color_variant,
-        design_data=get_builtin_design_data(base_template),
-    )
+    design = _instantiate_design_from_builtin(request.user, base_template, color_variant, name)
     logger.info(
         '[INVOICES] Duplicated builtin design %s (%s) as %s for user %s.',
         base_template, color_variant or 'default', design.pk, request.user.pk,
     )
     return Response(InvoiceDesignSerializer(design).data, status=status.HTTP_201_CREATED)
+
+
+def _instantiate_design_from_builtin(user, base_template, color_variant='', name=None, design_data=None, source='builtin'):
+    """
+    The one real "create an InvoiceDesign row from a builtin seed" code
+    path — used by both design_duplicate (Path 1, above) and
+    design_ai_seed (Path 3, below) rather than each growing its own.
+    `design_data` defaults to the unmodified seed; Path 3 passes its own
+    AI-adjusted payload instead. Defined after design_duplicate since
+    Python resolves the name at call time, not definition time — either
+    order works, this keeps the two Path 1 pieces textually adjacent.
+    """
+    return InvoiceDesign.objects.create(
+        user=user,
+        name=name or f'{base_template.title()} (copy)',
+        base_template=base_template,
+        source=source,
+        color_variant=color_variant,
+        design_data=design_data if design_data is not None else get_builtin_design_data(base_template),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+# AI-SEEDED DESIGN — Step 9, Path 3. apps/invoices/ai_design.py owns the
+# classify + adjust pipeline; this view owns rate limiting, upload
+# handling, and turning any pipeline failure into a clear response that
+# still leaves the user a path to Path 1/Path 2 (they're never navigated
+# away from the gallery those live on — see DesignGallery.jsx).
+# ══════════════════════════════════════════════════════════════════
+
+# Separate, tighter limit than _check_moderate_rate_limit's 30/hour — this
+# is a real external Groq API call with real token cost per attempt, not a
+# free CRUD operation, per the task's own explicit instruction.
+AI_SEED_RATE_LIMIT = 5
+
+
+def _check_ai_seed_rate_limit(user):
+    key = f'ratelimit_invoices_design_ai_seed_{user.pk}'
+    count = cache.get(key, 0)
+    if count >= AI_SEED_RATE_LIMIT:
+        return True
+    cache.set(key, count + 1, timeout=3600)
+    return False
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def design_ai_seed(request):
+    if _check_ai_seed_rate_limit(request.user):
+        return _too_many_requests(
+            f'AI design seeding is limited to {AI_SEED_RATE_LIMIT} attempts per hour. Please try again later, '
+            'or pick a ready-made template / start a blank design instead.'
+        )
+
+    image = request.FILES.get('image')
+    if not image:
+        return Response({'error': 'No reference image provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    extension = os.path.splitext(image.name)[1].lower()
+    if extension not in ALLOWED_REFERENCE_IMAGE_EXTENSIONS:
+        return Response(
+            {'error': f'Unsupported file type. Allowed: {", ".join(sorted(ALLOWED_REFERENCE_IMAGE_EXTENSIONS))}'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if image.size > MAX_REFERENCE_IMAGE_SIZE_BYTES:
+        return Response({'error': 'File too large. Maximum size is 8MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        PILImage.open(image).verify()
+    except (UnidentifiedImageError, OSError):
+        return Response({'error': "That doesn't look like a valid image file."}, status=status.HTTP_400_BAD_REQUEST)
+    image.seek(0)
+
+    # The reference image is read into memory for the one Groq call and
+    # never written to Cloudinary/disk anywhere in this view or in
+    # ai_design.py — per the spec's real liability/copyright reasoning
+    # (reference images are often someone else's licensed template design).
+    # `image` (the Django UploadedFile) goes out of scope when this request
+    # finishes; nothing here holds a reference to it beyond that.
+    raw_bytes = image.read()
+
+    try:
+        base_template, design_data = seed_design_data_from_image(raw_bytes)
+    except ValueError as exc:
+        logger.warning('[INVOICES] AI design seeding failed for user %s: %s', request.user.pk, exc)
+        return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    design = _instantiate_design_from_builtin(
+        request.user, base_template, color_variant='ai_extracted',
+        name=f'{base_template.title()} (AI-seeded)', design_data=design_data, source='ai_seeded',
+    )
+    logger.info('[INVOICES] AI-seeded design %s (%s) for user %s.', design.pk, base_template, request.user.pk)
+    return Response(InvoiceDesignSerializer(design).data, status=status.HTTP_201_CREATED)
+
+
+# ══════════════════════════════════════════════════════════════════
+# SIGNATURE TOOL — Step 9. Classical image processing (Pillow luminance
+# thresholding, apps/invoices/signature_tool.py), not AI — a single stored
+# signature per user (FreelancerProfile.signature_url/signature_public_id,
+# Step 7b's fields), reused across every design/invoice, same as the logo.
+#
+# Preview-then-commit via a `commit` flag on the SAME endpoint, rather than
+# a separate confirm endpoint with server-side staged state: background
+# removal is a cheap, deterministic, non-AI operation (same input bytes
+# always produce the same output), so re-running it on the confirm call
+# costs nothing meaningful — no reason to hold anything in a cache/session
+# between the preview and the commit just to avoid a second, near-instant
+# Pillow pass.
+# ══════════════════════════════════════════════════════════════════
+
+def _check_signature_rate_limit(user):
+    key = f'signature_upload_{user.pk}'
+    count = cache.get(key, 0)
+    if count >= 10:
+        return True
+    cache.set(key, count + 1, timeout=3600)
+    return False
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def signature_upload(request):
+    """
+    POST with `image` (multipart file) — returns a cleaned, transparent-
+    background PNG preview as a data URI, and does NOT touch Cloudinary or
+    FreelancerProfile yet.
+    POST again with the same `image` plus `commit=true` — re-runs the same
+    processing for real, uploads it, and saves it as the user's one
+    signature (replacing any previous one, per Step 7b's single-field
+    lifecycle — destroys the old Cloudinary asset first, same pattern as
+    upload_logo).
+    """
+    if _check_signature_rate_limit(request.user):
+        return Response({'error': 'Too many uploads. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    file = request.FILES.get('image')
+    if not file:
+        return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    extension = os.path.splitext(file.name)[1].lower()
+    if extension not in ALLOWED_LOGO_EXTENSIONS:
+        return Response(
+            {'error': f'Unsupported file type. Allowed: {", ".join(sorted(ALLOWED_LOGO_EXTENSIONS))}'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if file.size > MAX_LOGO_SIZE_BYTES:
+        return Response({'error': 'File too large. Maximum size is 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Same content-validation discipline as upload_logo — extension alone
+    # doesn't confirm the file's actual content.
+    try:
+        PILImage.open(file).verify()
+    except (UnidentifiedImageError, OSError):
+        return Response({'error': "That doesn't look like a valid image file."}, status=status.HTTP_400_BAD_REQUEST)
+    file.seek(0)
+
+    raw_bytes = file.read()
+    try:
+        cleaned_png_bytes = remove_signature_background(raw_bytes)
+    except Exception:
+        logger.exception('[INVOICES] Signature background removal failed for user %s.', request.user.pk)
+        return Response({'error': 'Could not process that image. Please try a different photo.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    commit = str(request.data.get('commit', '')).lower() in ('true', '1', 'yes')
+    if not commit:
+        preview_data_uri = f'data:image/png;base64,{base64.b64encode(cleaned_png_bytes).decode("ascii")}'
+        return Response({'preview_data_uri': preview_data_uri})
+
+    try:
+        prof = request.user.profile
+    except FreelancerProfile.DoesNotExist:
+        return Response({'error': 'Profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    import cloudinary.uploader
+
+    if prof.signature_public_id:
+        try:
+            cloudinary.uploader.destroy(prof.signature_public_id)
+        except Exception:
+            pass  # best-effort cleanup — a failed destroy must never block the new upload
+
+    try:
+        result = cloudinary.uploader.upload(
+            io.BytesIO(cleaned_png_bytes), folder='lanceraos/signatures', resource_type='image', format='png',
+        )
+    except Exception:
+        logger.exception('[INVOICES] Cloudinary signature upload failed for user_id=%s', request.user.pk)
+        return Response({'error': 'Upload failed. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+    prof.signature_url = result.get('secure_url', '')
+    prof.signature_public_id = result.get('public_id', '')
+    prof.save(update_fields=['signature_url', 'signature_public_id'])
+
+    logger.info('[INVOICES] Signature saved for user %s.', request.user.pk)
+    return Response({'signature_url': prof.signature_url})

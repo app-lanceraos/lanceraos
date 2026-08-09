@@ -355,6 +355,16 @@ cloudinary.config(
 GROQ_API_KEY = env('GROQ_API_KEY', default='')
 GROQ_MODEL_FAST = 'openai/gpt-oss-20b'
 GROQ_MODEL_QUALITY = 'llama-3.3-70b-versatile'
+# apps.invoices' AI-seeded design classification (Step 9, core/ai.py +
+# apps/invoices/ai_design.py) is the first real Groq consumer in this
+# project. Read from env with the real POC-tested model as the default —
+# note this is NOT actually "the same pattern as GROQ_MODEL_FAST/QUALITY"
+# above (checked directly: those two are plain hardcoded strings, not env
+# reads, despite the sibling naming suggesting otherwise) — env-overridable
+# felt like the right call for a model id that Groq could deprecate out
+# from under a hardcoded string; not silently changing FAST/QUALITY to
+# match, since that wasn't asked for here.
+GROQ_MODEL_VISION = env('GROQ_MODEL_VISION', default='qwen/qwen3.6-27b')
 
 # ══════════════════════════════════════════════════════════════════
 # CELERY / CHANNELS

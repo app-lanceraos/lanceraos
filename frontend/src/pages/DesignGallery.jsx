@@ -94,7 +94,8 @@ export default function DesignGallery() {
   const [loading, setLoading] = useState(true)
   const [busyTemplate, setBusyTemplate] = useState(null)
   const [error, setError] = useState('')
-  const [justCreated, setJustCreated] = useState(null) // the design just duplicated, awaiting edit-or-done choice
+  const [justCreated, setJustCreated] = useState(null) // the design just duplicated/AI-seeded, awaiting edit-or-done choice
+  const [aiSeeding, setAiSeeding] = useState(false)
 
   useEffect(() => {
     api.get('/invoices/designs/')
@@ -116,6 +117,31 @@ export default function DesignGallery() {
       setError('Could not create a design from that template. Please try again.')
     } finally {
       setBusyTemplate(null)
+    }
+  }
+
+  async function handleAiSeedUpload(e) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file if the user retries
+    if (!file) return
+
+    setAiSeeding(true)
+    setError('')
+    try {
+      const formData = new FormData()
+      formData.append('image', file)
+      const { data } = await api.post('/invoices/designs/ai-seed/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setDesigns((prev) => [data, ...prev])
+      setJustCreated(data)
+    } catch (err) {
+      // Deliberately stays on this same page — Path 1's templates and the
+      // "Blank design" button above remain immediately visible/clickable,
+      // never a dead end, per Step 9's own explicit requirement.
+      setError(err.response?.data?.error || 'Could not create a design from that image. Please try again, or pick a template below instead.')
+    } finally {
+      setAiSeeding(false)
     }
   }
 
@@ -193,19 +219,34 @@ export default function DesignGallery() {
           />
         ))}
 
-        {/* Path 3 (AI-seeding) is Step 9 — not built here. This card is a
-            deliberate, visible slot for where it plugs in, not a stub of
-            the feature itself: disabled, clearly labeled "coming soon",
-            no backend call wired to it at all. */}
-        <div style={{
-          background: 'var(--bg-surface-2)', border: '1px dashed var(--border-default)', borderRadius: 'var(--radius-lg)',
-          padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
-          color: 'var(--text-tertiary)', minHeight: 200,
-        }}>
-          <Sparkles size={22} />
-          <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>AI-seeded design</span>
-          <span style={{ fontSize: '0.74rem', textAlign: 'center' }}>Coming soon — describe your brand and get a starting layout.</span>
-        </div>
+        {/* Path 3 — AI-seeded design (Step 9). Classify-only: uploads a
+            reference image, one Groq vision call maps it onto the closest
+            of the same 3 base templates + a couple of real colors + a
+            coarse layout density, and design_ai_seed (backend) returns a
+            real, already-saved, already-validated InvoiceDesign. Never a
+            dead end on failure — the error banner above renders in place;
+            Path 1's templates and "Blank design" stay clickable the whole
+            time. */}
+        <label
+          htmlFor="ai-seed-upload"
+          style={{
+            background: 'var(--bg-surface-2)', border: '1px dashed var(--border-default)', borderRadius: 'var(--radius-lg)',
+            padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+            color: 'var(--text-tertiary)', minHeight: 200, cursor: aiSeeding ? 'wait' : 'pointer',
+          }}
+        >
+          {aiSeeding ? <span className="fos-spinner" /> : <Sparkles size={22} />}
+          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+            {aiSeeding ? 'Reading your design…' : 'AI-seeded design'}
+          </span>
+          <span style={{ fontSize: '0.74rem', textAlign: 'center' }}>
+            {aiSeeding ? 'This calls a real AI model and can take a few seconds.' : 'Upload a logo, letterhead, or old invoice — we\'ll match the closest style.'}
+          </span>
+          <input
+            id="ai-seed-upload" type="file" accept="image/png,image/jpeg,image/webp"
+            onChange={handleAiSeedUpload} disabled={aiSeeding} style={{ display: 'none' }}
+          />
+        </label>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 12px' }}>

@@ -184,7 +184,10 @@ last_email_changed_at, created_at, updated_at
 **Signature-image field** (`signature_url`/`signature_public_id`, Step 7b) closes a gap Step 7
 flagged directly (checked against the model, found missing) — see this document's own `invoices`
 section and DECISIONS.md (09 August 2026 and the Step 7b entry) for the fields' addition and the
-real invoice PDF templates now reading `signature_url` when set.
+real invoice PDF templates now reading `signature_url` when set. The actual writer (Step 9,
+`POST /api/invoices/signature/`, `apps/invoices/signature_tool.py` — classical Pillow luminance-
+threshold background removal, deliberately not AI) is real now too; Step 7b only added the storage
+fields, this is the tool that fills them.
 
 1. **Mutable?** Yes — this is a live profile record, edited via Settings.
 2. **Soft deleted?** N/A — deleted alongside `User` via `anonymize()`, never independently.
@@ -920,6 +923,16 @@ the 3 built templates — see DECISIONS.md's Step 8 entry.
 **`is_default` enforcement** (one per user) is ported structurally from v1's
 `InvoiceTemplate.save()` — same pattern, applied to this new model, verified directly with a test
 creating two defaults for the same user and confirming the first is unset.
+
+**`source='ai_seeded'` is real as of Step 9** (`apps/invoices/ai_design.py`,
+`POST /api/invoices/designs/ai-seed/`) — previously just a model-level choice with nothing writing
+it. `color_variant` gets `'ai_extracted'` on this path specifically (a literal string, not one of
+the frontend gallery's 3 curated per-template keys — this path extracts real colors from a real
+uploaded reference image rather than picking from a fixed swatch list). No new column: the
+classify-and-adjust pipeline produces a `design_data` payload from one of the same 3 seeds, still
+validated by the exact same `validate_design_data_schema` before the row is ever saved. See
+DECISIONS.md's Step 9 entry for the full classify-vs-generate reasoning and the overlap-safety
+argument behind how `design_data` gets adjusted.
 
 ### `design_data` — the real JSON contract (Step 8, `apps/invoices/design_schema.py`)
 

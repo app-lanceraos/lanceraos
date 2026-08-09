@@ -61,6 +61,8 @@ Developer: Solo founder - Ali Amir
 - AI inference: Groq API
 - AI model (fast tasks): openai/gpt-oss-20b
 - AI model (complex writing): llama-3.3-70b-versatile
+- AI model (vision — image classify, Step 9): qwen/qwen3.6-27b, env-overridable via
+  GROQ_MODEL_VISION (unlike the two above, which are hardcoded, not env-read — see DECISIONS.md)
 - Encryption: cryptography library (Fernet)
 - Node.js: 24 LTS
 
@@ -330,7 +332,8 @@ lanceraos/                          <- Django project root
 │   ├── asgi.py                     <- ASGI config (Daphne + Channels)
 │   └── wsgi.py                     <- WSGI fallback entrypoint
 ├── core/
-│   ├── ai.py              ← Shared Groq API utility (call_groq) [not yet built]
+│   ├── ai.py              ← Shared Groq API utility (call_groq) — built Step 9,
+│   │                         apps.invoices' AI-seeded designs is the first real consumer
 │   ├── email.py            ← Resend HTTP API sender (send_email)
 │   ├── encryption.py        ← Fernet + HMAC blind-index helpers
 │   ├── events.py             ← Minimal on()/emit() event registry — apps.clients is its first
@@ -364,7 +367,10 @@ lanceraos/                          <- Django project root
 │   │                                  only /send/ excluded, see Module 2) + pdf_generator.py
 │   │                                  (WeasyPrint render pipeline) + design_schema.py/
 │   │                                  design_seeds.py (InvoiceDesign's validated design_data
-│   │                                  contract + the 3 builtin templates decomposed into it).
+│   │                                  contract + the 3 builtin templates decomposed into it) +
+│   │                                  ai_design.py (Step 9 — classify-only AI design seeding via
+│   │                                  core.ai.call_groq) + signature_tool.py (Step 9 — classical
+│   │                                  Pillow background removal, not AI).
 │   │                                  Email delivery/client portal — NOT YET BUILT.
 │   ├── clients/                    <- Client CRM — BUILT. Client/ClientNote/ClientTag,
 │   │                                  scoring.py (reliability-score formula, pure/testable
@@ -630,17 +636,21 @@ inside the main frontend/ app.
 Status: In progress. Foundations (`core/events.py`, `core/money.py`, `apps/payments/`'s
 `ExchangeRateSnapshot` + daily fetch task), the Client CRM backend (`apps/clients/`), the Invoice
 Core (data layer + CRUD/lifecycle endpoints + the real PDF render pipeline), the design system's
-backend contract (`InvoiceDesign.design_data`'s schema, validation, and CRUD), AND the design
-system's real drag-and-drop canvas editor and template gallery (Step 8b — see its own subsection
-below) are all built and tested, plus a real frontend for invoices (list/detail/lifecycle actions,
-aging report, autosave) — see Section 4's `frontend/` tree. One endpoint is deliberately excluded,
-not stubbed: the real `/send/` (needs `core.email.send_email()`, Step 10). The client portal,
-payment claims *workflow* (confirm/reject), comments *delivery*, recurring/reminder *background
-tasks*, per-invoice design override at creation time, and AI-seeded designs (Step 9) also don't
-exist yet — their tables/fields/backend contracts do (or, for the per-invoice override, don't even
-have a UI field to plug into yet — confirmed directly against `InvoiceFormFields.jsx`, flagged in
-DECISIONS.md rather than added) — but nothing calls them on a schedule, serves them publicly, or
-wires them into invoice creation yet. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design
+backend contract (`InvoiceDesign.design_data`'s schema, validation, and CRUD), the design system's
+real drag-and-drop canvas editor and template gallery (Step 8b), AND Path 3 (AI-seeded designs,
+Step 9 — classify-only against a real Groq vision call, `core/ai.py` + `apps/invoices/ai_design.py`)
+plus the signature tool (Step 9, classical image processing, `apps/invoices/signature_tool.py`) are
+all built and tested, plus a real frontend for invoices (list/detail/lifecycle actions, aging
+report, autosave) — see Section 4's `frontend/` tree. One endpoint is deliberately excluded, not
+stubbed: the real `/send/` (needs `core.email.send_email()`, Step 10). The client portal, payment
+claims *workflow* (confirm/reject), comments *delivery*, recurring/reminder *background tasks*, and
+per-invoice design override at creation time also don't exist yet — their tables/fields/backend
+contracts do (or, for the per-invoice override, don't even have a UI field to plug into yet —
+confirmed directly against `InvoiceFormFields.jsx`, flagged in DECISIONS.md rather than added) —
+but nothing calls them on a schedule, serves them publicly, or wires them into invoice creation yet.
+The signature tool's own frontend (an upload UI in Settings/Profile) also isn't built yet — Step 9
+built the backend endpoint only, per this project's established backend-first build order; flagged
+in DECISIONS.md rather than silently added. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design
 this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
@@ -797,16 +807,22 @@ Key API endpoints — apps/invoices/ (built, real):
 - POST /api/invoices/designs/{id}/set-default/ + /designs/duplicate/ (instantiates one of the 3
   builtin templates as a real, owned InvoiceDesign row — Path 1 of the design-system flow)
 
+Key API endpoints — apps/invoices/ (built, real — Step 9):
+- POST /api/invoices/designs/ai-seed/ (Path 3 — classify-only AI seeding, see this module's own
+  design-system note below; rate limited separately/stricter than every other design endpoint,
+  5/hour, since it's a real external Groq API cost per call)
+- POST /api/invoices/signature/ (classical Pillow background removal, not AI — preview-then-commit
+  via a `commit` flag on the same call; writes FreelancerProfile.signature_url/signature_public_id,
+  Step 7b's fields. Backend only — no frontend upload UI yet, see DECISIONS.md)
+
 Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not stubbed):
 - POST /api/invoices/{id}/send/ (real send — needs core.email.send_email(), Step 10)
 - POST /api/invoices/{id}/acknowledge/, GET/POST .../comments/, GET/POST .../claims/ + confirm/reject,
-  signature upload, WebSocket endpoints, all public/* portal endpoints, email/incoming webhook —
-  each needs a later step (portal auth Step 11, comments Step 13, claims Step 14) that hasn't landed
-  yet.
-- Per-invoice design override at invoice-creation time, and AI-seeded designs (Path 3, Step 9) — the
-  design system's own Step 9, not built here; `InvoiceFormFields.jsx` has no design-picker field at
-  all yet (confirmed directly), so there's genuinely nowhere for a per-invoice override to plug into
-  today — flagged in DECISIONS.md's Step 8b entry rather than added as unplanned scope.
+  WebSocket endpoints, all public/* portal endpoints, email/incoming webhook — each needs a later
+  step (portal auth Step 11, comments Step 13, claims Step 14) that hasn't landed yet.
+- Per-invoice design override at invoice-creation time — `InvoiceFormFields.jsx` has no design-picker
+  field at all yet (confirmed directly), so there's genuinely nowhere for it to plug into today —
+  flagged in DECISIONS.md's Step 8b entry rather than added as unplanned scope.
 - GET /api/clients/{id}/statement/pdf/ (needs real invoice data + WeasyPrint, later step)
 - GET/POST /api/clients/{id}/messages/, portal PIN endpoints — client portal, Step 11.
 
@@ -835,8 +851,20 @@ writing into each element's free-form `style` dict, undo/redo, a Preview toggle,
 3/8/20-sample-row toggle that genuinely reflows Zone 2 are all real and browser-verified. One
 confirmed, deliberate gap: no client-side Zone 1 overlap prevention — only the backend catches that
 today, demonstrated directly (dragging one element onto another and saving surfaces
-`design_schema.py`'s exact real error message in the editor). Full detail in DATABASE.md's
-`invoice_designs` section and DECISIONS.md's Step 8/8b entries.
+`design_schema.py`'s exact real error message in the editor).
+
+Path 3 (AI-seeded designs, Step 9, `apps/invoices/ai_design.py`) is also built and reached from the
+same gallery: upload a reference image, one real Groq vision call (`GROQ_MODEL_VISION`, via the now-
+real `core/ai.py`) classifies it against the same 3 base templates + a couple of real extracted
+colors + a coarse layout-density choice — deliberately CLASSIFY-only, never full HTML generation
+(a separate real POC explored that and was rejected for this system specifically; see DECISIONS.md
+for the full reasoning). The resulting `design_data` is produced by adjusting one of
+`design_seeds.py`'s own seeds — provably overlap-safe by construction (a uniform scale transform,
+not independent per-element nudges) — then re-validated against the exact same schema validator
+before the row is ever saved. Verified live against the real Groq API, not just mocked: a real bug
+(the vision model's own `<think>` reasoning was exhausting the token budget before ever reaching the
+JSON answer) was found and fixed this way. Full detail in DATABASE.md's `invoice_designs` section
+and DECISIONS.md's Step 8/8b/9 entries.
 
 ---
 
@@ -1110,7 +1138,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/ + design_data schema/CRUD; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report + design gallery/canvas editor built (Client CRM frontend, per-invoice design picker not yet) | Backend: 454 passing (`python manage.py test`). Frontend: 18 passing (`npm test`, `frontend/`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/ + design_data schema/CRUD + AI-seed/signature tool, Step 9; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report + design gallery/canvas editor + AI-seed upload built (Client CRM frontend, per-invoice design picker, signature upload UI not yet) | Backend: 504 passing (`python manage.py test`). Frontend: 18 passing (`npm test`, `frontend/`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

@@ -16,6 +16,9 @@ urlpatterns = [
     path('presets/<uuid:pk>/set-default/', views.preset_set_default, name='preset_set_default'),
     path('presets/<uuid:pk>/create-invoice/', views.preset_create_invoice, name='preset_create_invoice'),
 
+    path('designs/ai-seed/', views.design_ai_seed, name='design_ai_seed'),
+    path('signature/', views.signature_upload, name='signature_upload'),
+
     path('designs/', views.design_list, name='design_list'),
     path('designs/duplicate/', views.design_duplicate, name='design_duplicate'),
     path('designs/<uuid:pk>/', views.design_detail, name='design_detail'),
