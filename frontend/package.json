@@ -11,8 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@grapesjs/react": "^2.0.0",
     "@react-oauth/google": "^0.13.5",
     "axios": "^1.13.6",
+    "grapesjs": "^0.22.16",
     "lucide-react": "^0.577.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

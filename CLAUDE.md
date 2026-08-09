@@ -629,17 +629,19 @@ inside the main frontend/ app.
 ### Module 2 — Invoices + Client CRM + Client Portal
 Status: In progress. Foundations (`core/events.py`, `core/money.py`, `apps/payments/`'s
 `ExchangeRateSnapshot` + daily fetch task), the Client CRM backend (`apps/clients/`), the Invoice
-Core (data layer + CRUD/lifecycle endpoints + the real PDF render pipeline), and the design system's
-backend contract (`InvoiceDesign.design_data`'s schema, validation, and CRUD — see its own
-subsection below) are all built and tested, plus a real frontend for invoices (list/detail/lifecycle
-actions, aging report, autosave) — see Section 4's `frontend/` tree. One endpoint is deliberately
-excluded, not stubbed: the real `/send/` (needs `core.email.send_email()`, Step 10). The client
-portal, payment claims *workflow* (confirm/reject), comments *delivery*, recurring/reminder
-*background tasks*, and the design canvas UI (Step 8b, builds against Step 8's now-real endpoints)
-also don't exist yet — their tables/fields/backend contracts do, but nothing calls them on a
-schedule, serves them publicly, or renders an editor for them yet. See
-`INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design this is being built against, and
-`DECISIONS.md` for each step's reasoning as it lands.
+Core (data layer + CRUD/lifecycle endpoints + the real PDF render pipeline), the design system's
+backend contract (`InvoiceDesign.design_data`'s schema, validation, and CRUD), AND the design
+system's real drag-and-drop canvas editor and template gallery (Step 8b — see its own subsection
+below) are all built and tested, plus a real frontend for invoices (list/detail/lifecycle actions,
+aging report, autosave) — see Section 4's `frontend/` tree. One endpoint is deliberately excluded,
+not stubbed: the real `/send/` (needs `core.email.send_email()`, Step 10). The client portal,
+payment claims *workflow* (confirm/reject), comments *delivery*, recurring/reminder *background
+tasks*, per-invoice design override at creation time, and AI-seeded designs (Step 9) also don't
+exist yet — their tables/fields/backend contracts do (or, for the per-invoice override, don't even
+have a UI field to plug into yet — confirmed directly against `InvoiceFormFields.jsx`, flagged in
+DECISIONS.md rather than added) — but nothing calls them on a schedule, serves them publicly, or
+wires them into invoice creation yet. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design
+this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
 
@@ -800,12 +802,15 @@ Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not s
 - POST /api/invoices/{id}/acknowledge/, GET/POST .../comments/, GET/POST .../claims/ + confirm/reject,
   signature upload, WebSocket endpoints, all public/* portal endpoints, email/incoming webhook —
   each needs a later step (portal auth Step 11, comments Step 13, claims Step 14) that hasn't landed
-  yet. The design canvas UI itself (Step 8b, drag/resize/style-panel/undo-redo/AI-seeding) also isn't
-  built — Step 8 only built the backend contract it'll be built against.
+  yet.
+- Per-invoice design override at invoice-creation time, and AI-seeded designs (Path 3, Step 9) — the
+  design system's own Step 9, not built here; `InvoiceFormFields.jsx` has no design-picker field at
+  all yet (confirmed directly), so there's genuinely nowhere for a per-invoice override to plug into
+  today — flagged in DECISIONS.md's Step 8b entry rather than added as unplanned scope.
 - GET /api/clients/{id}/statement/pdf/ (needs real invoice data + WeasyPrint, later step)
 - GET/POST /api/clients/{id}/messages/, portal PIN endpoints — client portal, Step 11.
 
-**Design system (`InvoiceDesign.design_data`, Step 8) — backend contract built, editor not**:
+**Design system (`InvoiceDesign.design_data`) — backend contract AND editor both built (Steps 8/8b)**:
 a documented two-zone JSON schema (`apps/invoices/design_schema.py`) — `zone_1` (logo/business_info/
 client_info/dates, absolutely positioned, save-time overlap-checked) above the line-items table, and
 `zone_2` (the mandatory table + totals block, plus notes/signature/payment_info as a
@@ -814,7 +819,24 @@ with specific, per-violation error messages, not a generic rejection. The 3 buil
 decomposed into real seed `design_data` (`apps/invoices/design_seeds.py`) — Python constants, not
 database rows (`InvoiceDesign.user` is a required FK, so there's no ownerless "builtin" row) —
 materialized into a real, owned `InvoiceDesign` row via `design_duplicate` the moment a user picks
-one. Full detail in DATABASE.md's `invoice_designs` section and DECISIONS.md's Step 8 entry.
+one.
+
+A real, working drag-and-drop canvas editor (`frontend/src/pages/design-editor/DesignEditor.jsx`,
+full-screen and shell-less like `/account/deletion-review`, reached via "Manage Designs" in
+`Invoices.jsx`'s header -> `DesignGallery.jsx`) is built on top of GrapesJS core (evaluated against
+Puck and rejected — Puck's own docs confirm a slot/zone-only model with no absolute-positioning
+support at all, a hard blocker for Zone 1's real coordinate requirement; GrapesJS's core, free,
+BSD-3 API genuinely supports `dmode:'absolute'` drag + `resizable` handles, confirmed directly
+against its installed source). Real free-form drag/resize in Zone 1, flow-reorder-only in Zone 2,
+the mandatory table/totals block genuinely non-removable in the UI (not just backend-enforced —
+and a real bug in the first implementation of this was caught and fixed by this step's own browser
+testing, see DECISIONS.md), a pairing toggle restricted to signature/payment_info, a style panel
+writing into each element's free-form `style` dict, undo/redo, a Preview toggle, and a
+3/8/20-sample-row toggle that genuinely reflows Zone 2 are all real and browser-verified. One
+confirmed, deliberate gap: no client-side Zone 1 overlap prevention — only the backend catches that
+today, demonstrated directly (dragging one element onto another and saving surfaces
+`design_schema.py`'s exact real error message in the editor). Full detail in DATABASE.md's
+`invoice_designs` section and DECISIONS.md's Step 8/8b entries.
 
 ---
 
@@ -1088,7 +1110,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/ + design_data schema/CRUD; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report built (Client CRM frontend not yet) | 454 passing (`python manage.py test`, full backend) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/ + design_data schema/CRUD; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report + design gallery/canvas editor built (Client CRM frontend, per-invoice design picker not yet) | Backend: 454 passing (`python manage.py test`). Frontend: 18 passing (`npm test`, `frontend/`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

@@ -22,6 +22,8 @@ import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
 import Clients from '@/pages/Clients'
 import Invoices from '@/pages/Invoices'
+import DesignGallery from '@/pages/DesignGallery'
+import DesignEditor from '@/pages/design-editor/DesignEditor'
 import Onboarding from '@/pages/Onboarding'
 import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
@@ -87,6 +89,18 @@ export default function App() {
         <Route
           path="/invoices"
           element={<PrivateRoute><AppShell><Invoices /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/invoices/designs"
+          element={<PrivateRoute><AppShell><DesignGallery /></AppShell></PrivateRoute>}
+        />
+        {/* Step 8b's canvas editor — deliberately NOT wrapped in AppShell,
+            same shell-less pattern as /account/deletion-review above (see
+            DesignEditor.jsx's own comment and DECISIONS.md). Still gated by
+            PrivateRoute — shell-less is a layout choice, not an auth one. */}
+        <Route
+          path="/invoices/designs/:id/edit"
+          element={<PrivateRoute><DesignEditor /></PrivateRoute>}
         />
 
         {/* No dedicated landing page yet (separate future work) — send

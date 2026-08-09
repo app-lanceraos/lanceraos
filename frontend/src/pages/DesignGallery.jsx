@@ -1,0 +1,239 @@
+// src/pages/DesignGallery.jsx
+//
+// Step 8b's Path 1 (ready-made templates) + Path 2 (custom editor) entry
+// point — "Manage Designs", wired from Invoices.jsx's header (see that
+// file's own comment on why there's no natural per-invoice design picker
+// yet). Stays inside the normal AppShell frame — unlike DesignEditor.jsx's
+// canvas, a gallery/list page is exactly what AppShell's standard layout
+// already handles well, per DESIGN.md Section 5; no reason to break that
+// precedent here the way the canvas itself needed to.
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Copy, LayoutTemplate, Plus, Sparkles, Star, Trash2 } from 'lucide-react'
+
+import api from '@/lib/api'
+import useTitle from '@/hooks/useTitle'
+import useAuthStore from '@/store/authStore'
+import FosAlert from '@/components/FosAlert'
+import DesignCanvasPreview from '@/components/design-editor/DesignCanvasPreview'
+import { BASE_TEMPLATE_LABELS, BUILTIN_DESIGN_DATA, COLOR_VARIANTS } from '@/lib/designEditor/builtinDesigns'
+import { BLANK_DESIGN_DATA } from '@/lib/designEditor/constants'
+
+function BuiltinTemplateCard({ baseTemplate, logoUrl, onUse, busy }) {
+  const [variant, setVariant] = useState(COLOR_VARIANTS[baseTemplate][0].key)
+
+  return (
+    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+        <DesignCanvasPreview designData={BUILTIN_DESIGN_DATA[baseTemplate]} logoUrl={logoUrl} />
+      </div>
+      <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: 8 }}>
+        {BASE_TEMPLATE_LABELS[baseTemplate]}
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+        {COLOR_VARIANTS[baseTemplate].map((v) => (
+          <button
+            key={v.key}
+            onClick={() => setVariant(v.key)}
+            aria-label={v.label}
+            title={v.label}
+            style={{
+              width: 22, height: 22, borderRadius: '50%', cursor: 'pointer',
+              border: variant === v.key ? '2px solid var(--accent)' : '2px solid transparent',
+              background: `linear-gradient(135deg, ${v.primary} 50%, ${v.secondary} 50%)`,
+            }}
+          />
+        ))}
+      </div>
+      <button
+        onClick={() => onUse(baseTemplate, variant)}
+        disabled={busy}
+        className="fos-btn fos-btn-accent fos-btn-full"
+      >
+        Use this template
+      </button>
+    </div>
+  )
+}
+
+function SavedDesignCard({ design, onEdit, onSetDefault, onDelete, logoUrl }) {
+  return (
+    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+        <DesignCanvasPreview designData={design.design_data} logoUrl={logoUrl} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <span style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)' }}>{design.name}</span>
+        {design.is_default && <Star size={13} style={{ color: 'var(--accent)' }} fill="var(--accent)" />}
+      </div>
+      <div style={{ fontSize: '0.74rem', color: 'var(--text-tertiary)', marginBottom: 12 }}>
+        Based on {BASE_TEMPLATE_LABELS[design.base_template] || design.base_template} · {design.source}
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button onClick={() => onEdit(design)} className="fos-btn fos-btn-ghost" style={{ flex: 1 }}>Edit</button>
+        {!design.is_default && (
+          <button onClick={() => onSetDefault(design)} aria-label="Set as default" className="fos-btn fos-btn-ghost" style={{ padding: 8 }}>
+            <Star size={14} />
+          </button>
+        )}
+        <button onClick={() => onDelete(design)} aria-label="Delete design" className="fos-btn fos-btn-ghost" style={{ padding: 8, color: 'var(--status-red)' }}>
+          <Trash2 size={14} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export default function DesignGallery() {
+  useTitle('Manage Designs — LanceraOS')
+  const navigate = useNavigate()
+  const user = useAuthStore((s) => s.user)
+  const logoUrl = user?.profile_logo || null
+
+  const [designs, setDesigns] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [busyTemplate, setBusyTemplate] = useState(null)
+  const [error, setError] = useState('')
+  const [justCreated, setJustCreated] = useState(null) // the design just duplicated, awaiting edit-or-done choice
+
+  useEffect(() => {
+    api.get('/invoices/designs/')
+      .then(({ data }) => setDesigns(data))
+      .catch(() => setError('Could not load your saved designs.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  async function handleUseTemplate(baseTemplate, colorVariant) {
+    setBusyTemplate(baseTemplate)
+    setError('')
+    try {
+      const { data } = await api.post('/invoices/designs/duplicate/', {
+        base_template: baseTemplate, color_variant: colorVariant,
+      })
+      setDesigns((prev) => [data, ...prev])
+      setJustCreated(data)
+    } catch {
+      setError('Could not create a design from that template. Please try again.')
+    } finally {
+      setBusyTemplate(null)
+    }
+  }
+
+  function handleStartBlank() {
+    navigate('/invoices/designs/new/edit', {
+      state: { seedDesign: { name: 'Untitled design', base_template: 'professional', source: 'custom', color_variant: '', design_data: BLANK_DESIGN_DATA } },
+    })
+  }
+
+  function handleEdit(design) {
+    navigate(`/invoices/designs/${design.id}/edit`)
+  }
+
+  async function handleSetDefault(design) {
+    try {
+      const { data } = await api.post(`/invoices/designs/${design.id}/set-default/`)
+      setDesigns((prev) => prev.map((d) => (d.id === data.id ? data : { ...d, is_default: false })))
+    } catch {
+      setError('Could not set that design as default.')
+    }
+  }
+
+  async function handleDelete(design) {
+    if (!window.confirm(`Delete "${design.name}"? This can't be undone.`)) return
+    try {
+      await api.delete(`/invoices/designs/${design.id}/`)
+      setDesigns((prev) => prev.filter((d) => d.id !== design.id))
+    } catch {
+      setError('Could not delete that design.')
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)' }}>Manage Designs</h1>
+          <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+            Pick a ready-made template or build your own invoice layout.
+          </p>
+        </div>
+        <button onClick={handleStartBlank} className="fos-btn fos-btn-accent" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Plus size={15} /> Blank design
+        </button>
+      </div>
+
+      {error && <FosAlert type="error" onDismiss={() => setError('')} style={{ marginBottom: 16 }}>{error}</FosAlert>}
+
+      {justCreated && (
+        <FosAlert type="success" onDismiss={() => setJustCreated(null)} style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <span>"{justCreated.name}" is ready to use as-is, or you can customize it further.</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setJustCreated(null)} className="fos-btn fos-btn-ghost">Done</button>
+              <button onClick={() => handleEdit(justCreated)} className="fos-btn fos-btn-accent">Customize</button>
+            </div>
+          </div>
+        </FosAlert>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 12px' }}>
+        <LayoutTemplate size={16} style={{ color: 'var(--text-tertiary)' }} />
+        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          Ready-made templates
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16, marginBottom: 32 }}>
+        {Object.keys(BUILTIN_DESIGN_DATA).map((baseTemplate) => (
+          <BuiltinTemplateCard
+            key={baseTemplate}
+            baseTemplate={baseTemplate}
+            logoUrl={logoUrl}
+            onUse={handleUseTemplate}
+            busy={busyTemplate === baseTemplate}
+          />
+        ))}
+
+        {/* Path 3 (AI-seeding) is Step 9 — not built here. This card is a
+            deliberate, visible slot for where it plugs in, not a stub of
+            the feature itself: disabled, clearly labeled "coming soon",
+            no backend call wired to it at all. */}
+        <div style={{
+          background: 'var(--bg-surface-2)', border: '1px dashed var(--border-default)', borderRadius: 'var(--radius-lg)',
+          padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+          color: 'var(--text-tertiary)', minHeight: 200,
+        }}>
+          <Sparkles size={22} />
+          <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>AI-seeded design</span>
+          <span style={{ fontSize: '0.74rem', textAlign: 'center' }}>Coming soon — describe your brand and get a starting layout.</span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 12px' }}>
+        <Copy size={16} style={{ color: 'var(--text-tertiary)' }} />
+        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          Your designs
+        </span>
+      </div>
+      {loading ? (
+        <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Loading…</div>
+      ) : designs.length === 0 ? (
+        <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+          No saved designs yet — use a ready-made template above or start a blank one.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+          {designs.map((design) => (
+            <SavedDesignCard
+              key={design.id}
+              design={design}
+              logoUrl={logoUrl}
+              onEdit={handleEdit}
+              onSetDefault={handleSetDefault}
+              onDelete={handleDelete}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

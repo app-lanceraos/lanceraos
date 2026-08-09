@@ -1609,3 +1609,173 @@ another's), `design_duplicate` (valid/invalid `base_template`, independence from
 constant, default naming), serializer allowlist regression (client-supplied `id` ignored, `user`
 always the requesting user), and rate limiting for every mutating design endpoint. Full project
 test suite: 454 tests passing (up from 413 before this step); `manage.py check` clean.
+
+Date: 09 August 2026
+Decision: Step 8b — the drag-and-drop canvas editor for `InvoiceDesign.design_data`, built against
+Step 8's real backend contract. Frontend only (`frontend/src/lib/designEditor/`, `frontend/src/pages/
+design-editor/`, `frontend/src/pages/DesignGallery.jsx`) — no backend changes.
+
+**Canvas library: GrapesJS, not Puck — verified, not assumed, and the opposite of the initial
+expectation.** The task itself expected Puck to be the better fit (React-native, fits this
+codebase's component patterns) unless a concrete blocker showed up. One did: Puck's own
+documentation (fetched directly, not recalled from training) describes a slot/zone/DropZone
+component model — ordered, structured, flow-based — with no mention of absolute positioning,
+arbitrary pixel placement, or free resizing anywhere. Zone 1's requirement is genuinely
+coordinate-based (real x/y/width/height per design_schema.py), which Puck's model has no path to
+without building a positioning system on top of it from scratch — precisely the "don't build a
+canvas from scratch" the task's own framing warned against defeating. GrapesJS, by contrast: its
+core (free, open-source, BSD-3-licensed `grapesjs` npm package, confirmed via its own bundled
+`dist/grapes.mjs` source, not just docs) supports a real per-component `dmode: 'absolute'` drag
+mode and a `resizable` trait with full 8-handle configuration — both used directly in `componentTypes.js`.
+(The polished, snap-to-grid "Absolute Mode" *plugin* GrapesJS blogs about is a paid Studio SDK
+feature — confirmed and explicitly NOT what's used here; the underlying `dmode`/`resizable` this
+build depends on are core-free, a different and lower-level thing.) An official React wrapper
+(`@grapesjs/react`) exists and is used for the `<GjsEditor>`/`<Canvas>` mounting only — everything
+else (component types, blocks, style panel) is built directly against the real `grapesjs` Editor
+API via `onEditor`, since `@grapesjs/react`'s own README is explicit that it provides no UI
+components of its own, "let you define your own." Zone 2's flow-reorder-only requirement needed no
+special support either way — normal GrapesJS component sorting (the default, non-absolute drag
+mode) already does exactly that.
+
+**Full-screen, shell-less editor — not AppShell-embedded.** A real, working precedent for a
+shell-less authenticated route already exists in this codebase (`/account/deletion-review`,
+`DeletionReview.jsx`, confirmed directly in `App.jsx` rather than assumed) — `DesignEditor.jsx`
+follows that exact pattern (`<Route path="/invoices/designs/:id/edit" element={<PrivateRoute>
+<DesignEditor /></PrivateRoute>}>`, no `<AppShell>` wrapper) rather than inventing a new one. The
+canvas genuinely needs more width than AppShell's standard main-content frame gives every other
+page — a real A4-proportioned page plus a block palette plus a style panel doesn't fit
+comfortably inside the ~calc(100%-sidebar) frame DESIGN.md Section 5 describes. The "obvious way
+back" the task required: a persistent top bar (`EditorTopBar.jsx`) with a "← Designs" button,
+always visible, including in Preview mode — never a dead end. `DesignGallery.jsx` (the list/gallery
+page one level up) stays inside AppShell as normal — nothing about *that* page needed to break
+precedent, only the canvas itself.
+
+**Two-zone editor mechanics, matching design_schema.py exactly**:
+- Zone 1: a `lancera-zone1` container (`droppable` restricted to `lancera-zone1-element` children
+  only, via a real per-instance function check, not a static flag) holding free-form
+  `dmode:'absolute'`, `resizable`-enabled children — one per `ZONE_1_TYPES` (logo/business_info/
+  client_info/dates), added via GrapesJS's real `BlockManager` (mounted with
+  `editor.BlockManager.render(undefined, {external:true})`, not reimplemented — GrapesJS's own
+  drag-drop mechanics are mouse-event-based, not native HTML5 DnD, specifically so they work across
+  the canvas iframe boundary, confirmed empirically by actually dragging in the real browser).
+- Zone 2: a `lancera-zone2` container holding normal-flow, sortable-only children (no `dmode`
+  override, `resizable:false` — there is no x/y/width/height for zone_2 at all, per the schema) —
+  one per `ZONE_2_TYPES` (totals/notes/signature/payment_info). `spacing_after_previous` is a real
+  `margin-top` style value, editable both by GrapesJS's own resize-adjacent drag AND a direct
+  numeric field in the custom settings panel.
+- The mandatory line-items table is a **standalone root-level sibling**, not a child of the Zone 2
+  sortable list at all — deliberately, so "the table always starts Zone 2" is true by construction
+  (it was never in the reorderable collection to begin with) rather than needing runtime protection
+  against a drag-reorder edge case leapfrogging something ahead of it.
+- `paired_side_by_side` is a per-element boolean **trait**, not a separate pair-container block —
+  simpler to serialize (zone_2 stays a flat, ordered list; no nested structure to unpack) and the
+  trait is only ever shown in the settings panel for `signature`/`payment_info` types (checked
+  directly in `ElementSettingsPanel.jsx`), satisfying "disabled/hidden otherwise" without needing
+  GrapesJS's own Trait Manager component-type restrictions. The exact "signature" visual side-by-
+  side re-layout inside the editable canvas itself is NOT rendered live — the elements still stack
+  in the Zone 2 list for editing, flagged with a "⇄ paired" badge instead of a physical reflow.
+  That reflow is a rendering concern the real templates/pdf_generator.py express, not something the
+  editor canvas itself needs to pixel-preview; scoped out deliberately given the time this step had,
+  not silently skipped.
+- `modern.html`'s `style.sidebar: true` compromise (Step 8's own documented gap) is exposed as a
+  "Render in sidebar region" checkbox trait on every Zone 1 element type (not schema-restricted to
+  any one type) rather than a second, differently-mechanised droppable region — sidebar-flagged
+  elements render with a distinct purple dashed border + a 🗄 marker in the canvas so they read as
+  visually different from an ordinary Zone 1 box, per the task's own requirement, without needing a
+  second drag-and-drop target with different mechanics grafted onto the same container.
+- Style panel: a plain React form (`ElementSettingsPanel.jsx`), not GrapesJS's own Trait Manager UI
+  — deliberate, so it can use this project's real inline-style/lucide-icon conventions instead of
+  theming a Backbone-view-based panel, and so per-type field definitions (label/font/color/align/
+  etc., a `FIELD_DEFS` map per element type) stay declarative and easy to extend once Step 8b's own
+  scope grows. Reads/writes `component.getAttributes()['data-style-json']` directly — the one place
+  the free-form style dict actually lives on the live component.
+- Sample-row-count (3/8/20): real row `<div>`s rendered inside the table component's own view,
+  driven by a `data-sample-rows` attribute — changing it changes the table's real rendered height,
+  which pushes Zone 2's real, normal-flow siblings down exactly the way a heavier real invoice
+  would (confirmed directly: switching to 20 rows and reading the live DOM showed the literal text
+  "Sample line item 20" and the later zone_2 elements visibly lower on the page) — a real functional
+  exercise of the flow model, not a decorative counter.
+- Undo/redo: GrapesJS's own `UndoManager` (`.undo()`/`.redo()`/`.hasUndo()`/`.hasRedo()`), no
+  custom history stack. Preview: GrapesJS's own built-in command — its real registered id is
+  `'preview'`, **not** `'core:preview'` as commonly assumed/documented elsewhere; confirmed directly
+  against this project's actual installed `grapesjs/dist/grapes.mjs` source
+  (`commandsDef = [['preview', 'Preview', 'preview'], ...]`) before wiring `runCommand`/`stopCommand`
+  to it, rather than shipping a silently-broken button.
+
+**A real bug found and fixed by this step's own Playwright verification, not assumed correct from
+reading GrapesJS's docs**: the first implementation tried enforcing "totals removable only while
+another totals sibling exists" via a custom `isRemovable()` method on the component model. This did
+nothing — GrapesJS's real delete command and toolbar-delete-button code (confirmed directly in
+`dist/grapes.mjs`) check `component.get('removable')` as a **plain property read**, never a method
+call, and a function stored there is read back as a truthy value rather than invoked. A live
+Playwright test (delete one of two totals elements — allowed — then try to delete the last
+remaining one — should be blocked) caught this directly: the second delete also succeeded, which
+should never happen. Fixed by *actively setting* the real `removable` property on every totals
+sibling in response to real editor-level `'component:add'`/`'component:remove'` events (which do
+fire for any change anywhere in the tree, unlike a plain component model's own `.on('add remove',
+...)`, which — a second wrong guess, also caught by re-running the same test — listens on the wrong
+object: those events fire on the child *collection* (`component.components()`), not the parent
+model itself, and Backbone does not bubble collection events onto the model that owns the
+collection). The fix lives in `DesignEditor.jsx`'s `onEditorInit`, calling
+`refreshTotalsRemovability` (`componentTypes.js`) on every add/remove anywhere in the tree — verified
+correct in both directions afterward: deleting a design's second totals element (the minimal
+seed's own real shape) succeeds, and deleting the resulting last one is then blocked.
+
+**A real, confirmed gap, not silently swallowed**: this step does **not** implement client-side
+zone_1 overlap prevention — only the two rules the task explicitly asked for UI-level enforcement
+of (mandatory-element non-removal, the pairing count) got a real UI affordance; overlap is
+backend-only, exactly as the task's own framing anticipated might be the case ("if the backend
+catches an overlap the canvas UI itself somehow let through, that's a real gap worth noting"). This
+was directly demonstrated, not hypothesized: dragging "Bill to" on top of "From" in a real browser
+and saving surfaced `design_schema.py`'s exact real message — "zone_1.elements[3] (client_info)
+overlaps zone_1.elements[4] (business_info) — bounding boxes collide." — verbatim in the editor's
+error banner, confirming both that the gap is real (the canvas let the drag happen) and that the
+error-surfacing requirement works correctly (the specific, per-element backend message reaches the
+user, not a generic failure). Left unfixed deliberately — adding real-time client-side overlap
+detection during drag is a reasonable follow-up for whoever picks this up next, not silently added
+here beyond what was asked.
+
+**Path 1 gallery preview — a real, flagged data duplication, not a new backend endpoint**:
+`design_seeds.py`'s 3 `BUILTIN_DESIGNS` live only in Python; there's no "list builtins" backend
+endpoint (`design_duplicate` only *creates* a real row once a user has already picked one). Rather
+than add a backend endpoint for this frontend-only step, `builtinDesigns.js` hand-mirrors the same 3
+JSON structures for the gallery's preview cards (`DesignCanvasPreview.jsx`, rendered as a scaled
+static approximation using the same element vocabulary the editor edits — not a WeasyPrint render,
+a different pipeline entirely). If `design_seeds.py` changes, this file needs a matching manual
+update or the gallery silently drifts from what `design_duplicate` actually creates — flagged
+directly in both files' own comments, not hidden.
+
+**Per-invoice design override — confirmed absent, not built here.** `InvoiceFormFields.jsx` has no
+design-picker field of any kind (checked directly) — the spec's per-invoice design-override flow at
+invoice-creation time has nowhere to plug into yet. Out of this step's scope by the task's own
+explicit instruction; flagged rather than silently added. `DesignGallery.jsx`'s "Manage Designs"
+entry point (wired from `Invoices.jsx`'s header, next to the existing "From Preset" button) is the
+management-side half this step was actually asked to build.
+
+**New frontend dependencies**: `grapesjs@^0.22.16` (pinned below its latest 0.23.4 to satisfy
+`@grapesjs/react`'s own `peerDependencies` range, confirmed via `npm view`/`npm install`'s own
+ERESOLVE error rather than guessed) and `@grapesjs/react@^2.0.0`. `npm audit fix` run immediately
+after install brought the resulting tree to 0 vulnerabilities (the handful `npm install` initially
+reported — `brace-expansion`, `js-yaml`, `nanoid`, `postcss`, `undici`, `react-router`'s own
+existing range — were all transitive, non-breaking patch bumps, not anything specific to the two
+new packages). `package.json` is strict JSON and can't hold the per-dependency rationale comments
+`requirements.txt` uses — this entry, plus each file's own header comment, is the closest
+equivalent for this step's additions.
+
+Verified: this step's own vitest suite (`serialization.test.js` — the real design_data <-> GrapesJS
+round-trip, including all 3 real builtin seeds, with an explicit, documented ~1px/0.3mm tolerance on
+coordinates since the canvas's internal working unit is px while the schema is mm, never a false
+exact match; `rules.test.js` — the mandatory-totals and pairing-count logic in isolation) — 18 tests,
+all passing. Real browser verification via a throwaway Playwright script (not committed, per this
+project's established convention): logged in as a real test user, opened the gallery, used a real
+template (`design_duplicate` called for real), opened the resulting design in the editor, selected a
+real element (settings panel populated correctly), dragged it via real mouse events (confirmed via
+screenshot, not just a DOM-property read — which is what surfaced the overlap gap above), changed
+sample rows from 3 to 20 (confirmed via live DOM text), toggled Preview (confirmed palette/panel
+hide), toggled Undo, attempted to delete the mandatory table and the mandatory totals block via
+Backspace (both correctly blocked; the totals bug above was found and fixed via this exact test),
+confirmed a totals element genuinely becomes removable/protected as its sibling count changes both
+directions, toggled the pairing checkbox and watched the live status message update, saved a clean
+design successfully (confirmed via a follow-up real API GET that the persisted name and design_data
+matched), and confirmed dark mode renders the gallery correctly. Zero console errors across every
+run except the one, expected 400 from the deliberately-forced overlap-save test.

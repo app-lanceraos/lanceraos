@@ -1,9 +1,13 @@
 // src/pages/Invoices.jsx
 //
-// Invoice list — apps/invoices/ CRUD + lifecycle endpoints from Step 5 only
-// (no /send/, no /pdf/, no portal/comments/claims/designs — those are later
+// Invoice list — apps/invoices/ CRUD + lifecycle endpoints from Step 5, plus
+// GET .../pdf/ (Step 7b) and a "Manage Designs" entry point into Step 8b's
+// design gallery/editor (no per-invoice design override at creation time
+// yet — InvoiceFormFields.jsx has no design-picker field, confirmed
+// directly; flagged in DECISIONS.md rather than added here, out of this
+// step's scope). No /send/, no portal/comments/claims — those are later
 // steps, not stubbed here, same "don't build a placeholder" convention as
-// the backend). Ports v1's Invoices.jsx interaction patterns (search/filter/
+// the backend. Ports v1's Invoices.jsx interaction patterns (search/filter/
 // sort, card list, create flow, mobile FAB) against v2's real endpoints and
 // response shapes — v1's stored 'overdue' status badge and its Cash Flow
 // Forecast / Currency Diversification sections are deliberately NOT ported
@@ -17,8 +21,9 @@
 // from the status filter, not a 10th status option, because a sent-and-
 // overdue invoice must be reachable by both filters at once.
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
-  Search, X, Plus, FileText, ChevronDown, ChevronUp, Layers, BookmarkPlus,
+  Search, X, Plus, FileText, ChevronDown, ChevronUp, Layers, BookmarkPlus, LayoutTemplate,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -34,6 +39,7 @@ const LIMIT = 60
 
 export default function Invoices() {
   useTitle('LanceraOS | Invoices')
+  const navigate = useNavigate()
 
   const [invoices, setInvoices] = useState([])
   const [total, setTotal] = useState(0)
@@ -195,6 +201,9 @@ export default function Invoices() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <button className="fos-btn fos-btn-ghost header-designs-btn" onClick={() => navigate('/invoices/designs')}>
+            <LayoutTemplate size={15} /> Manage Designs
+          </button>
           <button className="fos-btn fos-btn-ghost header-preset-btn" onClick={() => setShowPresetPicker(true)}>
             <BookmarkPlus size={15} /> From Preset
           </button>
@@ -361,6 +370,7 @@ export default function Invoices() {
           .page-fab { display: flex !important; }
           .header-add-btn { display: none !important; }
           .header-preset-btn { display: none !important; }
+          .header-designs-btn { display: none !important; }
         }
       `}</style>
     </>
