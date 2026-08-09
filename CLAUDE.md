@@ -360,8 +360,12 @@ lanceraos/                          <- Django project root
 │   │                                  InvoicePartialPayment/InvoiceReminder/InvoiceViewEvent/
 │   │                                  InvoiceComment/PaymentClaim/InvoiceDesign/InvoicePreset/
 │   │                                  InvoicePresetItem) + serializers.py/views.py/urls.py
-│   │                                  (CRUD + lifecycle endpoints — /send/ and /pdf/ excluded,
-│   │                                  see Module 2). PDF/email/portal — NOT YET BUILT.
+│   │                                  (CRUD + lifecycle endpoints, incl. real GET .../pdf/ —
+│   │                                  only /send/ excluded, see Module 2) + pdf_generator.py
+│   │                                  (WeasyPrint render pipeline) + design_schema.py/
+│   │                                  design_seeds.py (InvoiceDesign's validated design_data
+│   │                                  contract + the 3 builtin templates decomposed into it).
+│   │                                  Email delivery/client portal — NOT YET BUILT.
 │   ├── clients/                    <- Client CRM — BUILT. Client/ClientNote/ClientTag,
 │   │                                  scoring.py (reliability-score formula, pure/testable
 │   │                                  independent of Invoice — see DECISIONS.md)
@@ -624,21 +628,24 @@ inside the main frontend/ app.
 
 ### Module 2 — Invoices + Client CRM + Client Portal
 Status: In progress. Foundations (`core/events.py`, `core/money.py`, `apps/payments/`'s
-`ExchangeRateSnapshot` + daily fetch task), the Client CRM backend (`apps/clients/`), and now the
-Invoice Core — both the data layer AND its CRUD + lifecycle endpoints (`apps/invoices/` — see its own
-subsection below) — are built and tested. Two endpoints are deliberately excluded, not stubbed: the
-real `/send/` (needs `core.email.send_email()`, Step 10) and `/pdf/` (needs `InvoiceDesign`
-rendering, Step 7). The client portal, payment claims *workflow* (confirm/reject), comments
-*delivery*, and recurring/reminder *background tasks* also don't exist yet — their tables/fields do,
-but nothing calls them on a schedule or serves them publicly yet. No frontend for this module yet
-either. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design this is being built against, and
+`ExchangeRateSnapshot` + daily fetch task), the Client CRM backend (`apps/clients/`), the Invoice
+Core (data layer + CRUD/lifecycle endpoints + the real PDF render pipeline), and the design system's
+backend contract (`InvoiceDesign.design_data`'s schema, validation, and CRUD — see its own
+subsection below) are all built and tested, plus a real frontend for invoices (list/detail/lifecycle
+actions, aging report, autosave) — see Section 4's `frontend/` tree. One endpoint is deliberately
+excluded, not stubbed: the real `/send/` (needs `core.email.send_email()`, Step 10). The client
+portal, payment claims *workflow* (confirm/reject), comments *delivery*, recurring/reminder
+*background tasks*, and the design canvas UI (Step 8b, builds against Step 8's now-real endpoints)
+also don't exist yet — their tables/fields/backend contracts do, but nothing calls them on a
+schedule, serves them publicly, or renders an editor for them yet. See
+`INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design this is being built against, and
 `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
 
 The most important module. Two closely related features in one app.
 
-Invoice Generator — built (apps/invoices/), no PDF/email yet:
+Invoice Generator — built (apps/invoices/), including real PDF rendering, email delivery still not:
 Invoice creation in any currency with no hardcoded choices (validated in the serializer layer via
 apps.clients.serializers.validate_currency_code, reused directly rather than duplicated). Line items
 (InvoiceItem) with quantity and unit price; `recalculate_totals()` derives subtotal/tax/total from
@@ -646,17 +653,20 @@ them, ported directly from v1. Tax rate and discount at invoice level, with tota
 go negative if a discount exceeds subtotal+tax. Anchor-currency conversion (`rate_to_usd_at_issue` +
 a snapshot FK, locked in by `invoice_finalise`/`invoice_mark_sent`) replaces v1's PKR-specific rate
 tracking — conversions are computed live from ExchangeRateSnapshot history, never stored at payment
-time. The three PDF templates (`apps/invoices/templates/invoices/{professional,minimal,modern}.html`)
-are built and wired to real Invoice/Client/InvoiceItem/FreelancerProfile data (Step 7) — line items
-loop and render-tested at both very few and very many items (a real 22-item/3-page WeasyPrint stress
-render, not just Django's own render_to_string), the client-currency-conversion line is real
-(`Invoice.client_currency_conversion`), and `professional.html` now has the same real `@page` page-
-counter footer the other two already had. Font sourcing and the actual WeasyPrint render call/
-endpoint are NOT built yet (Step 7b) — `pdf_url`/`pdf_generated_at` exist on the model (the
-frozen-at-send artifact fields) but nothing populates them; QR-code image generation and any
-signature-image field are also still missing (see DECISIONS.md, 09 August 2026). The real `/send/`
-action and the manual `mark-sent` dropdown flip both exist now, but only the latter is built (the
-former needs the email engine).
+time; `capture_issue_rate()` attaches a snapshot for USD invoices too (Step 7b fix), so this line
+shows correctly even when the invoice currency is USD and the client's isn't. The three PDF
+templates (`apps/invoices/templates/invoices/{professional,minimal,modern}.html`) are built, wired
+to real Invoice/Client/InvoiceItem/FreelancerProfile data, and actually rendered to real PDFs via
+WeasyPrint (`apps/invoices/pdf_generator.py`, Step 7b) — real embedded/subsetted custom fonts
+(IBM Plex Sans/Mono, Source Serif 4, Space Grotesk), a real QR code (base64 data URI, ported from
+v1's `generate_qr_image`) encoding `Invoice.payment_page_url`, and `FreelancerProfile.signature_url`
+(new field, mirrors `logo`'s exact pattern) rendering when set. `GET /api/invoices/<pk>/pdf/`
+live-renders for draft/created invoices and redirects to a frozen, stored Cloudinary `pdf_url` for
+sent-or-beyond invoices, populated exactly once by `invoice_mark_sent`. Template selection is an
+interim default (`FreelancerProfile` default-template setting checked first, then `'professional'`)
+until Step 8b's editor lets a real `InvoiceDesign` get picked per invoice. The real `/send/` action
+and the manual `mark-sent` dropdown flip both exist now, but only the latter is built (the former
+needs the email engine).
 
 Invoices start as a draft with NO invoice number at all — `invoice_finalise` (draft -> created) is
 what assigns the real INV-YYYY-NNNN, confirmed against `invoice_duplicate`'s own behavior (which
@@ -771,6 +781,7 @@ Key API endpoints — apps/clients/ (built, real):
 Key API endpoints — apps/invoices/ (built, real):
 - GET/POST /api/invoices/
 - GET/PUT/DELETE /api/invoices/{id}/ (PUT: draft only; DELETE: draft/created only — both 403 otherwise)
+- GET /api/invoices/{id}/pdf/ (live-render for draft/created; redirect to stored pdf_url for sent+)
 - POST /api/invoices/{id}/finalise/ + /mark-sent/ + /mark-paid/
 - POST /api/invoices/{id}/payments/ + DELETE /api/invoices/{id}/payments/undo/
 - POST /api/invoices/{id}/cancel/ + /refund/ + /bad-debt/ + /duplicate/
@@ -779,16 +790,31 @@ Key API endpoints — apps/invoices/ (built, real):
 - GET /api/invoices/summary/ + /aging-report/ + /exchange-rate/
 - GET/POST /api/invoices/presets/ + GET/PUT/DELETE /api/invoices/presets/{id}/
 - POST /api/invoices/presets/{id}/set-default/ + /create-invoice/
+- GET/POST /api/invoices/designs/ + GET/PUT/DELETE /api/invoices/designs/{id}/ (Step 8 — the
+  validated design_data contract; see this module's own design-system note below)
+- POST /api/invoices/designs/{id}/set-default/ + /designs/duplicate/ (instantiates one of the 3
+  builtin templates as a real, owned InvoiceDesign row — Path 1 of the design-system flow)
 
 Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not stubbed):
 - POST /api/invoices/{id}/send/ (real send — needs core.email.send_email(), Step 10)
-- GET /api/invoices/{id}/pdf/ (needs InvoiceDesign rendering, Step 7)
 - POST /api/invoices/{id}/acknowledge/, GET/POST .../comments/, GET/POST .../claims/ + confirm/reject,
-  designs CRUD, signature upload, WebSocket endpoints, all public/* portal endpoints, email/incoming
-  webhook — each needs a later step (portal auth Step 11, comments Step 13, claims Step 14, design
-  system Steps 7-9) that hasn't landed yet.
+  signature upload, WebSocket endpoints, all public/* portal endpoints, email/incoming webhook —
+  each needs a later step (portal auth Step 11, comments Step 13, claims Step 14) that hasn't landed
+  yet. The design canvas UI itself (Step 8b, drag/resize/style-panel/undo-redo/AI-seeding) also isn't
+  built — Step 8 only built the backend contract it'll be built against.
 - GET /api/clients/{id}/statement/pdf/ (needs real invoice data + WeasyPrint, later step)
 - GET/POST /api/clients/{id}/messages/, portal PIN endpoints — client portal, Step 11.
+
+**Design system (`InvoiceDesign.design_data`, Step 8) — backend contract built, editor not**:
+a documented two-zone JSON schema (`apps/invoices/design_schema.py`) — `zone_1` (logo/business_info/
+client_info/dates, absolutely positioned, save-time overlap-checked) above the line-items table, and
+`zone_2` (the mandatory table + totals block, plus notes/signature/payment_info as a
+spacing-relative flow that can never overlap something that might grow) — validated at save time
+with specific, per-violation error messages, not a generic rejection. The 3 built templates are
+decomposed into real seed `design_data` (`apps/invoices/design_seeds.py`) — Python constants, not
+database rows (`InvoiceDesign.user` is a required FK, so there's no ownerless "builtin" row) —
+materialized into a real, owned `InvoiceDesign` row via `design_duplicate` the moment a user picks
+one. Full detail in DATABASE.md's `invoice_designs` section and DECISIONS.md's Step 8 entry.
 
 ---
 
@@ -1062,7 +1088,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints; /send/ and /pdf/ excluded pending Steps 10/7) built | - | 368 passing (`core`/`apps.payments`/`apps.clients`/`apps.invoices`) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/ + design_data schema/CRUD; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report built (Client CRM frontend not yet) | 454 passing (`python manage.py test`, full backend) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

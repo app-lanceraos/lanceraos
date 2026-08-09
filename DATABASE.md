@@ -148,6 +148,12 @@ pseb_registered (plain bool — see note below), pseb_encrypted, pseb_hash (uniq
 logo, logo_public_id, business_name, address_line1/2, city, country,
 default_currency, default_payment_terms
 
+# Invoice PDF signature (Step 7b) — same CharField/Cloudinary-lifecycle
+# pattern as logo/logo_public_id above, mirrored exactly (not URLField,
+# despite that being the intuitive guess). Storage only; the actual
+# upload/background-removal tool is a later step.
+signature_url, signature_public_id
+
 # Payment methods
 bank_name, bank_account_number, jazzcash_number, easypaisa_number,
 payoneer_email, wise_profile_id, wise_access_token, wise_refresh_token
@@ -175,10 +181,10 @@ client_onboarding_enabled, client_onboarding_message, income_type
 last_email_changed_at, created_at, updated_at
 ```
 
-**No signature-image field exists** (checked directly while wiring the invoice PDF templates,
-Step 7 — see this document's own `invoices` section and DECISIONS.md, 09 August 2026). `logo` is
-the only stored Cloudinary URL here; a signature equivalent, if added later, would plausibly live
-alongside it in the Business group above.
+**Signature-image field** (`signature_url`/`signature_public_id`, Step 7b) closes a gap Step 7
+flagged directly (checked against the model, found missing) — see this document's own `invoices`
+section and DECISIONS.md (09 August 2026 and the Step 7b entry) for the fields' addition and the
+real invoice PDF templates now reading `signature_url` when set.
 
 1. **Mutable?** Yes — this is a live profile record, edited via Settings.
 2. **Soft deleted?** N/A — deleted alongside `User` via `anonymize()`, never independently.
@@ -684,8 +690,9 @@ The Invoice Core, per `INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 5 — ported 
 the anchor-currency design and the no-stored-`overdue` fix. Step 4 built the models only; Step 5
 added the CRUD + lifecycle endpoint surface (create/edit/finalise/mark-sent/mark-paid/payments/
 undo/cancel/refund/bad-debt/duplicate/toggle-reminders/pause-resume-recurring/timeline/summary/
-aging-report/exchange-rate/presets) — real `/send/` (needs `send_email()`, Step 10) and `/pdf/`
-(needs `InvoiceDesign` rendering, Step 7) remain deliberately unbuilt, not stubbed.
+aging-report/exchange-rate/presets). Step 7b built the real `GET .../pdf/` render pipeline
+(`apps/invoices/pdf_generator.py`) and wired it into `mark-sent`'s one-time store. Real `/send/`
+(needs `send_email()`, Step 10) remains deliberately unbuilt, not stubbed.
 
 **Schema** (grouped by purpose): `id` (UUID PK), `user` (FK, `CASCADE`), `client` (FK →
 `clients.Client`, `SET_NULL`, nullable), `invoice_number` (see uniqueness note below), `status`
@@ -771,15 +778,16 @@ rate is stored at payment time, per the anchor-currency design.
 **Step 7 additions — three `@property` methods, no schema change, no migration**: `currency_symbol`,
 `payment_page_url`, and `client_currency_conversion`, added to back the three PDF templates
 (`apps/invoices/templates/invoices/*.html`). See DECISIONS.md (09 August 2026) for the full
-conversion-line design. Two real gaps surfaced while wiring these, neither fixed here:
-- `capture_issue_rate()` never attaches `exchange_rate_snapshot` for a USD invoice (USD is the
-  anchor, needs no rate for its own currency) — so `client_currency_conversion` can never produce a
-  line for a USD invoice even when the client's currency differs, since there's no snapshot to pull
-  a *different* currency's rate from.
-- There is no signature-image URL field anywhere (`FreelancerProfile`, `InvoiceDesign`, and
-  `Invoice` all checked directly) — `FreelancerProfile.logo` exists, a signature equivalent doesn't.
-  The PDF templates' signature `<img>` is gated behind a context variable (`signature_url`) no
-  current field backs, so it simply never renders yet.
+conversion-line design. Two real gaps surfaced while wiring these — **both closed in Step 7b**:
+- `capture_issue_rate()` used to never attach `exchange_rate_snapshot` for a USD invoice (USD is the
+  anchor, needs no rate for its own currency), so `client_currency_conversion` could never produce a
+  line for a USD invoice even when the client's currency differed. Fixed by attaching the day's
+  snapshot regardless of currency — `rates_to_usd['USD']` is always explicitly `1.0`, so USD invoices
+  now source other currencies' rates from the same snapshot every other currency already used.
+- There was no signature-image URL field anywhere. Fixed by `FreelancerProfile.signature_url` /
+  `signature_public_id` (see this document's own `freelancer_profiles` section above) — same
+  `CharField`/Cloudinary-lifecycle pattern as `logo`/`logo_public_id`, mirrored exactly rather than
+  the initially-guessed `URLField`.
 
 ---
 
@@ -891,13 +899,19 @@ not merged into `InvoiceComment`.
 ## `invoice_designs` (`InvoiceDesign`, in `apps.invoices`)
 
 New — no v1 equivalent (v1's PDF generation was reportlab code, not user-editable data). The
-visual PDF/portal template system (decisions doc Section 9/10).
+visual PDF/portal template system. Referred to elsewhere in this repo as "decisions doc Section
+9/10" — **that literal numbered section doesn't exist anywhere in this repo** (checked
+`INVOICES_CLIENTS_TECHNICAL_SPEC.md`, `DECISIONS.md`, `INVOICES_MODULE_KICKOFF.md`, `DESIGN.md`
+directly; none contain a "Section 9" or "Section 10" heading). Step 8 is what actually defines the
+`design_data` contract below, from the task's own schema description plus the real structure of
+the 3 built templates — see DECISIONS.md's Step 8 entry.
 
 **Schema**: `id`, `user` (FK, `CASCADE`), `name`, `base_template` (`professional`/`minimal`/
-`modern`), `source` (`builtin`/`custom`/`ai_seeded`), `color_variant` (blank, builtin-path only),
-`design_data` (JSONField), `is_default`, `created_at`/`updated_at`.
+`modern`), `source` (`builtin`/`custom`/`ai_seeded` — model default `builtin`, overridden to
+`custom` at the serializer layer for regular user-authored creates; see DECISIONS.md), `color_variant`
+(blank, builtin-path only), `design_data` (JSONField), `is_default`, `created_at`/`updated_at`.
 
-1. **Mutable?** Yes — edited via the design editor (a later step). 2. **Soft deleted?** No — hard
+1. **Mutable?** Yes — edited via the design editor (Step 8b). 2. **Soft deleted?** No — hard
    delete; `Invoice.design` is `SET_NULL`, so a deleted design never breaks an invoice that already
    rendered against it (the frozen `pdf_url` survives regardless). 3. **Audit trail?** No dedicated
    events — a design edit isn't a security/finance-relevant action. 4. **Indexed?** None beyond the
@@ -906,6 +920,84 @@ visual PDF/portal template system (decisions doc Section 9/10).
 **`is_default` enforcement** (one per user) is ported structurally from v1's
 `InvoiceTemplate.save()` — same pattern, applied to this new model, verified directly with a test
 creating two defaults for the same user and confirming the first is unset.
+
+### `design_data` — the real JSON contract (Step 8, `apps/invoices/design_schema.py`)
+
+Validated at save time by `InvoiceDesignSerializer.validate_design_data` (`apps/invoices/
+serializers.py`) — a payload violating any rule below is rejected with a specific, per-violation
+error message, not a generic "invalid design." Shared, documented structure both this step's
+validation and Step 8b's canvas editor build against — not an implicit shape either side has to
+infer.
+
+```
+{
+  "zone_1": {
+    "elements": [
+      {
+        "type": "logo" | "business_info" | "client_info" | "dates",
+        "x": <mm, number>, "y": <mm, number>,
+        "width": <mm, number > 0>, "height": <mm, number > 0>,
+        "style": { ...free-form... }
+      },
+      ...
+    ]
+  },
+  "zone_2": {
+    "table": { "style": { ...free-form... } },
+    "elements": [
+      {
+        "type": "totals" | "notes" | "signature" | "payment_info",
+        "spacing_after_previous": <mm, number >= 0>,
+        "style": { ...free-form... },
+        "paired_side_by_side": <bool, optional>
+      },
+      ...
+    ]
+  }
+}
+```
+
+**Two-zone model**: `zone_1` sits above the line-items table and is absolutely positioned (valid
+because Zone 1's total height is always known ahead of render time). `zone_2` is the table and
+everything after it — the table has a start position but deliberately no fixed height (the number
+of line items isn't knowable in advance), so every element after it is a spacing-relative flow,
+`{type, spacing_after_previous, style}`, never independent `x`/`y` — an element can never overlap
+something that might grow, by construction.
+
+**Validation rules, each with its own specific error message** (see `design_schema.py`'s
+`validate_design_data_schema`, a pure function returning a list of violation strings — empty means
+valid):
+- `zone_1` and `zone_2` are both required top-level keys.
+- Every `zone_1` element needs all of `type`/`x`/`y`/`width`/`height`/`style`; `type` must be one of
+  the 4 listed above; `width`/`height` must be numbers `> 0`; `style` must be an object.
+- `zone_2.table` is **structurally mandatory** — a payload omitting it is rejected outright (this is
+  what makes the line-items table non-deletable at the schema level, not just a UI convention).
+- `zone_2.elements` must contain **at least one `type: "totals"` element** — the totals block is
+  mandatory the same way.
+- **Zone 1 overlap check**: simple axis-aligned rectangle collision, pairwise across every `zone_1`
+  element — any two bounding boxes that intersect are rejected, naming both colliding elements by
+  index and type. `zone_2` elements are structurally incapable of overlapping (no independent
+  coordinates at all), so this check only ever runs within `zone_1`.
+- **Pairing rule**: `paired_side_by_side: true` may be set on zero or exactly two `zone_2` elements.
+  If set on exactly one, or three or more, that's rejected. If set on exactly two, both must have
+  `type` in `{signature, payment_info}` — the only fixed-height, non-reflowing types in the zone_2
+  vocabulary; pairing e.g. `notes` (which can grow) is rejected by name.
+
+**Seed data** (`apps/invoices/design_seeds.py`, `BUILTIN_DESIGNS`): real `design_data` JSON for all
+3 built templates, decomposed from their actual HTML/CSS (`apps/invoices/templates/invoices/
+{professional,minimal,modern}.html`) — honest starting positions/spacing a user could meaningfully
+edit in Step 8b's canvas, deliberately not pixel-perfect reproductions. All 3 pass
+`validate_design_data_schema` with zero errors (dogfooded directly in
+`apps/invoices/tests/test_designs.py`, not just trusted by construction).
+
+These are Python dicts, not database rows — `InvoiceDesign.user` is a required FK with no
+`null=True` (verified directly against the model before assuming otherwise), so there's no
+"ownerless" row a `builtin` design could live as ahead of a real user picking one.
+`design_duplicate` (`apps/invoices/views.py`) is what turns a seed into a real, owned
+`InvoiceDesign` row — `POST /api/invoices/designs/duplicate/` with `{base_template, color_variant?,
+name?}` creates one for the requesting user with `source='builtin'` and a deep copy of that
+template's seed `design_data`. See DECISIONS.md for why this is the right mechanism instead of
+pre-creating rows per user or making `user` nullable.
 
 ---
 

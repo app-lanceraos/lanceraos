@@ -1439,3 +1439,173 @@ restoring the venv to its prior state. `manage.py check` clean.
 
 Verified: one migration (`0004_invoice_refunded_amount`) applied against the real local Postgres
 database. Full test suite (376 tests, 8 net new/changed) passing; `manage.py check` clean.
+
+Date: 09 August 2026
+Decision: Step 7b — built the actual PDF render pipeline (`apps/invoices/pdf_generator.py`), the
+real `GET /api/invoices/<pk>/pdf/` endpoint, font sourcing, QR generation, and closed the two real
+gaps Step 7 found and pinned rather than fixed.
+
+**`capture_issue_rate()` USD-anchor gap — closed**: moved the `ExchangeRateSnapshot` lookup ahead of
+the `currency == 'USD'` branch so both branches share it — a USD invoice now gets
+`exchange_rate_snapshot` attached (still `rate_to_usd_at_issue = 1`, `rates_to_usd['USD']` is always
+explicitly `1.0`), so `client_currency_conversion` can finally source a *different* currency's rate
+for a USD invoice with a non-USD client. The test that pinned this as a known gap
+(`test_currency_line_omitted_when_usd_anchor_has_no_snapshot`) was replaced with
+`test_capture_issue_rate_attaches_snapshot_for_usd_invoices_too`, which calls the real method (not
+hand-setting `exchange_rate_snapshot` the way other fixtures in that file do) and asserts the fix
+through to the rendered "at rate 277.78" line in all three templates.
+
+**Signature field — closed**: added `FreelancerProfile.signature_url`/`signature_public_id`
+(`apps/users/models.py`), verified and mirrored `logo`/`logo_public_id`'s exact field type
+(`CharField(max_length=500, blank=True)`, not `URLField` — the intuitive guess going in, wrong once
+checked) and lifecycle role. Storage only; the upload/background-removal tool is a separate, later
+step.
+
+**Font sourcing**: real IBM Plex Sans/Mono, Source Serif 4, Space Grotesk, and Caveat files
+downloaded from their real upstream GitHub release paths into `apps/invoices/static/invoices/
+fonts/` (Caveat unused by any template's `@font-face` today — downloaded anyway per instruction,
+not invented a use for it). `pdf_generator.py`'s `FONT_CONTEXT` computes real `file://` URIs via
+`Path.as_uri()` and injects them as template variables — WeasyPrint's own URL fetcher resolves
+these directly; Django's `{% static %}` tag only resolves in a browser context and was never used.
+Two real template bugs found and fixed along the way: a multi-line Django `{# #}` comment
+containing the literal text `{% static %}` closed early (the comment tokenizer isn't DOTALL),
+so the literal text got parsed as a real tag — fixed by switching to CSS `/* */` comments inside
+`<style>` blocks, never parsed by Django's tokenizer at all. WeasyPrint doesn't support CSS4's
+`font-weight: 400 700` range syntax in `@font-face` (logs a warning and silently drops the whole
+declaration) — fixed in `modern.html` by declaring two ordinary single-weight `@font-face` rules
+for Space Grotesk pointing at the same variable font file.
+
+**QR generation**: ported v1's `generate_qr_image` approach directly (`v1-reference/apps/invoices/
+pdf_generator.py` — same `qrcode.QRCode(version=None, error_correction=ERROR_CORRECT_M,
+box_size=10, border=2)` call), but output as a base64 PNG data URI instead of v1's ReportLab
+`ImageReader`, since WeasyPrint just needs a normal `<img src>`. Encodes `Invoice.payment_page_url`
+(the `/pay/<view_token>` link — the portal page itself still doesn't exist, same "not built yet"
+404 already noted for other steps).
+
+**Interim template-selection default**: `Invoice.design` is null for every real invoice today
+(nothing creates `InvoiceDesign` rows yet as of this step). `pdf_generator._select_template_name`
+checks `FreelancerProfile` for a default-template setting first (none exists), then falls back to
+`'professional'` — commented clearly in the code as interim, explicitly superseded once Step 8's
+real design records exist to select from.
+
+**`/pdf/` — redirect, not proxy**: draft/created invoices always live-render (call the pipeline
+fresh, return PDF bytes, `Content-Type: application/pdf`); `sent`-or-beyond invoices redirect
+(302) to the frozen `pdf_url`. Checked how the only other Cloudinary-served asset in this app
+(the profile logo) is actually consumed — the backend returns the raw `secure_url` in an API
+response and the frontend fetches it directly, no backend proxy exists anywhere — so a redirect is
+the closest analog for a GET endpoint that must serve either live bytes or a stored asset
+uniformly. If a sent+ invoice somehow has a blank `pdf_url` (shouldn't happen, but not asserted
+away), falls back to a live render and logs it as an anomaly rather than 404ing or crashing.
+
+**`store_invoice_pdf` — Cloudinary `resource_type='raw'`**: mirrors `upload_logo`'s lazy
+`import cloudinary.uploader` convention exactly, but `resource_type='raw'` (not `'image'`) since a
+PDF is a document, not an image Cloudinary should attempt to transform.
+
+**Mark-sent PDF failure is non-fatal to the status transition**: `invoice_mark_sent`'s one-time
+render+store is wrapped in a bare `try`/`except`, logging on failure but still completing the
+`status='sent'` transition with `pdf_url` left blank. Reasoning: refusing to record a real-world
+event ("I already sent this invoice myself") just because PDF generation failed would be more
+confusing than useful for a manual dropdown flip — paired with `/pdf/`'s own defensive live-render
+fallback above for exactly this case.
+
+Verified: `invoice_duplicate` (Step 5) already correctly omits `pdf_url`/`pdf_generated_at` from
+its `Invoice.objects.create()` kwargs (relying on model field defaults) — confirmed with a real
+test (`test_duplicate_resets_pdf_url_and_generated_at`) rather than assumed from the existing code
+comment. Real WeasyPrint PDFs generated and inspected directly (not just "rendered without
+error"): PyMuPDF font-table inspection confirmed genuine subsetted embedding for all custom fonts
+(e.g. `XHSHVD+IBM-Plex-Sans`, the random-prefix-plus-hyphenated-name pattern that itself proves
+real embedding, not a system-font-name collision) across all three templates; QR data URIs
+confirmed well-formed and encoding the real `payment_page_url`; the currency-conversion line
+confirmed actually appearing for a USD invoice with a non-USD client through the real pipeline
+end-to-end. `weasyprint`, `qrcode[pil]`, and `pymupdf` added to `requirements.txt` for real this
+time (Step 7a used WeasyPrint only temporarily, uninstalled afterward — Step 7b is the step that
+actually needs it committed).
+
+Verified: full test suite (454 tests as of Step 8 below; 413 immediately after this step) passing;
+`manage.py check` clean.
+
+Date: 09 August 2026
+Decision: Step 8 — defined the `design_data` JSON schema for `InvoiceDesign` for real (`apps/
+invoices/design_schema.py`), built validated CRUD + `set-default` + `duplicate` endpoints against
+it, and decomposed the 3 built templates into real seed `design_data` (`apps/invoices/
+design_seeds.py`). Backend contract only, per this step's explicit scope — no canvas UI.
+
+**"Decisions doc Section 9/10" doesn't exist — flagged, not silently assumed**: both
+`INVOICES_CLIENTS_TECHNICAL_SPEC.md` and `DATABASE.md` cite `InvoiceDesign` as "the visual
+PDF/portal template system (decisions doc Section 9/10)". Checked directly: no file in this repo
+(`DECISIONS.md`, `INVOICES_MODULE_KICKOFF.md`, `DESIGN.md`, the tech spec itself) contains a
+literal "Section 9" or "Section 10" heading — this was already independently discovered and noted
+during Step 7b as well ("the actual 'Section 9-10' reference... didn't exist in the technical
+spec"). Rather than block on a document that isn't in this repo, this step's own task description
+(a complete, unambiguous zone_1/zone_2/pairing-rule specification) became the working spec,
+cross-checked against the real `InvoiceDesign` model fields and the real template HTML/CSS. This
+entry, plus `design_schema.py`'s own module docstring, is now the closest thing to a real "Section
+9/10" that exists in this codebase.
+
+**Schema shape**: `zone_1.elements[]` (`{type, x, y, width, height, style}`, types `logo`/
+`business_info`/`client_info`/`dates`, absolutely positioned since Zone 1's height is always
+known) and `zone_2` (`{table: {style}, elements: [{type, spacing_after_previous, style,
+paired_side_by_side?}]}`, types `totals`/`notes`/`signature`/`payment_info`, spacing-relative flow
+since the table's height depends on line-item count). See DATABASE.md's `invoice_designs` section
+for the full validation-rule list; not duplicated here.
+
+**`source` defaults to `'custom'` at the serializer layer, not the model's own `'builtin'`
+default**: `InvoiceDesign.source`'s model-level `default='builtin'` was a Step 4 placeholder from
+before any design CRUD existed. A user calling `design_create` today is authoring a genuinely
+custom design, not a builtin one — `InvoiceDesignSerializer.create()` calls
+`validated_data.setdefault('source', 'custom')` before saving. `design_duplicate` sets `source`
+explicitly to `'builtin'` regardless, since that path IS instantiating a builtin seed. Left the
+model's own default alone rather than changing it — `design_duplicate`'s explicit set and the
+serializer's override cover every real write path today, and changing a model default is a
+migration for a value nothing currently depends on defaulting to.
+
+**`design_duplicate` — why this mechanism, and why scoped this narrowly**: the spec's own language
+is that picking a built-in template + color variant "converts into this same structure under the
+hood" (Path 1). That conversion needs a starting point. `InvoiceDesign.user` is a required FK with
+no `null=True` (verified directly against the model, not assumed) — so there is no "ownerless" row
+a `builtin` design could live as ahead of a real user picking one, and making `user` nullable or
+pre-creating rows for every user were both rejected as bigger, unnecessary changes for what's
+fundamentally a one-line copy operation. `POST /api/invoices/designs/duplicate/` with
+`{base_template, color_variant?, name?}` creates a new, real, owned `InvoiceDesign` row from
+`design_seeds.get_builtin_design_data(base_template)` (a `copy.deepcopy`, confirmed independent of
+the shared module-level constant with a dedicated test). Deliberately does NOT also support
+duplicating an arbitrary existing custom `InvoiceDesign` — nothing in the spec asks for that (a
+design is already `PUT`-editable in place), and adding it would be scope creep beyond what this
+step was asked to build.
+
+**Seed decomposition — honest, not pixel-perfect**: all 3 templates' real CSS was read directly
+(not from memory) and translated into `zone_1`/`zone_2` element positions in mm, matching each
+template's own `@page`/padding values. Two places where the real HTML doesn't map cleanly onto the
+two-zone vocabulary, resolved pragmatically rather than by forcing a bad fit:
+  - `professional.html`/`minimal.html`'s `.lower` row genuinely places `notes` and the bank-methods
+    `payment_info` block side by side in the real CSS, but the pairing rule only permits
+    `signature`+`payment_info` (the only two fixed-height, non-reflowing zone_2 types — `notes` can
+    grow). Represented as two sequential, unpaired elements instead of forcing an invalid pairing —
+    consistent with the "reasonable, not pixel-perfect" bar this step's instructions explicitly set.
+  - `modern.html`'s sidebar is `position:fixed`, running the full page height beside the table, not
+    strictly "above" it — and its pay-online QR block has no valid zone_1 type at all (`payment_info`
+    isn't in that vocabulary). Kept honest: the sidebar's logo/business_info still use those zone_1
+    types with `style.sidebar: true` marking where they really render, and the QR block became a
+    zone_2 `payment_info` element with the same flag, left unpaired (matching the real HTML, where
+    `modern.html`'s signature block has nothing paired next to it — zero pairs is valid per the
+    schema).
+All 3 seeded designs pass `validate_design_data_schema` with zero errors — dogfooded directly in
+`apps/invoices/tests/test_designs.py::SeedDataValidationTests`, not just trusted by construction.
+
+**Validation error format**: `InvoiceDesignSerializer.validate_design_data` raises
+`serializers.ValidationError` with the full list of violation strings from
+`validate_design_data_schema` (not fail-fast on the first one) — each message names the specific
+element index/type and rule violated (e.g. "zone_2.elements[1] has paired_side_by_side=true but
+type \"notes\" is not pairable — only ['payment_info', 'signature'] may be paired side-by-side."),
+per this step's explicit requirement that Step 8b's editor be able to show the user exactly what's
+wrong, not a generic "invalid design."
+
+Verified: 41 new tests (`apps/invoices/tests/test_designs.py`) covering schema validation (every
+rule above, including a real intentionally-colliding zone_1 fixture derived from the seed data
+itself, not synthetic-only), all 3 seeds dogfooded against the same validator, CRUD, cross-user
+isolation (404, not 403, matching the established `get_object_or_404(..., user=request.user)`
+pattern), set-default uniqueness (including that setting one user's default never touches
+another's), `design_duplicate` (valid/invalid `base_template`, independence from the shared seed
+constant, default naming), serializer allowlist regression (client-supplied `id` ignored, `user`
+always the requesting user), and rate limiting for every mutating design endpoint. Full project
+test suite: 454 tests passing (up from 413 before this step); `manage.py check` clean.

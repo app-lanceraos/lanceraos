@@ -31,12 +31,15 @@ from rest_framework.response import Response
 from core.events import emit
 from apps.payments.models import ExchangeRateSnapshot
 
+from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
 from .models import (
-    NON_OVERDUE_STATUSES, Invoice, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem,
+    NON_OVERDUE_STATUSES, Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset,
+    InvoicePresetItem,
 )
 from .pdf_generator import render_invoice_pdf, store_invoice_pdf
 from .serializers import (
-    InvoiceListSerializer, InvoicePartialPaymentSerializer, InvoicePresetSerializer, InvoiceSerializer,
+    InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer, InvoicePresetSerializer,
+    InvoiceSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -920,3 +923,116 @@ def preset_create_invoice(request, pk):
     emit('InvoiceCreated', invoice_id=str(invoice.pk), user_id=str(request.user.pk), from_preset=str(preset.pk))
     logger.info('[INVOICES] Created invoice %s from preset %s.', invoice.pk, preset.pk)
     return Response(InvoiceListSerializer(invoice).data, status=status.HTTP_201_CREATED)
+
+
+# ══════════════════════════════════════════════════════════════════
+# DESIGNS — Step 8. The design_data JSON contract (apps/invoices/
+# design_schema.py) and real, tested CRUD against it. The canvas UI
+# consuming these endpoints is Step 8b, not built here.
+# ══════════════════════════════════════════════════════════════════
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def design_list(request):
+    if request.method == 'POST':
+        return design_create(request)
+
+    designs = InvoiceDesign.objects.filter(user=request.user)
+    return Response(InvoiceDesignSerializer(designs, many=True).data)
+
+
+def design_create(request):
+    if _check_moderate_rate_limit('design_create', request.user):
+        return _too_many_requests('Too many designs created recently. Please try again later.')
+
+    serializer = InvoiceDesignSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    design = serializer.save(user=request.user)
+    logger.info('[INVOICES] Created design %s for user %s.', design.pk, request.user.pk)
+    return Response(InvoiceDesignSerializer(design).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def design_detail(request, pk):
+    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
+
+    if request.method == 'GET':
+        return Response(InvoiceDesignSerializer(design).data)
+
+    if request.method == 'DELETE':
+        if _check_moderate_rate_limit('design_delete', request.user):
+            return _too_many_requests('Too many actions. Please try again later.')
+        design.delete()
+        logger.info('[INVOICES] Deleted design %s.', pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    if _check_moderate_rate_limit('design_update', request.user):
+        return _too_many_requests('Too many updates. Please try again later.')
+
+    serializer = InvoiceDesignSerializer(design, data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    serializer.save()
+    logger.info('[INVOICES] Updated design %s.', design.pk)
+    return Response(InvoiceDesignSerializer(design).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def design_set_default(request, pk):
+    if _check_moderate_rate_limit('design_set_default', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
+    design.is_default = True
+    design.save()  # InvoiceDesign.save()'s own override unsets every other default for this user
+    logger.info('[INVOICES] Set design %s as default for user %s.', design.pk, request.user.pk)
+    return Response(InvoiceDesignSerializer(design).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def design_duplicate(request):
+    """
+    Path 1 (ready-made templates) — the spec's own language is that
+    picking a built-in + color variant "converts into this same
+    structure under the hood." That conversion needs a starting point;
+    duplicating one of the 3 built templates' design_data
+    (apps/invoices/design_seeds.py) into a new, real, editable
+    InvoiceDesign row for the requesting user is that starting point.
+
+    Deliberately scoped to only this one case — instantiating a builtin
+    seed by `base_template` name, not an existing InvoiceDesign row (no
+    `pk` in this URL at all). Nothing in the spec asks for general
+    "duplicate any existing design" — an InvoiceDesign is already
+    PUT-editable in place — so that's left unbuilt; see DECISIONS.md.
+    """
+    if _check_moderate_rate_limit('design_duplicate', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    base_template = request.data.get('base_template')
+    if base_template not in BUILTIN_DESIGNS:
+        return Response(
+            {'base_template': f'Must be one of {sorted(BUILTIN_DESIGNS)}.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    color_variant = request.data.get('color_variant', '') or ''
+    name = request.data.get('name') or f'{base_template.title()} (copy)'
+
+    design = InvoiceDesign.objects.create(
+        user=request.user,
+        name=name,
+        base_template=base_template,
+        source='builtin',
+        color_variant=color_variant,
+        design_data=get_builtin_design_data(base_template),
+    )
+    logger.info(
+        '[INVOICES] Duplicated builtin design %s (%s) as %s for user %s.',
+        base_template, color_variant or 'default', design.pk, request.user.pk,
+    )
+    return Response(InvoiceDesignSerializer(design).data, status=status.HTTP_201_CREATED)

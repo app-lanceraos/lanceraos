@@ -13,7 +13,8 @@ from rest_framework import serializers
 from apps.clients.models import Client
 from apps.clients.serializers import validate_currency_code
 
-from .models import Invoice, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem
+from .design_schema import validate_design_data_schema
+from .models import Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem
 
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
@@ -210,3 +211,38 @@ class InvoicePresetSerializer(serializers.ModelSerializer):
             for item_data in items_data:
                 InvoicePresetItem.objects.create(preset=instance, **item_data)
         return instance
+
+
+class InvoiceDesignSerializer(serializers.ModelSerializer):
+    """
+    Step 8 — the real validated contract Step 8b's canvas editor builds
+    against. `source` defaults to 'custom' here on create (the model's
+    own field default is 'builtin', a Step 4 placeholder from before any
+    design CRUD existed — see DECISIONS.md for why that's fine to leave
+    on the model and just override at this layer: design_duplicate is
+    the only path that legitimately wants 'builtin', and it sets the
+    field explicitly rather than relying on either default).
+    """
+    class Meta:
+        model = InvoiceDesign
+        fields = [
+            'id', 'name', 'base_template', 'source', 'color_variant',
+            'design_data', 'is_default', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('Design name is required.')
+        return value
+
+    def validate_design_data(self, value):
+        errors = validate_design_data_schema(value)
+        if errors:
+            raise serializers.ValidationError(errors)
+        return value
+
+    def create(self, validated_data):
+        validated_data.setdefault('source', 'custom')
+        return super().create(validated_data)

@@ -16,6 +16,11 @@ urlpatterns = [
     path('presets/<uuid:pk>/set-default/', views.preset_set_default, name='preset_set_default'),
     path('presets/<uuid:pk>/create-invoice/', views.preset_create_invoice, name='preset_create_invoice'),
 
+    path('designs/', views.design_list, name='design_list'),
+    path('designs/duplicate/', views.design_duplicate, name='design_duplicate'),
+    path('designs/<uuid:pk>/', views.design_detail, name='design_detail'),
+    path('designs/<uuid:pk>/set-default/', views.design_set_default, name='design_set_default'),
+
     path('<uuid:pk>/', views.invoice_detail, name='invoice_detail'),
     path('<uuid:pk>/pdf/', views.invoice_pdf, name='invoice_pdf'),
     path('<uuid:pk>/finalise/', views.invoice_finalise, name='invoice_finalise'),
