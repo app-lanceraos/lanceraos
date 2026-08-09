@@ -64,3 +64,19 @@ Pillow==11.*
 
 # ── Admin brute-force protection (core/, config/settings.py) ─
 django-axes==8.3.*
+
+# ── Invoice PDF generation (apps/invoices/pdf_generator.py, Step 7b) ─
+# WeasyPrint was deliberately excluded above until the module needing it
+# was actually built (see this file's own header comment) — apps.invoices
+# now renders real HTML->PDF via WeasyPrint, so it belongs here.
+weasyprint==69.*
+# QR code image generation for the "pay online" link — same library v1
+# used (v1-reference/apps/invoices/pdf_generator.py's generate_qr_image),
+# not a reinvention. [pil] extra required for QRCode.make_image().
+qrcode[pil]==8.2
+# Test-only: inspects a real rendered PDF's embedded fonts
+# (apps/invoices/tests/test_pdf_pipeline.py) — "WeasyPrint didn't log a
+# font warning" isn't proof the custom fonts actually embedded, so the
+# font-sourcing test opens the real output PDF and checks its font table
+# directly, not the render log.
+pymupdf==1.28.*

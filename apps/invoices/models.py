@@ -479,14 +479,29 @@ class Invoice(models.Model):
         existed on apps.payments.ExchangeRateSnapshot in v2 (verified
         directly against apps/payments/models.py). Looks up rates_to_usd
         directly instead.
+
+        Real, found-and-fixed gap (Step 7b, see DECISIONS.md): this used to
+        return immediately for a USD invoice, setting rate_to_usd_at_issue=1
+        but leaving exchange_rate_snapshot unset — correct for USD's OWN
+        rate (1 USD is always worth 1 USD, no lookup needed), but it meant
+        a USD invoice had no snapshot attached at all, so
+        client_currency_conversion could never source a *different*
+        currency's rate for it either, even when the client's own
+        default_currency genuinely differed. Fixed by still attaching
+        whatever snapshot is available — rates_to_usd['USD'] is always
+        explicitly 1.0 in every real snapshot (apps/payments/tasks.py's
+        daily fetch sets it explicitly, never left to the upstream API's
+        own USD entry alone), so this doesn't change rate_to_usd_at_issue's
+        value, only which snapshot row backs it.
         """
-        if self.currency == 'USD':
-            self.rate_to_usd_at_issue = Decimal('1')
-            return
         snapshot = (
             ExchangeRateSnapshot.objects.filter(date=timezone.now().date()).first()
             or ExchangeRateSnapshot.objects.order_by('-date').first()
         )
+        if self.currency == 'USD':
+            self.rate_to_usd_at_issue = Decimal('1')
+            self.exchange_rate_snapshot = snapshot
+            return
         if snapshot is None:
             return
         rate = snapshot.rates_to_usd.get(self.currency)

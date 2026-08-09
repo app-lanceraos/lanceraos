@@ -17,6 +17,7 @@ urlpatterns = [
     path('presets/<uuid:pk>/create-invoice/', views.preset_create_invoice, name='preset_create_invoice'),
 
     path('<uuid:pk>/', views.invoice_detail, name='invoice_detail'),
+    path('<uuid:pk>/pdf/', views.invoice_pdf, name='invoice_pdf'),
     path('<uuid:pk>/finalise/', views.invoice_finalise, name='invoice_finalise'),
     path('<uuid:pk>/mark-sent/', views.invoice_mark_sent, name='invoice_mark_sent'),
     path('<uuid:pk>/mark-paid/', views.invoice_mark_paid, name='invoice_mark_paid'),

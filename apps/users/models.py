@@ -354,6 +354,16 @@ class FreelancerProfile(models.Model):
 
     logo = models.CharField(max_length=500, blank=True)
     logo_public_id = models.CharField(max_length=200, blank=True)
+    # Same field type/pattern as logo/logo_public_id above, verified and
+    # mirrored exactly (not URLField, despite that being the intuitive
+    # guess — logo itself is a plain CharField) — a Cloudinary secure_url
+    # + the public_id needed to destroy() it on replacement, same lifecycle
+    # cloudinary.uploader already implements for logo uploads
+    # (apps/users/views/profile.py's upload_logo). Storage only, for the
+    # invoice-PDF templates (apps.invoices, Step 7b) to read — the actual
+    # upload/background-removal tool is Step 9, not built here.
+    signature_url = models.CharField(max_length=500, blank=True)
+    signature_public_id = models.CharField(max_length=200, blank=True)
     business_name = models.CharField(max_length=200, blank=True)
     address_line1 = models.CharField(max_length=200, blank=True)
     address_line2 = models.CharField(max_length=200, blank=True)

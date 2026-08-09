@@ -1,11 +1,10 @@
 # apps/invoices/views.py
 """
 Invoice CRUD + lifecycle endpoints — Section 7 of
-INVOICES_CLIENTS_TECHNICAL_SPEC.md, minus the two rows that genuinely
-belong to later steps: the real /send/ (needs core.email's send_email(),
-Step 10) and /pdf/ (needs InvoiceDesign rendering, Step 7). Neither is
-stubbed here — they simply don't exist yet, matching this project's
-"don't build a placeholder" convention.
+INVOICES_CLIENTS_TECHNICAL_SPEC.md. GET .../pdf/ (Step 7b, apps/invoices/
+pdf_generator.py) is built now; the real /send/ (needs core.email's
+send_email(), Step 10) still isn't — not stubbed, simply doesn't exist
+yet, matching this project's "don't build a placeholder" convention.
 
 Rate limiting mirrors apps.clients.views' _check_moderate_rate_limit /
 _too_many_requests shape exactly (same 30/hour, same cache-based check,
@@ -20,6 +19,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.core.cache import cache
 from django.db.models import Q, Sum
+from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -34,6 +34,7 @@ from apps.payments.models import ExchangeRateSnapshot
 from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem,
 )
+from .pdf_generator import render_invoice_pdf, store_invoice_pdf
 from .serializers import (
     InvoiceListSerializer, InvoicePartialPaymentSerializer, InvoicePresetSerializer, InvoiceSerializer,
 )
@@ -200,6 +201,40 @@ def invoice_detail(request, pk):
     return Response(InvoiceListSerializer(invoice).data)
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def invoice_pdf(request, pk):
+    """
+    Per the spec's Stored PDF note: draft/created invoices always
+    live-render (nothing frozen yet, nothing to break) and get the PDF
+    bytes back directly. Everything from `sent` onward serves the frozen
+    `pdf_url` artifact instead — a redirect to its Cloudinary URL, never a
+    fresh render, regardless of any later InvoiceDesign edit. Redirecting
+    (not proxying the bytes through this endpoint) matches how every other
+    Cloudinary-hosted asset in this app is already served — apps/users'
+    upload_logo returns the raw secure_url directly and the frontend
+    fetches it itself; there's no existing proxy-through pattern to break
+    from.
+
+    If a sent-or-beyond invoice somehow has no pdf_url yet (mark-sent's
+    render+store is deliberately non-fatal to that status transition —
+    see invoice_mark_sent), this is a genuine anomaly: falls back to a
+    live render rather than a bare 404, but logs it as such.
+    """
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+
+    if invoice.status in ('draft', 'created'):
+        pdf_bytes = render_invoice_pdf(invoice)
+        return HttpResponse(pdf_bytes, content_type='application/pdf')
+
+    if invoice.pdf_url:
+        return HttpResponseRedirect(invoice.pdf_url)
+
+    logger.error('[INVOICES] Invoice %s is status=%s with no pdf_url — falling back to a live render.', invoice.invoice_number, invoice.status)
+    pdf_bytes = render_invoice_pdf(invoice)
+    return HttpResponse(pdf_bytes, content_type='application/pdf')
+
+
 # ══════════════════════════════════════════════════════════════════
 # LIFECYCLE ACTIONS
 # ══════════════════════════════════════════════════════════════════
@@ -280,6 +315,23 @@ def invoice_mark_sent(request, pk):
     invoice.status = 'sent'
     invoice.sent_at = timezone.now()
     invoice.save()
+
+    # One-time render+store, per the spec's Stored PDF note: "The manual
+    # mark-sent dropdown-flip path also triggers this same one-time
+    # render+store, since the invoice is leaving created either way."
+    # Deliberately non-fatal to the status transition itself — a
+    # WeasyPrint/Cloudinary failure here shouldn't block a freelancer
+    # recording something that already happened in reality (they sent
+    # this invoice themselves, outside the platform). GET .../pdf/ falls
+    # back to a live render if pdf_url is still blank despite status
+    # being sent-or-beyond — a genuine anomaly, logged there, not silently
+    # treated as normal.
+    try:
+        invoice.pdf_url = store_invoice_pdf(invoice)
+        invoice.pdf_generated_at = timezone.now()
+        invoice.save(update_fields=['pdf_url', 'pdf_generated_at'])
+    except Exception:
+        logger.exception('[INVOICES] mark-sent PDF render+store failed for invoice %s — status transition kept, pdf_url left blank.', invoice.invoice_number)
 
     emit('InvoiceSent', invoice_id=str(invoice.pk), user_id=str(request.user.pk), via='manual')
     logger.info('[INVOICES] Marked invoice %s as sent (manual).', invoice.invoice_number)

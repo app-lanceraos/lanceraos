@@ -155,22 +155,39 @@ class PdfTemplateRenderTests(TestCase):
         for template, html in outputs.items():
             self.assertNotIn('at rate', html, template)
 
-    def test_currency_line_omitted_when_usd_anchor_has_no_snapshot(self):
+    def test_capture_issue_rate_attaches_snapshot_for_usd_invoices_too(self):
         """
-        Documents the real, found gap (see DECISIONS.md): capture_issue_rate()
-        never attaches an exchange_rate_snapshot for a USD invoice (USD is
-        the anchor, no conversion needed for its OWN rate), so there's
-        nothing here to source a *different* currency's rate from either,
-        even though the client's currency genuinely differs. Not fixed in
-        this step — this test pins the current, honest behavior so a
-        future fix is a deliberate test change, not an accidental one.
+        Closes the real gap Step 7a found and pinned (see DECISIONS.md,
+        09 August 2026): capture_issue_rate() used to return early for a
+        USD invoice without ever setting exchange_rate_snapshot, so a USD
+        invoice could never source a *different* currency's rate for the
+        client-currency-conversion line, even when the client's currency
+        genuinely differed. Fixed in Step 7b — this test asserts the fix
+        directly, not just the property's own None-handling, by calling
+        the real method (not hand-setting exchange_rate_snapshot on the
+        fixture the way the other tests in this file do).
         """
+        snapshot = make_snapshot(PKR=Decimal('0.0036'))
         client = Client.objects.create(user=self.user, name='Callahan', email='c@example.com', default_currency='PKR')
-        invoice = make_invoice_with_items(
-            self.user, n_items=1, client=client, currency='USD',
-            rate_to_usd_at_issue=Decimal('1'), exchange_rate_snapshot=None,
-        )
-        self.assertIsNone(invoice.client_currency_conversion)
+        invoice = make_invoice_with_items(self.user, n_items=1, client=client, currency='USD')
+        invoice.capture_issue_rate()
+        invoice.save()
+        self.assertEqual(invoice.rate_to_usd_at_issue, Decimal('1'))
+        self.assertEqual(invoice.exchange_rate_snapshot_id, snapshot.pk)
+        conversion = invoice.client_currency_conversion
+        self.assertIsNotNone(conversion)
+        # 1 / 0.0036 = 277.7778 -> quantized to 277.78
+        self.assertEqual(conversion['rate'], Decimal('277.78'))
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertIn('at rate 277.78', html, template)
+
+    def test_capture_issue_rate_still_sets_rate_1_for_usd_with_no_snapshot_available(self):
+        """No ExchangeRateSnapshot exists at all yet — capture_issue_rate() must still set rate_to_usd_at_issue=1 for USD, not raise."""
+        invoice = make_invoice_with_items(self.user, n_items=1, currency='USD')
+        invoice.capture_issue_rate()
+        self.assertEqual(invoice.rate_to_usd_at_issue, Decimal('1'))
+        self.assertIsNone(invoice.exchange_rate_snapshot)
 
     def test_currency_line_omitted_when_client_currency_missing_from_snapshot(self):
         """Defensive: the day's fetch didn't happen to include the client's currency."""
@@ -208,8 +225,16 @@ class PdfTemplateRenderTests(TestCase):
         for template, html in outputs.items():
             self.assertIn(self.user.profile.logo, html, template)
 
-    def test_signature_omitted_when_no_field_available(self):
-        """Real, found gap: no signature URL field exists anywhere yet (see DECISIONS.md) — must degrade gracefully, not error."""
+    def test_signature_omitted_when_context_has_no_signature_url(self):
+        """
+        This file only exercises Django's render_to_string directly with a
+        hand-built context (no pdf_generator.py involved) — signature_url
+        now exists on FreelancerProfile (Step 7b), but this test still
+        renders without passing a top-level `signature_url` key at all, so
+        the template must keep degrading gracefully. The real round-trip
+        through build_pdf_context (set vs blank) is covered in
+        test_pdf_pipeline.py, added once the field actually existed.
+        """
         invoice = make_invoice_with_items(self.user, n_items=1)
         html = render_to_string('invoices/minimal.html', {'invoice': invoice, 'freelancer': self.user.profile})
         self.assertNotIn('class="sig"', html)
