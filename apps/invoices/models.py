@@ -235,7 +235,12 @@ class Invoice(models.Model):
     terms = models.TextField(blank=True)
 
     # ── Reminders ──────────────────────────────────────────────────
-    reminders_enabled = models.BooleanField(default=True)
+    # Defaults False (was True, ported unchanged from v1) — a brand-new
+    # invoice hasn't been sent yet, so there's nothing real to remind about
+    # until the freelancer actually sends it and makes a real choice (the
+    # Mark-as-Sent modal's own reminders checkbox, or Step 10's /send/).
+    # This is a going-forward default only — see DECISIONS.md.
+    reminders_enabled = models.BooleanField(default=False)
     reminder_count = models.SmallIntegerField(default=0)
     last_reminder_sent_at = models.DateTimeField(null=True, blank=True)
 

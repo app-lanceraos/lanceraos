@@ -447,7 +447,7 @@ def invoice_add_payment(request, pk):
     if invoice.status in ('cancelled', 'bad_debt', 'refunded', 'draft'):
         return Response({'error': f'Cannot record a payment on a {invoice.status} invoice.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    serializer = InvoicePartialPaymentSerializer(data=request.data, context={'request': request})
+    serializer = InvoicePartialPaymentSerializer(data=request.data, context={'request': request, 'invoice': invoice})
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

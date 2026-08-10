@@ -68,6 +68,7 @@ export default function Invoices() {
   const [presetBusyId, setPresetBusyId] = useState(null)
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
   const [showNewWizard, setShowNewWizard] = useState(false)
+  const [wizardEditId, setWizardEditId] = useState(null)
   const [pendingDetailMessage, setPendingDetailMessage] = useState(null)
 
   const searchTimer = useRef(null)
@@ -136,8 +137,13 @@ export default function Invoices() {
     }
   }
 
-  function openDetail(id) {
-    setSelectedInvoiceId(id)
+  // A draft is still being built, so it opens in the same guided wizard a
+  // brand-new invoice does (pre-filled with its real saved data) rather
+  // than InvoiceDetailPanel — only status=created-and-beyond invoices open
+  // the detail panel. See DECISIONS.md.
+  function openDetail(invoice) {
+    if (invoice.status === 'draft') setWizardEditId(invoice.id)
+    else setSelectedInvoiceId(invoice.id)
   }
 
   function handleInvoiceChanged(updated, opts) {
@@ -165,35 +171,41 @@ export default function Invoices() {
   }
 
   // Called when NewInvoiceWizard closes — `createdId` is the real backend
-  // id if the threshold was crossed before closing, or null if the user
-  // closed before ever entering a client (nothing was created, nothing to
+  // id if the threshold was crossed before closing (or the draft already
+  // existed, in edit mode), or null if a brand-new wizard was closed
+  // before ever entering a client (nothing was created, nothing to
   // refresh).
   function handleWizardClosed(createdId) {
     setShowNewWizard(false)
+    setWizardEditId(null)
     if (createdId) refreshAfterChange()
   }
 
-  // Called when the wizard's Finalise/Mark-as-Sent succeeds — hands off
-  // to the normal InvoiceDetailPanel for the now-non-draft invoice, same
-  // as opening any existing invoice from the list. The success message
-  // travels with the hand-off (`initialMessage`) since the action that
-  // earned it happened inside the wizard, a different component instance
-  // than the InvoiceDetailPanel that's about to mount for the first time —
-  // without this, "Invoice finalised." would have nowhere left to show.
+  // Called when the wizard's Finalise succeeds — hands off to the normal
+  // InvoiceDetailPanel for the now-non-draft invoice, same as opening any
+  // other existing invoice from the list. The success message travels
+  // with the hand-off (`initialMessage`) since the action that earned it
+  // happened inside the wizard, a different component instance than the
+  // InvoiceDetailPanel that's about to mount for the first time — without
+  // this, "Invoice finalised." would have nowhere left to show.
   function handleWizardFinalised(id, message) {
     setShowNewWizard(false)
+    setWizardEditId(null)
     setSelectedInvoiceId(id)
     setPendingDetailMessage(message || null)
     refreshAfterChange()
   }
 
+  // preset_create_invoice (backend) creates a real, fully-populated
+  // invoice, but it's still status=draft like any other — it opens in the
+  // wizard's edit mode too, for the same reason any other draft does.
   async function handlePickPreset(preset) {
     setPresetBusyId(preset.id)
     setCreateError(null)
     try {
       const { data } = await api.post(`/invoices/presets/${preset.id}/create-invoice/`)
       setShowPresetPicker(false)
-      setSelectedInvoiceId(data.id)
+      setWizardEditId(data.id)
       refreshAfterChange()
     } catch {
       setCreateError('Failed to create an invoice from this preset. Please try again.')
@@ -267,53 +279,57 @@ export default function Invoices() {
         )}
       </div>
 
-      {/* ── Filters row ── */}
+      {/* ── Client filter ── */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} className="fos-input fos-select" style={{ width: 'auto', minWidth: 160 }}>
           <option value="">All Clients</option>
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select" style={{ width: 'auto', minWidth: 170 }}>
-          {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-        {/* Overdue is a separate toggle, not a status pill — a sent-and-overdue
-            invoice must be reachable together with any status pill at once. */}
-        <button
-          onClick={() => setOverdueOnly((v) => !v)}
-          className="fos-btn"
-          style={{
-            padding: '6px 14px', fontSize: '0.78rem', borderRadius: 'var(--radius-full)',
-            background: overdueOnly ? 'var(--status-red-bg)' : 'var(--bg-surface)',
-            color: overdueOnly ? 'var(--status-red-text)' : 'var(--text-secondary)',
-            border: `1.5px solid ${overdueOnly ? 'var(--status-red)' : 'var(--border-subtle)'}`,
-            fontWeight: overdueOnly ? 700 : 500,
-          }}
-        >
-          Overdue Only
-        </button>
       </div>
 
-      {/* ── Status pills ── */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, overflowX: 'auto', paddingBottom: 4 }}>
-        {STATUS_FILTER_OPTIONS.map((opt) => {
-          const isActive = statusFilter === opt.key
-          return (
-            <button
-              key={opt.key || 'all'}
-              onClick={() => setStatusFilter(opt.key)}
-              className="fos-btn"
-              style={{
-                flexShrink: 0, padding: '6px 14px', fontSize: '0.78rem', borderRadius: 'var(--radius-full)',
-                background: isActive ? 'var(--accent-glow)' : 'var(--bg-surface)',
-                color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
-                border: `1.5px solid ${isActive ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                fontWeight: isActive ? 700 : 500,
-              }}
-            >
-              {opt.label}
-            </button>
-          )
-        })}
+      {/* ── Status pills + Overdue (merged into the same row — a layout
+          change only, Overdue stays a functionally independent toggle, not
+          a status pill, since a sent-and-overdue invoice must be reachable
+          together with any status pill at once) + Sort, trailing at the
+          right as the row's one secondary control ── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', overscrollBehaviorX: 'contain', paddingBottom: 4, flex: 1, minWidth: 0 }}>
+          {STATUS_FILTER_OPTIONS.map((opt) => {
+            const isActive = statusFilter === opt.key
+            return (
+              <button
+                key={opt.key || 'all'}
+                onClick={() => setStatusFilter(opt.key)}
+                className="fos-btn"
+                style={{
+                  flexShrink: 0, padding: '6px 14px', fontSize: '0.78rem', borderRadius: 'var(--radius-full)',
+                  background: isActive ? 'var(--accent-glow)' : 'var(--bg-surface)',
+                  color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
+                  border: `1.5px solid ${isActive ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                  fontWeight: isActive ? 700 : 500,
+                }}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+          <button
+            onClick={() => setOverdueOnly((v) => !v)}
+            className="fos-btn"
+            style={{
+              flexShrink: 0, padding: '6px 14px', fontSize: '0.78rem', borderRadius: 'var(--radius-full)',
+              background: overdueOnly ? 'var(--status-red-bg)' : 'var(--bg-surface)',
+              color: overdueOnly ? 'var(--status-red-text)' : 'var(--text-secondary)',
+              border: `1.5px solid ${overdueOnly ? 'var(--status-red)' : 'var(--border-subtle)'}`,
+              fontWeight: overdueOnly ? 700 : 500,
+            }}
+          >
+            Overdue Only
+          </button>
+        </div>
+        <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select" style={{ width: 'auto', minWidth: 170, flexShrink: 0 }}>
+          {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
       </div>
 
       {/* ── Content ── */}
@@ -335,7 +351,7 @@ export default function Invoices() {
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
             {invoices.map((inv) => (
-              <InvoiceCard key={inv.id} invoice={inv} onOpen={() => openDetail(inv.id)} />
+              <InvoiceCard key={inv.id} invoice={inv} onOpen={() => openDetail(inv)} />
             ))}
           </div>
           {invoices.length < total && (
@@ -369,22 +385,23 @@ export default function Invoices() {
         />
       )}
 
-      {/* ── Detail panel ── */}
+      {/* ── Detail panel — created-and-beyond invoices only; drafts open
+          the wizard below instead (see openDetail) ── */}
       {selectedInvoiceId && (
         <InvoiceDetailPanel
           invoiceId={selectedInvoiceId}
-          clients={clients}
           onClose={() => setSelectedInvoiceId(null)}
           onChanged={handleInvoiceChanged}
+          onPresetSaved={(preset) => setPresets((prev) => [...prev, preset])}
           initialMessage={pendingDetailMessage}
           onInitialMessageShown={() => setPendingDetailMessage(null)}
         />
       )}
 
-      {/* ── New invoice wizard (Step 2 rework) ── */}
-      {showNewWizard && (
+      {/* ── Invoice wizard — new invoice, or an existing draft being edited ── */}
+      {(showNewWizard || wizardEditId) && (
         <NewInvoiceWizard
-          clients={clients}
+          editInvoiceId={wizardEditId}
           onClose={handleWizardClosed}
           onFinalised={handleWizardFinalised}
         />
@@ -414,23 +431,38 @@ function SummaryStrip({ summary }) {
     { label: 'Past-Due', data: summary?.past_due, hint: 'Outstanding + overdue', statusKey: 'red' },
   ]
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
-      {cards.map((c) => (
-        <div key={c.label} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: '14px 16px' }}>
-          <p style={{ margin: 0, fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{c.label}</p>
-          {summary ? (
-            <>
-              <p style={{ margin: '5px 0 2px', fontSize: '1.3rem', fontWeight: 800, color: `var(--status-${c.statusKey}-text)`, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-                {formatAggregate(c.data?.total)}
-              </p>
-              <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>{c.data?.count ?? 0} invoice{c.data?.count !== 1 ? 's' : ''}</p>
-            </>
-          ) : (
-            <div style={{ height: 34, marginTop: 6, background: 'var(--bg-surface-3)', borderRadius: 'var(--radius-sm)', animation: 'skeleton-pulse 1.4s ease-in-out infinite' }} />
-          )}
-        </div>
-      ))}
-    </div>
+    <>
+      <div className="kpi-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
+        {cards.map((c) => (
+          <div key={c.label} className="kpi-card" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: '14px 16px' }}>
+            <p className="kpi-card-label" style={{ margin: 0, fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{c.label}</p>
+            {summary ? (
+              <>
+                <p className="kpi-card-value" style={{ margin: '5px 0 2px', fontSize: '1.3rem', fontWeight: 800, color: `var(--status-${c.statusKey}-text)`, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                  {formatAggregate(c.data?.total)}
+                </p>
+                <p className="kpi-card-count" style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>{c.data?.count ?? 0} invoice{c.data?.count !== 1 ? 's' : ''}</p>
+              </>
+            ) : (
+              <div style={{ height: 34, marginTop: 6, background: 'var(--bg-surface-3)', borderRadius: 'var(--radius-sm)', animation: 'skeleton-pulse 1.4s ease-in-out infinite' }} />
+            )}
+          </div>
+        ))}
+      </div>
+      {/* All 3 KPI cards stay in one row even at phone widths — auto-fit's
+          200px minimum was wrapping them to one-per-row well before 375px
+          (200×3 + gaps > 375). Forces exactly 3 explicit columns with
+          smaller padding/font instead of letting auto-fit reflow. */}
+      <style>{`
+        @media (max-width: 480px) {
+          .kpi-strip { grid-template-columns: repeat(3, 1fr) !important; gap: 6px !important; }
+          .kpi-card { padding: 8px 8px !important; }
+          .kpi-card-label { font-size: 0.58rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .kpi-card-value { font-size: 0.92rem !important; }
+          .kpi-card-count { font-size: 0.62rem !important; }
+        }
+      `}</style>
+    </>
   )
 }
 

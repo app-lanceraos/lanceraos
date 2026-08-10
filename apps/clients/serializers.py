@@ -87,6 +87,31 @@ class ClientSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Client name is required.')
         return value
 
+    def validate_email(self, value):
+        """
+        Real, server-side duplicate-prevention — added for the invoice
+        wizard's "save this as a new client" flow (a user typing a
+        one-time client's details that happen to match a client they
+        already have saved), but applies to every caller of this
+        serializer, including the plain "Add Client" modal, since the
+        underlying problem (silently creating a second Client record for
+        the same person) is identical either way. Checked case-
+        insensitively and across archived clients too — re-adding an
+        already-known email should surface as "you already have this
+        client," not create a parallel row (the existing one, if
+        archived, is what `restore` is for).
+        """
+        value = value.strip()
+        user = self.context['request'].user
+        qs = Client.objects.filter(user=user, email__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                'A client with this email already exists — search for them instead of creating a duplicate.'
+            )
+        return value
+
     def validate_default_currency(self, value):
         return validate_currency_code(value)
 

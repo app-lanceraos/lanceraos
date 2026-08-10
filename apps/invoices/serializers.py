@@ -37,6 +37,20 @@ class InvoicePartialPaymentSerializer(serializers.ModelSerializer):
     def validate_amount(self, value):
         if value <= 0:
             raise serializers.ValidationError('Payment amount must be greater than zero.')
+        # mark_paid pre-fills exactly the outstanding balance, so it can
+        # never violate this by construction — this check specifically
+        # targets invoice_add_payment (manual partial-payment entry via
+        # this serializer), where a user can type any number. Compares the
+        # raw amount directly against outstanding_amount, matching
+        # update_paid_status()'s own existing convention of summing
+        # partial_payments.amount directly with no currency conversion
+        # (a real, separate, pre-existing simplification — not something
+        # this check changes or is scoped to fix).
+        invoice = self.context.get('invoice')
+        if invoice is not None and value > invoice.outstanding_amount:
+            raise serializers.ValidationError(
+                f'Payment amount cannot exceed the outstanding balance of {invoice.outstanding_amount} {invoice.currency}.'
+            )
         return value
 
 

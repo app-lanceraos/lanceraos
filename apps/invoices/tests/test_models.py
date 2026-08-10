@@ -29,6 +29,25 @@ def make_invoice(user, **overrides):
     return Invoice.objects.create(**defaults)
 
 
+class ReminderDefaultTests(TestCase):
+    """
+    reminders_enabled defaults to False for a newly-created invoice (was
+    True, ported unchanged from v1) — a brand-new invoice hasn't been sent
+    yet, so there's nothing real to remind about until the freelancer
+    actually sends it. Going-forward default only; not a backfill.
+    """
+    def setUp(self):
+        self.user = User.objects.create_user(email='freelancer@example.com', password='Sup3r$ecret1')
+
+    def test_new_invoice_defaults_reminders_off(self):
+        invoice = make_invoice(self.user)
+        self.assertFalse(invoice.reminders_enabled)
+
+    def test_model_field_default_is_false(self):
+        field = Invoice._meta.get_field('reminders_enabled')
+        self.assertFalse(field.default)
+
+
 class NeverOverdueRegressionTests(TestCase):
     """
     The single most important behavioral test in this step. v1 could leak

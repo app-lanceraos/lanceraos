@@ -2076,4 +2076,197 @@ once it's filled, and re-disabled after bouncing back to stage 1 and invalidatin
 browser verification (Playwright, ad-hoc, not committed) confirmed the same scenarios end to end
 against the live backend, plus the reload investigation's full click-through and the Preview PDF
 network-layer check described above.
+
+---
+
+Date: 10 August 2026
+Decision: Reload-on-filter-click root cause found (a generic auth-expiry hard-redirect, not a filter
+bug); wizard gains a real draft-edit mode and a search-driven client step; currency/tax/discount move
+into stage 2; Mark-as-Sent removed from the wizard entirely; reminders default reversed to off;
+payment-amount-exceeds-due validation added; several real bugs fixed (banner condition, preset-list
+refresh, KPI mobile layout); invoice numbering isolation re-verified and confirmed still correct.
+
+**Reload-on-filter-click: found, with real Network-tab evidence — but the root cause is not in the
+filter pills at all.** The exact interaction (every status pill, the Overdue toggle, the client/sort
+selects, on both Invoices.jsx and Clients.jsx) was re-tested with the rigorous check this task asked
+for — a `window.__markerCheck` set before each click, verified to survive after it, plus
+`framenavigated` event tracking — across both Chromium and WebKit. Zero reproductions, confirming
+every filter control really is a plain `<button>`/`<select>` with no form ancestor (ruling out the
+implicit-submission theory directly). A whole-codebase grep for anything capable of a real
+`window.location` write turned up exactly two: `NewInvoiceWizard.jsx`'s Preview PDF (a different tab,
+irrelevant here) and `api.js`'s `_forceLogout()` — the ONLY code path in the entire frontend that can
+produce a genuine full-page navigation. Reproduced directly: wiping the auth cookies mid-session
+(simulating an already-dead session — natural 15-minute access-token expiry with a since-invalidated
+refresh token, or the session getting evicted by the 3-concurrent-session cap, very plausible given
+how many fresh test-user logins this project's own iterative Playwright-testing workflow has produced
+across sessions) and then clicking a filter pill produces exactly what was reported: `GET /invoices/
+-> 401`, a failed silent-refresh attempt, then a real hard navigation to `/login`. This isn't specific
+to filter pills — it's the first API call made after the session dies, which happens to be a filter
+click simply because that's usually the first thing someone does after leaving a tab idle. The
+previous investigation's "zero reproductions" was accurate for what it tested (a live, valid session
+throughout) — it just never tested an expired one, which is the one condition that reproduces this.
+One real improvement made alongside the diagnosis (not a fix to the mechanism, which is correct and
+necessary as-is): `_forceLogout()` now redirects to `/login?session_expired=1`, and `Login.jsx` shows
+"Your session has ended — please sign in again." instead of silently dumping the user on a blank
+login form with no explanation — the message is captured once on mount (before a cleanup effect
+strips the query param) so it survives the URL rewrite. `overscroll-behavior-x: contain` was also
+added to both pages' horizontally-scrollable pill rows as a separate, purely defensive hardening
+against macOS trackpad swipe-to-navigate — a real, well-documented browser gesture risk for this
+exact CSS pattern, but NOT something this pass could confirm or rule out as a contributing cause
+(Playwright's `.click()` has zero lateral pointer travel, and a synthetic CDP wheel-delta burst aimed
+at reproducing it produced no navigation either) — added because it's zero-risk and closes a
+plausible secondary gap, not reported as "the fix."
+
+**Wizard gains a real draft-edit mode (`editInvoiceId` prop) — every status=draft invoice now opens
+the wizard, not `InvoiceDetailPanel`.** A draft is still being built, so it belongs in the same guided
+flow a brand-new one does, pre-filled with its real saved data instead of starting blank. Wired at
+both real entry points: `Invoices.jsx`'s `openDetail` now branches on `invoice.status === 'draft'`,
+and `preset_create_invoice`'s result (also a real, immediately-usable, but still `status='draft'`
+invoice) opens the same way instead of the detail panel. Lands on stage 1 if the client isn't valid
+yet, stage 2 if the client is set but items aren't, or stage 1 as the reasonable default once
+everything's already filled in — there's nothing further to prompt for, and stage 1 is the more
+natural "you're editing this" landing spot than jumping straight to line items. `InvoiceDetailPanel`'s
+own `status === 'draft'` rendering branch is now unreachable through any known UI path (both entry
+points route drafts to the wizard) but was deliberately left in place rather than deleted — a
+defensive fallback that still works correctly if ever reached, not dead code removed without being
+asked to.
+
+**Wizard restructure**: currency/tax/discount moved out of stage 3 and into stage 2, alongside line
+items, so the running total (`computeTotals`, unchanged) is visible while it's still being built, not
+only after moving on. Stage 3 is now just notes/terms + reminders/late-fee/recurring options.
+`routeErrorsToStage` updated to match — a `currency`/`tax_rate`/`discount_amount` backend error now
+routes to stage 2, not 3.
+
+**Preview PDF relocated to the bottom action row, available from stage 2 onward (once ≥1 real item
+exists); Mark-as-Sent removed from the wizard entirely.** Preview used to render inline inside stage
+2's body — it's now a permanent fixture of the footer, gated by `canPreview` (`stage >= 2 &&
+itemValid`) rather than only existing while stage 2 happens to be showing. Mark-as-Sent never made
+sense inside a "build this invoice" flow — marking something sent before it's even finalised isn't a
+real state a user should be able to reach — so its handler, button, and API call were deleted from
+`NewInvoiceWizard.jsx` outright, not just hidden. It stays exactly as it was in `InvoiceDetailPanel`,
+for already-created invoices only; confirmed no wizard code path can reach it (grepped directly —
+`mark-sent`/`mark_sent` appear nowhere in `NewInvoiceWizard.jsx` after this change).
+
+**Client step rebuilt around a real, debounced, backend search (`ClientSearchField`, inside
+`InvoiceFormFields.jsx`) — replaces the Existing/One-Time button toggle entirely.** The old
+`ClientCombobox` filtered whatever client array happened to already be in memory (capped at
+`client_list`'s own default page size, 50) client-side; it's replaced with the Name field itself
+doubling as a live search trigger against the real `GET /clients/?search=...` endpoint (the exact
+query Clients.jsx's own search already uses server-side — `Q(name__icontains) | Q(email__icontains)
+| Q(company__icontains)`), 300ms debounced. Picking a result fills every client field directly and
+sets `client`; manually editing Name or Email afterward detaches the link (`client` back to `null`) —
+editing means this invoice is being customized for this one send, not mutating the saved record.
+Company/Phone are now always-visible plain fields regardless of whether a client is linked, matching
+one-time-client data entry with no separate mode switch anywhere. `clientMode` is gone from the form
+shape entirely (`blankInvoiceForm`/`invoiceToForm`/`formToPayload` in `invoiceHelpers.js` all
+updated) — `is_one_time_client` is now derived directly as `!form.client`.
+
+**"Save this as a new client" — a real, opt-in POST /clients/ at the threshold-crossing moment, OFF
+by default.** Shown only when no client is linked and both name+email are filled in, and only before
+the invoice exists (`allowSaveAsNewClient={!invoiceId}` — once an invoice exists, whether freshly
+created this session or a loaded existing draft, there's no more "threshold" to hook a client-save
+into). Checked at `handleNextFromStage1`: if the toggle is on, `POST /clients/` fires FIRST, so the
+invoice's own `client` FK can point to the new record from creation, not a follow-up PUT; a rejection
+here (duplicate email) stops before the invoice is ever created, staying on stage 1 with the real
+error surfaced. The duplicate check itself is new, real, server-side validation
+(`ClientSerializer.validate_email` in `apps/clients/serializers.py`) — case-insensitive, checked
+across archived clients too (a re-added email should surface as "you already have this client," not
+create a second row) — and applies to every caller of this serializer, not just the wizard's new
+flow, since the underlying problem (silently creating a duplicate Client record) is identical for the
+plain "Add Client" modal too. There was no such check anywhere before this — `Client.email` has never
+carried a uniqueness constraint at the DB level, and nothing validated it at the serializer level
+either.
+
+**Reminders default reversed to False for new invoices** — was `True`, ported unchanged from v1 all
+the way through the last several passes. A brand-new invoice hasn't been sent yet, so defaulting
+reminders on means enabling a schedule for something that isn't even going out yet; there's nothing
+real to remind about until the freelancer actually sends it and makes a real choice (the Mark-as-Sent
+modal's own checkbox, or Step 10's `/send/`). Changed in both places that need to agree, confirmed
+directly rather than assumed: `Invoice.reminders_enabled`'s own model field default
+(migration `0006_alter_invoice_reminders_enabled`) and `blankInvoiceForm()` in `invoiceHelpers.js`
+(the wizard's pre-creation state). Every other creation path was checked for an explicit override that
+would fight this: `preset_create_invoice` sets nothing, correctly inheriting the model default;
+`invoice_duplicate` deliberately copies the ORIGINAL invoice's own `reminders_enabled` value (a
+duplicate should preserve settings, not reset them — unrelated to this default and left alone); the
+Mark-as-Sent modal's own local checkbox still defaults to checked, which is correct and unrelated —
+that's a distinct, deliberate choice made AT the moment of explicitly marking something sent, not the
+"what does a brand-new, unseen draft start with" question this change answers. Existing invoices are
+completely unaffected — this is a schema default for new rows, not a backfill.
+
+**Payment-amount-exceeds-due validation** — `invoice_add_payment` (manual partial-payment entry, the
+one path where a user can type any number) previously had no check against `outstanding_amount` at
+all; `InvoicePartialPaymentSerializer.validate_amount` now rejects any amount greater than the
+invoice's real outstanding balance, with the actual remaining amount stated in the error. The
+comparison is deliberately naive about currency — it compares the payment's raw `amount` directly
+against `outstanding_amount` with no conversion, matching `update_paid_status()`'s own pre-existing
+convention of summing `partial_payments.amount` directly regardless of each payment's own `currency`
+field (a real, separate simplification already baked into this system, not something this fix changes
+or was scoped to touch). `mark_paid` was already safe by construction (pre-fills exactly the
+outstanding balance) and needed no change. Frontend: `AddPaymentModal` checks the same comparison
+client-side for immediate feedback; `InvoiceDetailPanel`'s `runAction` error handler was also
+generalized to surface a DRF field-level error (e.g. `{"amount": [...]}`) as a fallback message
+instead of only ever showing a generic "Action failed" when something reaches the backend anyway —
+the backend check is the one that actually matters, per the task's own framing, and this makes sure
+its message is visible when it fires.
+
+**Real bugs found and fixed, each confirmed with direct evidence, not assumed from the report alone**:
+- The "hasn't been sent through LanceraOS" banner (`getSendBannerCopy`) was showing on every status
+  beyond `created` with `sent_via_platform=False` — i.e. `viewed`/`partially_paid`/`paid`/`cancelled`/
+  `refunded`/`bad_debt` too, not just `sent`. The `else` branch fell through for anything past
+  `created`; fixed by checking `status === 'sent'` explicitly as its own branch, with a bare `return
+  null` for everything else.
+- Saving a new `InvoicePreset` from `InvoiceDetailPanel` never appeared in `Invoices.jsx`'s "From
+  Preset" picker without a full reload — `presets` was fetched once on mount with no way to learn a
+  new one existed. Fixed with a real callback (`onPresetSaved`, called with the server row on
+  success) rather than Invoices.jsx re-fetching the whole list — confirmed working via Playwright: a
+  freshly-saved preset now appears in "From Preset" with no reload.
+- The 3 dashboard KPI cards (`SummaryStrip` in `Invoices.jsx`) were wrapping to one-per-row well
+  before 375px (`minmax(200px, 1fr)` × 3 + gaps exceeds any phone width). Fixed with a `≤480px` media
+  query forcing exactly 3 explicit columns with reduced padding/font, verified with real screenshots
+  at 375/768/1280/1920 — unaffected at the 3 wider breakpoints, all 3 cards genuinely stay in one row
+  at 375px.
+- The `created` status's DISPLAY label was renamed to "Finalised" everywhere it appears
+  (`INVOICE_STATUS_META`, `STATUS_FILTER_OPTIONS`, the pill/badge/timeline text) to match the
+  "Finalise" action button's own name — a display-layer rename only. The stored status VALUE stays
+  `'created'` in the database, the API, and every filter query param; nothing backend-side changed.
+- `invoice_timeline`'s `created`/`finalised`/`sent` entries (added last pass) had never actually
+  gotten matching frontend rendering — `timelineLabel`/`timelineIcon`/`timelineDotColor` only handled
+  `payment`/`reminder`/`view`, so these 3 event types rendered as a raw, unstyled type string. Fixed
+  as part of adding the "who sent it" requirement: `sent` now reads "Sent by LanceraOS" (`via:
+  'platform'`) or "Marked as sent by you" (`via: 'manual'`) — no new actor field needed, since a
+  manual mark-sent only ever has one possible human actor (the invoice's own freelancer); `created`/
+  `finalised` got real labels and icons too. `timelineLabel`/`timelineDotColor` moved from
+  `InvoiceDetailPanel.jsx` into `invoiceHelpers.js` (pure, no JSX) specifically so they're directly
+  unit-testable without rendering the whole panel; `timelineIcon` (returns JSX) stayed inline.
+
+**Invoice numbering — re-verified, not assumed broken, and it genuinely still holds.** A real,
+end-to-end test (`InvoiceNumberingInterleavedIsolationTests`, `test_views.py`) creates two distinct
+users, each with 3 real draft invoices, and finalises them through the actual `POST .../finalise/`
+endpoint in a genuinely interleaved order (user A, user B, user A, user B, ...) using two independent
+authenticated sessions — not one client re-logging in between calls. Both users' numbers came out as
+their own clean 0001/0002/0003 sequence, completely unaffected by the other's interleaved activity,
+in both interleave directions. `generate_invoice_number`'s only real call site was also confirmed
+directly (grepped, not assumed) to still be exactly one place — `_finalise_invoice`
+(`apps/invoices/views.py`) — so numbering has NOT shifted to draft-creation time despite this and the
+previous pass's changes around the freeze-point/wizard rework; every draft in the new test starts
+with a genuinely blank `invoice_number`, confirmed directly before finalising. Zero-padding past 9999
+was also verified empirically rather than trusted from the format string: a real `INV-{year}-9999`
+followed by a real finalise call produces `INV-{year}-10000`, not a truncated or colliding value.
+The only real regression risk named in the task (numbering shifting to draft-creation time) does not
+exist; the numbering system is correct as-is.
+
+Verified: full backend suite, 518 tests passing (up from 510 before this pass) — includes the 2
+`InvoiceNumberingInterleavedIsolationTests` isolation tests + 1 zero-padding test, 4 new
+`AddPaymentTests` payment-validation tests, 2 new `ReminderDefaultTests`, and 2 stale assertions in
+`test_toggle_reminders_on_created_status_specifically` fixed to match the new reminders default
+(this test predates this pass and asserted the OLD `True` default — a necessary update, not a
+regression). Frontend: 51 tests passing (up from 28) — `NewInvoiceWizard.test.jsx` fully rewritten
+(22 tests: threshold/back-forward/error-routing/gating from before, plus new coverage for the client
+search-and-pick flow, the save-as-new-client toggle's success and duplicate-rejection paths, the
+reminders-default-false payload check, and 4 new tests for draft-loading mode landing on the right
+stage with real data) and a new `invoiceHelpers.test.js` (11 tests) covering the banner condition's
+exact 2-state restriction and the timeline's who-sent-it label logic directly. Real browser
+verification (Playwright, ad-hoc, not committed) confirmed every scenario above end to end against
+the live backend, including the reload investigation's dead-session reproduction and the KPI-mobile
+screenshots at all 4 required breakpoints.
 through the mocked test suite.

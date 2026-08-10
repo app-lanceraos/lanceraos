@@ -394,6 +394,42 @@ class AddPaymentTests(InvoicesAPITestCase):
         })
         self.assertEqual(resp.status_code, 400)
 
+    def test_add_payment_rejects_amount_exceeding_outstanding_balance(self):
+        """Real bug fixed this pass: invoice_add_payment previously allowed
+        an amount greater than outstanding_amount (total - amount_paid),
+        letting amount_paid exceed total. The error must state the actual
+        remaining amount, not a generic rejection."""
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_add_payment', kwargs={'pk': invoice.pk}), {
+            'amount': '150.00', 'payment_date': str(date.today()),
+        })
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('100', str(resp.json()))
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, Decimal('0'))
+
+    def test_add_payment_rejects_amount_exceeding_remaining_after_a_prior_payment(self):
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        first = self._post(reverse('invoices:invoice_add_payment', kwargs={'pk': invoice.pk}), {
+            'amount': '60.00', 'payment_date': str(date.today()),
+        })
+        self.assertEqual(first.status_code, 201)
+        # Only 40 remains outstanding — 41 must be rejected.
+        second = self._post(reverse('invoices:invoice_add_payment', kwargs={'pk': invoice.pk}), {
+            'amount': '41.00', 'payment_date': str(date.today()),
+        })
+        self.assertEqual(second.status_code, 400)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, Decimal('60.00'))
+
+    def test_add_payment_accepts_amount_exactly_equal_to_outstanding_balance(self):
+        invoice = self._invoice(status='created', total=Decimal('100.00'))
+        resp = self._post(reverse('invoices:invoice_add_payment', kwargs={'pk': invoice.pk}), {
+            'amount': '100.00', 'payment_date': str(date.today()),
+        })
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['status'], 'paid')
+
 
 class UndoPaymentTests(InvoicesAPITestCase):
     def test_undo_removes_most_recent_payment(self):
@@ -615,17 +651,17 @@ class ToggleAndRecurringTests(InvoicesAPITestCase):
         self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, 'created')
-        self.assertTrue(invoice.reminders_enabled)  # default
+        self.assertFalse(invoice.reminders_enabled)  # default, changed this pass — see DECISIONS.md
 
         resp = self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()['status'], 'created')  # unaffected by the toggle
-        self.assertFalse(resp.json()['reminders_enabled'])
+        self.assertTrue(resp.json()['reminders_enabled'])  # False -> True
         invoice.refresh_from_db()
-        self.assertFalse(invoice.reminders_enabled)
+        self.assertTrue(invoice.reminders_enabled)
 
         resp = self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))
-        self.assertTrue(resp.json()['reminders_enabled'])
+        self.assertFalse(resp.json()['reminders_enabled'])  # True -> False
 
     def test_pause_and_resume_recurring(self):
         invoice = self._invoice(is_recurring=True, recurring_interval_days=30)
@@ -1142,3 +1178,108 @@ class RateLimitTests(InvoicesAPITestCase):
         self._drain('preset_create_invoice')
         resp = self._post(reverse('invoices:preset_create_invoice', kwargs={'pk': preset.pk}))
         self.assertEqual(resp.status_code, 429)
+
+
+# ══════════════════════════════════════════════════════════════════
+# INVOICE NUMBERING — per-user isolation under genuinely interleaved
+# real finalise calls (not the model-method-level test already in
+# test_models.py's InvoiceNumberingTests — this goes through the real
+# `invoice_finalise` endpoint, the one real call site, to catch a
+# regression in WHEN numbering happens, not just the per-user filter
+# logic itself). Raised because the previous pass's freeze-point-at-
+# finalise change touched this same call site — verified here rather
+# than assumed to still be correct.
+# ══════════════════════════════════════════════════════════════════
+
+class InvoiceNumberingInterleavedIsolationTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.rf = RequestFactory()
+        self.user_a = User.objects.create_user(email='freelancer-a@example.com', password='Sup3r$ecret1')
+        self.user_a.is_email_verified = True; self.user_a.is_active = True; self.user_a.save()
+        self.user_b = User.objects.create_user(email='freelancer-b@example.com', password='Sup3r$ecret1')
+        self.user_b.is_email_verified = True; self.user_b.is_active = True; self.user_b.save()
+        # Two independent sessions — genuinely two different logged-in
+        # users, not one client re-authenticating between calls.
+        self.client_a = self._new_authed_client('freelancer-a@example.com')
+        self.client_b = self._new_authed_client('freelancer-b@example.com')
+
+    def _new_authed_client(self, email):
+        client = DjangoTestClient(enforce_csrf_checks=True)
+        dummy = self.rf.get('/')
+        csrf_token = get_token(dummy)
+        client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        resp = client.post(reverse('users:login'), data=json.dumps({
+            'login': email, 'password': 'Sup3r$ecret1',
+        }), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token)
+        assert resp.status_code == 200, resp.content
+        return client
+
+    def _finalise(self, client, invoice):
+        dummy = self.rf.get('/')
+        csrf_token = get_token(dummy)
+        client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        resp = client.post(
+            reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}),
+            content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token,
+        )
+        assert resp.status_code == 200, resp.content
+        return resp.json()['invoice_number']
+
+    def test_two_users_finalising_in_genuinely_interleaved_order_stay_isolated(self):
+        year = timezone.now().year
+        # 3 draft invoices per user, each with a real line item (finalise
+        # requires one) — created upfront so numbering is assigned only at
+        # the interleaved finalise calls below, not at draft-creation time.
+        drafts_a = [make_invoice(self.user_a, status='draft', invoice_number=None) for _ in range(3)]
+        drafts_b = [make_invoice(self.user_b, status='draft', invoice_number=None) for _ in range(3)]
+        for inv in drafts_a + drafts_b:
+            InvoiceItem.objects.create(invoice=inv, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+
+        # Every draft starts genuinely unnumbered — confirms numbering
+        # hasn't shifted to draft-creation time.
+        for inv in drafts_a + drafts_b:
+            self.assertIn(inv.invoice_number, (None, ''))
+
+        # Interleaved, not sequential: A, B, A, B, A, B — simulates two
+        # freelancers finalising invoices around the same time, neither
+        # ever waiting for the other to finish a whole batch first.
+        numbers_a, numbers_b = [], []
+        for i in range(3):
+            numbers_a.append(self._finalise(self.client_a, drafts_a[i]))
+            numbers_b.append(self._finalise(self.client_b, drafts_b[i]))
+
+        self.assertEqual(numbers_a, [f'INV-{year}-0001', f'INV-{year}-0002', f'INV-{year}-0003'])
+        self.assertEqual(numbers_b, [f'INV-{year}-0001', f'INV-{year}-0002', f'INV-{year}-0003'])
+
+    def test_two_users_finalising_in_reverse_interleave_still_isolated(self):
+        """Same as above with the interleave order flipped (B, A, B, A, B, A) — confirms this isn't order-dependent."""
+        year = timezone.now().year
+        drafts_a = [make_invoice(self.user_a, status='draft', invoice_number=None) for _ in range(3)]
+        drafts_b = [make_invoice(self.user_b, status='draft', invoice_number=None) for _ in range(3)]
+        for inv in drafts_a + drafts_b:
+            InvoiceItem.objects.create(invoice=inv, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+
+        numbers_a, numbers_b = [], []
+        for i in range(3):
+            numbers_b.append(self._finalise(self.client_b, drafts_b[i]))
+            numbers_a.append(self._finalise(self.client_a, drafts_a[i]))
+
+        self.assertEqual(numbers_a, [f'INV-{year}-0001', f'INV-{year}-0002', f'INV-{year}-0003'])
+        self.assertEqual(numbers_b, [f'INV-{year}-0001', f'INV-{year}-0002', f'INV-{year}-0003'])
+
+    def test_number_extends_past_9999_without_truncation_or_collision(self):
+        """
+        zfill(4) pads UP TO 4 digits but never truncates beyond it — a
+        real 5-digit invoice number must come out as -10000, not wrap,
+        truncate to -0000, or collide with an earlier number. Verified
+        empirically rather than trusted from the format string alone.
+        """
+        year = timezone.now().year
+        make_invoice(self.user_a, invoice_number=f'INV-{year}-9999')
+        self.assertEqual(Invoice.generate_invoice_number(self.user_a), f'INV-{year}-10000')
+
+        draft = make_invoice(self.user_a, status='draft', invoice_number=None)
+        InvoiceItem.objects.create(invoice=draft, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        number = self._finalise(self.client_a, draft)
+        self.assertEqual(number, f'INV-{year}-10000')

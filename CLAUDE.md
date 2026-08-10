@@ -650,7 +650,22 @@ and-beyond invoices now always redirect to the frozen `pdf_url` rather than live
 `GET`; a "Preview PDF" wizard action covers the pre-finalise case via the same live-render endpoint
 still available at `status='draft'`. `Invoice.finalised_at` (new field, Step 9b) backs both the PDF
 freeze point and a real `invoice_timeline` (now surfaces created/finalised/sent lifecycle events,
-not just views/reminders/payments). One endpoint is deliberately excluded, not
+not just views/reminders/payments — including WHO sent it, Step 9c: "Sent by LanceraOS" vs "Marked
+as sent by you", no new actor field needed since a manual mark-sent only ever has one possible human
+actor). Step 9c (10 August 2026) reworked the wizard further: it now doubles as the edit surface for
+an already-existing draft (`editInvoiceId` prop) — every status=draft invoice opens here instead of
+`InvoiceDetailPanel`, pre-filled with real saved data; the client step is search-driven against the
+real `GET /clients/?search=` endpoint (no more Existing/One-Time toggle) with an opt-in "save as new
+client" flow backed by real server-side duplicate-email validation
+(`ClientSerializer.validate_email`); currency/tax/discount moved into stage 2 alongside line items;
+Mark-as-Sent was removed from the wizard entirely (stays in `InvoiceDetailPanel` only); and
+`reminders_enabled` now defaults to `False` for new invoices (was `True`, ported from v1) at both the
+model field default and the wizard's own blank-form state. Step 9c also fixed 3 real, confirmed bugs
+found this pass — the "hasn't been sent" banner showing on every post-created status instead of just
+`sent`; a new `InvoicePreset` never appearing in "From Preset" without a full reload; the 3 dashboard
+KPI cards wrapping to one-per-row on phone widths — and renamed `created`'s DISPLAY label to
+"Finalised" everywhere (the stored status value is untouched). See DECISIONS.md's 10 August 2026
+entry for the full reasoning on each. One endpoint is deliberately excluded, not
 stubbed: the real `/send/` (needs `core.email.send_email()`, Step 10). The client portal, payment
 claims *workflow* (confirm/reject), comments *delivery*, recurring/reminder *background tasks*, and
 per-invoice design override at creation time also don't exist yet — their tables/fields/backend
@@ -1147,7 +1162,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard (`NewInvoiceWizard.jsx`, Step 9b) + design gallery/canvas editor + AI-seed upload built (Client CRM frontend, per-invoice design picker, signature upload UI not yet) | Backend: 510 passing (`python manage.py test`). Frontend: 28 passing (`npm test`, `frontend/`, incl. `NewInvoiceWizard.test.jsx`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload built (Client CRM frontend, per-invoice design picker, signature upload UI not yet) | Backend: 518 passing (`python manage.py test`). Frontend: 51 passing (`npm test`, `frontend/`, incl. `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

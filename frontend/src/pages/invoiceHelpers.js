@@ -28,7 +28,11 @@ export { formatMoney, STATUS_BADGE_STYLE, STATUS_BADGE_OUTLINE_STYLE, statusBadg
 // component maps this meta onto a badge (InvoiceCard, InvoiceDetailPanel).
 export const INVOICE_STATUS_META = {
   draft: { label: 'Draft', statusKey: 'gray', variant: 'outline' },
-  created: { label: 'Created', statusKey: 'blue', variant: 'outline' },
+  // Display label only — matches the "Finalise" action button's own name.
+  // The stored status VALUE stays 'created' everywhere (DB/API/filter
+  // query params) — this is a display-layer rename, not a data migration;
+  // see DECISIONS.md.
+  created: { label: 'Finalised', statusKey: 'blue', variant: 'outline' },
   sent: { label: 'Sent', statusKey: 'blue', variant: 'filled' },
   viewed: { label: 'Viewed', statusKey: 'blue', variant: 'filled', icon: 'eye' },
   partially_paid: { label: 'Partially Paid', statusKey: 'amber', variant: 'filled' },
@@ -43,7 +47,7 @@ export const OVERDUE_BADGE = { label: 'Overdue', statusKey: 'red' }
 export const STATUS_FILTER_OPTIONS = [
   { key: '', label: 'All' },
   { key: 'draft', label: 'Draft' },
-  { key: 'created', label: 'Created' },
+  { key: 'created', label: 'Finalised' },
   { key: 'sent', label: 'Sent' },
   { key: 'viewed', label: 'Viewed' },
   { key: 'partially_paid', label: 'Partially Paid' },
@@ -125,15 +129,19 @@ const BLANK_ITEM = { description: '', quantity: '1', unit_price: '' }
 
 export function blankInvoiceForm() {
   return {
-    clientMode: 'onetime',
     client: null,
+    save_as_new_client: false,
     client_name: '', client_email: '', client_company: '', client_address: '', client_phone: '',
-    is_one_time_client: true,
     currency: 'USD',
     tax_rate: '0', discount_amount: '0',
     due_date: '',
     notes: '', terms: '',
-    reminders_enabled: true,
+    // Defaults OFF for a newly-created invoice — was `true` (ported
+    // unchanged from v1); a fresh invoice hasn't been sent yet, so there's
+    // nothing to remind about until the freelancer actually sends it and
+    // makes a real choice (see DECISIONS.md). Invoice.reminders_enabled's
+    // own model-level default must agree — see apps/invoices/models.py.
+    reminders_enabled: false,
     late_fee_enabled: false, late_fee_rate: '2.00',
     is_recurring: false, recurring_interval_days: 30, recurring_auto_send: false,
     items: [{ ...BLANK_ITEM }],
@@ -142,17 +150,16 @@ export function blankInvoiceForm() {
 
 export function invoiceToForm(invoice) {
   return {
-    clientMode: invoice.client ? 'existing' : 'onetime',
     client: invoice.client || null,
+    save_as_new_client: false,
     client_name: invoice.client_name || '', client_email: invoice.client_email || '',
     client_company: invoice.client_company || '', client_address: invoice.client_address || '',
     client_phone: invoice.client_phone || '',
-    is_one_time_client: invoice.is_one_time_client ?? !invoice.client,
     currency: invoice.currency || 'USD',
     tax_rate: String(invoice.tax_rate ?? '0'), discount_amount: String(invoice.discount_amount ?? '0'),
     due_date: invoice.due_date || '',
     notes: invoice.notes || '', terms: invoice.terms || '',
-    reminders_enabled: invoice.reminders_enabled ?? true,
+    reminders_enabled: invoice.reminders_enabled ?? false,
     late_fee_enabled: invoice.late_fee_enabled ?? false, late_fee_rate: String(invoice.late_fee_rate ?? '2.00'),
     is_recurring: invoice.is_recurring ?? false,
     recurring_interval_days: invoice.recurring_interval_days || 30,
@@ -165,7 +172,7 @@ export function invoiceToForm(invoice) {
 
 export function formToPayload(form) {
   return {
-    client: form.clientMode === 'existing' ? form.client : null,
+    client: form.client || null,
     client_name: form.client_name, client_email: form.client_email,
     client_company: form.client_company, client_address: form.client_address, client_phone: form.client_phone,
     currency: form.currency,
@@ -179,7 +186,7 @@ export function formToPayload(form) {
     is_recurring: form.is_recurring,
     recurring_interval_days: form.is_recurring ? Number(form.recurring_interval_days) : null,
     recurring_auto_send: form.recurring_auto_send,
-    is_one_time_client: form.clientMode === 'onetime',
+    is_one_time_client: !form.client,
     items: form.items
       .filter((it) => it.description.trim())
       .map((it, i) => ({
@@ -191,31 +198,67 @@ export function formToPayload(form) {
   }
 }
 
-// The "hasn't been sent through LanceraOS" banner — 3 real, distinct
-// states, not one generic message for "anything not sent_via_platform":
+// The "hasn't been sent through LanceraOS" banner — exactly 2 real,
+// distinct states show it, nothing else:
 //   a) status === 'created', never mark-sent at all yet.
-//   b) status is 'sent' or beyond, but sent_via_platform is False — the
-//      freelancer marked it sent themselves (manual dropdown-flip).
+//   b) status === 'sent' specifically, but sent_via_platform is False —
+//      the freelancer marked it sent themselves (manual dropdown-flip).
 //      Acknowledges that choice directly, states the real reminders
 //      on/off decision they made at that time, and clarifies view/payment
 //      tracking only activates once the client actually visits the link.
-//   c) sent_via_platform === True — no banner at all, everything active.
-//      No real data reaches this yet (the real /send/ action is Step 10),
-//      but the condition is written correctly now rather than guessed
-//      later.
+// Every other status (draft, viewed, partially_paid, paid, cancelled,
+// refunded, bad_debt) shows no banner — either it never applied (draft),
+// or the invoice has already moved past the point this warning is about
+// (a viewed/paid invoice's tracking already activated; the "hasn't been
+// sent" warning would be actively wrong there, a real bug this fixes —
+// the previous version fell through to case (b)'s copy for EVERY status
+// beyond 'created', not just 'sent'). sent_via_platform === True (Step 10,
+// no real data yet) always suppresses the banner regardless of status,
+// checked first.
 export function getSendBannerCopy(invoice) {
-  if (invoice.status === 'draft' || invoice.sent_via_platform) return null
+  if (invoice.sent_via_platform) return null
 
   if (invoice.status === 'created') {
     return "This invoice hasn't been sent through LanceraOS — reminders, view tracking, and payment tracking won't activate until you send it.";
   }
 
-  const remindersPhrase = invoice.reminders_enabled
-    ? 'You chose to enable reminders when you marked it sent.'
-    : 'You chose to leave reminders off when you marked it sent.'
-  const sentDate = invoice.sent_at ? new Date(invoice.sent_at).toLocaleDateString() : null
-  return `You marked this invoice as sent yourself${sentDate ? ` on ${sentDate}` : ''} — LanceraOS didn't deliver it. `
-    + `${remindersPhrase} View and payment tracking will only activate once your client actually opens the invoice link.`
+  if (invoice.status === 'sent') {
+    const remindersPhrase = invoice.reminders_enabled
+      ? 'You chose to enable reminders when you marked it sent.'
+      : 'You chose to leave reminders off when you marked it sent.'
+    const sentDate = invoice.sent_at ? new Date(invoice.sent_at).toLocaleDateString() : null
+    return `You marked this invoice as sent yourself${sentDate ? ` on ${sentDate}` : ''} — LanceraOS didn't deliver it. `
+      + `${remindersPhrase} View and payment tracking will only activate once your client actually opens the invoice link.`
+  }
+
+  return null
+}
+
+// ── Timeline helpers ──────────────────────────────────────────────
+// Pure, no-JSX — live here (not InvoiceDetailPanel.jsx) so they're
+// directly unit-testable without rendering the whole panel; `timelineIcon`
+// (lucide-react, returns JSX) stays inline in that component instead.
+export function timelineDotColor(type) {
+  return {
+    payment: 'var(--status-green-text)', reminder: 'var(--status-amber-text)', view: 'var(--status-blue-text)',
+    created: 'var(--text-tertiary)', finalised: 'var(--status-blue-text)', sent: 'var(--status-blue-text)',
+  }[type] || 'var(--text-tertiary)'
+}
+
+// 'sent's `via` field (apps/invoices/views.py's invoice_timeline) is the
+// real actor signal, not a separate tracked "who" — there's only ever one
+// possible human actor for a manual mark-sent (the invoice's own
+// freelancer; no client/staff/other-account path exists), so "by you" is
+// accurate and the clearest first-person framing for someone viewing their
+// own timeline, without needing a dedicated actor field on the model.
+export function timelineLabel(ev) {
+  if (ev.type === 'payment') return `Payment recorded — ${formatMoney(ev.amount, ev.currency)} via ${ev.source}`
+  if (ev.type === 'reminder') return `Reminder ${ev.reminder_number} sent${ev.delivered === false ? ' (delivery failed)' : ''}`
+  if (ev.type === 'view') return `Viewed via ${(ev.source || 'link').replace('_', ' ')}`
+  if (ev.type === 'created') return 'Invoice created'
+  if (ev.type === 'finalised') return `Finalised${ev.invoice_number ? ` as ${ev.invoice_number}` : ''}`
+  if (ev.type === 'sent') return ev.via === 'platform' ? 'Sent by LanceraOS' : 'Marked as sent by you'
+  return ev.type
 }
 
 export function computeTotals(form) {

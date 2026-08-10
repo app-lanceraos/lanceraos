@@ -25,11 +25,15 @@ import {
   CURRENCY_OPTIONS, PAYMENT_TERMS_OPTIONS,
 } from './clientHelpers'
 
+// 'all' deliberately removed as a filter pill — search already covers
+// "show me everyone" (clearing search/filter is the equivalent), so a
+// dedicated pill for it was redundant. The 'all' filter VALUE itself is
+// left alone in the backend/EmptyState copy below in case it's ever
+// reachable another way; only the pill entry point is gone.
 const FILTER_PILLS = [
   { key: 'active', label: 'Active' },
   { key: 'flagged', label: 'Flagged' },
   { key: 'archived', label: 'Archived' },
-  { key: 'all', label: 'All' },
   { key: 'with_overdue', label: 'Has Overdue' },
   { key: 'new_this_month', label: 'New This Month' },
 ]
@@ -162,36 +166,33 @@ export default function Clients() {
         </button>
       </div>
 
-      {/* ── Search + sort ── */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
-        <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
-          <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
-          <input
-            type="text"
-            className="fos-input"
-            style={{ paddingLeft: 36, paddingRight: search ? 36 : 14 }}
-            placeholder="Search by name, email, or company…"
-            value={search}
-            onChange={(e) => handleSearchChange(e.target.value)}
-          />
-          {search && (
-            <button
-              onClick={() => handleSearchChange('')}
-              aria-label="Clear search"
-              style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', padding: 0 }}
-            >
-              <X size={15} />
-            </button>
-          )}
-        </div>
-        <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select" style={{ width: 'auto', minWidth: 180 }}>
-          {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+      {/* ── Search ── */}
+      <div style={{ position: 'relative', marginBottom: 14 }}>
+        <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
+        <input
+          type="text"
+          className="fos-input"
+          style={{ paddingLeft: 36, paddingRight: search ? 36 : 14 }}
+          placeholder="Search by name, email, or company…"
+          value={search}
+          onChange={(e) => handleSearchChange(e.target.value)}
+        />
+        {search && (
+          <button
+            onClick={() => handleSearchChange('')}
+            aria-label="Clear search"
+            style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', padding: 0 }}
+          >
+            <X size={15} />
+          </button>
+        )}
       </div>
 
-      {/* ── Filter pills ── */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, overflowX: 'auto', paddingBottom: 4 }}>
-        {FILTER_PILLS.map((pill) => {
+      {/* ── Filter pills + Sort, trailing at the right as the row's one
+          secondary control (matches Invoices.jsx's identical layout) ── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', overscrollBehaviorX: 'contain', paddingBottom: 4, flex: 1, minWidth: 0 }}>
+          {FILTER_PILLS.map((pill) => {
           const isActive = filter === pill.key
           return (
             <button
@@ -211,6 +212,10 @@ export default function Clients() {
             </button>
           )
         })}
+        </div>
+        <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select" style={{ width: 'auto', minWidth: 180, flexShrink: 0 }}>
+          {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
       </div>
 
       {/* ── Content ── */}
@@ -393,7 +398,6 @@ function EmptyState({ search, filter, onAddClient }) {
         archived: 'No archived clients.',
         with_overdue: 'No clients with overdue invoices right now.',
         new_this_month: 'No clients added this month yet.',
-        all: 'No clients yet.',
         active: 'No active clients yet.',
       }[filter] || 'No clients yet.'
 
@@ -401,7 +405,7 @@ function EmptyState({ search, filter, onAddClient }) {
     <div style={{ textAlign: 'center', padding: '48px 24px', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)' }}>
       <Users size={28} style={{ color: 'var(--text-tertiary)', marginBottom: 10 }} />
       <p style={{ margin: 0, fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.95rem' }}>{copy}</p>
-      {!isSearch && (filter === 'all' || filter === 'active') && (
+      {!isSearch && filter === 'active' && (
         <>
           <p style={{ margin: '8px 0 0', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
             Add your first client to start tracking their contact info and invoices.

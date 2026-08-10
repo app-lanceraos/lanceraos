@@ -144,12 +144,22 @@ api.interceptors.response.use(
   },
 )
 
+// A real hard navigation (not React Router's navigate) is deliberate here —
+// this runs inside a plain axios interceptor with no router context, and a
+// full reload guarantees every last bit of in-memory app state is gone, not
+// just what a client-side route change happens to reset. The
+// `session_expired` query param is the one improvement worth making: without
+// it, a user whose session died mid-use (natural 15-minute access-token
+// expiry, or eviction by the 3-concurrent-session cap — see DECISIONS.md's
+// reload investigation) just sees the whole app vanish and dump them on a
+// blank login form with no explanation, which reads as "the page randomly
+// reloaded/crashed" rather than what actually happened.
 function _forceLogout() {
   import('@/store/authStore')
     .then(({ default: useAuthStore }) => useAuthStore.getState().clearLocalAuth())
     .catch(() => {})
   if (window.location.pathname !== '/login') {
-    window.location.href = '/login'
+    window.location.href = '/login?session_expired=1'
   }
 }
 

@@ -15,7 +15,7 @@
 import { useEffect, useState } from 'react'
 import {
   X, Send, CheckCircle2, Wallet, Undo2, Ban, ShieldAlert, Copy, BookmarkPlus,
-  Check, AlertTriangle, Pause, Play, Bell, BellOff, Trash2, Clock, Eye, Receipt,
+  Check, AlertTriangle, Pause, Play, Bell, BellOff, Trash2, Clock, Eye, Receipt, FileText,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -29,12 +29,13 @@ import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
   PAYMENT_SOURCE_OPTIONS, UNDO_CONFIRMATION_AGE_DAYS, daysSince, getSendBannerCopy, invoiceToForm,
+  timelineDotColor, timelineLabel,
 } from '@/pages/invoiceHelpers'
 
 const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']
 const NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']
 
-export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clients = [], initialMessage, onInitialMessageShown }) {
+export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPresetSaved, initialMessage, onInitialMessageShown }) {
   const [invoice, setInvoice] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -134,7 +135,16 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clie
       await fn()
       if (successMsg) showToast('success', successMsg)
     } catch (e) {
-      showToast('error', e.response?.data?.error || 'Action failed. Please try again.')
+      const body = e.response?.data
+      // Most rejections here have already been caught client-side first
+      // (e.g. AddPaymentModal's own outstanding-balance check) — this is
+      // the fallback for whatever reaches the backend anyway, so a DRF
+      // field-level error (serializer.errors' own shape, e.g. `amount`)
+      // still surfaces its real message instead of a generic one.
+      const fieldError = body && typeof body === 'object'
+        ? Object.values(body).find((v) => Array.isArray(v) && v.length)?.[0]
+        : null
+      showToast('error', body?.error || fieldError || 'Action failed. Please try again.')
     } finally {
       setBusyKey(null)
     }
@@ -214,7 +224,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clie
     // render, so a stale flush result would silently drop the last edits.
     const flushed = await flushPendingSave()
     const current = flushed || invoice
-    await api.post('/invoices/presets/', {
+    const { data } = await api.post('/invoices/presets/', {
       name,
       include_client: includeClient && !!current.client,
       client: includeClient ? current.client : null,
@@ -225,6 +235,11 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clie
       late_fee_enabled: current.late_fee_enabled, late_fee_rate: current.late_fee_rate,
       items: (current.items || []).map((it) => ({ description: it.description, quantity: it.quantity, unit_price: it.unit_price })),
     })
+    // Real bug, fixed here: Invoices.jsx fetches its presets list once on
+    // mount and had no way of knowing a new one was just created — "From
+    // Preset" needed a full page reload to see it. This tells the parent
+    // directly rather than Invoices.jsx re-fetching the whole list.
+    onPresetSaved?.(data)
     setModal(null)
   }, 'Saved as a preset.')
 
@@ -294,7 +309,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clie
           {invoice.status === 'draft' ? (
             <>
               <SaveStatusIndicator state={saveState} />
-              {form && <InvoiceFormFields form={form} setForm={setForm} errors={saveErrors} clients={clients} />}
+              {form && <InvoiceFormFields form={form} setForm={setForm} errors={saveErrors} />}
             </>
           ) : (
             <>
@@ -549,20 +564,14 @@ function TimelineTab({ loaded, entries }) {
   )
 }
 
-function timelineDotColor(type) {
-  return { payment: 'var(--status-green-text)', reminder: 'var(--status-amber-text)', view: 'var(--status-blue-text)' }[type] || 'var(--text-tertiary)'
-}
 function timelineIcon(type) {
   if (type === 'payment') return <Wallet size={12} />
   if (type === 'reminder') return <Bell size={12} />
   if (type === 'view') return <Eye size={12} />
+  if (type === 'created') return <FileText size={12} />
+  if (type === 'finalised') return <CheckCircle2 size={12} />
+  if (type === 'sent') return <Send size={12} />
   return null
-}
-function timelineLabel(ev) {
-  if (ev.type === 'payment') return `Payment recorded — ${formatMoney(ev.amount, ev.currency)} via ${ev.source}`
-  if (ev.type === 'reminder') return `Reminder ${ev.reminder_number} sent${ev.delivered === false ? ' (delivery failed)' : ''}`
-  if (ev.type === 'view') return `Viewed via ${(ev.source || 'link').replace('_', ' ')}`
-  return ev.type
 }
 
 function TabButton({ icon: Icon, label, active, onClick }) {
@@ -671,6 +680,15 @@ function AddPaymentModal({ invoice, busy, onConfirm, onClose }) {
 
   function submit() {
     if (!amount || parseFloat(amount) <= 0) { setError('Enter a valid amount.'); return }
+    // Immediate client-side feedback — the real, authoritative check is
+    // the same comparison server-side (InvoicePartialPaymentSerializer.
+    // validate_amount), which is what actually matters if this value is
+    // ever stale (e.g. another payment recorded concurrently) by the time
+    // this reaches the backend.
+    if (parseFloat(amount) > Number(invoice.outstanding_amount)) {
+      setError(`Amount cannot exceed the outstanding balance of ${formatMoney(invoice.outstanding_amount, invoice.currency)}.`)
+      return
+    }
     setError('')
     onConfirm({ amount, currency, source, payment_date: paymentDate, notes })
   }

@@ -13,10 +13,12 @@
 // CreateClientModal take `form`/`onChange` from Clients.jsx rather than
 // managing their own state.
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, Plus, Search, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 
+import api from '@/lib/api'
 import FormField from './FormField'
 import FormSelect from './FormSelect'
+import FosAlert from './FosAlert'
 import {
   CURRENCY_OPTIONS, formatMoney, RECURRING_INTERVAL_OPTIONS, computeTotals,
 } from '@/pages/invoiceHelpers'
@@ -26,38 +28,22 @@ const BLANK_ITEM = { description: '', quantity: '1', unit_price: '' }
 // `stage` is optional — omitted (InvoiceDetailPanel's existing usage,
 // editing an already-created draft) renders every section at once,
 // unchanged from before this prop existed. NewInvoiceWizard.jsx passes
-// 1/2/3 to render only that stage's fields, per the task's own explicit
-// stage boundaries (not v1's exact grouping, which put currency/issue-date
-// in step 1 alongside client — this project's stage 1 is client+due-date
-// only; currency/tax/discount move to stage 3 instead):
-//   1: client (existing/one-time + fields) + due date
-//   2: line items (+ live totals preview, directly items-derived)
-//   3: currency, tax, discount, notes/terms, reminders/late-fee/recurring
+// 1/2/3 to render only that stage's fields, per this pass's revised stage
+// boundaries (currency/tax/discount moved OUT of stage 3 and into stage 2,
+// alongside line items, so the running total is visible while it's still
+// being built — see computeTotals below; this superseded an earlier pass
+// that grouped them with notes/terms in stage 3 instead):
+//   1: client (search-driven — see ClientSearchField below) + due date
+//   2: line items + currency/tax/discount + a live running total
+//   3: notes/terms + reminders/late-fee/recurring options
 function showStage(stage, n) {
   return !stage || stage === n
 }
 
-export default function InvoiceFormFields({ form, setForm, errors = {}, clients = [], stage }) {
+export default function InvoiceFormFields({
+  form, setForm, errors = {}, stage, allowSaveAsNewClient = false, duplicateClientError, onDismissDuplicateClientError,
+}) {
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
-
-  function selectExistingClient(client) {
-    setForm((f) => ({
-      ...f,
-      clientMode: 'existing',
-      client: client.id,
-      client_name: client.name, client_email: client.email,
-      client_company: client.company || '', client_address: client.address || '',
-      client_phone: client.phone || '',
-      currency: client.default_currency || f.currency,
-    }))
-  }
-
-  function clearClient() {
-    setForm((f) => ({
-      ...f, clientMode: 'onetime', client: null,
-      client_name: '', client_email: '', client_company: '', client_address: '', client_phone: '',
-    }))
-  }
 
   function setItem(i, key, value) {
     setForm((f) => {
@@ -86,81 +72,48 @@ export default function InvoiceFormFields({ form, setForm, errors = {}, clients 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* ── Client (stage 1) ── */}
+      {/* ── Client (stage 1) — a single search-driven field replaces the old
+          Existing/One-Time button toggle (see this component's own DECISIONS.md
+          entry): typing searches apps.clients' real list live; picking a result
+          fills every field below directly, no separate mode switch. Typed text
+          that matches nothing is just one-time-client data as typed — Company/
+          Phone stay plain, always-visible fields either way. ── */}
       {showStage(stage, 1) && (
       <div>
         <p className="fos-label" style={{ marginBottom: 8 }}>Client</p>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-          <button
-            type="button"
-            onClick={() => setForm((f) => ({ ...f, clientMode: 'existing' }))}
-            className="fos-btn"
-            style={{
-              flex: 1, padding: '7px 12px', fontSize: '0.78rem',
-              background: form.clientMode === 'existing' ? 'var(--accent-glow)' : 'var(--bg-surface-2)',
-              color: form.clientMode === 'existing' ? 'var(--accent)' : 'var(--text-secondary)',
-              border: `1.5px solid ${form.clientMode === 'existing' ? 'var(--accent)' : 'var(--border-subtle)'}`,
-              fontWeight: form.clientMode === 'existing' ? 700 : 500,
-            }}
-          >
-            Existing Client
-          </button>
-          <button
-            type="button"
-            onClick={clearClient}
-            className="fos-btn"
-            style={{
-              flex: 1, padding: '7px 12px', fontSize: '0.78rem',
-              background: form.clientMode === 'onetime' ? 'var(--accent-glow)' : 'var(--bg-surface-2)',
-              color: form.clientMode === 'onetime' ? 'var(--accent)' : 'var(--text-secondary)',
-              border: `1.5px solid ${form.clientMode === 'onetime' ? 'var(--accent)' : 'var(--border-subtle)'}`,
-              fontWeight: form.clientMode === 'onetime' ? 700 : 500,
-            }}
-          >
-            One-Time Client
-          </button>
-        </div>
+        <ClientSearchField form={form} setForm={setForm} errors={errors} />
 
-        {form.clientMode === 'existing' && (
-          <ClientCombobox
-            clients={clients}
-            selectedName={form.client_name}
-            onSelect={selectExistingClient}
-            onClear={clearClient}
-          />
-        )}
-
-        {(form.clientMode === 'onetime' || form.client_name) && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: form.clientMode === 'existing' ? 10 : 0 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-              <FormField
-                label="Client Name" required disabled={form.clientMode === 'existing'}
-                value={form.client_name} onChange={(e) => set('client_name', e.target.value)} error={errors.client_name}
+        {allowSaveAsNewClient && !form.client && form.client_name.trim() && form.client_email.trim() && (
+          <div style={{ marginTop: 10 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              <input
+                type="checkbox" checked={form.save_as_new_client}
+                onChange={(e) => set('save_as_new_client', e.target.checked)}
+                style={{ accentColor: 'var(--accent)', width: 14, height: 14 }}
               />
-              <FormField
-                label="Client Email" type="email" required disabled={form.clientMode === 'existing'}
-                value={form.client_email} onChange={(e) => set('client_email', e.target.value)} error={errors.client_email}
-              />
-            </div>
-            {form.clientMode === 'onetime' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-                <FormField label="Company" value={form.client_company} onChange={(e) => set('client_company', e.target.value)} />
-                <FormField label="Phone" value={form.client_phone} onChange={(e) => set('client_phone', e.target.value)} />
-              </div>
+              Save this as a new client
+            </label>
+            {duplicateClientError && (
+              <FosAlert type="error" onDismiss={onDismissDuplicateClientError} style={{ marginTop: 8 }}>{duplicateClientError}</FosAlert>
             )}
           </div>
         )}
 
-        {/* Due date is part of stage 1 per the task's own explicit stage
-            boundaries — currency/tax/discount move to stage 3 below,
-            even though v1's own step 1 grouped currency alongside client. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginTop: 10 }}>
+          <FormField label="Company" value={form.client_company} onChange={(e) => set('client_company', e.target.value)} />
+          <FormField label="Phone" value={form.client_phone} onChange={(e) => set('client_phone', e.target.value)} />
+        </div>
+
+        {/* Due date is part of stage 1 — the stage the creation threshold
+            gets crossed on; currency/tax/discount live in stage 2 below,
+            with the line items they total. */}
         <div style={{ marginTop: 10, maxWidth: 220 }}>
           <FormField label="Due Date" type="date" value={form.due_date} onChange={(e) => set('due_date', e.target.value)} />
         </div>
       </div>
       )}
 
-      {/* ── Line items (stage 2) ── */}
+      {/* ── Line items + currency/tax/discount + live running total (stage 2) ── */}
       {showStage(stage, 2) && (
       <>
       <div>
@@ -209,8 +162,15 @@ export default function InvoiceFormFields({ form, setForm, errors = {}, clients 
         </button>
       </div>
 
-      {/* ── Totals preview — client-side display only; the server's own
-          recalculate_totals() is authoritative on save ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+        <FormSelect label="Currency" value={form.currency} onChange={(e) => set('currency', e.target.value)} options={CURRENCY_OPTIONS} />
+        <FormField label="Tax Rate (%)" type="number" value={form.tax_rate} onChange={(e) => set('tax_rate', e.target.value)} />
+        <FormField label={`Discount (${form.currency})`} type="number" value={form.discount_amount} onChange={(e) => set('discount_amount', e.target.value)} />
+      </div>
+
+      {/* ── Running total — client-side display only, updates live as items/
+          tax/discount change; the server's own recalculate_totals() is
+          authoritative on save ── */}
       <div style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
         <Row label="Subtotal" value={formatMoney(totals.subtotal, form.currency)} />
         {totals.tax > 0 && <Row label={`Tax (${form.tax_rate}%)`} value={formatMoney(totals.tax, form.currency)} />}
@@ -222,15 +182,9 @@ export default function InvoiceFormFields({ form, setForm, errors = {}, clients 
       </>
       )}
 
-      {/* ── Currency / tax / discount / notes / options (stage 3) ── */}
+      {/* ── Notes/terms + reminders/late-fee/recurring options (stage 3) ── */}
       {showStage(stage, 3) && (
       <>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-        <FormSelect label="Currency" value={form.currency} onChange={(e) => set('currency', e.target.value)} options={CURRENCY_OPTIONS} />
-        <FormField label="Tax Rate (%)" type="number" value={form.tax_rate} onChange={(e) => set('tax_rate', e.target.value)} />
-        <FormField label={`Discount (${form.currency})`} type="number" value={form.discount_amount} onChange={(e) => set('discount_amount', e.target.value)} />
-      </div>
-
       {/* ── Notes / terms ── */}
       <div>
         <label className="fos-label">Notes for Client</label>
@@ -297,64 +251,99 @@ function OptionToggle({ label, hint, checked, onChange }) {
   )
 }
 
-// ── ClientCombobox — search-as-you-type over already-fetched active clients ──
-function ClientCombobox({ clients, selectedName, onSelect, onClear }) {
-  const [query, setQuery] = useState(selectedName || '')
+// ── ClientSearchField — Name doubles as a live, debounced, real-backend
+// search (GET /clients/?search=..., the exact endpoint/pattern Clients.jsx
+// itself searches with); Email sits alongside as a plain field. Picking a
+// result fills every client field on the form directly and links `client`.
+// Manually editing Name or Email after a pick detaches the link (`client`
+// back to null) — the invoice is now customized for this one send, not a
+// mutation of the saved record. Replaces the old client-array-prop-filtering
+// ClientCombobox (no real backend search, and coupled to a two-button
+// Existing/One-Time mode this pass removed) — see DECISIONS.md.
+function ClientSearchField({ form, setForm, errors }) {
+  const [query, setQuery] = useState(form.client_name || '')
+  const [results, setResults] = useState([])
   const [open, setOpen] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const searchTimer = useRef(null)
   const ref = useRef(null)
 
-  useEffect(() => { setQuery(selectedName || '') }, [selectedName])
+  // Re-syncs the visible text only when `client` itself changes (a pick or
+  // a clear) — not on every keystroke, which would fight the input's own
+  // value while the user is actively typing.
+  useEffect(() => { setQuery(form.client_name || '') }, [form.client]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     function handler(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const results = query.trim()
-    ? clients.filter((c) =>
-        c.name.toLowerCase().includes(query.toLowerCase())
-        || c.email.toLowerCase().includes(query.toLowerCase())
-        || (c.company || '').toLowerCase().includes(query.toLowerCase()))
-    : clients
+  function handleNameChange(value) {
+    setQuery(value)
+    setOpen(true)
+    setForm((f) => ({ ...f, client_name: value, client: null }))
+    clearTimeout(searchTimer.current)
+    if (!value.trim()) { setResults([]); return }
+    searchTimer.current = setTimeout(async () => {
+      setSearching(true)
+      try {
+        const { data } = await api.get('/clients/', { params: { search: value.trim(), limit: 8 } })
+        setResults(data.results || [])
+      } catch {
+        setResults([])
+      } finally {
+        setSearching(false)
+      }
+    }, 300)
+  }
+
+  function selectResult(c) {
+    setForm((f) => ({
+      ...f, client: c.id, save_as_new_client: false,
+      client_name: c.name, client_email: c.email,
+      client_company: c.company || '', client_address: c.address || '',
+      client_phone: c.phone || '',
+      currency: c.default_currency || f.currency,
+    }))
+    setQuery(c.name)
+    setOpen(false)
+  }
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <div style={{ position: 'relative' }}>
-        <Search size={14} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
-        <input
-          className="fos-input" style={{ paddingLeft: 32 }}
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+      <div ref={ref} style={{ position: 'relative' }}>
+        <FormField
+          label="Client Name" required value={query}
+          onChange={(e) => handleNameChange(e.target.value)}
           onFocus={() => setOpen(true)}
-          placeholder="Search your clients…"
+          error={errors.client_name}
+          hint={form.client ? 'Linked to a saved client — editing detaches it' : undefined}
         />
-        {selectedName && (
-          <button type="button" onClick={() => { setQuery(''); onClear(); setOpen(false) }} aria-label="Clear client" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex' }}>
-            <X size={14} />
-          </button>
+        {open && query.trim() && (searching || results.length > 0) && (
+          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: 'var(--bg-surface)', border: '1.5px solid var(--accent)', borderRadius: 'var(--radius-md)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', maxHeight: 220, overflowY: 'auto', zIndex: 5 }}>
+            {searching && <p style={{ margin: 0, padding: '10px 12px', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Searching…</p>}
+            {!searching && results.map((c) => (
+              <button
+                type="button" key={c.id}
+                onMouseDown={() => selectResult(c)}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: 'none', border: 'none', borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-2)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+              >
+                <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.name}</p>
+                <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>{c.email}{c.company ? ` · ${c.company}` : ''}</p>
+              </button>
+            ))}
+          </div>
         )}
       </div>
-      {open && results.length > 0 && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: 'var(--bg-surface)', border: '1.5px solid var(--accent)', borderRadius: 'var(--radius-md)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', maxHeight: 220, overflowY: 'auto', zIndex: 5 }}>
-          {results.map((c) => (
-            <button
-              type="button" key={c.id}
-              onMouseDown={() => { onSelect(c); setOpen(false) }}
-              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: 'none', border: 'none', borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-2)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
-            >
-              <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.name}</p>
-              <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>{c.email}{c.company ? ` · ${c.company}` : ''}</p>
-            </button>
-          ))}
-        </div>
-      )}
-      {open && query.trim() && results.length === 0 && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '10px 12px', zIndex: 5 }}>
-          <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>No matching clients. Switch to "One-Time Client" to type details directly.</p>
-        </div>
-      )}
+      <FormField
+        label="Client Email" type="email" required
+        value={form.client_email}
+        onChange={(e) => setForm((f) => ({ ...f, client_email: e.target.value, client: null }))}
+        error={errors.client_email}
+      />
     </div>
   )
 }

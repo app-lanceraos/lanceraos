@@ -35,10 +35,19 @@ export default function Login() {
 
   const loginRef = useRef(null)
 
+  // Captured once, on mount, from the query param `_forceLogout` (api.js)
+  // appends before its hard redirect here — read before the cleanup effect
+  // below strips that param, so the message survives the URL rewrite
+  // instead of disappearing the instant it's cleaned up.
+  const [sessionExpired] = useState(() => new URLSearchParams(location.search).get('session_expired') === '1')
+
   useEffect(() => {
     loginRef.current?.focus()
     const from = location.state?.from
     if (from && from !== '/login') setRedirectPath(from)
+    if (new URLSearchParams(location.search).get('session_expired')) {
+      navigate('/login', { replace: true })
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearErrors = () => {
@@ -168,6 +177,11 @@ export default function Login() {
         {location.state?.message && (
           <div style={{ marginBottom: 20 }}>
             <AuthAlert variant="success">{location.state.message}</AuthAlert>
+          </div>
+        )}
+        {sessionExpired && !location.state?.message && (
+          <div style={{ marginBottom: 20 }}>
+            <AuthAlert variant="info">Your session has ended — please sign in again.</AuthAlert>
           </div>
         )}
         {error && !lockError && (

@@ -6,6 +6,7 @@ export default function FormField({
   label,
   value,
   onChange,
+  onFocus,
   type = 'text',
   placeholder,
   disabled = false,
@@ -32,6 +33,7 @@ export default function FormField({
           type={resolvedType}
           value={value ?? ''}
           onChange={onChange}
+          onFocus={onFocus}
           placeholder={placeholder}
           disabled={disabled}
           autoComplete={autoComplete}
