@@ -42,6 +42,29 @@ export const badgeBaseStyle = {
   whiteSpace: 'nowrap',
 }
 
+// Outlined variant of the same 5 status colors — no new hex values, same
+// -bg/-text token pair, just applied as a border+transparent-background
+// instead of a filled background. Exists so 2+ statuses that share one
+// color bucket (e.g. invoiceHelpers.js's INVOICE_STATUS_META: created/
+// sent/viewed all bucket to 'blue') can still read as visually distinct
+// states rather than 3 identical-looking chips with different text —
+// see INVOICE_STATUS_META's own `variant` field for where this gets used.
+export const STATUS_BADGE_OUTLINE_STYLE = {
+  green: { background: 'transparent', color: 'var(--status-green-text)', border: '1.5px solid var(--status-green)' },
+  amber: { background: 'transparent', color: 'var(--status-amber-text)', border: '1.5px solid var(--status-amber)' },
+  red: { background: 'transparent', color: 'var(--status-red-text)', border: '1.5px solid var(--status-red)' },
+  blue: { background: 'transparent', color: 'var(--status-blue-text)', border: '1.5px solid var(--status-blue)' },
+  gray: { background: 'transparent', color: 'var(--status-gray-text)', border: '1.5px solid var(--status-gray)' },
+}
+
+// `statusKey` + `variant` ('filled'|'outline') -> a real style object,
+// used anywhere a status badge renders (invoiceHelpers.js's
+// INVOICE_STATUS_META, and any other status meta that adopts a `variant`
+// field the same way).
+export function statusBadgeStyle(statusKey, variant = 'filled') {
+  return variant === 'outline' ? STATUS_BADGE_OUTLINE_STYLE[statusKey] : STATUS_BADGE_STYLE[statusKey]
+}
+
 // A ClientTag's `color` is user-chosen per-tag data (like an avatar
 // color), not a structural/status color — DESIGN.md's "never hardcode a
 // status hex" rule targets fixed UI states (paid/overdue/etc.), not

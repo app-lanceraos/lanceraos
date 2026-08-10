@@ -332,7 +332,9 @@ class MarkSentTests(InvoicesAPITestCase):
         self.assertFalse(invoice.reminders_enabled)
 
     def test_mark_sent_assigns_invoice_number_from_draft(self):
+        """Mark as Sent from draft finalises implicitly first (see FinalisePdfStoreTests) — needs a real item, same as an explicit Finalise would."""
         invoice = self._invoice(status='draft', invoice_number=None)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
         invoice.refresh_from_db()
         self.assertIsNotNone(invoice.invoice_number)
@@ -600,6 +602,31 @@ class ToggleAndRecurringTests(InvoicesAPITestCase):
         resp = self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))
         self.assertTrue(resp.json()['reminders_enabled'])
 
+    def test_toggle_reminders_on_created_status_specifically(self):
+        """
+        invoice_toggle_reminders has no status restriction at all, but a
+        real invoice reaching 'created' only via the real finalise flow
+        (not a bare fixture status= override) is what actually exercises
+        the full real path end to end — this is the specific status the
+        task called out to verify, not just 'sent'.
+        """
+        invoice = self._invoice(status='draft')
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'created')
+        self.assertTrue(invoice.reminders_enabled)  # default
+
+        resp = self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['status'], 'created')  # unaffected by the toggle
+        self.assertFalse(resp.json()['reminders_enabled'])
+        invoice.refresh_from_db()
+        self.assertFalse(invoice.reminders_enabled)
+
+        resp = self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))
+        self.assertTrue(resp.json()['reminders_enabled'])
+
     def test_pause_and_resume_recurring(self):
         invoice = self._invoice(is_recurring=True, recurring_interval_days=30)
         resp = self._post(reverse('invoices:invoice_pause_recurring', kwargs={'pk': invoice.pk}))
@@ -631,12 +658,40 @@ class TimelineTests(InvoicesAPITestCase):
         resp = self._get(reverse('invoices:invoice_timeline', kwargs={'pk': invoice.pk}))
         self.assertEqual(resp.status_code, 200)
         types = {entry['type'] for entry in resp.json()['results']}
-        self.assertEqual(types, {'view', 'reminder', 'payment'})
+        # 'created' is always present now (this pass — every invoice has a
+        # real created_at) — see test_timeline_always_includes_created below
+        # for that behavior specifically; this test's own focus is the 3
+        # event-sourced types still all showing up together.
+        self.assertEqual(types, {'created', 'view', 'reminder', 'payment'})
 
-    def test_timeline_empty_for_a_fresh_draft(self):
+    def test_timeline_only_has_created_for_a_fresh_draft(self):
+        """
+        Real lifecycle events (created/finalised/sent) were invisible
+        before this pass even though the invoice already carried their
+        real timestamps — a fresh draft now shows exactly one entry
+        (created), not zero, and finalised/sent are correctly absent since
+        neither has happened yet.
+        """
         invoice = self._invoice(status='draft')
         resp = self._get(reverse('invoices:invoice_timeline', kwargs={'pk': invoice.pk}))
-        self.assertEqual(resp.json()['results'], [])
+        results = resp.json()['results']
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['type'], 'created')
+
+    def test_timeline_includes_finalised_and_sent_with_real_timestamps(self):
+        invoice = self._invoice(status='draft')
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
+        self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+
+        resp = self._get(reverse('invoices:invoice_timeline', kwargs={'pk': invoice.pk}))
+        results = resp.json()['results']
+        types = [e['type'] for e in results]
+        self.assertEqual(types, ['created', 'finalised', 'sent'])  # sorted by timestamp, oldest first
+        finalised_entry = next(e for e in results if e['type'] == 'finalised')
+        sent_entry = next(e for e in results if e['type'] == 'sent')
+        self.assertTrue(finalised_entry['invoice_number'])
+        self.assertEqual(sent_entry['via'], 'manual')
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -189,44 +189,96 @@ class InvoicePdfEndpointTests(InvoicesAPITestCase):
         self.assertEqual(resp.status_code, 404)
 
 
-class MarkSentPdfStoreTests(InvoicesAPITestCase):
-    """invoice_mark_sent's one-time render+store, per the spec's Stored PDF note."""
+class FinalisePdfStoreTests(InvoicesAPITestCase):
+    """
+    The freeze point moved to invoice_finalise this pass (see DECISIONS.md):
+    is_editable already only permits edits at status='draft', so a
+    'created' invoice was already fully immutable — freezing at
+    mark-sent/send pointlessly live-rendered it on every GET in between.
+    """
 
-    def test_mark_sent_populates_pdf_url_exactly_once(self):
-        invoice = self._invoice(status='created')
+    def test_finalise_populates_pdf_url_exactly_once(self):
+        invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
             mock_store.return_value = 'https://res.cloudinary.com/demo/raw/upload/invoice_once.pdf'
-            resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+            resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
         self.assertEqual(resp.status_code, 200)
         mock_store.assert_called_once()
         invoice.refresh_from_db()
         self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/invoice_once.pdf')
         self.assertIsNotNone(invoice.pdf_generated_at)
+        self.assertIsNotNone(invoice.finalised_at)
 
     def test_pdf_never_rerendered_on_subsequent_gets(self):
         """Once stored, GET .../pdf/ must redirect to the SAME url forever — never re-render, per the frozen-artifact guarantee."""
-        invoice = self._invoice(status='created')
+        invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
             mock_store.return_value = 'https://res.cloudinary.com/demo/raw/upload/invoice_frozen.pdf'
-            self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+            self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
 
-        for _ in range(3):
-            resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': invoice.pk}))
-            self.assertEqual(resp.status_code, 302)
-            self.assertEqual(resp['Location'], 'https://res.cloudinary.com/demo/raw/upload/invoice_frozen.pdf')
-        mock_store.assert_called_once()  # still exactly once, across every subsequent GET
+            for _ in range(3):
+                resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': invoice.pk}))
+                self.assertEqual(resp.status_code, 302)
+                self.assertEqual(resp['Location'], 'https://res.cloudinary.com/demo/raw/upload/invoice_frozen.pdf')
+            mock_store.assert_called_once()  # still exactly once, across every subsequent GET
 
-    def test_mark_sent_pdf_failure_does_not_block_status_transition(self):
-        invoice = self._invoice(status='created')
+    def test_finalise_pdf_failure_does_not_block_status_transition(self):
+        invoice = self._invoice(status='draft')
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
             mock_store.side_effect = RuntimeError('WeasyPrint blew up')
-            resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+            resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
         self.assertEqual(resp.status_code, 200)
         invoice.refresh_from_db()
-        self.assertEqual(invoice.status, 'sent')
+        self.assertEqual(invoice.status, 'created')
         self.assertEqual(invoice.pdf_url, '')
+
+    def test_mark_sent_from_draft_finalises_and_stores_exactly_once(self):
+        """
+        Mark as Sent is reachable directly from 'draft' (a parallel choice
+        to Finalise, not a strict sequence) — when that happens, it must
+        finalise (and therefore freeze the PDF) on the way to 'sent',
+        exactly once, the same as an explicit Finalise click would.
+        """
+        invoice = self._invoice(status='draft')
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+            mock_store.return_value = 'https://res.cloudinary.com/demo/raw/upload/invoice_direct_sent.pdf'
+            resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp.status_code, 200)
+        mock_store.assert_called_once()
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'sent')
+        self.assertIsNotNone(invoice.invoice_number)
+        self.assertIsNotNone(invoice.finalised_at)
+        self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/invoice_direct_sent.pdf')
+
+    def test_mark_sent_on_already_finalised_invoice_does_not_rerender(self):
+        """The PDF is already frozen by the time a real finalise happened separately — mark-sent must not render again."""
+        invoice = self._invoice(status='draft')
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+            mock_store.return_value = 'https://res.cloudinary.com/demo/raw/upload/invoice_finalised.pdf'
+            self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
+            mock_store.assert_called_once()
+
+            resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+            self.assertEqual(resp.status_code, 200)
+            mock_store.assert_called_once()  # still exactly once — mark-sent did not re-render
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'sent')
+        self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/invoice_finalised.pdf')
+
+    def test_mark_sent_from_draft_requires_a_line_item(self):
+        """The same defensive check invoice_finalise already had, now mirrored here since mark-sent can finalise implicitly."""
+        invoice = self._invoice(status='draft')
+        resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp.status_code, 400)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'draft')
 
 
 class DuplicateResetsPdfFieldsTests(InvoicesAPITestCase):
@@ -246,3 +298,16 @@ class DuplicateResetsPdfFieldsTests(InvoicesAPITestCase):
         # and the original is untouched
         original.refresh_from_db()
         self.assertEqual(original.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/original.pdf')
+
+    def test_duplicate_resets_finalised_at(self):
+        """finalised_at is new this pass — confirmed with a real test that invoice_duplicate resets it too, not just assumed by omission from the explicit create() kwargs."""
+        from django.utils import timezone
+        original = self._invoice(status='created')
+        original.finalised_at = timezone.now()
+        original.save(update_fields=['finalised_at'])
+
+        resp = self._post(reverse('invoices:invoice_duplicate', kwargs={'pk': original.pk}))
+        new_invoice = Invoice.objects.get(pk=resp.json()['id'])
+        self.assertIsNone(new_invoice.finalised_at)
+        original.refresh_from_db()
+        self.assertIsNotNone(original.finalised_at)

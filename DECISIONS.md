@@ -1927,4 +1927,153 @@ backend suite: 504 tests passing (up from 454 before this step). Frontend: 18 te
 (unchanged by this step's frontend addition, which is upload-flow UI wired to a real endpoint, not
 a data-layer change). Real, live end-to-end browser verification against the actual Groq API (not
 mocked) as described above — the max_tokens bug and its fix were found and confirmed this way, not
+
+---
+
+Date: 09 August 2026
+Decision: Reload-on-click investigation re-run from scratch (result: no reproductions found,
+contradicting the premise it was raised under); invoice creation reworked from an eagerly-created
+empty draft to a delayed-creation 3-stage wizard (`NewInvoiceWizard.jsx`); PDF freeze point moved
+from mark-sent to finalise; timeline/banner/badge/reminders follow-on fixes.
+
+**Reload investigation: re-run in full, honest result is zero reproductions.** This was raised as
+"genuinely unfixed, not a regression — do not assume any prior 'fixed' claim holds," so it got a
+real, broad, unscripted click-through (not a single scripted pass) across the entire
+invoice/client surface: list, filters, sort, every card, every panel open/close, every lifecycle
+button, the old and new create flows, Step 8b's design gallery/canvas editor (including inside
+GrapesJS's own rendered UI — its toolbar icons were checked directly via
+`el => el.tagName`, confirmed real `<div>`s, never `<a>`/`<form>`), and Step 9's AI-seed upload.
+Every click was cross-checked against the Network tab for a real document-type navigation. Result:
+0 click-caused unexpected navigations across the whole pass. This is reported as-is rather than
+assumed fixed from a partial check, per the task's own instruction — but it's also not proof the
+underlying Step 6 `AppShell.jsx` fix has zero remaining gaps anywhere in the app, only that this
+specific, broad pass over this specific surface found none.
+
+**Empty-draft creation model reversed — a deliberate second decision, not a silent overwrite of the
+Step 6 Gmail-compose-style choice.** That earlier decision made "New Invoice" create a real backend
+draft row the instant the button was clicked, reasoning it should feel like an always-saved Gmail
+compose window. Revisited here because an invoice draft isn't actually disposable the way an empty
+email compose window is — it's a real row that shows up in the invoice list, in `summary()` counts,
+and in aging reports, for a business object the user hasn't actually decided to create yet (e.g.
+every accidental "New Invoice" click, or a click immediately regretted, left a stray permanent
+`draft` row with no client and no line items). Fixed by moving record creation to a real threshold —
+at least a client (existing client selected, or a one-time client's name + email both filled in) —
+crossed at Stage 1's "Next". Before the threshold, all form state lives in React only
+(`NewInvoiceWizard.jsx`); closing discards it with nothing to clean up server-side. Crossing it
+fires the real `POST /invoices/` and switches into the exact same continuous-autosave behavior an
+existing draft already had — extracted into `useInvoiceAutosave.js` (used by both
+`NewInvoiceWizard.jsx` and `InvoiceDetailPanel.jsx`) specifically so the delicate race-safe
+serialization logic (verified once already, by deliberately forcing a real 2.5s-delayed network
+race) never had to be hand-derived a second time.
+
+**3 stages, boundaries given directly rather than mirrored from v1's exact split**: Stage 1 —
+client + due date (where the threshold is crossed). Stage 2 — line items. Stage 3 — currency/tax/
+discount/notes/terms/options. `InvoiceFormFields.jsx` now takes a `stage` prop and renders each
+section conditionally; the underlying field-editing UI itself is unchanged. Finalise/Mark-as-Sent
+only render at all once stage 3 is reached, and stay disabled (`canFinalise`) unless a valid client
+AND at least one real line item are both true — re-checked on every render from `form`/`invoiceId`
+directly, not assumed from "the user won't jump backwards" — confirmed as a real UI-state guarantee
+by a dedicated test that fills stage 3 as valid, jumps back to stage 1, blanks the client email, and
+jumps forward again, and finds both actions disabled again
+(`NewInvoiceWizard.test.jsx`). This also subsumes what would otherwise have been a separate
+"don't let mark-sent fire on an empty draft" fix — with creation now gated behind the same
+threshold Finalise/Mark-as-Sent are gated behind, there's no longer a code path that reaches either
+action with an empty invoice. A defensive backend check was still added to `invoice_mark_sent`
+(reject a direct call with no line items) as pure defense-in-depth against the endpoint being hit
+directly, bypassing the wizard entirely — not asked for explicitly, but a 3-line mirror of
+`invoice_finalise`'s own existing check, closing an easily-avoidable gap rather than leaving it open
+on the assumption nobody would call the API directly.
+
+**Backend validation errors route to the stage that owns the failing field**
+(`routeErrorsToStage`), the same pattern v1's own `InvoiceForm` used
+(`if (mapped.client_name...) setStep(1)`), adapted to v2's real field/error names — a
+`client_name`/`client_email`/`due_date` error goes to stage 1, any `items`/`item_N_*` error goes to
+stage 2, anything else falls through to stage 3.
+
+**PDF freeze point moved from mark-sent to finalise.** `is_editable` already only allows edits at
+`status='draft'` — a `created` invoice is already fully immutable, so freezing the PDF at
+mark-sent/send meant every `GET .../pdf/` on a `created`-but-not-yet-sent invoice was live-rendering
+pointlessly. `_finalise_invoice()` (new shared helper, called by both `invoice_finalise` directly and
+by `invoice_mark_sent` when it's invoked on a still-draft invoice, since Finalise and Mark-as-Sent
+are parallel choices in the UI, not a strict sequence) now does the one-time render+store; the
+now-redundant render+store call was removed from `invoice_mark_sent`. `GET .../pdf/`'s boundary moved
+from "live-render draft or created" to "live-render draft only" — `created`-and-beyond always
+redirects to the frozen `pdf_url`. `invoice_duplicate` was re-confirmed to still reset `pdf_url`/
+`pdf_generated_at`/the new `finalised_at` on the fresh draft it creates (all three are simply
+omitted from its explicit `create()` kwargs, the same pattern as before). This also directly backs
+Stage 2's new "Preview PDF" action — it calls the same live-render endpoint against the
+still-draft invoice, so no separate preview-specific code path was needed.
+
+**`finalised_at` added** (`apps/invoices/migrations/0005_invoice_finalised_at.py`) — didn't exist
+before this pass; set inside `_finalise_invoice()`, the same place this pass was already touching for
+the PDF-freeze move, rather than as a separate migration pass. `invoice_timeline` now always seeds a
+`created` entry from `Invoice.created_at`, and conditionally adds `finalised` (from `finalised_at`)
+and `sent` (from `sent_at`, tagged `via: 'platform'|'manual'` from `sent_via_platform`) before the
+existing view/reminder/payment entries — additive only, nothing already surfaced there changed.
+
+**3-state "hasn't been sent through LanceraOS" banner** (`getSendBannerCopy`,
+`invoiceHelpers.js`) — the same field-level facts already on `Invoice`
+(`status`, `sent_via_platform`, `sent_at`, `reminders_enabled`) drive 3 genuinely different messages
+rather than one generic "not sent" warning: `created`-never-mark-sent keeps the original copy;
+`sent`-via-manual-dropdown acknowledges the freelancer's own choice, states the real reminders
+on/off decision they made, and clarifies tracking activates only once the client opens the link;
+`sent_via_platform=True` shows no banner at all. That third branch has no real data reaching it yet
+(the real `/send/` action is Step 10) but the condition is written correctly now rather than left as
+a guess for later. A real, separate success toast (via `useTimedMessage`, the same pattern already
+used in `Profile.jsx`) now fires on Finalise/Mark-as-Sent alongside whichever banner applies, not
+instead of it — carried across the wizard-to-`InvoiceDetailPanel` hand-off (the wizard unmounts on
+success, discarding its own toast state) via a new `initialMessage`/`onInitialMessageShown` prop
+pair, confirmed working end to end via Playwright.
+
+**Status badge differentiation uncovered a real, pre-existing bug affecting the whole app, not just
+invoices.** `INVOICE_STATUS_META` mapped `created`/`sent`/`viewed` all to the same `'blue'` bucket —
+textually different statuses, visually identical badges. Fixed within DESIGN.md's existing 5-color
+token set (no new hex values) by adding a `variant` (`filled`/`outline`) per status and, while
+verifying the fix in a real browser, finding that `getComputedStyle(document.documentElement)
+.getPropertyValue('--status-green-bg')` (and the other 14 `--status-{color}[-bg|-text]` tokens)
+returned `''` — they were referenced everywhere via `STATUS_BADGE_STYLE` but had never actually been
+defined in `theme.css`, so every status badge in the app had been silently rendering with browser
+fallback values (`background` falls back to its own initial value, `transparent`, rather than
+erroring) for an unknown period before this. Added all 15 tokens to `theme.css` per DESIGN.md
+Section 2.5's own spec values; `draft`/`created` now render as outline variants of gray/blue,
+`sent`/`viewed`/`paid`/`partially_paid`/`bad_debt` as filled, distinguishing every status that
+shares a color bucket with a sibling.
+
+**Preview PDF's popup: a real Playwright/Chromium automation artifact, not a real bug — recorded so
+it isn't "fixed" a second time later on a false premise.** The implementation opens a blank tab
+synchronously (before any `await`, so it's still a direct result of the click — a tab opened only
+after an `await` is exactly what popup blockers target) and navigates it directly to the real,
+authenticated `GET /invoices/{id}/pdf/` endpoint once the pending autosave flushes — a normal
+top-level navigation, so the httpOnly auth cookie rides along on the same registrable domain
+(`localhost:5173`/`:8000` share one) exactly like a real link click, no blob URL involved. An earlier
+attempt used a blob URL instead (`axios` GET the PDF bytes, `URL.createObjectURL`, then
+`window.open()` to it) and was abandoned after confirming directly that Chrome never actually
+navigated the tab to it — blob URLs are scoped to the document that created them and don't reliably
+transfer into a separate top-level browsing context via `window.open`. The direct-navigation version
+looked broken under Playwright too (`page.waitForURL` timing out with `net::ERR_ABORTED; maybe frame
+was detached?`, `popup.url()` stuck on `about:blank`) until checked against the real network layer
+directly (`context.on('response', ...)`), which showed the actual request completing
+(`GET /invoices/{id}/pdf/ -> 200 [application/pdf]`) with the popup still open and attached
+(`context.pages().length === 2`, `popup.isClosed() === false`). This matches a known Chromium
+behavior: a top-level navigation that resolves to a PDF response hands the frame to Chrome's
+internal PDF viewer (a separate guest-view process), which a real user sees as the PDF simply
+rendering, but which Playwright's own navigation-tracking (`waitForURL`/`.url()`) doesn't follow —
+an automation-harness limitation, not a defect in the app. No app-code fix was needed; the debug
+`console.log` statements added while isolating this were removed once confirmed.
+
+Verified: full backend suite, 510 tests passing (up from 508 — 2 net additions this pass on top of
+the pre-existing rewrites the freeze-point boundary move required across `test_pdf_pipeline.py` and
+`test_views.py`). Frontend: 28 tests passing (up from 18) — the pre-existing design-editor
+`serialization`/`rules` suites unchanged, plus a new `NewInvoiceWizard.test.jsx` (10 tests, React
+Testing Library + `axios-mock-adapter` against the real shared `api` instance, no
+`@testing-library/jest-dom` in this project's devDependencies so assertions use plain `expect` +
+raw DOM properties) covering: closing before the threshold creates no backend row; Next without a
+client is blocked and creates nothing; crossing the threshold fires exactly one `POST` and a second
+Back/Next cycle never fires a second one; Back-then-Next preserves both client and item field state;
+a `client_*`-field backend error on finalise routes back to stage 1 while an `item_*` error routes
+to stage 2; Finalise/Mark-as-Sent are absent before stage 3, disabled with a blank line item, enabled
+once it's filled, and re-disabled after bouncing back to stage 1 and invalidating the client. Real
+browser verification (Playwright, ad-hoc, not committed) confirmed the same scenarios end to end
+against the live backend, plus the reload investigation's full click-through and the Preview PDF
+network-layer check described above.
 through the mocked test suite.

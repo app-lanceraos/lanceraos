@@ -222,6 +222,13 @@ class Invoice(models.Model):
     due_date = models.DateField(null=True, blank=True)
     paid_date = models.DateField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
+    # Added in this pass — invoice_timeline had no way to surface a real
+    # "Finalised" lifecycle event (only views/reminders/payments existed).
+    # Set once, in invoice_finalise (or the shared _finalise_invoice() helper
+    # invoice_mark_sent calls when it finalises a still-draft invoice on the
+    # way to 'sent') — never touched again, same one-time-set convention as
+    # sent_at.
+    finalised_at = models.DateTimeField(null=True, blank=True)
 
     # ── Content ────────────────────────────────────────────────────
     notes = models.TextField(blank=True)

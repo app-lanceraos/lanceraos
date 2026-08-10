@@ -641,7 +641,16 @@ real drag-and-drop canvas editor and template gallery (Step 8b), AND Path 3 (AI-
 Step 9 — classify-only against a real Groq vision call, `core/ai.py` + `apps/invoices/ai_design.py`)
 plus the signature tool (Step 9, classical image processing, `apps/invoices/signature_tool.py`) are
 all built and tested, plus a real frontend for invoices (list/detail/lifecycle actions, aging
-report, autosave) — see Section 4's `frontend/` tree. One endpoint is deliberately excluded, not
+report, autosave) — see Section 4's `frontend/` tree. Invoice creation (Step 9b) was reworked from
+an eagerly-created empty draft to a delayed-creation, 3-stage wizard (`NewInvoiceWizard.jsx`) — no
+backend row exists until a real threshold (a valid client) is crossed; see DECISIONS.md's
+09 August 2026 entry for the full reversal reasoning. The one-time PDF render+store also moved
+this pass from mark-sent to finalise (`_finalise_invoice`, `apps/invoices/views.py`) — `created`-
+and-beyond invoices now always redirect to the frozen `pdf_url` rather than live-rendering on every
+`GET`; a "Preview PDF" wizard action covers the pre-finalise case via the same live-render endpoint
+still available at `status='draft'`. `Invoice.finalised_at` (new field, Step 9b) backs both the PDF
+freeze point and a real `invoice_timeline` (now surfaces created/finalised/sent lifecycle events,
+not just views/reminders/payments). One endpoint is deliberately excluded, not
 stubbed: the real `/send/` (needs `core.email.send_email()`, Step 10). The client portal, payment
 claims *workflow* (confirm/reject), comments *delivery*, recurring/reminder *background tasks*, and
 per-invoice design override at creation time also don't exist yet — their tables/fields/backend
@@ -1138,7 +1147,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/ + design_data schema/CRUD + AI-seed/signature tool, Step 9; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report + design gallery/canvas editor + AI-seed upload built (Client CRM frontend, per-invoice design picker, signature upload UI not yet) | Backend: 504 passing (`python manage.py test`). Frontend: 18 passing (`npm test`, `frontend/`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard (`NewInvoiceWizard.jsx`, Step 9b) + design gallery/canvas editor + AI-seed upload built (Client CRM frontend, per-invoice design picker, signature upload UI not yet) | Backend: 510 passing (`python manage.py test`). Frontend: 28 passing (`npm test`, `frontend/`, incl. `NewInvoiceWizard.test.jsx`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

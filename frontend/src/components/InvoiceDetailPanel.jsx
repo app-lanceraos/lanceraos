@@ -12,26 +12,29 @@
 // days_overdue docstring) — every status badge here is rendered alongside a
 // separate, orthogonal Overdue badge computed from invoice.days_overdue,
 // never merged into or replacing the real status.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   X, Send, CheckCircle2, Wallet, Undo2, Ban, ShieldAlert, Copy, BookmarkPlus,
   Check, AlertTriangle, Pause, Play, Bell, BellOff, Trash2, Clock, Eye, Receipt,
 } from 'lucide-react'
 
 import api from '@/lib/api'
+import useTimedMessage from '@/hooks/useTimedMessage'
+import useInvoiceAutosave from '@/hooks/useInvoiceAutosave'
 import FormField from './FormField'
 import FormSelect from './FormSelect'
 import FosAlert from './FosAlert'
 import InvoiceFormFields from './InvoiceFormFields'
+import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
-  PAYMENT_SOURCE_OPTIONS, UNDO_CONFIRMATION_AGE_DAYS, daysSince, formToPayload, invoiceToForm,
+  PAYMENT_SOURCE_OPTIONS, UNDO_CONFIRMATION_AGE_DAYS, daysSince, getSendBannerCopy, invoiceToForm,
 } from '@/pages/invoiceHelpers'
 
 const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']
 const NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']
 
-export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clients = [] }) {
+export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clients = [], initialMessage, onInitialMessageShown }) {
   const [invoice, setInvoice] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -40,120 +43,40 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clie
   const [timelineLoaded, setTimelineLoaded] = useState(false)
   const [activeTab, setActiveTab] = useState('details')
 
-  // ── Autosave (Step 6 rework) ──────────────────────────────────────
+  // ── Autosave (Step 6 rework; extracted to useInvoiceAutosave this
+  // pass so NewInvoiceWizard.jsx can share the exact same race-safe
+  // chain once a brand-new invoice crosses its creation threshold) ──
   // Continuous, Gmail-compose-style autosave for the entire time an
   // invoice is status='draft' — matches is_editable exactly (see
   // apps/invoices/models.py; PUT is rejected with 403 the moment status
-  // leaves 'draft', including 'created' — that boundary is unchanged by
-  // this rework, only the friction *before* it is removed). There is no
-  // more separate "editing" toggle: a draft invoice's form fields ARE
-  // the invoice, live.
+  // leaves 'draft', including 'created'). There is no more separate
+  // "editing" toggle: a draft invoice's form fields ARE the invoice, live.
   const [form, setForm] = useState(null)
-  const [saveState, setSaveState] = useState('idle') // 'idle' | 'saving' | 'saved' | 'error'
-  const [saveErrors, setSaveErrors] = useState({})
-  const saveTimerRef = useRef(null)
-  const skipNextAutosaveRef = useRef(false)
-  // Race-safety, the real mechanism (see saveNow's docstring below for
-  // why an earlier AbortController-only design was verified — by
-  // deliberately forcing an artificial network race, not by inspection —
-  // to still let the DB end up with the older value).
-  const saveInFlightRef = useRef(false)
-  const nextFormToSaveRef = useRef(null)
-  const saveTailRef = useRef(Promise.resolve(null))
+  const {
+    saveState, saveErrors, setSaveErrors, flushPendingSave, skipNextAutosave,
+  } = useInvoiceAutosave(invoiceId, form, invoice?.status === 'draft', setInvoice)
 
   const [busyKey, setBusyKey] = useState(null)
-  const [toast, setToast] = useState(null)
+  const { message: toast, show: showToast, clear: clearToast } = useTimedMessage()
 
   const [modal, setModal] = useState(null) // 'mark_sent' | 'mark_paid' | 'add_payment' | 'refund' | 'undo' | 'save_preset' | 'cancel' | 'bad_debt' | 'delete'
-  const toastTimer = useRef(null)
 
   useEffect(() => { loadInvoice() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { loadTimeline() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced autosave — fires ~700ms after the last field change, not
-  // on every keystroke. Deliberately does NOT depend on `invoice` (only
-  // on `form`), so a save response updating `invoice` never re-triggers
-  // this effect and never overwrites in-progress typing.
+  // Surfaces a success message that was earned inside NewInvoiceWizard.jsx
+  // (Finalise/Mark-as-Sent), a different component instance than this one —
+  // this is the one place that message has anywhere left to show, since
+  // the wizard unmounts the instant it hands off. Shown once, then cleared
+  // in the parent so navigating away and reopening this same invoice later
+  // doesn't repeat a stale message.
   useEffect(() => {
-    if (!form) return
-    if (skipNextAutosaveRef.current) { skipNextAutosaveRef.current = false; return }
-    if (!invoice || invoice.status !== 'draft') return
-    clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => { saveTimerRef.current = null; triggerSave(form) }, 700)
-    return () => clearTimeout(saveTimerRef.current)
-  }, [form]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Race-safety, the real mechanism: never more than one PUT for this
-  // invoice in flight at a time, full stop. An earlier design used
-  // AbortController + a response-version counter instead — that looked
-  // correct and passed casual testing, but a deliberate test (delay one
-  // PUT's server-side handling by 2.5s via route interception, then fire
-  // a second edit+save while it's still "in flight") proved it wasn't:
-  // aborting a request only stops the *client* from acting on its
-  // response — Django had usually already received and would still
-  // finish processing the aborted request, so the older write could
-  // still land in Postgres *after* the newer one, silently overwriting
-  // it, even though the UI kept showing the newer value. Verified
-  // directly against the database, not assumed. Strict serialization
-  // fixes this at the only place it can actually be fixed: never let a
-  // second request exist for the server to reorder in the first place.
-  // If a save is requested while one is already in flight, this
-  // remembers only the latest form (coalescing, not queueing every
-  // intermediate change) and sends it the instant the in-flight one
-  // finishes.
-  function triggerSave(currentForm) {
-    nextFormToSaveRef.current = currentForm
-    if (!saveInFlightRef.current) {
-      saveTailRef.current = runSaveChain()
+    if (initialMessage) {
+      showToast('success', initialMessage)
+      onInitialMessageShown?.()
     }
-    return saveTailRef.current
-  }
-
-  async function runSaveChain() {
-    let last = null
-    while (nextFormToSaveRef.current) {
-      const toSave = nextFormToSaveRef.current
-      nextFormToSaveRef.current = null
-      saveInFlightRef.current = true
-      last = await performSave(toSave)
-      saveInFlightRef.current = false
-    }
-    return last
-  }
-
-  async function performSave(currentForm) {
-    setSaveState('saving')
-    try {
-      const { data } = await api.put(`/invoices/${invoiceId}/`, formToPayload(currentForm))
-      setInvoice(data)
-      setSaveErrors({})
-      setSaveState('saved')
-      return data
-    } catch (e) {
-      const body = e.response?.data
-      if (body && typeof body === 'object') {
-        setSaveErrors(Object.fromEntries(Object.entries(body).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])))
-      }
-      setSaveState('error')
-      return null
-    }
-  }
-
-  // Flushes a pending (not-yet-fired) debounced save immediately —
-  // called before any lifecycle action so finalise/mark-sent/duplicate/
-  // save-as-preset always act on the latest typed content, never on
-  // stale server data missing the last few keystrokes. Returns the fresh
-  // invoice row when a flush actually ran (so callers don't read `invoice`
-  // via a stale closure — setInvoice() inside performSave won't have been
-  // reflected in this same closure execution yet), or null when there was
-  // nothing pending to flush.
-  async function flushPendingSave() {
-    const hadPendingTimer = !!saveTimerRef.current
-    clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = null
-    if (hadPendingTimer && form) return triggerSave(form)
-    return saveTailRef.current
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessage])
+  useEffect(() => { loadTimeline() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The sole close path (X button + overlay click) — flushes first so
   // closing right after typing still saves, exactly like closing a Gmail
@@ -173,7 +96,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clie
       const { data } = await api.get(`/invoices/${invoiceId}/`)
       setInvoice(data)
       if (data.status === 'draft') {
-        skipNextAutosaveRef.current = true
+        skipNextAutosave()
         setForm(invoiceToForm(data))
       } else {
         setForm(null)
@@ -209,9 +132,9 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clie
     setBusyKey(key)
     try {
       await fn()
-      if (successMsg) showToast(successMsg)
+      if (successMsg) showToast('success', successMsg)
     } catch (e) {
-      showToast(e.response?.data?.error || 'Action failed. Please try again.', 'error')
+      showToast('error', e.response?.data?.error || 'Action failed. Please try again.')
     } finally {
       setBusyKey(null)
     }
@@ -336,7 +259,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clie
 
   const meta = INVOICE_STATUS_META[invoice.status] || INVOICE_STATUS_META.draft
   const isOverdue = invoice.days_overdue > 0
-  const showBanner = invoice.status !== 'draft' && !invoice.sent_via_platform
+  const sendBannerCopy = getSendBannerCopy(invoice)
   const busy = busyKey !== null
 
   return (
@@ -355,20 +278,18 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, clie
                 {invoice.invoice_number || '(unnumbered draft)'}
               </h2>
               {isOverdue && <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[OVERDUE_BADGE.statusKey] }}>{OVERDUE_BADGE.label}</span>}
-              <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[meta.statusKey] }}>{meta.label}</span>
+              <InvoiceStatusBadge meta={meta} />
             </div>
             <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
               {invoice.client_name || 'No client yet'} · Due {invoice.due_date || '—'}
             </p>
           </div>
 
-          {showBanner && (
-            <FosAlert type="warning" style={{ marginBottom: 16 }}>
-              This invoice hasn't been sent through LanceraOS — reminders, view tracking, and payment tracking won't activate until you send it.
-            </FosAlert>
+          {sendBannerCopy && (
+            <FosAlert type="warning" style={{ marginBottom: 16 }}>{sendBannerCopy}</FosAlert>
           )}
 
-          {toast && <FosAlert type={toast.type} style={{ marginBottom: 16 }}>{toast.msg}</FosAlert>}
+          {toast && <FosAlert type={toast.type} onDismiss={clearToast} style={{ marginBottom: 16 }}>{toast.text}</FosAlert>}
 
           {invoice.status === 'draft' ? (
             <>

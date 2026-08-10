@@ -224,25 +224,30 @@ def invoice_detail(request, pk):
 @permission_classes([IsAuthenticated])
 def invoice_pdf(request, pk):
     """
-    Per the spec's Stored PDF note: draft/created invoices always
-    live-render (nothing frozen yet, nothing to break) and get the PDF
-    bytes back directly. Everything from `sent` onward serves the frozen
-    `pdf_url` artifact instead — a redirect to its Cloudinary URL, never a
-    fresh render, regardless of any later InvoiceDesign edit. Redirecting
-    (not proxying the bytes through this endpoint) matches how every other
-    Cloudinary-hosted asset in this app is already served — apps/users'
-    upload_logo returns the raw secure_url directly and the frontend
-    fetches it itself; there's no existing proxy-through pattern to break
-    from.
+    Live-vs-stored boundary moved in this pass: only `draft` still
+    live-renders (nothing frozen yet, nothing to break — this is also
+    what backs the wizard's "Preview PDF" action before finalising).
+    Everything from `created` onward serves the frozen `pdf_url` artifact
+    instead — a redirect to its Cloudinary URL, never a fresh render,
+    regardless of any later InvoiceDesign edit. `created` used to live-
+    render here too (grouped with `draft`), which was real, pointless
+    work: `is_editable` already only allows edits at status='draft', so a
+    `created` invoice can never change again, and invoice_finalise (this
+    pass) now freezes its PDF the moment it leaves draft — see
+    _finalise_invoice. Redirecting (not proxying the bytes through this
+    endpoint) matches how every other Cloudinary-hosted asset in this app
+    is already served — apps/users' upload_logo returns the raw
+    secure_url directly and the frontend fetches it itself; there's no
+    existing proxy-through pattern to break from.
 
-    If a sent-or-beyond invoice somehow has no pdf_url yet (mark-sent's
-    render+store is deliberately non-fatal to that status transition —
-    see invoice_mark_sent), this is a genuine anomaly: falls back to a
+    If a created-or-beyond invoice somehow has no pdf_url yet
+    (_finalise_invoice's render+store is deliberately non-fatal to the
+    status transition itself), this is a genuine anomaly: falls back to a
     live render rather than a bare 404, but logs it as such.
     """
     invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
 
-    if invoice.status in ('draft', 'created'):
+    if invoice.status == 'draft':
         pdf_bytes = render_invoice_pdf(invoice)
         return HttpResponse(pdf_bytes, content_type='application/pdf')
 
@@ -258,21 +263,67 @@ def invoice_pdf(request, pk):
 # LIFECYCLE ACTIONS
 # ══════════════════════════════════════════════════════════════════
 
+def _finalise_invoice(invoice):
+    """
+    The real "leave draft" event — draft -> created, invoice_number
+    assignment, exchange-rate lock, finalised_at timestamp, and the
+    one-time PDF render+store (moved here from invoice_mark_sent in this
+    pass — see DECISIONS.md). Shared by invoice_finalise (the explicit
+    button) AND invoice_mark_sent (which calls this first if the invoice
+    is still a draft when the user clicks "Mark as Sent" directly,
+    skipping the separate Finalise click — see that view's own docstring).
+
+    is_editable only permits edits at status='draft' (Invoice.is_editable) —
+    a created invoice is already fully immutable, so this render+store is
+    the ONE point where freezing the PDF is both correct and sufficient;
+    invoice_pdf's own live-vs-stored boundary already treats anything past
+    draft/created as frozen, and re-rendering on every later GET for an
+    invoice that can never change again was pointless work.
+
+    Caller is responsible for the surrounding rate limit / not-found /
+    status checks — this assumes the caller already confirmed
+    invoice.status == 'draft'. PDF failure is deliberately non-fatal to
+    the status transition (same reasoning invoice_mark_sent's docstring
+    already gave for this): a WeasyPrint/Cloudinary hiccup shouldn't block
+    a real lifecycle transition. invoice_pdf's own GET falls back to a
+    live render if pdf_url is still blank despite status being
+    created-or-beyond, logged there as a genuine anomaly.
+    """
+    invoice.recalculate_totals()
+    if not invoice.invoice_number:
+        invoice.invoice_number = Invoice.generate_invoice_number(invoice.user)
+    invoice.capture_issue_rate()
+    invoice.status = 'created'
+    invoice.finalised_at = timezone.now()
+    invoice.save()
+
+    try:
+        invoice.pdf_url = store_invoice_pdf(invoice)
+        invoice.pdf_generated_at = timezone.now()
+        invoice.save(update_fields=['pdf_url', 'pdf_generated_at'])
+    except Exception:
+        logger.exception('[INVOICES] Finalise PDF render+store failed for invoice %s — status transition kept, pdf_url left blank.', invoice.invoice_number)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def invoice_finalise(request, pk):
     """
     draft -> created. Assigns invoice_number if not already assigned; locks
-    the exchange rate via the latest ExchangeRateSnapshot.
+    the exchange rate via the latest ExchangeRateSnapshot; freezes the PDF
+    (see _finalise_invoice — moved here from invoice_mark_sent this pass,
+    since a created invoice is already fully immutable and that's the
+    real "leaving draft" event, not "leaving created").
 
     Validation actually enforced today: status must be draft, and at least
     one line item must exist. It does NOT check client_name/client_email —
     a real mismatch against the intuitive expectation that finalising
     requires "a client or one-time-client info", surfaced while relaxing
     InvoiceSerializer's client_name/client_email to allow_blank for
-    autosave (Step 6 rework). Not tightened here — deliberately out of
-    scope for that rework, recorded rather than silently assumed either
-    way. A finalised invoice with a blank client name is possible today.
+    autosave (Step 6 rework). Not tightened here at the backend level —
+    the frontend's own wizard rework (this pass) is what actually closes
+    that gap now, by making Finalise/Mark-as-Sent unreachable in the UI
+    before a real client + item exist; see DECISIONS.md.
     """
     if _check_moderate_rate_limit('finalise', request.user):
         return _too_many_requests('Too many finalise actions. Please try again later.')
@@ -283,12 +334,7 @@ def invoice_finalise(request, pk):
     if not invoice.items.exists():
         return Response({'error': 'Add at least one line item before finalising.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    invoice.recalculate_totals()
-    if not invoice.invoice_number:
-        invoice.invoice_number = Invoice.generate_invoice_number(request.user)
-    invoice.capture_issue_rate()
-    invoice.status = 'created'
-    invoice.save()
+    _finalise_invoice(invoice)
 
     emit('InvoiceFinalised', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
     logger.info('[INVOICES] Finalised invoice %s.', invoice.invoice_number)
@@ -314,6 +360,16 @@ def invoice_mark_sent(request, pk):
     and /mark-sent/ as two distinct rows with different descriptions.
     Setting it here would be exactly the "conflating manual flip with a
     real send" mistake this step's own instructions warned against.
+
+    Callable directly from 'draft' (the frontend offers Finalise and Mark
+    as Sent as parallel choices, not a strict sequence — a user can click
+    Mark as Sent without ever clicking Finalise first) — when that
+    happens, this finalises the invoice first (_finalise_invoice, the one
+    real place the PDF gets frozen) before also transitioning to 'sent',
+    so "leaving draft via mark-sent" gets exactly the same one-time
+    render+store as "leaving draft via finalise" — never twice, never
+    zero times. If the invoice is already 'created' (finalised earlier,
+    separately), that PDF is already frozen and this does not re-render.
     """
     if not request.data.get('confirm'):
         return Response({'error': 'confirm: true is required to mark this invoice as sent.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -325,32 +381,15 @@ def invoice_mark_sent(request, pk):
     if invoice.status not in ('draft', 'created'):
         return Response({'error': 'Only draft or created invoices can be marked sent.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    if not invoice.invoice_number:
-        invoice.invoice_number = Invoice.generate_invoice_number(request.user)
-    if not invoice.exchange_rate_snapshot:
-        invoice.capture_issue_rate()
+    if invoice.status == 'draft':
+        if not invoice.items.exists():
+            return Response({'error': 'Add at least one line item before marking this invoice as sent.'}, status=status.HTTP_400_BAD_REQUEST)
+        _finalise_invoice(invoice)
 
     invoice.reminders_enabled = bool(request.data.get('send_reminders', True))
     invoice.status = 'sent'
     invoice.sent_at = timezone.now()
     invoice.save()
-
-    # One-time render+store, per the spec's Stored PDF note: "The manual
-    # mark-sent dropdown-flip path also triggers this same one-time
-    # render+store, since the invoice is leaving created either way."
-    # Deliberately non-fatal to the status transition itself — a
-    # WeasyPrint/Cloudinary failure here shouldn't block a freelancer
-    # recording something that already happened in reality (they sent
-    # this invoice themselves, outside the platform). GET .../pdf/ falls
-    # back to a live render if pdf_url is still blank despite status
-    # being sent-or-beyond — a genuine anomaly, logged there, not silently
-    # treated as normal.
-    try:
-        invoice.pdf_url = store_invoice_pdf(invoice)
-        invoice.pdf_generated_at = timezone.now()
-        invoice.save(update_fields=['pdf_url', 'pdf_generated_at'])
-    except Exception:
-        logger.exception('[INVOICES] mark-sent PDF render+store failed for invoice %s — status transition kept, pdf_url left blank.', invoice.invoice_number)
 
     emit('InvoiceSent', invoice_id=str(invoice.pk), user_id=str(request.user.pk), via='manual')
     logger.info('[INVOICES] Marked invoice %s as sent (manual).', invoice.invoice_number)
@@ -599,8 +638,10 @@ def invoice_duplicate(request, pk):
         is_one_time_client=original.is_one_time_client,
         # NOT copied — explicitly reset: status (defaults to 'draft'),
         # invoice_number (defaults to None), view_token (fresh, via
-        # save()), pdf_url/pdf_generated_at (blank/None), sent_via_platform
-        # (False), amount_paid (0).
+        # save()), pdf_url/pdf_generated_at/finalised_at (blank/None —
+        # finalised_at added this pass, confirmed with a real test that
+        # it stays None on the new draft even when the original had a
+        # real value), sent_via_platform (False), amount_paid (0).
     )
     for item in original.items.all():
         InvoiceItem.objects.create(
@@ -665,18 +706,28 @@ def invoice_resume_recurring(request, pk):
 @permission_classes([IsAuthenticated])
 def invoice_timeline(request, pk):
     """
-    Unified activity feed, built with what genuinely exists today:
-    InvoiceViewEvent, InvoiceReminder, and InvoicePartialPayment rows.
-    No status-change-history model exists yet, so individual status
-    transitions aren't itemized as their own entries (only inferable
-    from current status + these events). Comments (Step 13) and claims
-    (Step 14) will extend this feed additively — same response shape,
-    new `type` values — once those models have real rows; zero change
-    needed here when that happens.
+    Unified activity feed. Previously only surfaced InvoiceViewEvent/
+    InvoiceReminder/InvoicePartialPayment rows — real lifecycle moments
+    (created/finalised/sent) were invisible even though the invoice itself
+    already carries the real timestamps for them (created_at/
+    finalised_at/sent_at). No dedicated status-change-history model exists
+    (individual transitions beyond these three aren't itemized — only
+    inferable from current status), but these three needed no new model
+    at all, just reading fields that were already there. Comments
+    (Step 13) and claims (Step 14) will extend this feed additively —
+    same response shape, new `type` values — once those models have real
+    rows; zero change needed here when that happens.
     """
     invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
 
-    entries = []
+    entries = [{'type': 'created', 'timestamp': invoice.created_at.isoformat()}]
+    if invoice.finalised_at:
+        entries.append({'type': 'finalised', 'timestamp': invoice.finalised_at.isoformat(), 'invoice_number': invoice.invoice_number})
+    if invoice.sent_at:
+        entries.append({
+            'type': 'sent', 'timestamp': invoice.sent_at.isoformat(),
+            'via': 'platform' if invoice.sent_via_platform else 'manual',
+        })
     for event in invoice.view_events.all():
         entries.append({
             'type': 'view', 'timestamp': event.viewed_at.isoformat(),

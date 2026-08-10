@@ -23,7 +23,21 @@ import {
 
 const BLANK_ITEM = { description: '', quantity: '1', unit_price: '' }
 
-export default function InvoiceFormFields({ form, setForm, errors = {}, clients = [] }) {
+// `stage` is optional — omitted (InvoiceDetailPanel's existing usage,
+// editing an already-created draft) renders every section at once,
+// unchanged from before this prop existed. NewInvoiceWizard.jsx passes
+// 1/2/3 to render only that stage's fields, per the task's own explicit
+// stage boundaries (not v1's exact grouping, which put currency/issue-date
+// in step 1 alongside client — this project's stage 1 is client+due-date
+// only; currency/tax/discount move to stage 3 instead):
+//   1: client (existing/one-time + fields) + due date
+//   2: line items (+ live totals preview, directly items-derived)
+//   3: currency, tax, discount, notes/terms, reminders/late-fee/recurring
+function showStage(stage, n) {
+  return !stage || stage === n
+}
+
+export default function InvoiceFormFields({ form, setForm, errors = {}, clients = [], stage }) {
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
 
   function selectExistingClient(client) {
@@ -72,7 +86,8 @@ export default function InvoiceFormFields({ form, setForm, errors = {}, clients 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* ── Client ── */}
+      {/* ── Client (stage 1) ── */}
+      {showStage(stage, 1) && (
       <div>
         <p className="fos-label" style={{ marginBottom: 8 }}>Client</p>
         <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
@@ -135,17 +150,19 @@ export default function InvoiceFormFields({ form, setForm, errors = {}, clients 
             )}
           </div>
         )}
-      </div>
 
-      {/* ── Financials ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-        <FormSelect label="Currency" value={form.currency} onChange={(e) => set('currency', e.target.value)} options={CURRENCY_OPTIONS} />
-        <FormField label="Due Date" type="date" value={form.due_date} onChange={(e) => set('due_date', e.target.value)} />
-        <FormField label="Tax Rate (%)" type="number" value={form.tax_rate} onChange={(e) => set('tax_rate', e.target.value)} />
-        <FormField label={`Discount (${form.currency})`} type="number" value={form.discount_amount} onChange={(e) => set('discount_amount', e.target.value)} />
+        {/* Due date is part of stage 1 per the task's own explicit stage
+            boundaries — currency/tax/discount move to stage 3 below,
+            even though v1's own step 1 grouped currency alongside client. */}
+        <div style={{ marginTop: 10, maxWidth: 220 }}>
+          <FormField label="Due Date" type="date" value={form.due_date} onChange={(e) => set('due_date', e.target.value)} />
+        </div>
       </div>
+      )}
 
-      {/* ── Line items ── */}
+      {/* ── Line items (stage 2) ── */}
+      {showStage(stage, 2) && (
+      <>
       <div>
         <p className="fos-label" style={{ marginBottom: 8 }}>Line Items{errors.items && <span className="fos-error" style={{ display: 'inline', marginLeft: 8 }}>{errors.items}</span>}</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -202,6 +219,17 @@ export default function InvoiceFormFields({ form, setForm, errors = {}, clients 
           <Row label="Total" value={formatMoney(totals.total, form.currency)} bold />
         </div>
       </div>
+      </>
+      )}
+
+      {/* ── Currency / tax / discount / notes / options (stage 3) ── */}
+      {showStage(stage, 3) && (
+      <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+        <FormSelect label="Currency" value={form.currency} onChange={(e) => set('currency', e.target.value)} options={CURRENCY_OPTIONS} />
+        <FormField label="Tax Rate (%)" type="number" value={form.tax_rate} onChange={(e) => set('tax_rate', e.target.value)} />
+        <FormField label={`Discount (${form.currency})`} type="number" value={form.discount_amount} onChange={(e) => set('discount_amount', e.target.value)} />
+      </div>
 
       {/* ── Notes / terms ── */}
       <div>
@@ -242,6 +270,8 @@ export default function InvoiceFormFields({ form, setForm, errors = {}, clients 
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   )
 }

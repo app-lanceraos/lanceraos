@@ -5,23 +5,37 @@
 // CURRENCY_OPTIONS are imported from clientHelpers rather than duplicated —
 // they're generic, not client-specific in shape.
 
-export { formatMoney, STATUS_BADGE_STYLE, badgeBaseStyle, CURRENCY_OPTIONS } from './clientHelpers'
+export { formatMoney, STATUS_BADGE_STYLE, STATUS_BADGE_OUTLINE_STYLE, statusBadgeStyle, badgeBaseStyle, CURRENCY_OPTIONS } from './clientHelpers'
 
 // Invoice.STATUS_CHOICES (apps/invoices/models.py) mapped to DESIGN.md's
-// status color map (Section 2.5/7). Overdue is deliberately NOT a key here —
-// it is never a status value in v2 (a real v1 bug this build fixes; see
-// Invoice.days_overdue's own docstring). Overdue is a separate, orthogonal
-// badge layered on top of whichever status is real — see OVERDUE_BADGE below.
+// real 5-color status token set (Section 2.5/7) — no new hex values
+// invented. Overdue is deliberately NOT a key here — it is never a status
+// value in v2 (a real v1 bug this build fixes; see Invoice.days_overdue's
+// own docstring). Overdue is a separate, orthogonal badge layered on top
+// of whichever status is real — see OVERDUE_BADGE below.
+//
+// `variant` ('filled' default, or 'outline') differentiates statuses that
+// share one color bucket — confirmed as a real, textually-different-but-
+// visually-identical bug: created/sent/viewed all mapped to plain
+// 'blue', and separately draft/cancelled/refunded all mapped to plain
+// 'gray'. Fixed the same way in both buckets (outline for the "earliest"/
+// least-final member, e.g. created and draft) rather than only patching
+// the one bucket the bug report named, since it's the identical
+// underlying issue — see DECISIONS.md. `icon` is a second, cheap
+// differentiator (lucide-react, already a project dependency) for the one
+// remaining same-variant collision per bucket (sent/viewed both filled
+// blue; cancelled/refunded both filled gray) — rendered by whichever
+// component maps this meta onto a badge (InvoiceCard, InvoiceDetailPanel).
 export const INVOICE_STATUS_META = {
-  draft: { label: 'Draft', statusKey: 'gray' },
-  created: { label: 'Created', statusKey: 'blue' },
-  sent: { label: 'Sent', statusKey: 'blue' },
-  viewed: { label: 'Viewed', statusKey: 'blue' },
-  partially_paid: { label: 'Partially Paid', statusKey: 'amber' },
-  paid: { label: 'Paid', statusKey: 'green' },
-  cancelled: { label: 'Cancelled', statusKey: 'gray' },
-  refunded: { label: 'Refunded', statusKey: 'gray' },
-  bad_debt: { label: 'Bad Debt', statusKey: 'red' },
+  draft: { label: 'Draft', statusKey: 'gray', variant: 'outline' },
+  created: { label: 'Created', statusKey: 'blue', variant: 'outline' },
+  sent: { label: 'Sent', statusKey: 'blue', variant: 'filled' },
+  viewed: { label: 'Viewed', statusKey: 'blue', variant: 'filled', icon: 'eye' },
+  partially_paid: { label: 'Partially Paid', statusKey: 'amber', variant: 'filled' },
+  paid: { label: 'Paid', statusKey: 'green', variant: 'filled' },
+  cancelled: { label: 'Cancelled', statusKey: 'gray', variant: 'filled' },
+  refunded: { label: 'Refunded', statusKey: 'gray', variant: 'filled', icon: 'undo' },
+  bad_debt: { label: 'Bad Debt', statusKey: 'red', variant: 'filled' },
 }
 
 export const OVERDUE_BADGE = { label: 'Overdue', statusKey: 'red' }
@@ -175,6 +189,33 @@ export function formToPayload(form) {
         sort_order: i + 1,
       })),
   }
+}
+
+// The "hasn't been sent through LanceraOS" banner — 3 real, distinct
+// states, not one generic message for "anything not sent_via_platform":
+//   a) status === 'created', never mark-sent at all yet.
+//   b) status is 'sent' or beyond, but sent_via_platform is False — the
+//      freelancer marked it sent themselves (manual dropdown-flip).
+//      Acknowledges that choice directly, states the real reminders
+//      on/off decision they made at that time, and clarifies view/payment
+//      tracking only activates once the client actually visits the link.
+//   c) sent_via_platform === True — no banner at all, everything active.
+//      No real data reaches this yet (the real /send/ action is Step 10),
+//      but the condition is written correctly now rather than guessed
+//      later.
+export function getSendBannerCopy(invoice) {
+  if (invoice.status === 'draft' || invoice.sent_via_platform) return null
+
+  if (invoice.status === 'created') {
+    return "This invoice hasn't been sent through LanceraOS — reminders, view tracking, and payment tracking won't activate until you send it.";
+  }
+
+  const remindersPhrase = invoice.reminders_enabled
+    ? 'You chose to enable reminders when you marked it sent.'
+    : 'You chose to leave reminders off when you marked it sent.'
+  const sentDate = invoice.sent_at ? new Date(invoice.sent_at).toLocaleDateString() : null
+  return `You marked this invoice as sent yourself${sentDate ? ` on ${sentDate}` : ''} — LanceraOS didn't deliver it. `
+    + `${remindersPhrase} View and payment tracking will only activate once your client actually opens the invoice link.`
 }
 
 export function computeTotals(form) {

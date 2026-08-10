@@ -30,6 +30,8 @@ import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import FosAlert from '@/components/FosAlert'
 import InvoiceDetailPanel from '@/components/InvoiceDetailPanel'
+import NewInvoiceWizard from '@/components/NewInvoiceWizard'
+import InvoiceStatusBadge from '@/components/InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
   STATUS_FILTER_OPTIONS, SORT_OPTIONS, formatAggregate, daysOverdueLabel,
@@ -61,11 +63,12 @@ export default function Invoices() {
   const [aging, setAging] = useState(null)
   const [agingLoading, setAgingLoading] = useState(false)
 
-  const [creatingInvoice, setCreatingInvoice] = useState(false)
   const [createError, setCreateError] = useState(null)
   const [showPresetPicker, setShowPresetPicker] = useState(false)
   const [presetBusyId, setPresetBusyId] = useState(null)
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
+  const [showNewWizard, setShowNewWizard] = useState(false)
+  const [pendingDetailMessage, setPendingDetailMessage] = useState(null)
 
   const searchTimer = useRef(null)
 
@@ -150,27 +153,38 @@ export default function Invoices() {
     refreshAfterChange()
   }
 
-  // "New Invoice" creates a real, minimal draft record immediately —
-  // Gmail-compose-style (Step 6 rework): the record exists in the DB the
-  // moment this resolves, before the user has typed anything, so every
-  // lifecycle action in the detail panel operates on something real from
-  // the first render. No blank-invoice form/submit step exists anymore —
-  // the panel itself is where the (now-continuously-autosaving) editing
-  // happens. A bare `{}` POST works because InvoiceSerializer's
-  // client_name/client_email are now allow_blank for exactly this reason
-  // (apps/invoices/serializers.py).
-  async function handleNewInvoice() {
-    setCreatingInvoice(true)
+  // "New Invoice" no longer creates a backend record immediately — a real,
+  // deliberate reversal of the earlier Gmail-compose-style rework (see
+  // DECISIONS.md): an empty draft invoice is a real row in a business
+  // list, not a disposable compose window. NewInvoiceWizard.jsx holds form
+  // state locally and only fires the real POST /invoices/ once a genuine
+  // creation threshold is crossed (a client, existing or one-time).
+  function handleNewInvoice() {
     setCreateError(null)
-    try {
-      const { data } = await api.post('/invoices/', {})
-      setSelectedInvoiceId(data.id)
-      refreshAfterChange()
-    } catch {
-      setCreateError('Failed to create a new invoice. Please try again.')
-    } finally {
-      setCreatingInvoice(false)
-    }
+    setShowNewWizard(true)
+  }
+
+  // Called when NewInvoiceWizard closes — `createdId` is the real backend
+  // id if the threshold was crossed before closing, or null if the user
+  // closed before ever entering a client (nothing was created, nothing to
+  // refresh).
+  function handleWizardClosed(createdId) {
+    setShowNewWizard(false)
+    if (createdId) refreshAfterChange()
+  }
+
+  // Called when the wizard's Finalise/Mark-as-Sent succeeds — hands off
+  // to the normal InvoiceDetailPanel for the now-non-draft invoice, same
+  // as opening any existing invoice from the list. The success message
+  // travels with the hand-off (`initialMessage`) since the action that
+  // earned it happened inside the wizard, a different component instance
+  // than the InvoiceDetailPanel that's about to mount for the first time —
+  // without this, "Invoice finalised." would have nowhere left to show.
+  function handleWizardFinalised(id, message) {
+    setShowNewWizard(false)
+    setSelectedInvoiceId(id)
+    setPendingDetailMessage(message || null)
+    refreshAfterChange()
   }
 
   async function handlePickPreset(preset) {
@@ -207,8 +221,8 @@ export default function Invoices() {
           <button className="fos-btn fos-btn-ghost header-preset-btn" onClick={() => setShowPresetPicker(true)}>
             <BookmarkPlus size={15} /> From Preset
           </button>
-          <button className="fos-btn fos-btn-accent header-add-btn" onClick={handleNewInvoice} disabled={creatingInvoice}>
-            {creatingInvoice ? <span className="fos-spinner" /> : <Plus size={15} />} New Invoice
+          <button className="fos-btn fos-btn-accent header-add-btn" onClick={handleNewInvoice}>
+            <Plus size={15} /> New Invoice
           </button>
         </div>
       </div>
@@ -336,13 +350,13 @@ export default function Invoices() {
       )}
 
       {/* ── Mobile FAB ── */}
-      <button className="page-fab" onClick={handleNewInvoice} disabled={creatingInvoice} aria-label="New invoice" style={{
+      <button className="page-fab" onClick={handleNewInvoice} aria-label="New invoice" style={{
         display: 'none', position: 'fixed', bottom: 24, right: 24, width: 56, height: 56,
         borderRadius: '50%', background: 'var(--accent)', color: '#000', border: 'none',
         boxShadow: '0 4px 20px var(--accent-glow-lg)', alignItems: 'center', justifyContent: 'center',
         cursor: 'pointer', zIndex: 90,
       }}>
-        {creatingInvoice ? <span className="fos-spinner" /> : <Plus size={24} />}
+        <Plus size={24} />
       </button>
 
       {/* ── Preset picker modal ── */}
@@ -362,6 +376,17 @@ export default function Invoices() {
           clients={clients}
           onClose={() => setSelectedInvoiceId(null)}
           onChanged={handleInvoiceChanged}
+          initialMessage={pendingDetailMessage}
+          onInitialMessageShown={() => setPendingDetailMessage(null)}
+        />
+      )}
+
+      {/* ── New invoice wizard (Step 2 rework) ── */}
+      {showNewWizard && (
+        <NewInvoiceWizard
+          clients={clients}
+          onClose={handleWizardClosed}
+          onFinalised={handleWizardFinalised}
         />
       )}
 
@@ -467,7 +492,7 @@ function InvoiceCard({ invoice, onOpen }) {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end', flexShrink: 0 }}>
           {isOverdue && <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[OVERDUE_BADGE.statusKey] }}>{OVERDUE_BADGE.label}</span>}
-          <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[meta.statusKey] }}>{meta.label}</span>
+          <InvoiceStatusBadge meta={meta} />
         </div>
       </div>
 
