@@ -136,12 +136,22 @@ export function blankInvoiceForm() {
     tax_rate: '0', discount_amount: '0',
     due_date: '',
     notes: '', terms: '',
-    // Defaults OFF for a newly-created invoice — was `true` (ported
-    // unchanged from v1); a fresh invoice hasn't been sent yet, so there's
-    // nothing to remind about until the freelancer actually sends it and
-    // makes a real choice (see DECISIONS.md). Invoice.reminders_enabled's
-    // own model-level default must agree — see apps/invoices/models.py.
-    reminders_enabled: false,
+    // Reverted back to `true` — this is a real, deliberate lifecycle rule
+    // now, not a single default flip: the wizard's own visible starting
+    // state stays ON (a user creating an invoice sees reminders on by
+    // default, and their explicit choice is respected through creation/
+    // autosave), but invoice_finalise (apps/invoices/views.py) now
+    // unconditionally forces the stored value to False the moment an
+    // invoice actually leaves draft, regardless of whatever was submitted
+    // here — see that function's own comment and DECISIONS.md for why.
+    // Invoice.reminders_enabled's bare model-field default is deliberately
+    // LEFT at False (unrelated to this wizard default, and moot post-
+    // finalise anyway) — the one narrow case where the two can disagree
+    // is a preset-created draft (which skips this function and the
+    // wizard's "Next" payload entirely) reopened before being finalised;
+    // flagged here rather than silently resolved, since the task scoped
+    // this default change to the wizard/creation UI specifically.
+    reminders_enabled: true,
     late_fee_enabled: false, late_fee_rate: '2.00',
     is_recurring: false, recurring_interval_days: 30, recurring_auto_send: false,
     items: [{ ...BLANK_ITEM }],

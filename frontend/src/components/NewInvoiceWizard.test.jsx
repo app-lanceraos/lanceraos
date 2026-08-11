@@ -295,8 +295,17 @@ describe('NewInvoiceWizard — Finalise unreachable with incomplete data; Mark-a
   })
 })
 
-describe('NewInvoiceWizard — reminders default off for a newly-created invoice', () => {
-  it('the created payload has reminders_enabled: false with no user interaction', async () => {
+describe('NewInvoiceWizard — reminders default: ON in the wizard, forced off at finalise (backend)', () => {
+  // Reverted back to true this pass — a real, deliberate lifecycle rule,
+  // not a single default flip: the wizard's own visible starting state
+  // stays ON (what a user sees while creating), while invoice_finalise
+  // (apps/invoices/views.py) unconditionally forces the STORED value to
+  // False the moment an invoice actually leaves draft, regardless of what
+  // was submitted here. That override is a backend-only concern with its
+  // own dedicated backend tests (test_views.py's
+  // test_finalise_forces_reminders_disabled_regardless_of_starting_value)
+  // — this test only covers the wizard's own creation-time default.
+  it('the created payload has reminders_enabled: true with no user interaction', async () => {
     mock.onPost('/invoices/').reply(201, { id: 'inv-9' })
     render(<NewInvoiceWizard onClose={vi.fn()} onFinalised={vi.fn()} />)
 
@@ -305,7 +314,50 @@ describe('NewInvoiceWizard — reminders default off for a newly-created invoice
     await waitFor(() => expect(mock.history.post.filter((r) => r.url === '/invoices/').length).toBe(1))
 
     const body = JSON.parse(mock.history.post.find((r) => r.url === '/invoices/').data)
-    expect(body.reminders_enabled).toBe(false)
+    expect(body.reminders_enabled).toBe(true)
+  })
+
+  it('the reminders toggle is visibly checked by default on stage 3', async () => {
+    mock.onPost('/invoices/').reply(201, { id: 'inv-9b' })
+    render(<NewInvoiceWizard onClose={vi.fn()} onFinalised={vi.fn()} />)
+
+    fillClient()
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => expect(screen.getByLabelText(/^description/i)).toBeTruthy())
+    fireEvent.change(screen.getByLabelText(/^description/i), { target: { value: 'Work' } })
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+
+    await waitFor(() => expect(screen.getByText(/reminders enabled/i)).toBeTruthy())
+    const toggle = screen.getByText(/reminders enabled/i).closest('label').querySelector('input[type="checkbox"]')
+    expect(toggle.checked).toBe(true)
+  })
+
+  it('respects an explicit user choice to turn reminders off before crossing the threshold', async () => {
+    mock.onPost('/invoices/').reply(201, { id: 'inv-9c' })
+    mock.onPut(/\/invoices\/inv-9c\//).reply(200, { id: 'inv-9c' })
+    mock.onPost('/invoices/inv-9c/finalise/').reply(200, { id: 'inv-9c' })
+    render(<NewInvoiceWizard onClose={vi.fn()} onFinalised={vi.fn()} />)
+
+    fillClient()
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => expect(screen.getByLabelText(/^description/i)).toBeTruthy())
+    fireEvent.change(screen.getByLabelText(/^description/i), { target: { value: 'Work' } })
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => expect(screen.getByText(/reminders enabled/i)).toBeTruthy())
+
+    const toggle = screen.getByText(/reminders enabled/i).closest('label').querySelector('input[type="checkbox"]')
+    fireEvent.click(toggle) // explicit user choice: turn it off
+
+    fireEvent.click(screen.getByRole('button', { name: /^finalise$/i }))
+    await waitFor(() => expect(mock.history.post.some((r) => r.url === '/invoices/inv-9c/finalise/')).toBe(true))
+
+    // The explicit off-choice must have been autosaved (flushPendingSave,
+    // called before the finalise POST) — the most recent PUT to the
+    // invoice must carry it.
+    const puts = mock.history.put.filter((r) => r.url === '/invoices/inv-9c/')
+    expect(puts.length).toBeGreaterThan(0)
+    const lastPut = JSON.parse(puts[puts.length - 1].data)
+    expect(lastPut.reminders_enabled).toBe(false)
   })
 })
 

@@ -72,8 +72,18 @@ export default function Clients() {
   const [rowBusyId, setRowBusyId] = useState(null)
 
   const searchTimer = useRef(null)
+  // Same stale-response protection as Invoices.jsx's load() — a
+  // monotonically increasing request-id checked before committing to
+  // state, so an out-of-order response from an earlier filter/search/sort
+  // change can never overwrite state with stale data. handleSearchChange
+  // below already passes `value` straight into `load()` as an explicit
+  // argument rather than reading `search` state inside `load` itself, so
+  // (unlike Invoices.jsx before this pass) there was no separate stale-
+  // closure bug here to fix — confirmed directly, not assumed identical.
+  const latestRequestId = useRef(0)
 
   const load = useCallback(async (q, f, s) => {
+    const requestId = ++latestRequestId.current
     setLoading(true)
     setError(null)
     try {
@@ -82,12 +92,14 @@ export default function Clients() {
       if (f) params.filter = f
       if (s) params.sort = s
       const { data } = await api.get('/clients/', { params })
+      if (requestId !== latestRequestId.current) return // superseded by a newer request — discard
       setClients(data.results || [])
       setTotal(data.total ?? (data.results || []).length)
     } catch {
+      if (requestId !== latestRequestId.current) return
       setError('Failed to load clients. Please try again.')
     } finally {
-      setLoading(false)
+      if (requestId === latestRequestId.current) setLoading(false)
     }
   }, [])
 
@@ -218,10 +230,14 @@ export default function Clients() {
         </select>
       </div>
 
-      {/* ── Content ── */}
-      {loading && <ClientGridSkeleton />}
+      {/* ── Content — same fix as Invoices.jsx: only a genuine first load
+          (nothing rendered yet) shows the full skeleton; every subsequent
+          refetch keeps the current grid mounted and just dims it, instead
+          of unmounting and rebuilding the whole thing on every filter/
+          search/sort change. ── */}
+      {loading && clients.length === 0 && !error && <ClientGridSkeleton />}
 
-      {!loading && error && (
+      {error && clients.length === 0 && (
         <div style={{ padding: 32, textAlign: 'center' }}>
           <FosAlert type="error" style={{ display: 'inline-flex', marginBottom: 12 }}>{error}</FosAlert>
           <br />
@@ -233,20 +249,32 @@ export default function Clients() {
         <EmptyState search={search} filter={filter} onAddClient={openCreateForm} />
       )}
 
-      {!loading && !error && clients.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
-          {clients.map((client) => (
-            <ClientCard
-              key={client.id}
-              client={client}
-              busy={rowBusyId === client.id}
-              onOpen={() => openDetail(client.id)}
-              onFlag={() => openDetail(client.id, 'flag')}
-              onArchive={() => handleQuickArchive(client)}
-              onRestore={() => handleQuickRestore(client)}
-            />
-          ))}
-        </div>
+      {clients.length > 0 && (
+        <>
+          {error && (
+            <FosAlert type="error" style={{ marginBottom: 12 }}>
+              {error} <button className="fos-btn fos-btn-ghost" style={{ marginLeft: 8 }} onClick={() => load(search, filter, sort)}>Retry</button>
+            </FosAlert>
+          )}
+          <div
+            style={{
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12,
+              opacity: loading ? 0.55 : 1, transition: 'opacity 0.15s ease',
+            }}
+          >
+            {clients.map((client) => (
+              <ClientCard
+                key={client.id}
+                client={client}
+                busy={rowBusyId === client.id}
+                onOpen={() => openDetail(client.id)}
+                onFlag={() => openDetail(client.id, 'flag')}
+                onArchive={() => handleQuickArchive(client)}
+                onRestore={() => handleQuickRestore(client)}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       {/* ── Mobile FAB ── */}

@@ -295,6 +295,21 @@ def _finalise_invoice(invoice):
     invoice.capture_issue_rate()
     invoice.status = 'created'
     invoice.finalised_at = timezone.now()
+    # Deliberate override of whatever the create-flow submitted — not an
+    # oversight. Finalising never sets sent_via_platform=True, and per
+    # Invoice.sent_via_platform's own field help_text ("gates reminders
+    # only"), reminders are structurally inert until an invoice is
+    # actually sent via the real platform. Storing True here would be a
+    # misleading value nothing can act on — the wizard's own reminders
+    # toggle default (ON) is a real, separate choice the user sees and can
+    # set during creation, but it doesn't survive finalise as a stored
+    # value; see DECISIONS.md.
+    # TODO(Step 10 /send/): this is the point reminders should actually be
+    # able to turn on for real. Open question for that step, not decided
+    # here — whether /send/ restores the user's original wizard choice
+    # (would need to be captured somewhere between creation and send) or
+    # simply defaults reminders_enabled=True again at that point.
+    invoice.reminders_enabled = False
     invoice.save()
 
     try:

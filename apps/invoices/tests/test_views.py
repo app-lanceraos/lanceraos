@@ -301,6 +301,51 @@ class FinaliseTests(InvoicesAPITestCase):
         self.assertIsNotNone(invoice.rate_to_usd_at_issue)
         self.assertIsNotNone(invoice.exchange_rate_snapshot)
 
+    def test_finalise_forces_reminders_disabled_regardless_of_starting_value(self):
+        """
+        Real, deliberate lifecycle rule (this pass): the wizard's own
+        creation-time default for reminders_enabled is True (a user
+        creating an invoice sees the toggle on by default, and their
+        explicit choice through creation/autosave is respected up to
+        this point) — but invoice_finalise unconditionally overrides it
+        to False the moment an invoice leaves draft, since finalise never
+        sets sent_via_platform=True and reminders are structurally inert
+        (Invoice.sent_via_platform's own field help_text: "gates
+        reminders only") until a real send happens. Proven against BOTH
+        possible starting values, not just the one that happens to match
+        the unrelated model field default.
+        """
+        for starting_value in (True, False):
+            with self.subTest(starting_value=starting_value):
+                invoice = self._invoice(status='draft', invoice_number=None, reminders_enabled=starting_value)
+                InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+                resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+                self.assertEqual(resp.status_code, 200)
+                self.assertFalse(resp.json()['reminders_enabled'])
+                invoice.refresh_from_db()
+                self.assertFalse(invoice.reminders_enabled)
+
+    def test_finalise_via_mark_sent_from_draft_still_forces_reminders_false_before_mark_sents_own_choice_applies(self):
+        """
+        invoice_mark_sent calls _finalise_invoice first when invoked
+        directly on a draft (skipping a separate Finalise click) — this
+        confirms the forced-False override happens there too, and that
+        mark-sent's OWN send_reminders choice (applied immediately after,
+        in the same request) still correctly wins as the final stored
+        value — the two rules are not in conflict, they just apply in
+        sequence.
+        """
+        invoice = self._invoice(status='draft', invoice_number=None, reminders_enabled=True)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {
+            'confirm': True, 'send_reminders': True,
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['status'], 'sent')
+        # mark_sent's own send_reminders=True is what's actually stored —
+        # not left at _finalise_invoice's intermediate False.
+        self.assertTrue(resp.json()['reminders_enabled'])
+
 
 # ══════════════════════════════════════════════════════════════════
 # MARK SENT — sent_via_platform must NEVER be set here
@@ -646,12 +691,19 @@ class ToggleAndRecurringTests(InvoicesAPITestCase):
         the full real path end to end — this is the specific status the
         task called out to verify, not just 'sent'.
         """
-        invoice = self._invoice(status='draft')
+        # Starts True — the wizard's own creation-time default (this
+        # pass) — specifically to prove _finalise_invoice's override
+        # forces it back to False regardless of the submitted value, not
+        # because it coincidentally already matched the model's own bare
+        # field default (also False, but for an unrelated reason — see
+        # test_finalise_forces_reminders_disabled_regardless_of_starting_value
+        # below for the dedicated test of that exact rule).
+        invoice = self._invoice(status='draft', reminders_enabled=True)
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, 'created')
-        self.assertFalse(invoice.reminders_enabled)  # default, changed this pass — see DECISIONS.md
+        self.assertFalse(invoice.reminders_enabled)  # forced False by _finalise_invoice, not the model default
 
         resp = self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))
         self.assertEqual(resp.status_code, 200)

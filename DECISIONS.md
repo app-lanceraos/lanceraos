@@ -2269,4 +2269,145 @@ exact 2-state restriction and the timeline's who-sent-it label logic directly. R
 verification (Playwright, ad-hoc, not committed) confirmed every scenario above end to end against
 the live backend, including the reload investigation's dead-session reproduction and the KPI-mobile
 screenshots at all 4 required breakpoints.
+
+---
+
+Date: 10 August 2026 (second entry)
+Decision: The real root cause of the "everything feels like a page reload" complaint found —
+loading-state re-render, not navigation. Four prior rounds investigating this as a routing/navigation
+bug never found anything because there was nothing there to find. Also: search's stale-closure bug
+fixed, out-of-order response protection added, status/Overdue filters made mutually exclusive, the
+client filter dropdown removed, the real KPI tablet-wrap breakpoints found and fixed, and the
+reminders lifecycle rule refined into two distinct defaults (wizard vs. finalise), reversing part of
+the same-day earlier entry above.
+
+**Root cause: `load()` set `loading=true` unconditionally on every filter/search/sort change, and the
+render logic was `{loading && <InvoiceGridSkeleton />}` — every interaction unmounted the entire list
+and rebuilt it from an empty skeleton, which looks and feels exactly like a page reload without
+being one.** Confirmed directly against the real, current, GitHub-synced `frontend/src/pages/
+Invoices.jsx` (verified before touching anything: `LIMIT = 60`, `buildParams`, `statusFilter`/
+`overdueOnly`/`clientFilter` as separate state variables — the real file, not the `v1-reference`
+copy) before making any change. Same shape confirmed directly in `Clients.jsx` too (not assumed
+identical — its `load()` and render both had the exact same unconditional-`setLoading(true)` /
+`{loading && <Skeleton/>}` pattern, though its `handleSearchChange` did NOT have the stale-closure bug
+described below, since it already passed the typed value as an explicit argument into `load()` rather
+than reading `search` state inside `load` itself).
+
+**Fix**: the skeleton now only renders on a genuine first load (`loading && invoices.length === 0 &&
+!error`, applied identically to `clients.length` in `Clients.jsx`). Every subsequent refetch keeps the
+existing grid mounted and dims it to `opacity: 0.55` during the fetch instead of unmounting it — a
+plain CSS transition, not a new component; no established shimmer/progress-bar pattern existed
+anywhere else in the app to match, so the simpler "subtle opacity dim" option (offered as an
+alternative alongside a thin progress bar) was picked over inventing new animation/positioning
+machinery. An in-flight error on a refetch that still has a list showing now surfaces as an inline
+`FosAlert` with its own Retry button ABOVE the grid, rather than replacing the whole grid with the
+centered full-page error state — that centered state is now reserved for when there's truly nothing
+to show (`error && invoices.length === 0`). Verified directly, not just by reading the diff: a
+Playwright check tagged the actual rendered DOM nodes with a `data-testmark` attribute before
+switching filters, then confirmed marked nodes were still present in the DOM at the 30ms mark
+(before the mocked response could possibly have resolved) — the skeleton never appeared mid-flight,
+and the list never disappeared.
+
+**Search stale closure**: `handleSearchChange`'s debounced `setTimeout` callback called `load(buildParams(0))`,
+and `buildParams` reads `search` state via closure — for rapid typing, the closure captured over `search`
+from whichever render was current when `setTimeout` was scheduled, which could be one keystroke behind the
+actual final value by the time the debounce fired. Fixed by passing the just-typed value directly into the
+call instead: `load({ ...buildParams(0), search: value || undefined })` — the explicit spread always wins
+over whatever `buildParams(0)`'s own (possibly stale) internal reference to `search` produces. Verified with
+a real rapid-fire keystroke sequence (a/ac/acm/acme in a Playwright script, and separately in a
+`fireEvent.change` sequence in `Invoices.test.jsx`) — the network request that actually goes out carries
+the true final value ("acme"), and only one debounced call fires for the whole burst.
+
+**Stale (out-of-order) response protection**: added a monotonically increasing request-id
+(`latestRequestId` ref), checked before every commit to state in both `Invoices.jsx`'s and
+`Clients.jsx`'s `load()`. No existing `AbortController`/request-id pattern existed anywhere else in
+the app to match — the only mention of `AbortController` anywhere is a comment in
+`useInvoiceAutosave.js` explaining why it was REJECTED for THAT hook's problem (aborting a client-side
+promise doesn't stop Django from finishing an in-flight PUT, so an aborted write could still land in
+Postgres after a newer one — a write-ordering concern). That reasoning doesn't transfer here: these
+are reads, and all that's needed is "don't let an out-of-order response overwrite state with stale
+data," which a simple request-id counter handles without any special abort-error handling. Verified
+with a real out-of-order scenario in `Invoices.test.jsx`: a slow mocked response (150ms, for a `sent`
+filter clicked FIRST) engineered to resolve AFTER a fast mocked response (10ms, for a `draft` filter
+clicked SECOND) — the final rendered state correctly reflects the `draft` result, never the `sent`
+one, despite the `sent` response physically arriving later in wall-clock time.
+
+**Overdue and status filter made mutually exclusive** — confirmed directly this round that the
+previous design intent (independently combinable, so a sent-and-overdue invoice was reachable by
+both at once) is no longer what's wanted. Selecting any status pill now clears `overdueOnly`;
+toggling Overdue now clears `statusFilter`. The header comment describing "independent combinability"
+was rewritten to state the new rule plainly rather than left contradicting the actual code. A
+sent-and-overdue invoice is still reachable — via Overdue alone, or the Sent pill alone — just not by
+both applied together.
+
+**Client filter dropdown removed from the frontend** (state, `buildParams` entry, the `<select>`
+itself, and the now-fully-dead `clients`/`setClients` state + its mount-time fetch, which had no other
+use in the file once the dropdown was gone) — redundant with client search inside invoice creation.
+The backend's `?client=` query param is completely untouched; only this one frontend consumer of it
+is gone.
+
+**KPI tablet-wrap: the real breakpoints, measured, not guessed.** A width sweep against the actual
+running app (Playwright, `boundingBox()` checks on `.kpi-card`, not a visual guess) found the 3 KPI
+cards actually wrap in TWO separate zones, not one continuous "tablet width": `(480,659]` and
+`[769,939]`, with a genuinely fine zone in between (660-768) and above (940+). The second zone exists
+because `AppShell.jsx`'s own `isMobile = window.innerWidth <= 768` switch introduces a persistent
+sidebar at 769px that eats enough horizontal width to reintroduce the wrap despite the viewport being
+WIDER than the already-fine mobile range below it — auto-fit's 200px-per-card minimum (600px+gaps)
+needs more contiguous width than is available with the sidebar present until ~940px. Fixed by
+extending the existing `≤480px` "force 3 explicit columns" rule to `≤939px` as a single rule — safe to
+apply across the already-fine 660-768 gap too, since forcing exactly the same 3-equal-column result
+auto-fit already produces there changes nothing visually. Native `auto-fit` is left alone at 940px+,
+confirmed working correctly on its own from 940 through at least 1020 (and, by the same math, every
+wider desktop width too, since more room only helps auto-fit, never hurts it).
+
+**Reminders: reverted the wizard's own default back to `true`, replaced the earlier same-day "flip
+one default everywhere" decision with the real, two-part lifecycle rule this round actually asked
+for.** The earlier entry above this one changed `blankInvoiceForm()`'s `reminders_enabled` to `false`
+site-wide (both the model field default and the wizard's own state). This entry reverses HALF of
+that: the wizard's own creation-time default is `true` again — the frontend-visible starting state a
+user sees while creating an invoice, with their explicit choice (if they turn it off) respected
+through creation and autosave. What's NEW and does the actual work this round intended:
+`_finalise_invoice` (`apps/invoices/views.py`) now unconditionally sets `reminders_enabled = False` on
+every invoice at the moment it leaves draft, REGARDLESS of whatever value was submitted during
+creation — a deliberate override, not an oversight, with its own inline comment explaining why:
+finalising never sets `sent_via_platform=True`, and per that field's own help_text ("gates reminders
+only"), reminders are structurally inert until a real send happens, so storing `True` here would be a
+value nothing can act on. `Invoice.reminders_enabled`'s bare model-field default is deliberately LEFT
+at `False` — it's moot the instant any invoice is finalised, and the one narrow case where it could
+still show through (a preset-created draft, which skips both the wizard's payload and this function
+entirely, reopened before being finalised) is flagged in `invoiceHelpers.js`'s own comment rather than
+silently resolved, since the task scoped this default specifically to the wizard/creation UI.
+`invoice_mark_sent`'s own handling was traced end to end, not assumed: when invoked directly on a
+still-draft invoice, it calls `_finalise_invoice` FIRST (forcing `False`), then immediately applies
+its own `send_reminders` choice from the confirm dialog — so the two rules never actually conflict,
+they just apply in sequence, and mark-sent's own choice is always what's actually stored in the end.
+Frontend: no change was needed to make the detail panel show the real post-finalise value — it
+already does a genuine `GET /invoices/{id}/` on mount (`loadInvoice`), so the moment the wizard hands
+off to it, the "on-during-creation, off-after-finalise" transition is just what a real refetch
+naturally shows; confirmed directly with Playwright (wizard's stage-3 toggle checked by default,
+finalise, detail panel's "Automatic reminders" row reads "Off"). A `TODO(Step 10 /send/)` was added at
+the override's exact line, flagging — not deciding — whether the real `/send/` action should restore
+the user's original wizard choice or simply default `True` again; that's Step 10's call, not this
+one's.
+
+**A real discrepancy between this task's stated premise and the actual code, left as the task
+explicitly directed but flagged for the record**: the task asserted "Manual mark-sent's own
+confirm-dialog reminders toggle: UNCHANGED, still correctly defaults false, not touched by this fix."
+Checked directly against `MarkSentModal`'s real source (`InvoiceDetailPanel.jsx`) — its default is
+`useState(true)`, not `false`. Per the task's own explicit instruction that this file is "not touched
+by this fix," it was left exactly as-is; this entry records the mismatch rather than silently treating
+the incorrect premise as confirmed fact, or silently "fixing" something declared out of scope.
+
+Verified: full backend suite, 520 tests passing (up from 518) — 3 new tests in `FinaliseTests`
+(the two-starting-values reminders-forced-false proof via `subTest`, and the mark-sent-from-draft
+sequencing proof), plus 1 pre-existing test (`test_toggle_reminders_on_created_status_specifically`)
+updated to start from `reminders_enabled=True` specifically so it proves the override rather than
+coincidentally matching the unrelated model default. Frontend: 60 tests passing (up from 51) — a new
+`Invoices.test.jsx` (7 tests: first-load-vs-refetch skeleton behavior with real DOM-identity marker
+checks, the search stale-closure fix, the engineered out-of-order-response scenario, both directions
+of status/Overdue mutual exclusivity, and the client-dropdown removal) and 2 new tests plus 1 rewritten
+test in `NewInvoiceWizard.test.jsx` covering the reminders default reversal (payload check, visible
+toggle state, and that an explicit user off-choice survives through autosave to finalise). Real
+browser verification (Playwright, ad-hoc, not committed) confirmed every fix end to end against the
+live backend at the exact measured breakpoints and interaction sequences described above.
 through the mocked test suite.

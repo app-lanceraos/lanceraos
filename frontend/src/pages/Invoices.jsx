@@ -17,9 +17,15 @@
 // Critical display rule: Overdue is never a status value in v2 — it's
 // invoice.days_overdue > 0, a computed flag shown as an orthogonal badge
 // alongside whatever the real status is (see apps/invoices/models.py's
-// days_overdue docstring). The "Overdue" filter below is a separate toggle
-// from the status filter, not a 10th status option, because a sent-and-
-// overdue invoice must be reachable by both filters at once.
+// days_overdue docstring), and that data-model fact is unchanged here.
+// The "Overdue" FILTER TOGGLE below is a separate control from the status
+// pills, not a 10th status option — but as of this pass it's mutually
+// EXCLUSIVE with them in the UI (confirmed directly, not independently
+// combinable as an earlier version of this comment claimed): picking a
+// status pill clears Overdue, and toggling Overdue clears the status
+// pill. A sent-and-overdue invoice is still reachable (via the Overdue
+// toggle alone, or the "Sent" pill alone) — it's just not reachable by
+// both filters applied together anymore.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -52,10 +58,8 @@ export default function Invoices() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [overdueOnly, setOverdueOnly] = useState(false)
-  const [clientFilter, setClientFilter] = useState('')
   const [sort, setSort] = useState('recent')
 
-  const [clients, setClients] = useState([])
   const [presets, setPresets] = useState([])
 
   const [summary, setSummary] = useState(null)
@@ -72,17 +76,34 @@ export default function Invoices() {
   const [pendingDetailMessage, setPendingDetailMessage] = useState(null)
 
   const searchTimer = useRef(null)
+  // Stale-response protection — no existing AbortController/request-id
+  // pattern in the app to match (the only mention of AbortController
+  // anywhere is useInvoiceAutosave.js's own comment explaining why it was
+  // REJECTED for that hook's problem — aborting a client-side promise
+  // doesn't stop Django from finishing an in-flight PUT, so an aborted
+  // write could still land after a newer one). That reasoning doesn't
+  // apply here: these are reads, and all we need is "don't let an
+  // out-of-order response overwrite state with stale data" — a
+  // monotonically increasing request-id, checked before every commit to
+  // state, is the simpler mechanism for that and needs no special
+  // abort-error handling.
+  const latestRequestId = useRef(0)
 
   const load = useCallback(async (params, append = false) => {
+    const requestId = ++latestRequestId.current
     if (append) setLoadingMore(true); else { setLoading(true); setError(null) }
     try {
       const { data } = await api.get('/invoices/', { params: { limit: LIMIT, ...params } })
+      if (requestId !== latestRequestId.current) return // superseded by a newer request — discard
       setInvoices((prev) => (append ? [...prev, ...(data.results || [])] : data.results || []))
       setTotal(data.total ?? 0)
     } catch {
+      if (requestId !== latestRequestId.current) return
       if (!append) setError('Failed to load invoices. Please try again.')
     } finally {
-      if (append) setLoadingMore(false); else setLoading(false)
+      if (requestId === latestRequestId.current) {
+        if (append) setLoadingMore(false); else setLoading(false)
+      }
     }
   }, [])
 
@@ -91,23 +112,31 @@ export default function Invoices() {
     if (search) params.search = search
     if (statusFilter) params.status = statusFilter
     if (overdueOnly) params.overdue = 'true'
-    if (clientFilter) params.client = clientFilter
     if (sort) params.sort = sort
     return params
   }
 
-  useEffect(() => { load(buildParams(0)) }, [statusFilter, overdueOnly, clientFilter, sort]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(buildParams(0)) }, [statusFilter, overdueOnly, sort]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     api.get('/invoices/summary/').then(({ data }) => setSummary(data)).catch(() => setSummary(null))
-    api.get('/clients/', { params: { filter: 'all' } }).then(({ data }) => setClients(data.results || [])).catch(() => setClients([]))
     api.get('/invoices/presets/').then(({ data }) => setPresets(data)).catch(() => setPresets([]))
   }, [])
 
+  // Passes the just-typed value directly into the debounced call instead
+  // of relying on closure over `search` state — the old version captured
+  // whatever `search` was AT THE TIME setTimeout was scheduled, which is
+  // one keystroke behind by the time it actually fires for rapid typing.
+  // `buildParams(0)` still reads its own (possibly stale) `search` closure
+  // internally, but the explicit `search: value || undefined` spread
+  // after it always wins, so the request that actually goes out carries
+  // the real, current typed text.
   function handleSearchChange(value) {
     setSearch(value)
     clearTimeout(searchTimer.current)
-    searchTimer.current = setTimeout(() => load(buildParams(0)), 300)
+    searchTimer.current = setTimeout(() => {
+      load({ ...buildParams(0), search: value || undefined })
+    }, 300)
   }
 
   function loadMore() {
@@ -279,19 +308,10 @@ export default function Invoices() {
         )}
       </div>
 
-      {/* ── Client filter ── */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-        <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} className="fos-input fos-select" style={{ width: 'auto', minWidth: 160 }}>
-          <option value="">All Clients</option>
-          {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      </div>
-
       {/* ── Status pills + Overdue (merged into the same row — a layout
-          change only, Overdue stays a functionally independent toggle, not
-          a status pill, since a sent-and-overdue invoice must be reachable
-          together with any status pill at once) + Sort, trailing at the
-          right as the row's one secondary control ── */}
+          change only; mutually EXCLUSIVE with each other as of this pass,
+          see the header comment above) + Sort, trailing at the right as
+          the row's one secondary control ── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         <div style={{ display: 'flex', gap: 8, overflowX: 'auto', overscrollBehaviorX: 'contain', paddingBottom: 4, flex: 1, minWidth: 0 }}>
           {STATUS_FILTER_OPTIONS.map((opt) => {
@@ -299,7 +319,7 @@ export default function Invoices() {
             return (
               <button
                 key={opt.key || 'all'}
-                onClick={() => setStatusFilter(opt.key)}
+                onClick={() => { setStatusFilter(opt.key); setOverdueOnly(false) }}
                 className="fos-btn"
                 style={{
                   flexShrink: 0, padding: '6px 14px', fontSize: '0.78rem', borderRadius: 'var(--radius-full)',
@@ -314,7 +334,7 @@ export default function Invoices() {
             )
           })}
           <button
-            onClick={() => setOverdueOnly((v) => !v)}
+            onClick={() => { setOverdueOnly((v) => !v); setStatusFilter('') }}
             className="fos-btn"
             style={{
               flexShrink: 0, padding: '6px 14px', fontSize: '0.78rem', borderRadius: 'var(--radius-full)',
@@ -332,10 +352,17 @@ export default function Invoices() {
         </select>
       </div>
 
-      {/* ── Content ── */}
-      {loading && <InvoiceGridSkeleton />}
+      {/* ── Content ──
+          Only a genuine first load (nothing rendered yet at all) shows the
+          full skeleton — every subsequent refetch (filter/search/sort
+          change) keeps the current list mounted and just dims it slightly,
+          instead of unmounting the whole grid and rebuilding it from
+          nothing, which is what made every interaction look like a page
+          reload without actually being one (four prior rounds chased this
+          as a navigation bug; it never was one — see DECISIONS.md). */}
+      {loading && invoices.length === 0 && !error && <InvoiceGridSkeleton />}
 
-      {!loading && error && (
+      {error && invoices.length === 0 && (
         <div style={{ padding: 32, textAlign: 'center' }}>
           <FosAlert type="error" style={{ display: 'inline-flex', marginBottom: 12 }}>{error}</FosAlert>
           <br />
@@ -347,16 +374,26 @@ export default function Invoices() {
         <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={handleNewInvoice} />
       )}
 
-      {!loading && !error && invoices.length > 0 && (
+      {invoices.length > 0 && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+          {error && (
+            <FosAlert type="error" style={{ marginBottom: 12 }}>
+              {error} <button className="fos-btn fos-btn-ghost" style={{ marginLeft: 8 }} onClick={() => load(buildParams(0))}>Retry</button>
+            </FosAlert>
+          )}
+          <div
+            style={{
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12,
+              opacity: loading ? 0.55 : 1, transition: 'opacity 0.15s ease',
+            }}
+          >
             {invoices.map((inv) => (
               <InvoiceCard key={inv.id} invoice={inv} onOpen={() => openDetail(inv)} />
             ))}
           </div>
           {invoices.length < total && (
             <div style={{ textAlign: 'center', marginTop: 20 }}>
-              <button className="fos-btn fos-btn-ghost" onClick={loadMore} disabled={loadingMore}>
+              <button className="fos-btn fos-btn-ghost" onClick={loadMore} disabled={loadingMore || loading}>
                 {loadingMore ? <span className="fos-spinner" /> : null}
                 {loadingMore ? 'Loading…' : `Load More (${invoices.length} of ${total})`}
               </button>
@@ -449,12 +486,26 @@ function SummaryStrip({ summary }) {
           </div>
         ))}
       </div>
-      {/* All 3 KPI cards stay in one row even at phone widths — auto-fit's
-          200px minimum was wrapping them to one-per-row well before 375px
-          (200×3 + gaps > 375). Forces exactly 3 explicit columns with
-          smaller padding/font instead of letting auto-fit reflow. */}
+      {/* All 3 KPI cards stay in one row from the narrowest phone widths up
+          through tablet — measured directly against the real running app
+          (real viewport screenshots + boundingBox checks), not guessed.
+          auto-fit's 200px-per-card minimum (600px+gaps needed) actually
+          fails in TWO separate zones, not just "phone width": (480,659]
+          (AppShell's own mobile layout, window.innerWidth<=768, but the
+          page's own horizontal padding still leaves less than 600px until
+          ~660px), and [769,939] (AppShell switches to its desktop layout
+          with a persistent sidebar right at 769px, which eats enough
+          width to reintroduce the wrap despite the viewport being WIDER
+          than the mobile range that was already fine) — confirmed via a
+          real width sweep (600/620/640 wrap, 660/680/700 fine, 769-920
+          wrap again, 940+ fine). A single rule up to 939px covers both
+          zones (including the already-fine 660-768 gap between them,
+          harmlessly — forcing 3 explicit equal columns there changes
+          nothing visually since auto-fit already produced 3 equal columns
+          in that range); native auto-fit is left alone at 940px+, where
+          it's confirmed to work correctly on its own. */}
       <style>{`
-        @media (max-width: 480px) {
+        @media (max-width: 939px) {
           .kpi-strip { grid-template-columns: repeat(3, 1fr) !important; gap: 6px !important; }
           .kpi-card { padding: 8px 8px !important; }
           .kpi-card-label { font-size: 0.58rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
