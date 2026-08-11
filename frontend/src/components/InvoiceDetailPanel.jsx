@@ -72,7 +72,12 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   // doesn't repeat a stale message.
   useEffect(() => {
     if (initialMessage) {
-      showToast('success', initialMessage)
+      // A plain string is always a success toast (every existing caller);
+      // an object lets a caller like the Finalise & Send handoff show a
+      // warning instead — e.g. "finalised, but sending failed" must never
+      // render in the same green success style as a real full success.
+      const { type, text } = typeof initialMessage === 'string' ? { type: 'success', text: initialMessage } : initialMessage
+      showToast(type, text)
       onInitialMessageShown?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

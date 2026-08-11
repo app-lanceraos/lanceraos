@@ -295,6 +295,104 @@ describe('NewInvoiceWizard — Finalise unreachable with incomplete data; Mark-a
   })
 })
 
+describe('NewInvoiceWizard — Finalise & Send (combined action)', () => {
+  async function reachStage3WithValidData(mock, invoiceId) {
+    mock.onPost('/invoices/').reply(201, { id: invoiceId })
+    render(<NewInvoiceWizard onClose={vi.fn()} onFinalised={onFinalisedSpy} />)
+
+    fillClient()
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => expect(screen.getByLabelText(/^description/i)).toBeTruthy())
+    fireEvent.change(screen.getByLabelText(/^description/i), { target: { value: 'Real work' } })
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /finalise & send/i })).toBeTruthy())
+  }
+
+  let onFinalisedSpy
+
+  beforeEach(() => { onFinalisedSpy = vi.fn() })
+
+  it('is disabled at stage 3 while the data is incomplete, same gating as standalone Finalise', async () => {
+    mock.onPost('/invoices/').reply(201, { id: 'fs-1' })
+    render(<NewInvoiceWizard onClose={vi.fn()} onFinalised={vi.fn()} />)
+
+    fillClient()
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => expect(screen.getByLabelText(/^description/i)).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /finalise & send/i })).toBeTruthy())
+    expect(screen.getByRole('button', { name: /finalise & send/i }).disabled).toBe(true)
+  })
+
+  it('opens a confirm modal with the reminders toggle defaulted to the wizard\'s current value', async () => {
+    await reachStage3WithValidData(mock, 'fs-2')
+    fireEvent.click(screen.getByRole('button', { name: /finalise & send/i }))
+
+    expect(screen.getByText(/this finalises the invoice/i)).toBeTruthy()
+    const toggle = screen.getByText(/enable reminders/i).closest('label').querySelector('input[type="checkbox"]')
+    expect(toggle.checked).toBe(true) // wizard's own default is ON
+  })
+
+  it('confirming calls finalise-and-send with confirm:true and hands off via onFinalised on success', async () => {
+    mock.onPost('/invoices/fs-3/finalise-and-send/').reply(200, { id: 'fs-3', status: 'sent' })
+    await reachStage3WithValidData(mock, 'fs-3')
+
+    fireEvent.click(screen.getByRole('button', { name: /finalise & send/i }))
+    fireEvent.click(screen.getAllByRole('button', { name: /finalise & send/i })[1])
+
+    await waitFor(() => expect(onFinalisedSpy).toHaveBeenCalled())
+    const sendCalls = mock.history.post.filter((r) => r.url === '/invoices/fs-3/finalise-and-send/')
+    expect(sendCalls.length).toBe(1)
+    expect(JSON.parse(sendCalls[0].data)).toEqual({ confirm: true })
+    expect(onFinalisedSpy).toHaveBeenCalledWith('fs-3', 'Invoice finalised and sent.')
+  })
+
+  it('unchecking reminders in the modal PUTs reminders_enabled:false before sending', async () => {
+    mock.onPut(/\/invoices\/fs-4\//).reply(200, { id: 'fs-4' })
+    mock.onPost('/invoices/fs-4/finalise-and-send/').reply(200, { id: 'fs-4', status: 'sent' })
+    await reachStage3WithValidData(mock, 'fs-4')
+
+    fireEvent.click(screen.getByRole('button', { name: /finalise & send/i }))
+    const toggle = screen.getByText(/enable reminders/i).closest('label').querySelector('input[type="checkbox"]')
+    fireEvent.click(toggle) // ON -> OFF
+    fireEvent.click(screen.getAllByRole('button', { name: /finalise & send/i })[1])
+
+    await waitFor(() => expect(onFinalisedSpy).toHaveBeenCalled())
+    const puts = mock.history.put.filter((r) => r.url === '/invoices/fs-4/')
+    expect(puts.some((r) => JSON.parse(r.data).reminders_enabled === false)).toBe(true)
+  })
+
+  it('on total failure where the invoice never left draft, stays in the wizard and shows the real backend error', async () => {
+    mock.onPost('/invoices/fs-5/finalise-and-send/').reply(400, { error: 'Add at least one line item before finalising.' })
+    await reachStage3WithValidData(mock, 'fs-5')
+
+    fireEvent.click(screen.getByRole('button', { name: /finalise & send/i }))
+    fireEvent.click(screen.getAllByRole('button', { name: /finalise & send/i })[1])
+
+    await waitFor(() => expect(screen.getByText(/add at least one line item before finalising/i)).toBeTruthy())
+    expect(onFinalisedSpy).not.toHaveBeenCalled()
+  })
+
+  it('on a send-side failure AFTER finalise already committed, hands off with a warning — never a silent success', async () => {
+    mock.onPost('/invoices/fs-6/finalise-and-send/').reply(502, {
+      error: 'LanceraOS could not send this invoice: the email provider rejected the request. The invoice has not been sent — it is still Finalised, not Sent.',
+    })
+    mock.onGet('/invoices/fs-6/').reply(200, { id: 'fs-6', status: 'created' }) // the re-fetch this handler does on error
+    await reachStage3WithValidData(mock, 'fs-6')
+
+    fireEvent.click(screen.getByRole('button', { name: /finalise & send/i }))
+    fireEvent.click(screen.getAllByRole('button', { name: /finalise & send/i })[1])
+
+    await waitFor(() => expect(onFinalisedSpy).toHaveBeenCalled())
+    const [id, message] = onFinalisedSpy.mock.calls[0]
+    expect(id).toBe('fs-6')
+    expect(message.type).toBe('warning')
+    expect(message.text).toMatch(/finalised, but sending failed/i)
+    expect(message.text).toMatch(/has not been sent/i)
+  })
+})
+
 describe('NewInvoiceWizard — reminders default: ON in the wizard, forced off at finalise (backend)', () => {
   // Reverted back to true this pass — a real, deliberate lifecycle rule,
   // not a single default flip: the wizard's own visible starting state

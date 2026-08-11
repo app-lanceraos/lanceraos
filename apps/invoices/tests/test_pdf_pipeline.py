@@ -134,16 +134,23 @@ class RenderPipelineTests(TestCase):
         html_string = render_to_string('invoices/professional.html', build_pdf_context(invoice))
         self.assertIn('at rate', html_string)
 
-    def test_store_invoice_pdf_uploads_to_cloudinary_and_returns_url(self):
+    def test_store_invoice_pdf_uploads_to_cloudinary_and_returns_url_and_public_id(self):
         invoice = make_invoice_with_items(self.user, n_items=1)
         with patch('cloudinary.uploader.upload') as mock_upload:
-            mock_upload.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_x.pdf'}
-            url = store_invoice_pdf(invoice)
-        self.assertEqual(url, 'https://res.cloudinary.com/demo/raw/upload/invoice_x.pdf')
+            mock_upload.return_value = {
+                'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_x.pdf',
+                'public_id': 'lanceraos/invoices/invoice_x.pdf',
+            }
+            result = store_invoice_pdf(invoice)
+        self.assertEqual(result, {
+            'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_x.pdf',
+            'public_id': 'lanceraos/invoices/invoice_x.pdf',
+        })
         mock_upload.assert_called_once()
         _, kwargs = mock_upload.call_args
         self.assertEqual(kwargs['resource_type'], 'raw')
         self.assertEqual(kwargs['folder'], 'lanceraos/invoices')
+        self.assertEqual(kwargs['access_mode'], 'public')
 
 
 class InvoicePdfEndpointTests(InvoicesAPITestCase):
@@ -201,12 +208,16 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
-            mock_store.return_value = 'https://res.cloudinary.com/demo/raw/upload/invoice_once.pdf'
+            mock_store.return_value = {
+                'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_once.pdf',
+                'public_id': 'lanceraos/invoices/invoice_once.pdf',
+            }
             resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
         self.assertEqual(resp.status_code, 200)
         mock_store.assert_called_once()
         invoice.refresh_from_db()
         self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/invoice_once.pdf')
+        self.assertEqual(invoice.pdf_public_id, 'lanceraos/invoices/invoice_once.pdf')
         self.assertIsNotNone(invoice.pdf_generated_at)
         self.assertIsNotNone(invoice.finalised_at)
 
@@ -215,7 +226,10 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
-            mock_store.return_value = 'https://res.cloudinary.com/demo/raw/upload/invoice_frozen.pdf'
+            mock_store.return_value = {
+                'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_frozen.pdf',
+                'public_id': 'lanceraos/invoices/invoice_frozen.pdf',
+            }
             self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
 
             for _ in range(3):
@@ -245,7 +259,10 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
-            mock_store.return_value = 'https://res.cloudinary.com/demo/raw/upload/invoice_direct_sent.pdf'
+            mock_store.return_value = {
+                'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_direct_sent.pdf',
+                'public_id': 'lanceraos/invoices/invoice_direct_sent.pdf',
+            }
             resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
         self.assertEqual(resp.status_code, 200)
         mock_store.assert_called_once()
@@ -254,13 +271,17 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
         self.assertIsNotNone(invoice.invoice_number)
         self.assertIsNotNone(invoice.finalised_at)
         self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/invoice_direct_sent.pdf')
+        self.assertEqual(invoice.pdf_public_id, 'lanceraos/invoices/invoice_direct_sent.pdf')
 
     def test_mark_sent_on_already_finalised_invoice_does_not_rerender(self):
         """The PDF is already frozen by the time a real finalise happened separately — mark-sent must not render again."""
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
-            mock_store.return_value = 'https://res.cloudinary.com/demo/raw/upload/invoice_finalised.pdf'
+            mock_store.return_value = {
+                'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_finalised.pdf',
+                'public_id': 'lanceraos/invoices/invoice_finalised.pdf',
+            }
             self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
             mock_store.assert_called_once()
 

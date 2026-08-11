@@ -208,37 +208,26 @@ export function formToPayload(form) {
   }
 }
 
-// The "hasn't been sent through LanceraOS" banner — exactly 2 real,
-// distinct states show it, nothing else:
-//   a) status === 'created', never mark-sent at all yet.
-//   b) status === 'sent' specifically, but sent_via_platform is False —
-//      the freelancer marked it sent themselves (manual dropdown-flip).
-//      Acknowledges that choice directly, states the real reminders
-//      on/off decision they made at that time, and clarifies view/payment
-//      tracking only activates once the client actually visits the link.
-// Every other status (draft, viewed, partially_paid, paid, cancelled,
-// refunded, bad_debt) shows no banner — either it never applied (draft),
-// or the invoice has already moved past the point this warning is about
-// (a viewed/paid invoice's tracking already activated; the "hasn't been
-// sent" warning would be actively wrong there, a real bug this fixes —
-// the previous version fell through to case (b)'s copy for EVERY status
-// beyond 'created', not just 'sent'). sent_via_platform === True (Step 10,
-// no real data yet) always suppresses the banner regardless of status,
-// checked first.
+// Simplified banner rule (supersedes the earlier 3-state,
+// sent_via_platform-driven version — see DECISIONS.md):
+//   draft            -> no banner.
+//   created          -> unchanged copy: hasn't been sent through
+//                        LanceraOS yet, so reminders/tracking are inert.
+//   everything else  -> checks reminders_enabled ONLY. Off -> one line
+//                        pointing at the toggle. On -> no banner.
+// No sent_via_platform check anywhere — a manual mark-sent and a real
+// platform send are treated identically past 'created' now, since the
+// only thing actually actionable from this banner is the reminders
+// toggle itself.
 export function getSendBannerCopy(invoice) {
-  if (invoice.sent_via_platform) return null
+  if (invoice.status === 'draft') return null
 
   if (invoice.status === 'created') {
     return "This invoice hasn't been sent through LanceraOS — reminders, view tracking, and payment tracking won't activate until you send it.";
   }
 
-  if (invoice.status === 'sent') {
-    const remindersPhrase = invoice.reminders_enabled
-      ? 'You chose to enable reminders when you marked it sent.'
-      : 'You chose to leave reminders off when you marked it sent.'
-    const sentDate = invoice.sent_at ? new Date(invoice.sent_at).toLocaleDateString() : null
-    return `You marked this invoice as sent yourself${sentDate ? ` on ${sentDate}` : ''} — LanceraOS didn't deliver it. `
-      + `${remindersPhrase} View and payment tracking will only activate once your client actually opens the invoice link.`
+  if (!invoice.reminders_enabled) {
+    return 'Reminders are off — turn them on below if you\'d like reminder emails to go out.'
   }
 
   return null

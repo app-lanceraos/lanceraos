@@ -41,7 +41,7 @@
 // of the post-draft tabs/timeline/lifecycle-actions UI — this
 // component's only job is the pre-finalised creation/editing experience.
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ArrowRight, CheckCircle2, Eye, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, Eye, Mail, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import useInvoiceAutosave from '@/hooks/useInvoiceAutosave'
@@ -70,6 +70,7 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
   const [busyKey, setBusyKey] = useState(null)
   const [actionError, setActionError] = useState('')
   const [duplicateClientError, setDuplicateClientError] = useState('')
+  const [showFinaliseAndSend, setShowFinaliseAndSend] = useState(false)
 
   const { saveState, saveErrors, setSaveErrors, flushPendingSave, skipNextAutosave } = useInvoiceAutosave(invoiceId, form, true)
 
@@ -209,6 +210,57 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
     }
   }
 
+  // Combined finalise-and-send — a real send happens in this same
+  // request (apps/invoices/views.py's invoice_finalise_and_send), unlike
+  // handleFinalise above which never sends anything. `sendReminders` is
+  // written explicitly via a direct PUT (not through setForm +
+  // flushPendingSave, which would read the pre-update `form` closure —
+  // see handleSaveAsPreset's own stale-closure note in
+  // InvoiceDetailPanel.jsx) so the backend's own force_reminders_off=False
+  // path sees exactly the value the user just confirmed, not a stale one.
+  //
+  // On any error, re-fetches the invoice rather than guessing what
+  // happened from the error shape: invoice_finalise_and_send runs
+  // _finalise_invoice (an unconditional, already-committed DB write)
+  // BEFORE attempting the send, so a send-side failure (502) still means
+  // the invoice really is finalised now, just not sent — this stays in
+  // the wizard for a genuine pre-finalise failure (still draft), but
+  // hands off to the normal InvoiceDetailPanel (which has its own retry-
+  // capable Send button) the moment the real data shows status has
+  // already moved past draft.
+  async function handleFinaliseAndSend(sendReminders) {
+    if (!canFinalise) return
+    setBusyKey('finalise_and_send')
+    setActionError('')
+    try {
+      await flushPendingSave()
+      if (sendReminders !== form.reminders_enabled) {
+        await api.put(`/invoices/${invoiceId}/`, { reminders_enabled: sendReminders })
+      }
+      const { data } = await api.post(`/invoices/${invoiceId}/finalise-and-send/`, { confirm: true })
+      setShowFinaliseAndSend(false)
+      onFinalised(data.id, 'Invoice finalised and sent.')
+    } catch (e) {
+      // The real backend error, not a generic string — includes which
+      // delivery path(s) failed and makes clear nothing was sent (see
+      // _send_invoice_now's own error copy, apps/invoices/views.py).
+      const backendError = e.response?.data?.error || 'Could not finalise and send this invoice. It has not been sent.'
+      try {
+        const { data: current } = await api.get(`/invoices/${invoiceId}/`)
+        if (current.status !== 'draft') {
+          setShowFinaliseAndSend(false)
+          onFinalised(current.id, { type: 'warning', text: `Invoice finalised, but sending failed: ${backendError}` })
+          return
+        }
+      } catch { /* fall through to the normal in-wizard error below */ }
+      const errors = e.response?.data
+      if (errors && typeof errors === 'object' && !errors.error) routeErrorsToStage(errors)
+      setActionError(backendError)
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
   const busy = busyKey !== null
 
   if (loadingExisting) {
@@ -326,6 +378,17 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
                   {busyKey === 'finalise' ? <span className="fos-spinner" /> : <CheckCircle2 size={14} />} Finalise
                 </button>
               )}
+              {stage === 3 && (
+                <button
+                  onClick={() => setShowFinaliseAndSend(true)}
+                  disabled={!canFinalise || busy}
+                  className="fos-btn fos-btn-accent"
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: !canFinalise ? 0.5 : 1 }}
+                  title={!canFinalise ? 'Add a client and at least one line item first.' : undefined}
+                >
+                  {busyKey === 'finalise_and_send' ? <span className="fos-spinner" /> : <Mail size={14} />} Finalise & Send
+                </button>
+              )}
             </div>
           </div>
           {stage === 3 && !canFinalise && (
@@ -335,6 +398,15 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
           )}
         </div>
       </div>
+
+      {showFinaliseAndSend && (
+        <FinaliseAndSendModal
+          invoice={form}
+          busy={busyKey === 'finalise_and_send'}
+          onConfirm={handleFinaliseAndSend}
+          onClose={() => setShowFinaliseAndSend(false)}
+        />
+      )}
     </>
   )
 }
@@ -345,6 +417,45 @@ const panelStyle = {
   background: 'var(--bg-surface)', boxShadow: '-8px 0 32px rgba(0,0,0,0.2)', zIndex: 101,
   overflowY: 'auto', animation: 'panel-slide-in 0.2s cubic-bezier(0.22,1,0.36,1)',
   display: 'flex', flexDirection: 'column',
+}
+
+// Same confirm-step shape as InvoiceDetailPanel's own MarkSentModal/
+// SendModal (not imported from there — neither is exported, and this
+// component's local needs are simple enough not to warrant it), but
+// combining both real actions into one: it explains a real email goes
+// out AND lets the user set reminders_enabled right here before that
+// happens, defaulting to the invoice's own current toggle value so
+// re-confirming something they already set on stage 3 isn't required.
+function FinaliseAndSendModal({ invoice, busy, onConfirm, onClose }) {
+  const [sendReminders, setSendReminders] = useState(!!invoice.reminders_enabled)
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '24px 28px', width: '100%', maxWidth: 420, maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+          <h3 style={{ margin: 0, fontSize: '1.02rem', fontWeight: 700, color: 'var(--text-primary)' }}>Finalise & Send</h3>
+          <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
+        </div>
+        <p style={{ margin: '0 0 14px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+          This finalises the invoice (assigns its number, freezes the PDF) and immediately emails{' '}
+          <strong>{invoice.client_name || 'the client'}</strong> at <strong>{invoice.client_email}</strong> through
+          LanceraOS in one step. You're cc'd on the email.
+        </p>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '10px 12px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', marginBottom: 20 }}>
+          <input type="checkbox" checked={sendReminders} onChange={(e) => setSendReminders(e.target.checked)} style={{ marginTop: 3, accentColor: 'var(--accent)', width: 14, height: 14 }} />
+          <div>
+            <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)' }}>Enable reminders</p>
+            <p style={{ margin: '2px 0 0', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Starts the escalating reminder schedule once overdue.</p>
+          </div>
+        </label>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="fos-btn fos-btn-accent" onClick={() => onConfirm(sendReminders)} disabled={busy}>
+            {busy ? <span className="fos-spinner" /> : <Mail size={14} />} Finalise & Send
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function WizardSkeleton() {

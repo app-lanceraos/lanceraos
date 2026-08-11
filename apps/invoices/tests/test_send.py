@@ -64,12 +64,85 @@ class InvoiceSendGatingTests(InvoicesAPITestCase):
         self.assertEqual(resp.status_code, 400)
 
     @patch('apps.invoices.email_service.requests.get')
-    def test_pdf_fetch_failure_returns_502_and_does_not_change_status(self, mock_get):
+    def test_pdf_fetch_failure_self_heals_via_reupload_and_still_sends(self, mock_get):
+        """
+        A stored-PDF fetch failure (e.g. the confirmed Cloudinary access-mode
+        restriction — see DECISIONS.md) is not fatal to /send/ on its own:
+        fetch_invoice_pdf_bytes re-uploads and retries once before giving up.
+        Here the retried fetch also fails (still 401-equivalent), so it falls
+        through to the final live-render fallback — the send must still
+        succeed using those freshly-rendered bytes.
+        """
+        import requests
+        mock_get.side_effect = requests.RequestException('401 unauthorized')
+        invoice = _sendable_invoice(self.user)
+
+        with patch('apps.invoices.email_service.upload_pdf_bytes') as mock_upload, \
+             patch('requests.post') as mock_post:
+            mock_upload.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/healed.pdf', 'public_id': 'lanceraos/invoices/healed.pdf'}
+            fake_resend_response = MagicMock(status_code=200, text='')
+            fake_resend_response.json.return_value = {'id': 'x'}
+            mock_post.return_value = fake_resend_response
+            resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
+
+        self.assertEqual(resp.status_code, 200)
+        mock_upload.assert_called_once()  # the self-heal re-upload attempt
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'sent')
+        self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/healed.pdf')
+        self.assertEqual(invoice.pdf_public_id, 'lanceraos/invoices/healed.pdf')
+
+    @patch('apps.invoices.email_service.requests.get')
+    def test_total_pdf_failure_returns_502_with_specific_error_and_does_not_change_status(self, mock_get):
+        """
+        The genuine total-failure case: the stored fetch fails, and the
+        self-heal render itself fails too (WeasyPrint broken) — render
+        happens before the re-upload attempt now (one render, reused for
+        both), so a render failure alone is enough to exhaust every path.
+        Only then must /send/ actually give up — 502, invoice left
+        exactly as it was, and a real error message, not a generic one.
+        """
         import requests
         mock_get.side_effect = requests.RequestException('connection reset')
         invoice = _sendable_invoice(self.user)
-        resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
+
+        with patch('apps.invoices.email_service.render_invoice_pdf', side_effect=RuntimeError('weasyprint broken')):
+            resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
+
         self.assertEqual(resp.status_code, 502)
+        body = resp.json()
+        self.assertNotEqual(body['error'], 'Could not send this invoice. Please try again.')
+        self.assertIn('regenerate', body['error'].lower())
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'created')
+        self.assertFalse(invoice.sent_via_platform)
+
+    @patch('apps.invoices.email_service.requests.get')
+    def test_both_custom_smtp_and_resend_failing_returns_specific_error_and_leaves_invoice_unsent(self, mock_get):
+        """The item-8 atomicity case: custom SMTP AND its Resend fallback both fail — the error must name what actually happened, not a generic string, and the invoice must stay 'created'."""
+        mock_get.return_value = _mock_pdf_fetch_response()
+        profile = self.user.profile
+        profile.custom_smtp_enabled = True
+        profile.custom_smtp_verified = True
+        profile.custom_smtp_host = 'smtp.badhost.example.com'
+        profile.custom_smtp_port = 587
+        profile.custom_smtp_username = 'me@mybusiness.com'
+        profile.custom_smtp_password = encrypt_field('app-password-123')
+        profile.custom_smtp_use_tls = True
+        profile.custom_smtp_from_name = 'Ali'
+        profile.save()
+        invoice = _sendable_invoice(self.user)
+
+        failing_resend = MagicMock(status_code=500, text='internal error')
+        with patch('django.core.mail.backends.smtp.EmailBackend.send_messages', side_effect=OSError('Connection refused')), \
+             patch('requests.post', return_value=failing_resend):
+            resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
+
+        self.assertEqual(resp.status_code, 502)
+        body = resp.json()
+        self.assertNotEqual(body['error'], 'Could not send this invoice. Please try again.')
+        self.assertIn('custom smtp', body['error'].lower())
+        self.assertIn('not been sent', body['error'].lower())
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, 'created')
         self.assertFalse(invoice.sent_via_platform)

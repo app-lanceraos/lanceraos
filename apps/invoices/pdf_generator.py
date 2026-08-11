@@ -133,22 +133,46 @@ def render_invoice_pdf(invoice):
     return HTML(string=html_string).write_pdf()
 
 
-def store_invoice_pdf(invoice):
+def upload_pdf_bytes(invoice, pdf_bytes):
     """
-    Renders once and uploads the result to Cloudinary, returning the
-    secure_url — the frozen artifact for a sent-or-beyond invoice.
+    The upload half of store_invoice_pdf, split out (this pass) so a
+    caller that already has real rendered bytes in hand — specifically
+    email_service.py's self-heal chain — never pays WeasyPrint's render
+    cost twice for the same content. Returns
+    {'secure_url': str, 'public_id': str}.
+
     `resource_type='raw'` (not 'image') since this is a PDF document, not
     an image Cloudinary should try to transform/thumbnail.
+
+    `access_mode='public'` is passed explicitly — this is the
+    documented, correct way to request public delivery for a raw
+    upload. Confirmed directly against the real Cloudinary account this
+    project uses (a real test upload, checked via the Admin API, not
+    assumed) that this account currently has an account-level ACL
+    restriction on raw/PDF delivery that silently ignores this parameter
+    regardless of upload-time value (every real GET against the
+    resulting secure_url returns 401 with `x-cld-error: deny or ACL
+    failure`, Cloudinary's own header confirming an account-side policy,
+    not a code-level bug) — see DECISIONS.md for the full investigation
+    and why this parameter is still the correct thing to send: it costs
+    nothing, is the textbook-correct call per Cloudinary's own API docs,
+    and takes effect immediately the moment that account setting
+    changes, without needing a second code change.
     """
     import cloudinary.uploader  # lazy import — same convention as apps/users/views/profile.py's upload_logo
 
-    pdf_bytes = render_invoice_pdf(invoice)
     try:
         result = cloudinary.uploader.upload(
             io.BytesIO(pdf_bytes), folder='lanceraos/invoices', resource_type='raw',
             public_id=f'invoice_{invoice.pk}', overwrite=True, format='pdf',
+            access_mode='public',
         )
     except Exception:
         logger.exception('Cloudinary invoice-PDF upload failed for invoice_id=%s', invoice.pk)
         raise
-    return result.get('secure_url', '')
+    return {'secure_url': result.get('secure_url', ''), 'public_id': result.get('public_id', '')}
+
+
+def store_invoice_pdf(invoice):
+    """Renders once and uploads the result — see upload_pdf_bytes for the upload half's own documentation."""
+    return upload_pdf_bytes(invoice, render_invoice_pdf(invoice))

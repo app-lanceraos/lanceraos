@@ -265,15 +265,16 @@ def invoice_pdf(request, pk):
 # LIFECYCLE ACTIONS
 # ══════════════════════════════════════════════════════════════════
 
-def _finalise_invoice(invoice):
+def _finalise_invoice(invoice, force_reminders_off=True):
     """
     The real "leave draft" event — draft -> created, invoice_number
     assignment, exchange-rate lock, finalised_at timestamp, and the
     one-time PDF render+store (moved here from invoice_mark_sent in this
     pass — see DECISIONS.md). Shared by invoice_finalise (the explicit
-    button) AND invoice_mark_sent (which calls this first if the invoice
-    is still a draft when the user clicks "Mark as Sent" directly,
-    skipping the separate Finalise click — see that view's own docstring).
+    button), invoice_mark_sent (which calls this first if the invoice is
+    still a draft when the user clicks "Mark as Sent" directly, skipping
+    the separate Finalise click), AND invoice_finalise_and_send (the
+    combined action).
 
     is_editable only permits edits at status='draft' (Invoice.is_editable) —
     a created invoice is already fully immutable, so this render+store is
@@ -281,6 +282,19 @@ def _finalise_invoice(invoice):
     invoice_pdf's own live-vs-stored boundary already treats anything past
     draft/created as frozen, and re-rendering on every later GET for an
     invoice that can never change again was pointless work.
+
+    force_reminders_off: True (default) for the standalone Finalise button
+    — finalising alone never turns reminders on, since per
+    Invoice.sent_via_platform's own field help_text reminders are
+    structurally inert until an invoice is actually sent, so forcing the
+    stored value off here avoids a misleading "on" value nothing can act
+    on yet. The combined Finalise & Send action passes False instead —
+    that flow immediately proceeds to a real send in the same request, so
+    whatever reminders_enabled the invoice already holds (the create-flow
+    wizard's own toggle choice) is a real, actionable value the moment
+    finalise completes, and forcing it off first would just require
+    /send/ to inspect a stale, pre-overridden value instead of the user's
+    actual current choice. See DECISIONS.md's Finalise & Send entry.
 
     Caller is responsible for the surrounding rate limit / not-found /
     status checks — this assumes the caller already confirmed
@@ -297,27 +311,16 @@ def _finalise_invoice(invoice):
     invoice.capture_issue_rate()
     invoice.status = 'created'
     invoice.finalised_at = timezone.now()
-    # Deliberate override of whatever the create-flow submitted — not an
-    # oversight. Finalising never sets sent_via_platform=True, and per
-    # Invoice.sent_via_platform's own field help_text ("gates reminders
-    # only"), reminders are structurally inert until an invoice is
-    # actually sent via the real platform. Storing True here would be a
-    # misleading value nothing can act on — the wizard's own reminders
-    # toggle default (ON) is a real, separate choice the user sees and can
-    # set during creation, but it doesn't survive finalise as a stored
-    # value; see DECISIONS.md.
-    # TODO(Step 10 /send/): this is the point reminders should actually be
-    # able to turn on for real. Open question for that step, not decided
-    # here — whether /send/ restores the user's original wizard choice
-    # (would need to be captured somewhere between creation and send) or
-    # simply defaults reminders_enabled=True again at that point.
-    invoice.reminders_enabled = False
+    if force_reminders_off:
+        invoice.reminders_enabled = False
     invoice.save()
 
     try:
-        invoice.pdf_url = store_invoice_pdf(invoice)
+        pdf_result = store_invoice_pdf(invoice)
+        invoice.pdf_url = pdf_result['secure_url']
+        invoice.pdf_public_id = pdf_result['public_id']
         invoice.pdf_generated_at = timezone.now()
-        invoice.save(update_fields=['pdf_url', 'pdf_generated_at'])
+        invoice.save(update_fields=['pdf_url', 'pdf_public_id', 'pdf_generated_at'])
     except Exception:
         logger.exception('[INVOICES] Finalise PDF render+store failed for invoice %s — status transition kept, pdf_url left blank.', invoice.invoice_number)
 
@@ -413,57 +416,45 @@ def invoice_mark_sent(request, pk):
     return Response(InvoiceListSerializer(invoice).data)
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def invoice_send(request, pk):
+def _send_invoice_now(invoice, request):
     """
-    The REAL send — actually delivers the invoice email to the client,
-    distinct from invoice_mark_sent's manual self-report flip (that
-    endpoint is unmodified by this addition; the two are parallel,
-    legitimate actions per the decisions doc, not a sequence).
+    The actual delivery + state-commit logic shared by invoice_send (an
+    already-created invoice) and invoice_finalise_and_send (finalise then
+    immediately send in the same request). Callers have already checked
+    confirm/rate-limit and that invoice.status == 'created'.
 
-    Only from status='created' — a finalised, not-yet-sent invoice. The
-    PDF is already frozen by _finalise_invoice at that point (see its own
-    docstring on the freeze-point move); this endpoint never re-renders
-    or re-stores it, only fetches the already-stored bytes to attach.
+    Atomicity: status/sent_via_platform/sent_at are only ever written
+    AFTER send_invoice_related_email reports result['sent'] is True — the
+    invoice is left exactly as it was (still 'created', not 'sent') on
+    any failure, so a client never sees an invoice marked sent that it
+    never actually received. Verified directly against this function's
+    own control flow, not assumed: every return path before the
+    `invoice.status = 'sent'` line ends in `return Response(...)`, so
+    there is no way to reach that line without result['sent'] being True.
 
-    Sets sent_via_platform=True — the one thing invoice_mark_sent never
-    does (confirmed against that field's own help_text: "Set only by the
-    real /send/ action... Gates reminders only") — this is what actually
-    makes apps/invoices/tasks.py's reminder task eligible to fire for
-    this invoice for the first time.
+    Error responses are built from send_invoice_related_email's own
+    result dict, not a generic string — result['error'] carries Resend's
+    (or the final fallback's) real failure detail, and result['fallback_used']
+    tells the caller whether custom SMTP was even attempted first.
 
     reminders_enabled is deliberately left untouched here — whatever
-    value _finalise_invoice's own forced-False override (or a later
-    manual flip via invoice_toggle_reminders, which works on any
-    non-draft status already) currently holds is respected as-is. This
-    resolves _finalise_invoice's own open TODO ("does /send/ restore the
-    wizard's original choice, or default True again?") — neither: the
-    existing toggle already gives the user a real way to turn it back on
-    before or after sending, so /send/ doesn't need its own special-case
-    logic for a value there's already a dedicated control for.
-
-    Requires an explicit confirm:true, mirroring invoice_mark_sent's own
-    safety pattern — this is the one action in the whole lifecycle that
-    actually emails a third party, so a stray double-click must not be
-    able to trigger it silently.
+    value the invoice already holds (either _finalise_invoice's forced-
+    False, a later manual flip via invoice_toggle_reminders, or the
+    caller's own force_reminders_off=False pass-through for the combined
+    Finalise & Send action) is respected as-is. There is a dedicated
+    toggle for this already; /send/ doesn't need its own special-case
+    logic for a value the user can already set directly.
     """
-    if not request.data.get('confirm'):
-        return Response({'error': 'confirm: true is required to send this invoice.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    if _check_moderate_rate_limit('send', request.user):
-        return _too_many_requests('Too many send actions. Please try again later.')
-
-    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
-    if invoice.status != 'created':
-        return Response({'error': 'Only finalised, not-yet-sent invoices can be sent.'}, status=status.HTTP_400_BAD_REQUEST)
     if not invoice.pdf_url:
         logger.error('[INVOICES] Invoice %s is status=created with no pdf_url — cannot send.', invoice.invoice_number)
         return Response({'error': 'This invoice has no generated PDF yet. Please try finalising it again.'}, status=status.HTTP_400_BAD_REQUEST)
 
     pdf_bytes = fetch_invoice_pdf_bytes(invoice)
     if pdf_bytes is None:
-        return Response({'error': 'Could not retrieve this invoice\'s PDF. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response(
+            {'error': 'Could not retrieve or regenerate this invoice\'s PDF. The invoice has not been sent — please try again.'},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
 
     subject, html_body, plain_body = build_invoice_send_email(invoice)
     result = send_invoice_related_email(
@@ -471,7 +462,13 @@ def invoice_send(request, pk):
         pdf_bytes=pdf_bytes, request_id=getattr(request, 'request_id', None),
     )
     if not result['sent']:
-        return Response({'error': 'Could not send this invoice. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+        detail = result['error'] or 'the email provider rejected the request'
+        prefix = 'Your custom SMTP server and the LanceraOS fallback both failed to send this invoice' if result['fallback_used'] \
+            else 'LanceraOS could not send this invoice'
+        return Response(
+            {'error': f'{prefix}: {detail}. The invoice has not been sent — it is still Finalised, not Sent.'},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
 
     invoice.status = 'sent'
     invoice.sent_via_platform = True
@@ -485,6 +482,91 @@ def invoice_send(request, pk):
         ' (fallback from custom SMTP)' if result['fallback_used'] else '',
     )
     return Response(InvoiceListSerializer(invoice).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_send(request, pk):
+    """
+    The REAL send — actually delivers the invoice email to the client,
+    distinct from invoice_mark_sent's manual self-report flip (that
+    endpoint is unmodified by this addition; the two are parallel,
+    legitimate actions per the decisions doc, not a sequence).
+
+    Only from status='created' — a finalised, not-yet-sent invoice. The
+    PDF is already frozen by _finalise_invoice at that point (see its own
+    docstring on the freeze-point move); this endpoint never re-renders
+    or re-stores it on the happy path — fetch_invoice_pdf_bytes's own
+    self-heal chain is what may re-upload/re-render, only on failure.
+
+    Sets sent_via_platform=True — the one thing invoice_mark_sent never
+    does (confirmed against that field's own help_text: "Set only by the
+    real /send/ action... Gates reminders only") — this is what actually
+    makes apps/invoices/tasks.py's reminder task eligible to fire for
+    this invoice for the first time.
+
+    Requires an explicit confirm:true, mirroring invoice_mark_sent's own
+    safety pattern — this is the one action in the whole lifecycle that
+    actually emails a third party, so a stray double-click must not be
+    able to trigger it silently.
+
+    Actual delivery + state-commit logic lives in _send_invoice_now,
+    shared with invoice_finalise_and_send below.
+    """
+    if not request.data.get('confirm'):
+        return Response({'error': 'confirm: true is required to send this invoice.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if _check_moderate_rate_limit('send', request.user):
+        return _too_many_requests('Too many send actions. Please try again later.')
+
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    if invoice.status != 'created':
+        return Response({'error': 'Only finalised, not-yet-sent invoices can be sent.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    return _send_invoice_now(invoice, request)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_finalise_and_send(request, pk):
+    """
+    The combined "Finalise & Send" wizard action — draft -> created ->
+    sent in one request, one confirm. Exists because the standalone
+    Finalise button (invoice_finalise) always forces reminders_enabled
+    to False (see _finalise_invoice's own docstring on why that's correct
+    for THAT path: reminders are inert before a real send exists at all)
+    — but here a real send is about to happen in the very same request,
+    so that force-off would just make /send/ act on a stale value instead
+    of whatever the user's wizard toggle currently shows. Passing
+    force_reminders_off=False to _finalise_invoice is what fixes this:
+    reminders_enabled is left exactly as the invoice already holds it
+    (the create-flow wizard's own saved choice) straight through to the
+    send below. See DECISIONS.md for the full reasoning and the
+    alternative (a near-duplicate finalise function) that was rejected.
+
+    Same confirm:true + rate-limit + item-existence checks as the
+    standalone finalise, since this covers the same draft->created
+    transition; a second confirm for the send half is deliberately NOT
+    required — this is presented as one combined action with one
+    confirmation step, per the task's own framing.
+    """
+    if not request.data.get('confirm'):
+        return Response({'error': 'confirm: true is required to finalise and send this invoice.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if _check_moderate_rate_limit('finalise', request.user):
+        return _too_many_requests('Too many finalise actions. Please try again later.')
+
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    if invoice.status != 'draft':
+        return Response({'error': 'Only draft invoices can be finalised and sent.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not invoice.items.exists():
+        return Response({'error': 'Add at least one line item before finalising.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    _finalise_invoice(invoice, force_reminders_off=False)
+    emit('InvoiceFinalised', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
+    logger.info('[INVOICES] Finalised invoice %s (combined finalise-and-send).', invoice.invoice_number)
+
+    return _send_invoice_now(invoice, request)
 
 
 @api_view(['POST'])

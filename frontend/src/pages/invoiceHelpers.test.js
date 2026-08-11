@@ -2,41 +2,42 @@
 import { describe, expect, it } from 'vitest'
 import { getSendBannerCopy, timelineLabel } from './invoiceHelpers'
 
-describe('getSendBannerCopy — exactly 2 states show it, nothing else', () => {
-  it('shows the "never sent" copy for status=created', () => {
-    const copy = getSendBannerCopy({ status: 'created', sent_via_platform: false })
+// Simplified rule (supersedes the old 3-state, sent_via_platform-driven
+// version — see DECISIONS.md): draft -> nothing, created -> unchanged
+// copy, everything else -> reminders_enabled alone decides.
+describe('getSendBannerCopy — draft/created/reminders-only rule', () => {
+  it('never shows for draft, regardless of reminders_enabled', () => {
+    expect(getSendBannerCopy({ status: 'draft', reminders_enabled: true })).toBeNull()
+    expect(getSendBannerCopy({ status: 'draft', reminders_enabled: false })).toBeNull()
+  })
+
+  it('shows the unchanged "never sent" copy for status=created, regardless of reminders_enabled', () => {
+    const copy = getSendBannerCopy({ status: 'created', reminders_enabled: true })
     expect(copy).toMatch(/hasn't been sent through LanceraOS/)
+    expect(getSendBannerCopy({ status: 'created', reminders_enabled: false })).toMatch(/hasn't been sent through LanceraOS/)
   })
 
-  it('shows the "you marked it sent" copy for status=sent, sent_via_platform=false', () => {
-    const copy = getSendBannerCopy({ status: 'sent', sent_via_platform: false, reminders_enabled: true, sent_at: '2026-01-01' })
-    expect(copy).toMatch(/marked this invoice as sent yourself/)
-    expect(copy).toMatch(/enable reminders/)
-  })
-
-  it('reflects reminders_enabled=false in the sent-manually copy', () => {
-    const copy = getSendBannerCopy({ status: 'sent', sent_via_platform: false, reminders_enabled: false })
-    expect(copy).toMatch(/leave reminders off/)
-  })
-
-  it('never shows for draft', () => {
-    expect(getSendBannerCopy({ status: 'draft', sent_via_platform: false })).toBeNull()
-  })
-
-  // Real bug this fixes: the previous version fell through to the
-  // "sent manually" copy for EVERY status beyond 'created', not just
-  // 'sent' — meaning it showed up on viewed/partially_paid/paid/
-  // cancelled/refunded/bad_debt invoices too.
-  it('never shows for viewed, partially_paid, paid, cancelled, refunded, or bad_debt', () => {
-    for (const status of ['viewed', 'partially_paid', 'paid', 'cancelled', 'refunded', 'bad_debt']) {
-      expect(getSendBannerCopy({ status, sent_via_platform: false })).toBeNull()
+  // Every other status checks reminders_enabled alone now — no more
+  // sent_via_platform branch, and no more distinguishing a manual
+  // mark-sent from a real platform send here at all.
+  it('shows the reminders-off line for any post-created status when reminders_enabled is false', () => {
+    for (const status of ['sent', 'viewed', 'partially_paid', 'paid', 'cancelled', 'refunded', 'bad_debt']) {
+      const copy = getSendBannerCopy({ status, reminders_enabled: false })
+      expect(copy).toMatch(/Reminders are off/)
     }
   })
 
-  it('never shows once sent_via_platform is true, regardless of status', () => {
-    for (const status of ['created', 'sent', 'viewed', 'paid']) {
-      expect(getSendBannerCopy({ status, sent_via_platform: true })).toBeNull()
+  it('shows no banner at all for any post-created status when reminders_enabled is true', () => {
+    for (const status of ['sent', 'viewed', 'partially_paid', 'paid', 'cancelled', 'refunded', 'bad_debt']) {
+      expect(getSendBannerCopy({ status, reminders_enabled: true })).toBeNull()
     }
+  })
+
+  it('ignores sent_via_platform entirely — same result regardless of its value', () => {
+    expect(getSendBannerCopy({ status: 'sent', reminders_enabled: false, sent_via_platform: true })).toMatch(/Reminders are off/)
+    expect(getSendBannerCopy({ status: 'sent', reminders_enabled: false, sent_via_platform: false })).toMatch(/Reminders are off/)
+    expect(getSendBannerCopy({ status: 'sent', reminders_enabled: true, sent_via_platform: true })).toBeNull()
+    expect(getSendBannerCopy({ status: 'sent', reminders_enabled: true, sent_via_platform: false })).toBeNull()
   })
 })
 

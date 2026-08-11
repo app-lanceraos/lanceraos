@@ -38,6 +38,8 @@ from core.email import send_email_detailed
 from core.encryption import decrypt_field
 from core.events import emit
 
+from .pdf_generator import render_invoice_pdf, upload_pdf_bytes
+
 from apps.users.models import FreelancerProfile
 
 from .models import CURRENCY_SYMBOLS
@@ -265,24 +267,91 @@ def _get_custom_smtp_from_address(user, profile):
     return f'{display} <{address}>'
 
 
+def _try_fetch(url):
+    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
+    resp.raise_for_status()
+    return resp.content
+
+
 def fetch_invoice_pdf_bytes(invoice):
     """
     Fetches the already-frozen PDF from its stored Cloudinary pdf_url —
-    never re-renders it (the freeze point is _finalise_invoice; see that
-    function's own docstring). Returns None on any failure rather than
-    raising, so callers decide what a missing PDF means for their own
-    send (a hard failure for the real send; reminders never attach a PDF
-    at all, matching v1's own reminder emails).
+    never re-renders it on the happy path (the freeze point is
+    _finalise_invoice; see that function's own docstring).
+
+    Self-heal chain on failure, in order:
+      1. Re-render ONCE (render_invoice_pdf) and try to upload those exact
+         bytes (upload_pdf_bytes, overwriting the same public_id),
+         persisting the resulting pdf_url/pdf_public_id/pdf_generated_at,
+         then retry the fetch. The invoice's content can't have changed
+         since freeze (is_editable forbids edits past draft), so a
+         same-content re-upload doesn't violate the frozen-PDF principle
+         — it's recovery, not re-rendering a changed document.
+      2. If the retried fetch ALSO fails, fall back to the SAME bytes
+         already rendered in step 1 — no second render. This step exists
+         because of a confirmed, code-independent problem: this
+         Cloudinary account has an ACL restriction on raw/PDF delivery
+         (verified directly — every real GET against a raw-resource PDF
+         URL returns 401 with `x-cld-error: deny or ACL failure`
+         regardless of access_mode, signing, or URL type; see
+         DECISIONS.md) that step 1's re-upload cannot fix, since it hits
+         the exact same account-level policy. Without this fallback,
+         /send/ would be permanently broken until that Cloudinary Console
+         setting changes. This does NOT re-freeze anything — pdf_url
+         still points at the (still-401) stored asset; only this one
+         email's attachment bytes come from the fresh render.
+
+    Reusing one render across both the re-upload attempt and the final
+    fallback is a real, measured fix, not a hypothetical one: profiling
+    this chain end to end against the real dev Cloudinary account showed
+    WeasyPrint's render alone costs ~6s, and the original version called
+    it twice on this path (once inside store_invoice_pdf, again for the
+    live-render fallback) — since this account's restriction makes this
+    the path EVERY real send currently takes, that was a real ~6s tax on
+    every single /send/ call, not a rare-case cost. See DECISIONS.md.
+
+    Returns None only if every path — including the final live render —
+    fails, so callers can still treat a total failure as fatal for a real
+    send (reminders never attach a PDF at all either way, matching v1).
     """
     if not invoice.pdf_url:
         return None
+
     try:
-        resp = requests.get(invoice.pdf_url, timeout=REQUEST_TIMEOUT_SECONDS)
-        resp.raise_for_status()
-        return resp.content
-    except requests.RequestException:
-        logger.exception('Failed to fetch stored PDF for invoice_id=%s from %s', invoice.pk, invoice.pdf_url)
+        return _try_fetch(invoice.pdf_url)
+    except requests.RequestException as exc:
+        logger.warning(
+            '[INVOICES] Stored PDF fetch failed for invoice_id=%s url=%s (%s) — attempting self-heal re-upload.',
+            invoice.pk, invoice.pdf_url, exc,
+        )
+
+    try:
+        pdf_bytes = render_invoice_pdf(invoice)
+    except Exception:
+        logger.exception('[INVOICES] Self-heal render failed for invoice_id=%s — no PDF bytes available.', invoice.pk)
         return None
+
+    try:
+        pdf_result = upload_pdf_bytes(invoice, pdf_bytes)
+        invoice.pdf_url = pdf_result['secure_url']
+        invoice.pdf_public_id = pdf_result['public_id']
+        invoice.pdf_generated_at = timezone.now()
+        invoice.save(update_fields=['pdf_url', 'pdf_public_id', 'pdf_generated_at'])
+    except Exception:
+        logger.exception('[INVOICES] Self-heal re-upload failed for invoice_id=%s.', invoice.pk)
+    else:
+        try:
+            content = _try_fetch(invoice.pdf_url)
+            logger.info('[INVOICES] Self-heal re-upload+retry succeeded for invoice_id=%s.', invoice.pk)
+            return content
+        except requests.RequestException as exc:
+            logger.warning(
+                '[INVOICES] Self-heal retry fetch still failing for invoice_id=%s (%s) — falling back to the bytes already rendered above.',
+                invoice.pk, exc,
+            )
+
+    logger.info('[INVOICES] Live-render fallback used for invoice_id=%s — stored pdf_url remains unreachable.', invoice.pk)
+    return pdf_bytes
 
 
 def send_invoice_related_email(invoice, subject, html_body, plain_body, *, pdf_bytes=None, request_id=None):

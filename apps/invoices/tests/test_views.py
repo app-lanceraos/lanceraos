@@ -348,6 +348,123 @@ class FinaliseTests(InvoicesAPITestCase):
 
 
 # ══════════════════════════════════════════════════════════════════
+# FINALISE & SEND — the combined action. reminders_enabled must NOT be
+# forced off here, unlike standalone Finalise (see FinaliseTests above).
+# ══════════════════════════════════════════════════════════════════
+
+class FinaliseAndSendTests(InvoicesAPITestCase):
+    def _post_finalise_and_send(self, invoice, **data):
+        data.setdefault('confirm', True)
+        return self._post(reverse('invoices:invoice_finalise_and_send', kwargs={'pk': invoice.pk}), data)
+
+    def test_requires_explicit_confirm(self):
+        invoice = self._invoice(status='draft', invoice_number=None)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self._post(reverse('invoices:invoice_finalise_and_send', kwargs={'pk': invoice.pk}), {})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_only_from_draft(self):
+        invoice = self._invoice(status='created')
+        resp = self._post_finalise_and_send(invoice)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_requires_at_least_one_item(self):
+        invoice = self._invoice(status='draft', invoice_number=None)
+        resp = self._post_finalise_and_send(invoice)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_combined_action_finalises_and_sends_in_one_call(self):
+        """Full flow: draft -> created -> sent, invoice_number assigned, PDF frozen, sent_via_platform set — all in one request."""
+        from unittest.mock import MagicMock, patch
+        invoice = self._invoice(status='draft', invoice_number=None)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+
+        from apps.invoices.tests.test_send import _mock_pdf_fetch_response
+        with patch('apps.invoices.views.store_invoice_pdf') as mock_store, \
+             patch('apps.invoices.email_service.requests.get') as mock_get, \
+             patch('requests.post') as mock_post:
+            mock_store.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/combined.pdf', 'public_id': 'lanceraos/invoices/combined.pdf'}
+            mock_get.return_value = _mock_pdf_fetch_response()
+            fake_resend = MagicMock(status_code=200, text='')
+            fake_resend.json.return_value = {'id': 'x'}
+            mock_post.return_value = fake_resend
+            resp = self._post_finalise_and_send(invoice)
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body['status'], 'sent')
+        self.assertTrue(body['sent_via_platform'])
+        self.assertIsNotNone(body['invoice_number'])
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'sent')
+        self.assertTrue(invoice.sent_via_platform)
+        self.assertIsNotNone(invoice.finalised_at)
+        self.assertIsNotNone(invoice.sent_at)
+        self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/combined.pdf')
+
+    def test_combined_action_respects_current_reminders_toggle_not_forced_off(self):
+        """
+        The core item-6 distinction: standalone Finalise always forces
+        reminders_enabled to False (FinaliseTests, above) — but Finalise &
+        Send must NOT, since a real send happens in the same request and
+        the user's current toggle choice is immediately actionable.
+        Proven against both starting values.
+        """
+        from unittest.mock import MagicMock, patch
+        from apps.invoices.tests.test_send import _mock_pdf_fetch_response
+        for starting_value in (True, False):
+            with self.subTest(starting_value=starting_value):
+                invoice = self._invoice(status='draft', invoice_number=None, reminders_enabled=starting_value)
+                InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+                with patch('apps.invoices.views.store_invoice_pdf') as mock_store, \
+                     patch('apps.invoices.email_service.requests.get') as mock_get, \
+                     patch('requests.post') as mock_post:
+                    mock_store.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/x.pdf', 'public_id': 'lanceraos/invoices/x.pdf'}
+                    mock_get.return_value = _mock_pdf_fetch_response()
+                    fake_resend = MagicMock(status_code=200, text='')
+                    fake_resend.json.return_value = {'id': 'x'}
+                    mock_post.return_value = fake_resend
+                    resp = self._post_finalise_and_send(invoice)
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.json()['reminders_enabled'], starting_value)
+                invoice.refresh_from_db()
+                self.assertEqual(invoice.reminders_enabled, starting_value)
+
+    def test_finalise_now_send_later_with_reminders_flipped_back_on(self):
+        """
+        The other real scenario item 6 calls out: a plain, standalone
+        Finalise forces reminders off — but the user can flip the
+        dedicated toggle back on afterward, and a LATER, separate /send/
+        call must respect that flipped-back-on value, not re-force it off
+        a second time. invoice_send never touches reminders_enabled at
+        all, so this should already hold with no special-case code.
+        """
+        from unittest.mock import MagicMock, patch
+        from apps.invoices.tests.test_send import _mock_pdf_fetch_response
+        invoice = self._invoice(status='draft', invoice_number=None, reminders_enabled=True)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+
+        with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+            mock_store.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/y.pdf', 'public_id': 'lanceraos/invoices/y.pdf'}
+            resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertFalse(resp.json()['reminders_enabled'])  # forced off by the standalone finalise
+
+        self._post(reverse('invoices:invoice_toggle_reminders', kwargs={'pk': invoice.pk}))  # flip back on
+        invoice.refresh_from_db()
+        self.assertTrue(invoice.reminders_enabled)
+
+        with patch('apps.invoices.email_service.requests.get') as mock_get, patch('requests.post') as mock_post:
+            mock_get.return_value = _mock_pdf_fetch_response()
+            fake_resend = MagicMock(status_code=200, text='')
+            fake_resend.json.return_value = {'id': 'x'}
+            mock_post.return_value = fake_resend
+            self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
+
+        invoice.refresh_from_db()
+        self.assertTrue(invoice.reminders_enabled)  # respected, not re-forced off by /send/
+
+
+# ══════════════════════════════════════════════════════════════════
 # MARK SENT — sent_via_platform must NEVER be set here
 # ══════════════════════════════════════════════════════════════════
 

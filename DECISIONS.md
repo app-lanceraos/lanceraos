@@ -2691,3 +2691,152 @@ names the real client; and the banner correctly disappears once the (intercepted
 `sent_via_platform=true` — the exact third banner case DECISIONS.md's 10 August entry noted had "no
 real data reaching it yet."
 all 4 required breakpoints on both pages.
+
+Date: 11 August 2026 (third entry)
+Decision: A real `/send/` call in this environment was returning `401 Client Error: Unauthorized`
+fetching the stored PDF from Cloudinary. The stated fix theory — pass `access_mode='public'` at
+upload time — was applied, but does NOT resolve the 401 on this real account. Root cause confirmed
+directly (not assumed) to be an account-level Cloudinary ACL restriction on raw/PDF delivery
+specifically, independent of anything this codebase can control.
+Reason: `access_mode='public'` is still the textbook-correct parameter to send (costs nothing, and
+takes effect immediately the moment the account-side setting changes) — it was kept — but a real,
+unmocked test upload against this project's actual Cloudinary account, checked via both the upload
+response and a follow-up Admin API lookup, showed `access_mode: None` regardless of what was
+requested. Every real GET against the resulting `secure_url` returned 401 with a `x-cld-error: deny
+or ACL failure` response header — Cloudinary's own diagnostic confirming an account-side policy, not
+a code bug. Ten distinct approaches were tried against the real account before concluding this:
+`access_mode` at upload time, `access_mode` via a post-upload `cloudinary.api.update()` call, every
+combination of `type='upload'/'private'/'authenticated'`, signed URLs (`cloudinary.utils.
+cloudinary_url(..., sign_url=True)`) under both SHA-1 and SHA-256, HTTP Basic Auth against the
+delivery URL, and the SDK's own dedicated `cloudinary.utils.private_download_url()` Admin-API
+helper — every one either 401'd or 404'd (a 404 was traced to one testing-only bug: a stale
+`public_id` already carrying a `.pdf` suffix from a prior upload, so passing `format='pdf'` again
+built a `...pdf.pdf` path — not the account issue). A control upload of a plain PNG image succeeded
+(200, publicly fetchable) with no special handling at all, proving the restriction is specific to
+raw/PDF content on this account, not account-wide. This is very likely the Cloudinary Console's own
+"Restricted media types" setting (Settings → Security) listing PDF/raw — a dashboard change only the
+account owner (Ali) can make; no code-level fix exists for it.
+Alternatives considered: continuing to try more upload-time parameter combinations (abandoned once
+the diagnostic header made clear this was account policy, not a request shape problem); doing nothing
+and leaving `/send/` broken until the Console setting is fixed (rejected — Severity 1, blocking);
+switching PDF storage to a different provider or resource type entirely (far larger change than this
+one account setting warrants, not attempted).
+What was actually built instead, since the account-level fix is outside code's reach: (1)
+`Invoice.pdf_public_id` (new field, mirrors `FreelancerProfile.signature_public_id`'s exact pattern)
+so a re-upload can target/overwrite the same asset rather than orphaning one; `store_invoice_pdf`
+(now split into `render_invoice_pdf` + `upload_pdf_bytes`, see the performance note below) persists
+both `secure_url` and `public_id`. (2) A one-time backfill management command
+(`apps/invoices/management/commands/backfill_invoice_pdf_public_ids.py`) run for real against the dev
+database — 15 pre-existing invoices backfilled, 0 failures — with an explicit `--dry-run` flag and an
+honest closing note that the backfilled URLs still return 401 until the Console setting changes;
+backfilling only fixes the missing column, not delivery access. (3) A self-heal chain in
+`fetch_invoice_pdf_bytes` (`apps/invoices/email_service.py`): a failed stored-PDF fetch triggers one
+re-render + re-upload attempt (overwriting the same `public_id`) and one retry fetch; if that ALSO
+fails, it falls back to the just-rendered bytes directly for that one email's attachment, bypassing
+Cloudinary delivery entirely for this call. This does not violate the frozen-PDF principle (`created`-
+and-beyond invoices are immutable, so a same-content re-upload is recovery, not a content change) and
+means `/send/` keeps working today despite the unresolved account setting — the moment Ali fixes the
+Console restriction, the self-heal path simply stops firing (the very first direct fetch succeeds
+again) with no further code change needed.
+Performance finding from profiling this chain end to end against the real dev Cloudinary account (a
+real, measured cost, not an assumption): a bare failed Cloudinary GET costs ~3.5s round-trip on this
+network, and a WeasyPrint render costs ~6s. The chain's first draft called `render_invoice_pdf`
+*twice* on the failure path (once inside the re-upload attempt, again for the final fallback) —
+since this account's restriction means every real send currently takes this exact path, that was a
+real, permanent ~6s tax on every single `/send/` call, not a rare-case cost: measured end-to-end
+latency for the full self-heal chain was ~25s before the fix. Fixed by splitting
+`store_invoice_pdf(invoice)` into `render_invoice_pdf(invoice) -> bytes` (unchanged) and the new
+`upload_pdf_bytes(invoice, pdf_bytes)` (the upload half only), so the self-heal chain renders once
+and reuses those exact bytes for both the re-upload attempt and the final fallback. Re-measured after
+the fix: ~6s end-to-end for the same failure path — still slow relative to a theoretical single-GET
+happy path (~3.5s, measured directly against this account, ignoring the fact that GET currently
+401s), but no longer paying for a second render. Flagged here rather than silently left as a known
+regression: this ~6s (rendering) + ~3.5-7s (one or two Cloudinary round-trips) latency on every real
+send is a genuine product-facing cost that will only fully resolve once the Cloudinary Console
+setting changes — worth revisiting if/when that happens, since the self-heal path would then fire
+rarely instead of on every call.
+
+Date: 11 August 2026 (fourth entry)
+Decision: Added a combined "Finalise & Send" action (`invoice_finalise_and_send`,
+`apps/invoices/views.py`) that finalises a draft and sends it in one request — and made
+`_finalise_invoice`'s reminders-force-off behavior conditional on which action triggered it, via a
+new `force_reminders_off` parameter (default `True`), rather than duplicating the function.
+Reason: the standalone Finalise button forces `reminders_enabled` to `False` unconditionally (09
+August entry) because reminders are structurally inert until a real send exists — correct for that
+path, since finalising alone never sends anything. But Finalise & Send performs a real send in the
+very same request, so forcing reminders off first would just make the send act on a stale,
+just-overridden value instead of the user's actual current toggle choice. Passing
+`force_reminders_off=False` from the combined action's own call to `_finalise_invoice` is the
+one-line fix — `invoice_send`/the new shared `_send_invoice_now` helper already never touch
+`reminders_enabled` at all (confirmed by direct inspection: the only paths to `invoice.status =
+'sent'` are guarded by a delivery-success check, and reminders_enabled is never assigned anywhere in
+that function), so whatever value the invoice holds at the moment `_finalise_invoice` returns is
+exactly what the real send sees.
+Alternatives considered: a separate, near-duplicate `_finalise_invoice_for_send` function (rejected —
+the task's own instruction explicitly asked for a shared-flag approach, not duplicated lifecycle
+logic, and duplication would mean the two functions' shared behavior — invoice_number assignment,
+exchange-rate lock, PDF freeze — silently drifting apart over time); having `/send/` itself accept
+and apply an explicit `reminders_enabled` override in its request body (rejected — unnecessary: the
+existing `invoice_toggle_reminders` endpoint already gives the user a real, dedicated way to change
+this value at any non-draft status, so a second way to set the same field from a different endpoint
+would just be two paths to one outcome).
+The other real scenario this distinction has to hold up against — "finalise now (forced off), send
+later after flipping the dedicated toggle back on" — needed no special-case code at all: `/send/`
+already never touches `reminders_enabled`, so a later, separate `invoice_toggle_reminders` call
+before a later, separate `/send/` call is respected automatically. Proven with a dedicated test
+(`test_finalise_now_send_later_with_reminders_flipped_back_on`,
+`apps/invoices/tests/test_views.py`) rather than assumed from reading the code alone.
+
+Date: 11 August 2026 (fifth entry)
+Decision: Replaced the entire 3-state, `sent_via_platform`-driven send banner (09 August entry) with
+a simpler rule: `draft` → nothing; `created` → the original, unchanged "hasn't been sent through
+LanceraOS" copy; every other status → `reminders_enabled` alone decides (off → one line pointing at
+the toggle, on → nothing).
+Reason: the 3-state version's second and third cases (`sent`+`sent_via_platform=False` showing a
+"you marked this sent yourself" acknowledgement, vs. implicitly needing a fourth "LanceraOS actually
+delivered it" case once `/send/` existed) added real branching complexity to distinguish HOW an
+invoice left `created`, when the only thing actually actionable from this banner — the one real
+control sitting right below it in `InvoiceDetailPanel.jsx` — is the reminders toggle itself. Once
+`/send/` was real (this pass), keeping the old rule would have meant either leaving it not fully
+covering the platform-sent case, or growing a fourth branch to cover it — more states than the actual
+decision space warrants. The new rule is deliberately blind to whether an invoice was marked sent
+manually or actually sent through LanceraOS past `created`; both cases care about exactly one thing at
+that point (are reminders going to fire), so both get exactly the same, single check.
+This is an explicit supersession, not a silent drop: the 3-state version (09 August entry) was real,
+shipped, and covered by real tests at the time — it was short-lived by design once `/send/` (Step 10)
+actually landed and made its second/third-case distinction no longer the most useful thing to show.
+`getSendBannerCopy` (`frontend/src/pages/invoiceHelpers.js`) and its test file
+(`invoiceHelpers.test.js`) were both rewritten in place rather than kept alongside the old version —
+no dead `sent_via_platform` branches were left behind, confirmed by grepping the function's own body
+after the edit.
+Alternatives considered: keeping a `sent_via_platform` check as a fourth explicit "delivered by
+LanceraOS, no action needed" case with its own copy (rejected — once reminders_enabled is the only
+real lever, a fourth state that also resolves to "no banner" whenever reminders are on is
+indistinguishable from the simpler rule in every case that matters, and only adds branches nothing
+downstream reads).
+
+Date: 11 August 2026 (sixth entry)
+Decision: Verified `invoice_send`'s state-commit ordering directly rather than assuming a bug existed
+just because the task raised the possibility — it was already correct. Fixed a real, separate problem
+found in the same review: its error messages on total delivery failure were generic ("Could not send
+this invoice. Please try again.") rather than naming what actually happened.
+Reason: direct inspection of `invoice_send` (now `_send_invoice_now`, extracted so
+`invoice_finalise_and_send` can share it) shows every code path that sets `invoice.status = 'sent'`
+is reached only after `send_invoice_related_email`'s own `result['sent']` has already been checked
+True — there is no path from "confirm the request" to "commit sent state" that skips the delivery-
+result check. This was true before this pass's changes too; the task's own instruction was phrased as
+a verify-then-fix-if-needed, and verification found nothing to fix on the ordering itself. What WAS
+worth fixing: the error response on failure was a single generic string regardless of whether custom
+SMTP failed, Resend failed, or both — `_send_invoice_now` now builds the message from
+`send_invoice_related_email`'s own result dict (`result['error']`, the real provider-side failure
+reason, plus `result['fallback_used']` to say whether custom SMTP was attempted first), and always
+states plainly that the invoice "has not been sent — it is still Finalised, not Sent," per the task's
+own requested framing. Proven with two dedicated tests: total failure via the self-heal/live-render
+chain being exhausted too (`test_total_pdf_failure_returns_502_with_specific_error_and_does_not_
+change_status`), and custom SMTP + Resend both failing (`test_both_custom_smtp_and_resend_failing_
+returns_specific_error_and_leaves_invoice_unsent`) — both assert the invoice stays `'created'` AND
+that the returned error is not the old generic string.
+Alternatives considered: leaving the generic error message as-is on the theory that "the invoice
+wasn't sent" is the only fact that matters (rejected — the task explicitly asked for a real, specific
+error, and a freelancer debugging a failed send needs to know whether their own SMTP server or
+LanceraOS's own Resend fallback is the actual problem, since only one of those is theirs to fix).

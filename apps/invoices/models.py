@@ -211,6 +211,13 @@ class Invoice(models.Model):
                    'making a live render on every created-status GET pointless work. See DECISIONS.md.',
     )
     pdf_generated_at = models.DateTimeField(null=True, blank=True)
+    # Mirrors FreelancerProfile.signature_public_id's exact pattern — the
+    # Cloudinary public_id, kept alongside the delivery URL so a re-upload
+    # (self-heal, or the one-time backfill for invoices frozen before this
+    # field existed) can target/overwrite the exact same asset rather than
+    # accumulating orphaned ones. See DECISIONS.md's Cloudinary access-mode
+    # entry for why a re-upload is sometimes needed at all.
+    pdf_public_id = models.CharField(max_length=200, blank=True)
 
     # ── Dates ──────────────────────────────────────────────────────
     # default=_today (not timezone.now, which v1 used verbatim on a
