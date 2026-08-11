@@ -38,6 +38,10 @@ app.conf.beat_schedule = {
         'task': 'apps.payments.tasks.fetch_exchange_rates',
         'schedule': crontab(hour=8, minute=0),
     },
+    'send-invoice-reminders-daily': {
+        'task': 'apps.invoices.tasks.send_invoice_reminders',
+        'schedule': crontab(hour=9, minute=0),
+    },
 }
 
 app.conf.timezone = 'Asia/Karachi'

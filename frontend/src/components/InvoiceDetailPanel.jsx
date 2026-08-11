@@ -14,7 +14,7 @@
 // never merged into or replacing the real status.
 import { useEffect, useState } from 'react'
 import {
-  X, Send, CheckCircle2, Wallet, Undo2, Ban, ShieldAlert, Copy, BookmarkPlus,
+  X, Send, Mail, CheckCircle2, Wallet, Undo2, Ban, ShieldAlert, Copy, BookmarkPlus,
   Check, AlertTriangle, Pause, Play, Bell, BellOff, Trash2, Clock, Eye, Receipt, FileText,
 } from 'lucide-react'
 
@@ -167,6 +167,17 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     const { data } = await api.post(`/invoices/${invoiceId}/mark-sent/`, { confirm: true, send_reminders: sendReminders })
     setInvoice(data); setForm(null); notifyChanged(data); setModal(null)
   }, 'Marked as sent.')
+
+  // The REAL send — distinct from handleMarkSent's manual self-report
+  // flip. Only reachable from status='created' (see the footer's own
+  // gate below); the backend re-checks this regardless. No flushPendingSave
+  // call needed here — a status='created' invoice is already immutable
+  // (is_editable is draft-only), so there's nothing pending to flush.
+  const handleSend = () => runAction('send', async () => {
+    const { data } = await api.post(`/invoices/${invoiceId}/send/`, { confirm: true })
+    setInvoice(data); notifyChanged(data); setModal(null)
+    await loadTimeline()
+  }, 'Invoice sent.')
 
   const handleMarkPaid = (form) => runAction('mark_paid', async () => {
     const { data } = await api.post(`/invoices/${invoiceId}/mark-paid/`, form)
@@ -385,6 +396,17 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                   <Send size={13} /> Mark as Sent
                 </button>
               )}
+              {/* The real send — a distinct, parallel action from Mark as
+                  Sent above, not a replacement for it (per DECISIONS.md:
+                  "I already sent this myself" vs. LanceraOS actually
+                  delivering it). Only reachable at status='created' —
+                  the backend's own real gate, mirrored here so the
+                  button is never even shown somewhere it'd just 400. */}
+              {invoice.status === 'created' && (
+                <button onClick={() => setModal({ kind: 'send' })} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
+                  <Mail size={13} /> Send
+                </button>
+              )}
               {!NO_PAYMENT_STATUSES.includes(invoice.status) && (
                 <>
                   <button onClick={() => setModal({ kind: 'add_payment' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Wallet size={13} /> Add Payment</button>
@@ -415,6 +437,9 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       {/* ── Modals ── */}
       {modal?.kind === 'mark_sent' && (
         <MarkSentModal busy={busyKey === 'mark_sent'} onConfirm={handleMarkSent} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === 'send' && (
+        <SendModal invoice={invoice} busy={busyKey === 'send'} onConfirm={handleSend} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'mark_paid' && (
         <MarkPaidModal invoice={invoice} busy={busyKey === 'mark_paid'} onConfirm={handleMarkPaid} onClose={() => setModal(null)} />
@@ -616,6 +641,26 @@ function ConfirmModal({ title, body, confirmLabel, danger, busy, onConfirm, onCl
         <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
         <button className={danger ? 'fos-btn fos-btn-danger' : 'fos-btn fos-btn-accent'} onClick={onConfirm} disabled={busy}>
           {busy ? <span className="fos-spinner" /> : null}{confirmLabel}
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+function SendModal({ invoice, busy, onConfirm, onClose }) {
+  return (
+    <ModalShell title="Send Invoice" onClose={onClose}>
+      <p style={{ margin: '0 0 14px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        This actually emails <strong>{invoice.client_name || 'the client'}</strong> at{' '}
+        <strong>{invoice.client_email}</strong> with the invoice PDF attached, through LanceraOS
+        (your own SMTP if configured and verified, otherwise LanceraOS's own mail). You're cc'd on
+        the email. This is different from "Mark as Sent" — that just records that you sent it
+        yourself elsewhere.
+      </p>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+        <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="fos-btn fos-btn-primary" onClick={onConfirm} disabled={busy}>
+          {busy ? <span className="fos-spinner" /> : <Mail size={14} />} Send Invoice
         </button>
       </div>
     </ModalShell>

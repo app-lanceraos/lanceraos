@@ -2,9 +2,10 @@
 """
 Invoice CRUD + lifecycle endpoints — Section 7 of
 INVOICES_CLIENTS_TECHNICAL_SPEC.md. GET .../pdf/ (Step 7b, apps/invoices/
-pdf_generator.py) is built now; the real /send/ (needs core.email's
-send_email(), Step 10) still isn't — not stubbed, simply doesn't exist
-yet, matching this project's "don't build a placeholder" convention.
+pdf_generator.py) is built now, and so is the real /send/ (Step 10,
+apps/invoices/email_service.py) — invoice_send, below, is the first real
+consumer of the custom-SMTP-vs-Resend routing chain core/email.py's own
+docstring left for "the modules that actually need it".
 
 Rate limiting mirrors apps.clients.views' _check_moderate_rate_limit /
 _too_many_requests shape exactly (same 30/hour, same cache-based check,
@@ -40,6 +41,7 @@ from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTE
 
 from .ai_design import seed_design_data_from_image
 from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
+from .email_service import build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email
 from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset,
     InvoicePresetItem,
@@ -408,6 +410,80 @@ def invoice_mark_sent(request, pk):
 
     emit('InvoiceSent', invoice_id=str(invoice.pk), user_id=str(request.user.pk), via='manual')
     logger.info('[INVOICES] Marked invoice %s as sent (manual).', invoice.invoice_number)
+    return Response(InvoiceListSerializer(invoice).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_send(request, pk):
+    """
+    The REAL send — actually delivers the invoice email to the client,
+    distinct from invoice_mark_sent's manual self-report flip (that
+    endpoint is unmodified by this addition; the two are parallel,
+    legitimate actions per the decisions doc, not a sequence).
+
+    Only from status='created' — a finalised, not-yet-sent invoice. The
+    PDF is already frozen by _finalise_invoice at that point (see its own
+    docstring on the freeze-point move); this endpoint never re-renders
+    or re-stores it, only fetches the already-stored bytes to attach.
+
+    Sets sent_via_platform=True — the one thing invoice_mark_sent never
+    does (confirmed against that field's own help_text: "Set only by the
+    real /send/ action... Gates reminders only") — this is what actually
+    makes apps/invoices/tasks.py's reminder task eligible to fire for
+    this invoice for the first time.
+
+    reminders_enabled is deliberately left untouched here — whatever
+    value _finalise_invoice's own forced-False override (or a later
+    manual flip via invoice_toggle_reminders, which works on any
+    non-draft status already) currently holds is respected as-is. This
+    resolves _finalise_invoice's own open TODO ("does /send/ restore the
+    wizard's original choice, or default True again?") — neither: the
+    existing toggle already gives the user a real way to turn it back on
+    before or after sending, so /send/ doesn't need its own special-case
+    logic for a value there's already a dedicated control for.
+
+    Requires an explicit confirm:true, mirroring invoice_mark_sent's own
+    safety pattern — this is the one action in the whole lifecycle that
+    actually emails a third party, so a stray double-click must not be
+    able to trigger it silently.
+    """
+    if not request.data.get('confirm'):
+        return Response({'error': 'confirm: true is required to send this invoice.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if _check_moderate_rate_limit('send', request.user):
+        return _too_many_requests('Too many send actions. Please try again later.')
+
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    if invoice.status != 'created':
+        return Response({'error': 'Only finalised, not-yet-sent invoices can be sent.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not invoice.pdf_url:
+        logger.error('[INVOICES] Invoice %s is status=created with no pdf_url — cannot send.', invoice.invoice_number)
+        return Response({'error': 'This invoice has no generated PDF yet. Please try finalising it again.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    pdf_bytes = fetch_invoice_pdf_bytes(invoice)
+    if pdf_bytes is None:
+        return Response({'error': 'Could not retrieve this invoice\'s PDF. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+    subject, html_body, plain_body = build_invoice_send_email(invoice)
+    result = send_invoice_related_email(
+        invoice, subject, html_body, plain_body,
+        pdf_bytes=pdf_bytes, request_id=getattr(request, 'request_id', None),
+    )
+    if not result['sent']:
+        return Response({'error': 'Could not send this invoice. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+    invoice.status = 'sent'
+    invoice.sent_via_platform = True
+    invoice.sent_at = timezone.now()
+    invoice.save()
+
+    emit('InvoiceSent', invoice_id=str(invoice.pk), user_id=str(request.user.pk), via='platform')
+    logger.info(
+        '[INVOICES] Sent invoice %s to %s via %s%s.',
+        invoice.invoice_number, invoice.client_email, result['sent_via'],
+        ' (fallback from custom SMTP)' if result['fallback_used'] else '',
+    )
     return Response(InvoiceListSerializer(invoice).data)
 
 

@@ -199,12 +199,16 @@ class Invoice(models.Model):
         ExchangeRateSnapshot, null=True, blank=True, on_delete=models.SET_NULL, related_name='invoices',
     )
 
-    # ── Stored PDF (frozen-at-send artifact) ────────────────────────
+    # ── Stored PDF (frozen-at-finalise artifact) ────────────────────
     pdf_url = models.URLField(
         blank=True,
-        help_text='Cloudinary URL of the frozen, rendered PDF. Populated once by the real /send/ '
-                   'action (or the manual mark-sent flip); never re-rendered afterward even if '
-                   'design is later edited.',
+        help_text='Cloudinary URL of the frozen, rendered PDF. Populated once by _finalise_invoice '
+                   '(the moment an invoice leaves draft — via either the explicit Finalise action or '
+                   'a Mark-as-Sent/real Send called directly on a draft) — never re-rendered '
+                   'afterward even if design is later edited. NOT the real /send/ action (Step 10) — '
+                   'that action was the original design intent here, but the freeze point moved '
+                   'earlier once is_editable was confirmed to already forbid any edit past draft, '
+                   'making a live render on every created-status GET pointless work. See DECISIONS.md.',
     )
     pdf_generated_at = models.DateTimeField(null=True, blank=True)
 

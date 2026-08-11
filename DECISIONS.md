@@ -2522,4 +2522,172 @@ sort round-trip" test failed, fixed before it could ship. A new `Clients.test.js
 its own mobile dropdown and the already-removed "All" pill. Real browser verification (Playwright,
 ad-hoc, not committed, using the new dedicated test account) confirmed zero network calls for every
 Invoices.jsx filter/toggle interaction, correct mobile-dropdown behavior and mutual exclusivity, and
+
+---
+
+Date: 11 August 2026 (second entry)
+Decision: Step 10 — the real `/send/` action, the custom-SMTP-vs-Resend routing chain
+(`apps/invoices/email_service.py`), the reminder Celery task, and the reply-to scope boundary vs.
+Step 13. Also: a stated premise about `InvoiceSerializer` using `Meta.exclude` was checked directly
+and found not to match the real code — recorded here rather than silently "fixed."
+
+**`InvoiceSerializer` was NOT converted from `Meta.exclude` to `Meta.fields` — because it already
+uses `Meta.fields`, and always has, as far as this repo's history shows.** The task's premise
+("currently uses Meta.exclude = ['user'] with a manually-maintained read_only_fields list") was
+checked directly before touching anything, per this pass's own instruction to read the file first:
+`apps/invoices/serializers.py`'s `InvoiceSerializer.Meta` is `fields = [...]` (an explicit 21-field
+allowlist) with `read_only_fields = ['id']` — exactly the pattern the file's own module docstring
+says it follows ("Explicit `fields=` allowlists only, never `Meta.exclude`"). A repo-wide grep for
+`exclude` across `apps/invoices/` and `apps/clients/` turned up zero `Meta.exclude` usages anywhere —
+every hit was a queryset `.exclude()` call or unrelated prose. There is nothing to mechanically
+convert. What's still real and done: the safety-pinning test the task asked for
+(`InvoiceSerializerFieldSafetyTests`, `test_send.py`) — it locks in the current, correct field/
+read-only set (including a behavioral proof that POSTing `status` directly has no effect on the
+created row) against a future accidental regression, which is the part of the ask that's genuinely
+valuable independent of whether a conversion actually happened this pass.
+
+**The custom-SMTP-vs-Resend routing chain exists exactly once**
+(`apps/invoices/email_service.py`'s `send_invoice_related_email()`), called by both `invoice_send`
+(views.py) and the reminder task (`tasks.py`) — per the task's explicit instruction not to duplicate
+it. Followed CLAUDE.md's Custom Email Rules 1-7 directly, not reinvented:
+- Rule 1: checks the sending user's `FreelancerProfile.custom_smtp_enabled` AND
+  `custom_smtp_verified` (both — confirmed the real, already-audited invariant that only
+  `save_custom_smtp`/`disable_custom_smtp` ever set either field still holds; nothing built this
+  pass writes to them).
+- Rule 4: on custom SMTP failure, immediately falls through to the exact same Resend call a default
+  send would make — the client-facing email is byte-for-byte identical either way (proven directly:
+  `test_custom_smtp_failure_the_client_facing_email_is_identical_either_way` inspects the real
+  Resend payload on the fallback path and asserts it carries the same recipient/attachment, and that
+  neither "fallback" nor "smtp" leaks into the subject/body). The exact specified in-app notification
+  copy ("Your email to [client] was sent from noreply@lanceraos.com because your custom email
+  failed. Check your SMTP settings.") lives in `core/notifications.py`'s `_describe()`, with
+  `[client]` filled from the real client name captured in the `CustomSmtpFailed` event's payload.
+  Logged fields (user_id, smtp_host, error_message, fallback_used=True, timestamp) are all on the
+  `AuditLog` row `apps/invoices/notifications.py`'s new `_record_custom_smtp_failed` handler writes —
+  timestamp is `AuditLog.created_at` itself, not a separate field.
+- Rules 5/6: `custom_smtp_password` is decrypted (`core.encryption.decrypt_field`) ONLY inside
+  `_get_custom_smtp_connection()`, never in `invoice_send` (views.py) or anywhere upstream — mirrors
+  `apps/users/views/smtp.py`'s `save_custom_smtp` connection-building call exactly (same backend
+  string, same kwarg shape), since that's real, already-audited precedent for constructing this
+  exact SMTP connection, not invented fresh here.
+
+**Real, not stubbed, event handlers — the first ones apps/invoices has ever had.** Grepping for
+`@on(` anywhere in the codebase before this pass returned nothing: `InvoiceSent` has been emitted
+since Step 1 with zero registered handlers, and `CustomSmtpFailed` was a name reserved in the event
+catalog with nothing emitting it yet either. `apps/invoices/notifications.py` (new) is the "plain
+handler living next to the code it affects" the spec's Business Event System section describes,
+registered via a new `InvoicesConfig.ready()` hook (`apps/invoices/apps.py`) — without that hook,
+the module is never imported by anything, its `@on(...)` decorators never run, and every `emit()`
+call in this whole app would keep calling zero handlers exactly as it does today. Confirmed the
+registration actually works, not just that the code compiles: a `manage.py shell` check right after
+writing it showed both handlers present in `core.events._HANDLERS`. `custom_smtp_failed` was added
+to `core/notifications.py`'s `NOTIFICATION_EVENTS`/`EVENT_TITLES`/`EVENT_ACTION_URLS` (the bell's own
+allowlist) — `invoice_sent` deliberately was NOT added there: a self-triggered "you just sent this"
+ping tells the freelancer nothing they don't already know, unlike a custom SMTP failure they'd have
+no other way to find out about.
+
+**PDF handling: fetched once from the already-frozen `pdf_url`, never re-rendered.** Confirmed
+directly against `_finalise_invoice`'s own docstring that the freeze point is finalise, not send —
+`invoice_send` calls `fetch_invoice_pdf_bytes()` (a plain `requests.get` against the stored
+Cloudinary URL) and attaches those bytes; `render_invoice_pdf`/`store_invoice_pdf` are asserted
+directly as NEVER called during a send (`test_never_re_renders_or_re_stores_the_pdf`). A PDF-fetch
+failure is treated as a hard error (502, invoice status unchanged) rather than silently sending a
+"here's your invoice" email with no invoice attached — also fixed `Invoice.pdf_url`'s own help_text
+in `models.py`, which still said "Populated once by the real /send/ action" from before the freeze
+point moved to finalise; a stale doc comment this step's own work made newly relevant to get right,
+not a pre-existing bug worth a separate pass.
+
+**Resend attachment/cc/reply_to support added to `core/email.py` as purely optional kwargs** —
+verified Resend's real HTTP API accepts `attachments: [{filename, content}]` (base64), `cc`, and
+`reply_to` fields directly alongside `from`/`to`/`subject`, rather than assuming a generic-email
+call would handle these automatically. `send_email()`'s existing bool-only contract is completely
+unchanged (`test_send_email_bool_contract_unchanged_for_existing_callers` proves every one of
+`apps/users/emails.py`'s existing 2-3-arg call sites still gets exactly a bool) — a new
+`send_email_detailed()` wraps the same underlying call and additionally returns the real Resend
+`provider_message_id`, needed for this step's observability logging. Message-id extraction is
+wrapped in its own try/except, separate from the request/response handling itself — a malformed or
+unexpected success-response body must never turn a delivered email into a reported failure
+(`test_send_email_detailed_survives_a_response_with_no_json_body` forces exactly this with a
+`resp.json()` that raises, confirming `sent=True` still holds).
+
+**Reply-to tracking: the outbound address is now correct on every sent/reminder email; the inbound
+receiving side is explicitly out of this step's scope, not half-built.** Checked directly, per the
+task's own instruction, rather than guessing: no inbound webhook endpoint exists anywhere in
+`config/urls.py` or `apps/invoices/urls.py`, and `InvoiceComment`'s `source='email_reply'` choice
+(the model already has a slot for this) has never been written to by anything — Comments themselves
+are Step 13, not yet built, matching CLAUDE.md's own build order. The real, established pattern for
+the address itself was found by reading `v1-reference/apps/invoices/email_service.py`'s
+`_get_reply_to_address` directly rather than invented: `reply+<view_token>@lanceraos.com`, ported
+verbatim as `get_reply_to_address()` in the new `email_service.py` and set as the `Reply-To` header
+on every real send and reminder. `view_token` is already unique/unguessable, so it doubles as the
+correlation key a future inbound handler would need — that handler itself is Step 13's job.
+
+**v1 features deliberately NOT ported into the real send email, and why**: v1's own
+`send_invoice_email` includes a "View Invoice Online" button (linking to `/invoice/<view_token>`, a
+public page), an onboarding-message block, and a portal-link footer. None of the three made it into
+v2's version here — the first two depend on the client portal (Step 11, confirmed not built via
+CLAUDE.md's own Module 2 status: "client portal... don't exist yet"), so linking to either would be
+a dead link in a real client's inbox. `FreelancerProfile.client_onboarding_message` and
+`Client.portal_token` both already exist as fields (checked directly, not assumed missing) but have
+no live destination to point to yet. The PDF is attached directly instead (and its own QR code
+already encodes `Invoice.payment_page_url`, Step 7b) — no dead link needed to view or pay it. What
+WAS ported directly, because it's real, working, and has no such dependency: cc'ing the freelancer's
+own email on every send (`v1-reference/apps/invoices/email_service.py`'s `_send_with_fallback`,
+confirmed via `msg.cc=[user.email]` in that file directly) — not mentioned in this step's own
+numbered requirements, but omitting it would have been a real regression from working reference
+behavior for something this cheap and unambiguous to keep.
+
+**Reminders — Step 10 resolves the open TODO the previous pass's `_finalise_invoice` override left
+behind.** That override (10 August entry) forces `reminders_enabled=False` at finalise regardless of
+the wizard's own default, with an explicit `TODO(Step 10 /send/)` asking whether `/send/` should
+restore the user's original wizard choice or just default `True` again. Resolved here: neither.
+`invoice_send` doesn't touch `reminders_enabled` at all — the existing `invoice_toggle_reminders`
+endpoint (already callable on any non-draft status, already wired to a real "Automatic reminders"
+On/Off control in `InvoiceDetailPanel.jsx`) already gives the user a real way to turn it back on
+before or after sending, so `/send/` doesn't need its own special-case logic for a value there's
+already a dedicated control for. The reminder task itself is the piece that makes this whole toggle
+chain matter for the first time: `sent_via_platform=True` (only ever set by the real `/send/`, never
+by `invoice_mark_sent`) is now a real, checked precondition
+(`test_reminder_never_fires_when_sent_via_platform_is_false` proves a manually-marked-sent invoice,
+however overdue, is never reminded — reminders were never really "on" for it to begin with, matching
+`sent_via_platform`'s own field help_text: "Gates reminders only").
+
+**Reminder task ported from v1-reference/apps/invoices/tasks.py's `send_invoice_reminders`, adapted
+for one real v2 difference: no stored `'overdue'` status.** v1 queries `status__in=['overdue',
+'partially_paid']` — v2 has no `'overdue'` status at all by design (a real v1 bug this project
+already fixed; see `NON_OVERDUE_STATUSES`' own module comment). The v2 task instead excludes
+`NON_OVERDUE_STATUSES` and requires `due_date__lt=today`, the identical derivation
+`Invoice.days_overdue` itself uses. Everything else ported directly and unchanged: the day 3/7/14/30
+escalation schedule, one reminder level per invoice per run (ascending order, stops at the first
+unsent eligible level — confirmed this ordering directly with a dedicated test proving a
+brand-new invoice at 31 days overdue fires level 1 first, NOT level 4, since nothing's been sent yet;
+a naive test asserting the opposite was written first, failed, and was corrected before being kept),
+and setting `escalation_required=True` after the 4th reminder. Registered in `config/celery.py`'s
+`beat_schedule` at 9AM daily, matching v1's own schedule.
+
+Verified: full backend suite, 560 tests passing (up from 520) — a new `apps/invoices/tests/
+test_send.py` (40 tests) covering the full custom-SMTP-vs-Resend matrix (enabled+verified success,
+enabled+verified with a forced SMTP failure falling back correctly with the exact notification copy
+and log fields, enabled-but-not-yet-verified still using Resend, disabled, never-configured), the
+real Resend payload's attachments/cc/reply_to, PDF-fetch-failure handling, the freeze-point
+never-re-renders proof, rate limiting, the `InvoiceSent`/`CustomSmtpFailed` AuditLog writes (including
+via the real notification-bell endpoint, not just the raw row), the banner's third case now backed
+by real data, the full reminder-task matrix (fires/doesn't fire per precondition, no duplicates,
+escalation, shared-routing-function proof), `core/email.py`'s new attachment/cc/reply_to/
+message-id-extraction behavior, and the serializer safety-pin. One real bug in this pass's own first
+draft of these tests was caught and fixed before landing: a custom-SMTP `from_address` assertion test
+tried to recursively call through its own mock (`KeyError` on a value that was never captured), and
+an escalation test's setup assumed a fresh invoice would jump straight to reminder level 4 at 31 days
+overdue, when the real (correct) ascending-order behavior fires level 1 first — both fixed by
+correcting the test, not the code, once the actual behavior was traced through directly. Frontend:
+existing 73 tests still passing (`InvoiceDetailPanel.jsx`'s new Send button/modal has no dedicated
+component test file, matching that this component has none yet for any of its other actions either;
+verified instead via a live Playwright pass against the real running app with the actual `/send/`
+network call intercepted and faked — deliberately, since a real `RESEND_API_KEY` is configured in
+this environment and letting a real send reach Resend during verification was avoided on purpose,
+not overlooked). That live pass confirmed: the Send button appears alongside Mark as Sent, not
+replacing it; the created-and-never-sent warning banner shows correctly before sending; the modal
+names the real client; and the banner correctly disappears once the (intercepted) response reports
+`sent_via_platform=true` — the exact third banner case DECISIONS.md's 10 August entry noted had "no
+real data reaching it yet."
 all 4 required breakpoints on both pages.

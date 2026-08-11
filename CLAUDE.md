@@ -669,23 +669,33 @@ found this pass — the "hasn't been sent" banner showing on every post-created 
 `sent`; a new `InvoicePreset` never appearing in "From Preset" without a full reload; the 3 dashboard
 KPI cards wrapping to one-per-row on phone widths — and renamed `created`'s DISPLAY label to
 "Finalised" everywhere (the stored status value is untouched). See DECISIONS.md's 10 August 2026
-entry for the full reasoning on each. One endpoint is deliberately excluded, not
-stubbed: the real `/send/` (needs `core.email.send_email()`, Step 10). The client portal, payment
-claims *workflow* (confirm/reject), comments *delivery*, recurring/reminder *background tasks*, and
-per-invoice design override at creation time also don't exist yet — their tables/fields/backend
-contracts do (or, for the per-invoice override, don't even have a UI field to plug into yet —
-confirmed directly against `InvoiceFormFields.jsx`, flagged in DECISIONS.md rather than added) —
-but nothing calls them on a schedule, serves them publicly, or wires them into invoice creation yet.
-The signature tool's own frontend (an upload UI in Settings/Profile) also isn't built yet — Step 9
-built the backend endpoint only, per this project's established backend-first build order; flagged
-in DECISIONS.md rather than silently added. 11 August 2026: the reload-feel complaint (10 August's
+entry for the full reasoning on each. The real `/send/` is now built (Step 10, 11 August 2026 —
+`apps/invoices/email_service.py`'s custom-SMTP-vs-Resend routing chain, `core/email.py`'s
+attachment/cc/reply_to/message-id extensions, `apps/invoices/tasks.py`'s day-3/7/14/30 reminder
+Celery task, `apps/invoices/notifications.py`'s first-ever `@on(...)` handlers) — the reminder
+*background task* now exists and runs daily at 9AM (`config/celery.py`'s beat_schedule), gated on
+`sent_via_platform=True` (only the real send sets this; the manual mark-sent flip never does). The
+client portal, payment claims *workflow* (confirm/reject), comments *delivery* (including the
+inbound reply-to receiving endpoint — the OUTBOUND `reply+<view_token>@lanceraos.com` address is now
+set correctly on every sent/reminder email, but nothing receives a reply to it yet, deliberately —
+that's Step 13), recurring-invoice *generation*, and per-invoice design override at creation time
+still don't exist yet — their tables/fields/backend contracts do (or, for the per-invoice override,
+don't even have a UI field to plug into yet — confirmed directly against `InvoiceFormFields.jsx`,
+flagged in DECISIONS.md rather than added) — but nothing calls them on a schedule, serves them
+publicly, or wires them into invoice creation yet. The signature tool's own frontend (an upload UI
+in Settings/Profile) also isn't built yet — Step 9 built the backend endpoint only, per this
+project's established backend-first build order; flagged in DECISIONS.md rather than silently
+added. 11 August 2026: the reload-feel complaint (10 August's
 fix was real but incomplete) traced to status/Overdue filtering still being a real server round-trip
 on every pill click — ported v1-reference's actual architecture for this one interaction
 (`Invoices.jsx`'s `visibleInvoices`, a pure client-side filter over the already-loaded list, zero
 network calls; `Clients.jsx`'s filter pills deliberately stay server-side, since v1's own Clients
 page never had this client-side pattern to port). Both `Invoices.jsx` and `Clients.jsx` also gained a
 mobile filter dropdown (`.filter-row-mobile`, ≤768px) collapsing the pill row into a single `<select>`
-next to the existing sort dropdown. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design
+next to the existing sort dropdown. `InvoiceDetailPanel.jsx` gained a real "Send" action (Step 10,
+second 11 August 2026 entry) at `status='created'`, alongside — not replacing — the existing manual
+"Mark as Sent" flip; the 3-state send banner's third case (`sent_via_platform=True` → no warning) is
+now exercised by real data for the first time. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design
 this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
@@ -1173,7 +1183,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload built (Client CRM frontend, per-invoice design picker, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px | Backend: 520 passing (`python manage.py test`). Frontend: 73 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; real `/send/` + custom-SMTP-vs-Resend routing + reminder Celery task, Step 10) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) built (Client CRM frontend, per-invoice design picker, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px | Backend: 560 passing (`python manage.py test`, incl. `test_send.py`'s 40-test custom-SMTP-vs-Resend/reminder/serializer-safety matrix). Frontend: 73 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

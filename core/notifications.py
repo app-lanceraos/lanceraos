@@ -15,6 +15,13 @@ NOTIFICATION_EVENTS = {
     'password_changed', 'password_reset_done', 'new_device_login',
     'email_change_done', '2fa_enabled', '2fa_disabled',
     'deletion_confirmed', 'session_revoked',
+    # apps/invoices, Step 10 — only the one event that tells the user
+    # something they couldn't otherwise know (their custom SMTP silently
+    # failed and Resend delivered instead). 'invoice_sent' is
+    # deliberately NOT added here — see apps/invoices/notifications.py's
+    # own handler docstring for why a self-triggered send doesn't need
+    # a bell ping.
+    'custom_smtp_failed',
 }
 
 EVENT_TITLES = {
@@ -26,6 +33,7 @@ EVENT_TITLES = {
     '2fa_disabled': 'Two-factor authentication disabled',
     'deletion_confirmed': 'Account scheduled for deletion',
     'session_revoked': 'Session signed out',
+    'custom_smtp_failed': 'Custom email delivery failed',
 }
 
 # Where clicking each notification type navigates. Compulsory — every
@@ -42,6 +50,12 @@ EVENT_ACTION_URLS = {
     '2fa_disabled': '/settings?tab=security',
     'deletion_confirmed': '/settings?tab=security',
     'session_revoked': '/settings?tab=sessions',
+    # Per INVOICES_CLIENTS_TECHNICAL_SPEC.md Section 6's own table entry
+    # for custom_smtp_failed — /settings?tab=smtp, not /invoices/{id}:
+    # the fix this notification points to is in SMTP settings, not on
+    # the invoice itself (the client-facing email already went out fine,
+    # via the Resend fallback).
+    'custom_smtp_failed': '/settings?tab=smtp',
 }
 
 
@@ -50,6 +64,15 @@ def _describe(log):
         return 'A session on your account was signed out.'
     if log.event == 'new_device_login':
         return f'Signed in from {log.ip_address or "an unknown location"}.'
+    if log.event == 'custom_smtp_failed':
+        # Exact copy per CLAUDE.md's Custom Email Rule 4 — "[client]"
+        # filled in with the real client name from this event's metadata
+        # (apps/invoices/notifications.py's _record_custom_smtp_failed).
+        client = log.metadata.get('client_name') or 'your client'
+        return (
+            f'Your email to {client} was sent from noreply@lanceraos.com '
+            f'because your custom email failed. Check your SMTP settings.'
+        )
     return ''
 
 
