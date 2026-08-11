@@ -658,9 +658,13 @@ an already-existing draft (`editInvoiceId` prop) — every status=draft invoice 
 real `GET /clients/?search=` endpoint (no more Existing/One-Time toggle) with an opt-in "save as new
 client" flow backed by real server-side duplicate-email validation
 (`ClientSerializer.validate_email`); currency/tax/discount moved into stage 2 alongside line items;
-Mark-as-Sent was removed from the wizard entirely (stays in `InvoiceDetailPanel` only); and
-`reminders_enabled` now defaults to `False` for new invoices (was `True`, ported from v1) at both the
-model field default and the wizard's own blank-form state. Step 9c also fixed 3 real, confirmed bugs
+Mark-as-Sent was removed from the wizard entirely (stays in `InvoiceDetailPanel` only). Reminders
+default is a two-part lifecycle rule as of 10 August 2026's second entry (superseding this same day's
+earlier "default False everywhere" note): the wizard's own creation-time default is back to `True`
+(what a user sees while creating), but `_finalise_invoice` now unconditionally forces the stored
+value to `False` the moment an invoice actually leaves draft, regardless of what was submitted —
+`Invoice.reminders_enabled`'s bare model-field default stays `False`, unrelated to the wizard and moot
+post-finalise either way. Step 9c also fixed 3 real, confirmed bugs
 found this pass — the "hasn't been sent" banner showing on every post-created status instead of just
 `sent`; a new `InvoicePreset` never appearing in "From Preset" without a full reload; the 3 dashboard
 KPI cards wrapping to one-per-row on phone widths — and renamed `created`'s DISPLAY label to
@@ -674,7 +678,14 @@ confirmed directly against `InvoiceFormFields.jsx`, flagged in DECISIONS.md rath
 but nothing calls them on a schedule, serves them publicly, or wires them into invoice creation yet.
 The signature tool's own frontend (an upload UI in Settings/Profile) also isn't built yet — Step 9
 built the backend endpoint only, per this project's established backend-first build order; flagged
-in DECISIONS.md rather than silently added. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design
+in DECISIONS.md rather than silently added. 11 August 2026: the reload-feel complaint (10 August's
+fix was real but incomplete) traced to status/Overdue filtering still being a real server round-trip
+on every pill click — ported v1-reference's actual architecture for this one interaction
+(`Invoices.jsx`'s `visibleInvoices`, a pure client-side filter over the already-loaded list, zero
+network calls; `Clients.jsx`'s filter pills deliberately stay server-side, since v1's own Clients
+page never had this client-side pattern to port). Both `Invoices.jsx` and `Clients.jsx` also gained a
+mobile filter dropdown (`.filter-row-mobile`, ≤768px) collapsing the pill row into a single `<select>`
+next to the existing sort dropdown. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design
 this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
@@ -1162,7 +1173,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload built (Client CRM frontend, per-invoice design picker, signature upload UI not yet) | Backend: 518 passing (`python manage.py test`). Frontend: 51 passing (`npm test`, `frontend/`, incl. `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; only /send/ excluded, pending Step 10) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload built (Client CRM frontend, per-invoice design picker, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px | Backend: 520 passing (`python manage.py test`). Frontend: 73 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

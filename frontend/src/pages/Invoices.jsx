@@ -26,7 +26,33 @@
 // pill. A sent-and-overdue invoice is still reachable (via the Overdue
 // toggle alone, or the "Sent" pill alone) — it's just not reachable by
 // both filters applied together anymore.
-import { useCallback, useEffect, useRef, useState } from 'react'
+//
+// Status/Overdue filtering is CLIENT-SIDE, not a server round-trip — a
+// real architectural fix, not a CSS patch. Traced directly against
+// v1-reference/frontend/src/pages/Invoices.jsx: v1's status pills filter
+// its already-loaded `invoices` array in memory (`const filtered = filter
+// ? invoices.filter(inv=>inv.status===filter) : invoices`) and never call
+// its own `load()` on a filter click at all — `load()` only re-runs on
+// search/sort change there. That's the literal, structural reason v1
+// never had a reload-feel on filter clicks: there was never a network
+// request or a loading-state change for that interaction to begin with.
+// v2's earlier version filtered server-side (a real GET on every pill
+// click), which is what the loading-skeleton-unmount fix (see
+// DECISIONS.md) was papering over rather than eliminating outright — a
+// dimmed-but-still-changing UI on every click is a smaller version of the
+// same problem, not its removal. This version matches v1's proven
+// architecture for exactly this interaction: `visibleInvoices` (below) is
+// a pure client-side filter over whatever's currently loaded, so a status
+// pill or Overdue click never touches the network and never changes
+// `loading` at all. Search and sort remain real server round-trips
+// (v1 does the same — its own `load()` DOES re-run on searchQ/sort
+// change), so their own stale-closure/stale-response protections above
+// still matter and are unchanged. The one honest tradeoff: if not every
+// invoice is loaded yet (`invoices.length < total`, i.e. "Load More"
+// hasn't been fully exhausted), a status/overdue filter only searches
+// what's already loaded — flagged to the user via a visible note rather
+// than silently under-reporting, see the render below.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Search, X, Plus, FileText, ChevronDown, ChevronUp, Layers, BookmarkPlus, LayoutTemplate,
@@ -107,16 +133,25 @@ export default function Invoices() {
     }
   }, [])
 
+  // Deliberately no `status`/`overdue` params — those are applied
+  // entirely client-side now (see `visibleInvoices` and the header
+  // comment above). Only search/sort/pagination ever reach the server.
   function buildParams(offset = 0) {
     const params = { offset }
     if (search) params.search = search
-    if (statusFilter) params.status = statusFilter
-    if (overdueOnly) params.overdue = 'true'
     if (sort) params.sort = sort
     return params
   }
 
-  useEffect(() => { load(buildParams(0)) }, [statusFilter, overdueOnly, sort]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(buildParams(0)) }, [sort]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Client-side view over whatever's currently loaded — never a network
+  // call, never touches `loading`. See the header comment for the full
+  // v1-vs-v2 architectural reasoning.
+  const visibleInvoices = useMemo(() => invoices.filter((inv) => (
+    (!statusFilter || inv.status === statusFilter)
+    && (!overdueOnly || inv.days_overdue > 0)
+  )), [invoices, statusFilter, overdueOnly])
 
   useEffect(() => {
     api.get('/invoices/summary/').then(({ data }) => setSummary(data)).catch(() => setSummary(null))
@@ -251,7 +286,11 @@ export default function Invoices() {
           <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)' }}>Invoices</h1>
           {!loading && (
             <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-              {total} invoice{total !== 1 ? 's' : ''} in this view
+              {statusFilter || overdueOnly ? (
+                <>{visibleInvoices.length} matching invoice{visibleInvoices.length !== 1 ? 's' : ''} (of {total} total)</>
+              ) : (
+                <>{total} invoice{total !== 1 ? 's' : ''} in this view</>
+              )}
             </p>
           )}
         </div>
@@ -312,7 +351,8 @@ export default function Invoices() {
           change only; mutually EXCLUSIVE with each other as of this pass,
           see the header comment above) + Sort, trailing at the right as
           the row's one secondary control ── */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+      {/* Desktop/tablet: the pill row, hidden ≤768px below. */}
+      <div className="filter-row-desktop" style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         <div style={{ display: 'flex', gap: 8, overflowX: 'auto', overscrollBehaviorX: 'contain', paddingBottom: 4, flex: 1, minWidth: 0 }}>
           {STATUS_FILTER_OPTIONS.map((opt) => {
             const isActive = statusFilter === opt.key
@@ -352,6 +392,33 @@ export default function Invoices() {
         </select>
       </div>
 
+      {/* Mobile (≤768px): the same pills, as two dropdowns instead of a
+          horizontally-scrollable row — a scrollable pill row is an awkward
+          fit for a phone-width screen (partially-hidden pills, sideways
+          scrolling to find one), so this collapses "All/Draft/Finalised/…
+          /Overdue Only" into a single Filter <select> (Overdue folded in
+          as one more option, keeping the same mutual-exclusivity the pill
+          row already has) sitting next to the existing Sort dropdown.
+          Hidden on desktop/tablet via the media query below; hidden here
+          by default so it never flashes before CSS loads. */}
+      <div className="filter-row-mobile" style={{ display: 'none', gap: 8, marginBottom: 20 }}>
+        <select
+          value={overdueOnly ? '__overdue__' : statusFilter}
+          onChange={(e) => {
+            if (e.target.value === '__overdue__') { setOverdueOnly(true); setStatusFilter('') }
+            else { setStatusFilter(e.target.value); setOverdueOnly(false) }
+          }}
+          className="fos-input fos-select"
+          style={{ flex: 1, minWidth: 0 }}
+        >
+          {STATUS_FILTER_OPTIONS.map((opt) => <option key={opt.key || 'all'} value={opt.key}>{opt.label}</option>)}
+          <option value="__overdue__">Overdue Only</option>
+        </select>
+        <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }}>
+          {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+
       {/* ── Content ──
           Only a genuine first load (nothing rendered yet at all) shows the
           full skeleton — every subsequent refetch (filter/search/sort
@@ -370,10 +437,6 @@ export default function Invoices() {
         </div>
       )}
 
-      {!loading && !error && invoices.length === 0 && (
-        <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={handleNewInvoice} />
-      )}
-
       {invoices.length > 0 && (
         <>
           {error && (
@@ -381,16 +444,32 @@ export default function Invoices() {
               {error} <button className="fos-btn fos-btn-ghost" style={{ marginLeft: 8 }} onClick={() => load(buildParams(0))}>Retry</button>
             </FosAlert>
           )}
-          <div
-            style={{
-              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12,
-              opacity: loading ? 0.55 : 1, transition: 'opacity 0.15s ease',
-            }}
-          >
-            {invoices.map((inv) => (
-              <InvoiceCard key={inv.id} invoice={inv} onOpen={() => openDetail(inv)} />
-            ))}
-          </div>
+
+          {/* Honest, not silent: a client-side status/overdue filter only
+              searches what's already loaded — if there's more on the
+              server than what's been fetched so far, say so rather than
+              quietly under-reporting matches. */}
+          {(statusFilter || overdueOnly) && invoices.length < total && (
+            <FosAlert type="info" style={{ marginBottom: 12 }}>
+              Searching the {invoices.length} most recently loaded invoices (of {total} total) — Load More below to search further back.
+            </FosAlert>
+          )}
+
+          {visibleInvoices.length === 0 ? (
+            <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={handleNewInvoice} />
+          ) : (
+            <div
+              style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12,
+                opacity: loading ? 0.55 : 1, transition: 'opacity 0.15s ease',
+              }}
+            >
+              {visibleInvoices.map((inv) => (
+                <InvoiceCard key={inv.id} invoice={inv} onOpen={() => openDetail(inv)} />
+              ))}
+            </div>
+          )}
+
           {invoices.length < total && (
             <div style={{ textAlign: 'center', marginTop: 20 }}>
               <button className="fos-btn fos-btn-ghost" onClick={loadMore} disabled={loadingMore || loading}>
@@ -400,6 +479,10 @@ export default function Invoices() {
             </div>
           )}
         </>
+      )}
+
+      {!loading && !error && invoices.length === 0 && (
+        <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={handleNewInvoice} />
       )}
 
       {/* ── Mobile FAB ── */}
@@ -450,6 +533,8 @@ export default function Invoices() {
           .header-add-btn { display: none !important; }
           .header-preset-btn { display: none !important; }
           .header-designs-btn { display: none !important; }
+          .filter-row-desktop { display: none !important; }
+          .filter-row-mobile { display: flex !important; }
         }
       `}</style>
     </>

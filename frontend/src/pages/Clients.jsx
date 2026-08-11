@@ -201,8 +201,10 @@ export default function Clients() {
       </div>
 
       {/* ── Filter pills + Sort, trailing at the right as the row's one
-          secondary control (matches Invoices.jsx's identical layout) ── */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+          secondary control (matches Invoices.jsx's identical layout) ──
+          Desktop/tablet only — hidden ≤768px in favor of the dropdown
+          version below (see that block's comment for why). */}
+      <div className="filter-row-desktop" style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         <div style={{ display: 'flex', gap: 8, overflowX: 'auto', overscrollBehaviorX: 'contain', paddingBottom: 4, flex: 1, minWidth: 0 }}>
           {FILTER_PILLS.map((pill) => {
           const isActive = filter === pill.key
@@ -226,6 +228,20 @@ export default function Clients() {
         })}
         </div>
         <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select" style={{ width: 'auto', minWidth: 180, flexShrink: 0 }}>
+          {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+
+      {/* Mobile (≤768px): same pills as a Filter <select>, same reasoning
+          as Invoices.jsx's mobile dropdown — a horizontally-scrollable
+          pill row is an awkward fit at phone width. Sits next to the same
+          Sort dropdown. Hidden by default so it never flashes before CSS
+          loads; shown via the media query below. */}
+      <div className="filter-row-mobile" style={{ display: 'none', gap: 8, marginBottom: 20 }}>
+        <select value={filter} onChange={(e) => setFilter(e.target.value)} className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }}>
+          {FILTER_PILLS.map((pill) => <option key={pill.key} value={pill.key}>{pill.label}</option>)}
+        </select>
+        <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }}>
           {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </div>
@@ -316,6 +332,8 @@ export default function Clients() {
         @media (max-width: 768px) {
           .page-fab { display: flex !important; }
           .header-add-btn { display: none !important; }
+          .filter-row-desktop { display: none !important; }
+          .filter-row-mobile { display: flex !important; }
         }
       `}</style>
     </>

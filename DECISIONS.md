@@ -2410,4 +2410,116 @@ test in `NewInvoiceWizard.test.jsx` covering the reminders default reversal (pay
 toggle state, and that an explicit user off-choice survives through autosave to finalise). Real
 browser verification (Playwright, ad-hoc, not committed) confirmed every fix end to end against the
 live backend at the exact measured breakpoints and interaction sequences described above.
-through the mocked test suite.
+
+---
+
+Date: 11 August 2026
+Decision: The reload complaint was reported as still happening after the previous entry's fix. Root
+cause found by direct architectural comparison against v1-reference/frontend — status/Overdue
+filtering was still a real server round-trip in v2 (dimmed, not unmounted, but still a network call
+and a `loading` state change on every pill click), while v1's equivalent interaction never touched
+the network at all. Ported v1's actual architecture rather than further polishing the symptom. Also:
+status filters collapse into a dropdown on mobile, alongside the existing sort dropdown.
+
+**Why the previous fix wasn't enough.** The 10 August entry correctly diagnosed and fixed the
+loading-skeleton-unmount bug (real, confirmed, still holds — verified again this pass with a
+completely fresh, unpolluted test account). But status/Overdue pill clicks still fired a real
+`GET /invoices/?status=...` on every click, still flipped `loading` true→false, and still dimmed the
+grid to `opacity: 0.55` for the round-trip's duration. That's a smaller version of the same problem,
+not its removal — on a non-instant connection, or simply for a user sensitive to any visible change,
+a dim-and-restore on every click reads as "something reloaded," which matches the report.
+
+**The real, structural fix: ported v1's actual architecture for this one interaction, not v1's
+literal code (v1 has the identical loading-unmount bug too — see below).** Traced directly against
+`v1-reference/frontend/src/pages/Invoices.jsx`: its status pills filter an already-loaded `invoices`
+array in memory —
+```js
+const filtered = filter === 'recurring' ? invoices.filter(inv => inv.is_recurring)
+  : filter ? invoices.filter(inv=>inv.status===filter) : invoices
+```
+— and its own `load()` only re-runs on `searchQ`/`sort` change (`useEffect(()=>{ load(searchQ, sort)
+},[load, searchQ, sort])`), never on `filter` change. That's the literal, structural reason v1's
+status-pill clicks never had anything to flicker: there was never a network request or a `loading`
+change for that interaction to begin with. `Invoices.jsx` (v2) now matches this exactly — `status`/
+`overdue` were removed from `buildParams()` and from the `load()`-triggering effect's dependency
+array entirely; a new `visibleInvoices` (`useMemo`) filters the currently-loaded `invoices` array by
+`statusFilter`/`overdueOnly` purely in the browser. Verified directly, not assumed: a real-browser
+check (fresh test account, network-request listener) confirms clicking every status pill and the
+Overdue toggle fires zero `/api/invoices/` requests, while a sort change still fires exactly one — and
+`Invoices.test.jsx` pins this with a dedicated "zero network calls" assertion across every pill.
+
+**The honest tradeoff, handled explicitly rather than left as a silent correctness gap.** v2 paginates
+(`limit`, max 200/request server-side); v1 does not appear to. Filtering client-side over only
+what's currently loaded means a status/overdue filter can undercount if more matching invoices exist
+beyond what's been fetched (`invoices.length < total`). Rather than "load everything" (risks a
+200-row cap silently truncating a long-time power user, or ballooning the initial request) or
+silently under-reporting, a visible `FosAlert` now says so directly: "Searching the {N} most recently
+loaded invoices (of {total} total) — Load More below to search further back," shown exactly when a
+status/overdue filter is active AND more exists on the server than is loaded. "Load More" itself is
+unchanged — it still fetches the next page of the unfiltered base list, which the client-side filter
+then re-applies over the grown set.
+
+**Why Clients.jsx's filter pills were NOT converted the same way — a deliberate scope decision, not
+an oversight.** Checked v1-reference/frontend/src/pages/Clients.jsx directly: unlike its Invoices
+page, v1's OWN Clients page sends `filter` to the server and re-fetches on every pill click
+(`useEffect(() => { load(search, filter, sort) }, [filter, sort])`) — it has no client-side-filter
+architecture to port here at all, and (per its own `{loading && <ClientListSkeleton />}` pattern) v1's
+Clients page would have had the exact same flicker v2's did before the 10 August fix. There's no "v1
+never had this" case for this specific page/interaction. Converting anyway would also have been a
+materially bigger change than Invoices.jsx's: `client_list`'s backend defaults to `filter=active` when
+no filter is sent, so a true client-side-filter base fetch would need to unconditionally request
+`filter=all` and reconstruct `is_active`/`is_flagged`/`created_at` logic in the frontend — and
+`with_overdue` currently always returns an empty queryset server-side regardless (`apps/clients/
+views.py`'s own comment says why, though it's now stale — apps.invoices exists; flagged here as a
+separate, unrelated finding, not fixed as part of this pass). Clients.jsx keeps the already-shipped,
+already-verified fix from the previous entry (skeleton-only-on-first-load, opacity dim during
+refetch, stale-response protection) — a real improvement over v1's own equivalent code, just not the
+zero-network architecture Invoices.jsx now has.
+
+**Mobile filter dropdown (both pages), a new feature, not a bug fix.** A horizontally-scrollable pill
+row is an awkward fit at phone width — partially-hidden pills, sideways scrolling to find one. Below
+768px (matching `AppShell.jsx`'s own `isMobile` breakpoint and this file's pre-existing
+`@media (max-width: 768px)` convention for the FAB/header-button swap), the pill row is replaced by a
+single Filter `<select>` sitting next to the existing Sort `<select>`. Implemented as two complete,
+parallel DOM structures (`.filter-row-desktop` / `.filter-row-mobile`), toggled by the same CSS media
+query, rather than trying to reshape one shared structure via CSS reordering — the two layouts (a
+scrollable pill row vs. a compact two-select row) are different enough shapes that forcing one DOM
+tree to cover both would be more fragile than the small amount of duplication this costs. On
+Invoices.jsx, Overdue is folded into the SAME select as one more option (`__overdue__` sentinel
+value) rather than a separate control, preserving the exact mutual-exclusivity the desktop pills
+already have with one dropdown instead of a dropdown-plus-toggle. Both the desktop and mobile
+controls read from and write to the same `statusFilter`/`overdueOnly`/`filter` state, so they always
+agree — confirmed directly (clicking a desktop pill updates the mobile dropdown's value, and vice
+versa, both covered by dedicated tests). Verified visually at all 4 required breakpoints (375/768/
+1280/1920px, real screenshots) on both pages: pills at ≥769px, dropdowns at ≤768px, no layout
+overlap or overflow at any width, zero console/page errors.
+
+**A real, self-inflicted contributing factor to the original report, worth recording plainly.** The
+main dev-account (`testuser@example.com`) had exactly 3 active sessions (the enforced max) at the
+start of this pass, all created by this project's own repeated automated-testing logins across prior
+work — every fresh Playwright login for verification evicts the least-recently-used session
+(`Session.create_for_user`'s own LRU eviction). If a real browser tab testing this app manually is
+open at the same time automated verification runs against the same account, the manual tab's session
+can get silently evicted, and the next action in that tab hits `_forceLogout()`'s hard
+`window.location.href` redirect (the only other real, if unrelated, navigation-capable mechanism in
+this app — see the 10 August entry). A dedicated, separate test account
+(`reloadtest@example.com`) was created for this pass's own verification specifically to stop
+contributing to that interference. This doesn't change any code — it's a testing-hygiene note for
+future passes, not a product fix.
+
+Verified: full backend suite, 369 tests passing in `apps.invoices`+`apps.clients` (no backend changes
+this pass — confirms nothing regressed from the frontend-only changes). Frontend: 73 tests passing
+(up from 65) — `Invoices.test.jsx` expanded to 16 tests (rewrote the 4 that asserted the old
+server-side status/overdue network behavior; added dedicated "zero network calls on any pill/toggle
+click," "immediate client-side re-filter with no await needed," "Overdue toggle filters by
+days_overdue," the "not all loaded" honest-notice pair, and the new mobile-dropdown suite: every
+status option present, filtering through it works with zero network calls, the Overdue sentinel value
+round-trips correctly, and desktop/mobile stay in sync). A genuine regression was caught by this same
+test rewrite mid-pass, not just prevented: an editing mistake while restructuring the render logic
+re-gated the entire list block on `!loading`, silently reintroducing the original unmount-on-refetch
+bug for search/sort — caught immediately because the rewritten "list stays mounted during a real
+sort round-trip" test failed, fixed before it could ship. A new `Clients.test.jsx` (4 tests) covers
+its own mobile dropdown and the already-removed "All" pill. Real browser verification (Playwright,
+ad-hoc, not committed, using the new dedicated test account) confirmed zero network calls for every
+Invoices.jsx filter/toggle interaction, correct mobile-dropdown behavior and mutual exclusivity, and
+all 4 required breakpoints on both pages.
