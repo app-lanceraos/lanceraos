@@ -4,12 +4,15 @@ Client CRM — Section 3 of INVOICES_CLIENTS_TECHNICAL_SPEC.md. Built ahead
 of apps/invoices/ (which doesn't exist yet), so Client carries no FK to
 Invoice at all; the future Invoice.client FK (SET_NULL) will point here.
 """
+import hashlib
 import secrets
 import uuid
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.validators import RegexValidator
 from django.db import models
+from django.utils import timezone
 
 from .scoring import compute_reliability_stats
 
@@ -205,3 +208,79 @@ class ClientTag(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class ClientPortalSession(models.Model):
+    """
+    Structurally mirrors apps.users.models.TrustedDevice, scoped to
+    (client, device) instead of (user, device) — a client's browser
+    session on the portal, distinct from Client.portal_token itself
+    (the persistent, non-expiring magic-link credential that MINTS these
+    sessions, per issue_or_renew_session in apps/clients/portal.py).
+
+    6-question framework:
+    1. Mutable? Yes — last_used_at/expires_at on every authenticated
+       portal request (the sliding-window renewal), revoked_at on logout.
+    2. Soft deleted? N/A — revoked_at IS the soft-delete; a revoked row
+       is kept for history (the portal's own "sessions" list, mirroring
+       Settings > Sessions) rather than deleted.
+    3. Audit trail? Not wired to core.AuditLog this step — no admin- or
+       security-relevant surface reads client-portal session history yet.
+       Revisit if/when the portal grows its own session-management UI.
+    4. Indexed? `token_hash` (the hot lookup path, every authenticated
+       portal request), `(client, revoked_at)` (a client's own session
+       list / logout-everywhere).
+    5. Encrypted? No — token_hash is a one-way SHA-256 hash, identical
+       treatment to Session.refresh_token_hash / TrustedDevice.token_hash;
+       nothing here needs to be reversible.
+    6. Cascade behavior? CASCADE from Client — a session has no meaning
+       independent of the client it authenticates.
+    """
+    SESSION_LIFETIME_DAYS = 60
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='portal_sessions')
+    token_hash = models.CharField(max_length=64, db_index=True)
+    device_name = models.CharField(max_length=300, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'client_portal_sessions'
+        indexes = [
+            models.Index(fields=['token_hash']),
+            models.Index(fields=['client', 'revoked_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.client.email} — {self.device_name[:40]}'
+
+    @staticmethod
+    def _hash_token(raw_token):
+        return hashlib.sha256(raw_token.encode()).hexdigest()
+
+    @classmethod
+    def get_valid(cls, raw_token):
+        """Looks up a live (non-revoked, non-expired) session by raw cookie value. Never raises — a missing/garbage token just means no match."""
+        return cls.objects.filter(
+            token_hash=cls._hash_token(raw_token),
+            revoked_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        ).select_related('client').first()
+
+    @classmethod
+    def create_for_client(cls, client, raw_token, device_name, ip_address, user_agent):
+        now = timezone.now()
+        return cls.objects.create(
+            client=client,
+            token_hash=cls._hash_token(raw_token),
+            device_name=device_name[:300],
+            ip_address=ip_address,
+            user_agent=user_agent[:500],
+            last_used_at=now,
+            expires_at=now + timedelta(days=cls.SESSION_LIFETIME_DAYS),
+        )

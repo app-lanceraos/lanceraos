@@ -2840,3 +2840,137 @@ Alternatives considered: leaving the generic error message as-is on the theory t
 wasn't sent" is the only fact that matters (rejected — the task explicitly asked for a real, specific
 error, and a freelancer debugging a failed send needs to know whether their own SMTP server or
 LanceraOS's own Resend fallback is the actual problem, since only one of those is theirs to fix).
+
+Date: 13 August 2026
+Decision: Promoted the custom-SMTP-vs-Resend routing chain (built Step 10 as
+apps/invoices/email_service.py's send_invoice_related_email) out to core/email.py as a new, general
+function, send_client_facing_email(user, to, subject, html_body, text_body, *, cc=None,
+reply_to=None, attachments=None, recipient_name=None, context_type=None, context_id=None,
+request_id=None) — done BEFORE any Client Portal Authentication code was written, as a required
+dependency-direction fix, not an incidental refactor alongside it.
+Reason: Portal auth (apps.clients) needs to send a client-facing email (the magic-link resend) through
+this exact chain — CLAUDE.md's Custom Email Rules item 2 explicitly lists "Client portal PIN" as one
+of the client-facing email categories the chain covers, so this isn't a new decision so much as the
+existing rule finally reaching a second real consumer. Before this fix, the chain lived entirely
+inside apps/invoices/email_service.py; apps.clients importing it directly would have created an
+apps.clients -> apps.invoices dependency, violating this project's one-directional apps.invoices ->
+apps.clients rule (INVOICES_CLIENTS_TECHNICAL_SPEC.md Section 2, confirmed by grepping apps/clients/
+for any apps.invoices import before this change and finding none — a real invariant worth protecting,
+not a theoretical one). core/ has no app-specific dependents at all and never has (confirmed directly:
+no core/*.py file imported anything from apps/ before this change either), so it's the correct shared
+home for logic two independent apps both need.
+What moved, concretely: the full routing decision (custom SMTP check -> send-via-user's-SMTP -> fall
+back to Resend on failure -> CustomSmtpFailed notification -> observability logging), plus its
+supporting helpers (_get_custom_smtp_connection, _get_custom_smtp_from_address, and _sender_name,
+renamed to the public sender_display_name since it's a plain User/FreelancerProfile concern that was
+never actually invoice-specific despite living in that file). apps/invoices/email_service.py's
+send_invoice_related_email is now a ~15-line wrapper: it builds the invoice-specific pieces (the PDF
+attachment via core.email.pdf_bytes_to_attachment, the reply-to address via get_reply_to_address,
+the freelancer's own cc, invoice.client_name as recipient_name, and an 'invoice'/invoice.pk
+correlation pair) and calls the shared function. Verified behavior-preserving, not just refactored on
+faith: the full existing Step 10 test suite (test_send.py, ~45 tests covering the entire custom-SMTP/
+Resend/fallback/notification matrix) passes unmodified in its assertions — only two internal patch
+targets changed (apps.invoices.email_service.store_invoice_pdf -> .upload_pdf_bytes, an unrelated
+prior rename already in flight; apps.invoices.email_service.render_invoice_pdf still resolves
+correctly since that stays a local import) — plus the full 608-test backend suite passing afterward.
+A subtlety worth recording: core/email.py importing django.core.exceptions.ObjectDoesNotExist and
+catching that broad base class (rather than importing apps.users.models.FreelancerProfile just to
+catch FreelancerProfile.DoesNotExist) is deliberate, not an oversight — importing FreelancerProfile
+into core/ would have reintroduced the exact same wrong-direction dependency this whole fix exists to
+avoid, just pointed at apps.users instead of apps.invoices. ObjectDoesNotExist is the real Django base
+class every model's own DoesNotExist inherits from, so this catches the identical exception without
+ever naming the model.
+The CustomSmtpFailed event's payload was generalized alongside the move: user_id/smtp_host/
+error_message stay as-is, but invoice_id/client_name/client_email became optional
+recipient_name/recipient_email/context_type/context_id kwargs — apps/invoices/notifications.py's
+already-registered handler (_record_custom_smtp_failed) maps context_id back to the invoice_id
+AuditLog metadata key ONLY when context_type == 'invoice', preserving the exact metadata shape every
+existing invoice-path caller/test already relies on, while a client-portal-triggered failure simply
+omits that key rather than storing a misleading value. This handler stays in apps/invoices/
+notifications.py rather than moving to core/ or apps/clients/ — core/events.py's on()/emit() bus is
+already app-agnostic by design (confirmed directly: apps.invoices' handler registration needs no
+import of, and receives events from, whichever app emits them), so a client-portal failure being
+processed by an invoices-owned handler is not a dependency violation in either direction; moving the
+handler itself was out of this step's scope (item 0 asked for the ROUTING function to move, not the
+notification handler) and would have been unrelated scope creep.
+Alternatives considered: keeping send_invoice_related_email in apps/invoices/ and having apps.clients
+duplicate the routing chain independently (rejected outright — CLAUDE.md rule 4's fallback/
+notification/logging behavior would drift between two copies over time, the exact bug class shared
+utilities exist to prevent); a thin core/email.py function that just re-exports/imports from
+apps.invoices at call time to avoid moving the real logic (rejected — that's still an
+apps.clients -> apps.invoices import at the point of use, the dependency direction violation itself,
+just deferred to runtime instead of import time).
+
+Date: 13 August 2026 (second entry)
+Decision: Built Client Portal Authentication (apps/clients/models.py's ClientPortalSession,
+apps/clients/portal.py, apps/clients/cookies.py, apps/clients/views_portal.py) scoped strictly to
+Client.portal_token-based access — deliberately NOT Invoice.view_token as an alternate portal-entry
+credential, NOT GET .../portal/me/'s invoice list, and NOT wiring the freelancer-own-session guard
+into any real call site.
+Reason: every one of those three deferred pieces needs real Invoice data (view_token itself, the
+invoice list content, or the Sent->Viewed/InvoiceViewEvent/comment-claim call sites the guard would
+actually gate) — building any of them inside apps/clients/ would mean this app reaching into
+apps.invoices, the exact dependency-direction violation the same day's first DECISIONS.md entry (item
+0) fixed in the OTHER direction (apps.clients no longer needing to import apps.invoices' email
+routing). Scoping this step to apps.clients-only data keeps that fix meaningful rather than
+immediately undoing its own premise from a different angle.
+A real, deliberate consequence: the endpoints below live at /api/clients/portal/... (this app's own
+URL namespace) rather than INVOICES_CLIENTS_TECHNICAL_SPEC.md Section 7's eventual unified
+/api/portal/<str:link_token>/ surface, which is documented there as accepting EITHER an invoice
+view_token OR a Client.portal_token — a surface that inherently spans both apps and can't be built
+correctly from apps.clients alone. This is a real, intentional divergence from the spec's documented
+endpoint table for now, expected to be consolidated once Step 12 adds the view_token half; noting it
+here so it isn't mistaken for spec non-compliance later.
+Rate limits (5/email/hour, 20/IP/hour on POST /api/clients/portal/request-link/) were pulled directly
+from INVOICES_CLIENTS_TECHNICAL_SPEC.md Section 3's own text ("5/email/hour, 20/IP/hour, per your
+confirmation") rather than invented — tighter than the existing _check_moderate_rate_limit convention
+(30/hour) elsewhere in apps.clients, deliberately: this endpoint is fully unauthenticated (no
+request.user to scope a normal per-user budget against at all) and gates a real, if modest, attack
+surface — a token+session pair that grants access to a client's financial documents. Two independent
+cache counters, both must pass; exceeding either returns a real 429, not folded into the generic
+success response the email-match/no-match distinction itself uses (a 429 doesn't leak whether the
+given email matched a real client — it only says "this address/IP made too many requests" — so
+returning it plainly doesn't reopen the enumeration-safety hole the generic-response requirement is
+actually about).
+The freelancer-own-session guard (portal.is_freelancer_previewing_portal) was built now, per the
+task's own explicit instruction, specifically because it needs no Invoice data at all — it only
+inspects two cookies on the current request (apps.users' own access-token cookie, reused via the
+real, already-audited CookieJWTAuthentication rather than a second hand-rolled JWT validator; and this
+app's own portal-session cookie). Directly tested against all four real combinations (both present,
+freelancer-only, portal-only, neither) rather than assumed correct from reading the logic. FLAGGED
+EXPLICITLY, per the task's own instruction, so it is not mistaken for dead code before Steps 12-14
+wire it to real call sites: this function currently has zero callers anywhere in the codebase outside
+its own test file.
+CSRF handling: portal_logout/portal_logout_everywhere call apps.users.authentication's existing
+enforce_csrf_standalone (the same helper apps.users' own NO_AUTH views already use, e.g. login/
+register) rather than skipping CSRF protection — both act on a cookie-derived session, so CLAUDE.md
+rule 14 ("CSRF protection is mandatory... on all state-changing requests") applies squarely, even
+though SameSite=Lax alone would already block most cross-site POST forgery here. portal_request_link
+deliberately does NOT enforce CSRF — it reads no cookie/session at all (the target email comes from
+the POST body, already attacker-controlled if they're forging the request in the first place), the
+same reasoning /api/auth/forgot-password/ already relies on for the identical shape of endpoint.
+portal_enter (the magic-link GET) primes the CSRF cookie via get_token(request) — the same mechanism
+/api/auth/csrf/ uses for the main app — so the cookie needed for a later logout POST already exists
+by the time a real portal frontend (Step 12+) would need it, without a separate priming endpoint.
+Alternatives considered: importing apps.users.authentication.CookieJWTAuthentication was weighed
+against re-implementing a lightweight JWT-cookie check locally in apps.clients to avoid any
+apps.clients -> apps.users import at all (rejected — apps.users is foundational infrastructure every
+app already depends on at the data level, Client.user itself is a FK to it, unlike the apps.invoices
+situation which is a peer app with genuinely separable concerns; and a second, subtly-different JWT
+validator is a real security-bug risk class for zero benefit over reusing the real, audited one).
+
+Date: 13 August 2026 (third entry)
+Decision: Updated CLAUDE.md's Module 2 "Client Portal" prose, which described a 6-digit-PIN-based
+auth flow (PIN emailed on first access, 30-day session from PIN entry), to match the token/session
+design actually specified in INVOICES_CLIENTS_TECHNICAL_SPEC.md Section 3 and just built (Step 11):
+Client.portal_token as a persistent, non-expiring magic link, no PIN anywhere, 60-day sliding
+ClientPortalSession window.
+Reason: this was a real, pre-existing discrepancy between CLAUDE.md's original founding prose (likely
+written before the technical spec's own more detailed portal design was worked out) and the spec doc
+this step was explicitly told to read and build against — confirmed directly by reading both
+documents, not assumed. Building the PIN flow CLAUDE.md described would have contradicted the spec
+doc's own ClientPortalSession schema (which has no PIN/OTP field at all) and this step's own explicit
+instructions (magic-link via Client.portal_token, no mention of a PIN anywhere). Per CLAUDE.md's own
+Architecture Decision Rule ("never silently change the architecture without recording the reason"),
+this is recorded here rather than the paragraph being quietly rewritten with no trace of what it used
+to say or why.

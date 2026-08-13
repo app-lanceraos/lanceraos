@@ -1,46 +1,31 @@
 # apps/invoices/email_service.py
 """
-The custom-SMTP-vs-Resend routing chain core/email.py's own docstring
-left for "the modules that actually need it" — apps/invoices is the
-first real consumer. Both invoice_send (views.py) and the reminder
-Celery task (tasks.py) call `send_invoice_related_email()` below, so the
-routing/fallback/observability logic exists exactly once, not duplicated
-per caller.
+Invoice-specific email content (subject/HTML/plain-text builders) and the
+Cloudinary-PDF-fetch self-heal chain. The actual custom-SMTP-vs-Resend
+routing chain used to live entirely in this file (Step 10) but was
+promoted to core/email.py as send_client_facing_email() this pass (Step
+11), once apps.clients (the portal magic-link resend email) needed the
+exact same chain — apps.clients importing it from here would have
+created an apps.clients -> apps.invoices dependency, violating this
+project's one-directional apps.invoices -> apps.clients rule
+(INVOICES_CLIENTS_TECHNICAL_SPEC.md Section 2). See core/email.py's own
+docstring for the full routing-chain documentation (CLAUDE.md's Custom
+Email Rules 1-7) — send_invoice_related_email below is now a thin
+wrapper: it builds the invoice-specific pieces (attachment, cc, reply-to,
+recipient name, correlation id) and calls the shared core function.
 
-Decision chain, per CLAUDE.md's Custom Email Rules (items 1-7),
-followed exactly:
-  1. custom_smtp_enabled AND custom_smtp_verified on the sending user's
-     FreelancerProfile -> send via their own SMTP server. Otherwise ->
-     Resend, from noreply@lanceraos.com.
-  4. Custom SMTP failure -> immediately fall back to Resend, notify the
-     user in-app with the exact specified copy, log user_id/smtp_host/
-     error_message/fallback_used=True/timestamp. The CLIENT-facing email
-     itself is byte-for-byte the same regardless of which path sent it —
-     the client is never told a fallback happened.
-  5/6. custom_smtp_password is Fernet-encrypted at rest; decrypted ONLY
-     here, inside the sending utility, never in a view or serializer.
-
-Invoice.user.profile's custom_smtp_enabled/custom_smtp_verified fields
-are only ever set by apps.users.views.smtp.save_custom_smtp/
-disable_custom_smtp (per the security-audit-driven exclusion from the
-general FreelancerProfileSerializer) — nothing in this module writes to
-either field, so that invariant holds by construction; confirmed by
-reading this file back after writing it, not just assumed.
+Both invoice_send (views.py) and the reminder Celery task (tasks.py)
+call send_invoice_related_email() below, so this invoice-specific
+assembly exists exactly once, not duplicated per caller.
 """
-import base64
 import logging
 
 import requests
-from django.core.mail import EmailMultiAlternatives, get_connection
 from django.utils import timezone
 
-from core.email import send_email_detailed
-from core.encryption import decrypt_field
-from core.events import emit
+from core.email import pdf_bytes_to_attachment, sender_display_name, send_client_facing_email
 
 from .pdf_generator import render_invoice_pdf, upload_pdf_bytes
-
-from apps.users.models import FreelancerProfile
 
 from .models import CURRENCY_SYMBOLS
 
@@ -97,7 +82,7 @@ def _html_wrapper(body_html):
 
 def build_invoice_send_email(invoice):
     """Subject/HTML/plain-text for the real /send/ action. Returns (subject, html, plain)."""
-    sender = _sender_name(invoice.user, getattr(invoice.user, 'profile', None))
+    sender = sender_display_name(invoice.user, getattr(invoice.user, "profile", None))
     amount = _fmt_money(invoice.total, invoice.currency)
     due = invoice.due_date.strftime('%d %b %Y') if invoice.due_date else '—'
 
@@ -151,7 +136,7 @@ def build_reminder_email(invoice, reminder_number):
     'overdue' status to reference) and the dropped view/portal links.
     Returns (subject, html, plain).
     """
-    sender = _sender_name(invoice.user, getattr(invoice.user, 'profile', None))
+    sender = sender_display_name(invoice.user, getattr(invoice.user, "profile", None))
     amount = _fmt_money(invoice.total, invoice.currency)
     due = invoice.due_date.strftime('%d %b %Y') if invoice.due_date else '—'
     days = invoice.days_overdue
@@ -217,15 +202,6 @@ Please respond within 48 hours or contact us immediately.</p>
     return subject, _html_wrapper(body), plain
 
 
-def _sender_name(user, profile):
-    if profile:
-        if profile.business_name:
-            return profile.business_name
-        if profile.display_name:
-            return profile.display_name
-    return user.get_full_name() or user.username
-
-
 def get_reply_to_address(invoice):
     """
     reply+<view_token>@lanceraos.com — the established pattern, ported
@@ -238,33 +214,6 @@ def get_reply_to_address(invoice):
     this step's scope (belongs to Comments, Step 13).
     """
     return f'reply+{invoice.view_token}@lanceraos.com'
-
-
-def _get_custom_smtp_connection(profile):
-    """
-    Decrypts custom_smtp_password ONLY here (CLAUDE.md rule 6) — never in
-    a view, serializer, or anywhere upstream of this call. Mirrors
-    apps/users/views/smtp.py's save_custom_smtp connection-building
-    exactly (same backend string, same kwarg shape), since that's real,
-    already-audited precedent for constructing this exact connection.
-    """
-    return get_connection(
-        backend='django.core.mail.backends.smtp.EmailBackend',
-        host=profile.custom_smtp_host,
-        port=profile.custom_smtp_port,
-        username=profile.custom_smtp_username,
-        password=decrypt_field(profile.custom_smtp_password or ''),
-        use_tls=profile.custom_smtp_use_tls,
-        use_ssl=profile.custom_smtp_use_ssl,
-        fail_silently=False,
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-
-
-def _get_custom_smtp_from_address(user, profile):
-    display = profile.custom_smtp_from_name or _sender_name(user, profile)
-    address = profile.custom_smtp_username or user.email
-    return f'{display} <{address}>'
 
 
 def _try_fetch(url):
@@ -356,9 +305,16 @@ def fetch_invoice_pdf_bytes(invoice):
 
 def send_invoice_related_email(invoice, subject, html_body, plain_body, *, pdf_bytes=None, request_id=None):
     """
-    THE shared custom-SMTP-vs-Resend routing function — the one place
-    this decision chain exists, called by invoice_send (views.py, real
-    send, pdf_bytes populated) and the reminder task (tasks.py,
+    Thin invoice-specific wrapper over core.email.send_client_facing_email
+    (the shared custom-SMTP-vs-Resend routing chain, promoted out of this
+    module this pass — see this file's own top docstring). Builds the
+    invoice-specific pieces the generic function doesn't know about: the
+    PDF attachment (base64-encoded via pdf_bytes_to_attachment), the
+    reply-to address (reply+<view_token>@..., get_reply_to_address), the
+    freelancer's own cc, the client's display name (for the
+    CustomSmtpFailed notification copy), and an 'invoice'/invoice.pk
+    correlation pair for observability. Called by invoice_send (views.py,
+    real send, pdf_bytes populated) and the reminder task (tasks.py,
     pdf_bytes=None; v1 never attaches a PDF to reminder emails either).
 
     User is always cc'd on the email to their client — real, ported
@@ -366,96 +322,17 @@ def send_invoice_related_email(invoice, subject, html_body, plain_body, *, pdf_b
     `_send_with_fallback`), not a new addition: the freelancer should
     have their own copy of what just went out in their name.
 
-    Returns a result dict — never raises:
-      {'sent': bool, 'sent_via': 'custom_smtp'|'resend'|None,
-       'smtp_host': str|None, 'provider_message_id': str|None,
-       'fallback_used': bool, 'error': str|None}
+    Returns the same result dict send_client_facing_email does — never
+    raises.
     """
-    user = invoice.user
-    try:
-        profile = user.profile
-    except FreelancerProfile.DoesNotExist:
-        profile = None
-
-    reply_to = get_reply_to_address(invoice)
-    use_custom = bool(profile and profile.custom_smtp_enabled and profile.custom_smtp_verified)
-    attachment_filename = f'{invoice.invoice_number or "invoice"}.pdf'
-
-    if use_custom:
-        try:
-            connection = _get_custom_smtp_connection(profile)
-            from_address = _get_custom_smtp_from_address(user, profile)
-            msg = EmailMultiAlternatives(
-                subject=subject, body=plain_body, from_email=from_address,
-                to=[invoice.client_email], cc=[user.email], reply_to=[reply_to],
-                connection=connection,
-            )
-            msg.attach_alternative(html_body, 'text/html')
-            if pdf_bytes:
-                msg.attach(attachment_filename, pdf_bytes, 'application/pdf')
-            msg.send(fail_silently=False)
-
-            result = {
-                'sent': True, 'sent_via': 'custom_smtp', 'smtp_host': profile.custom_smtp_host,
-                'provider_message_id': None, 'fallback_used': False, 'error': None,
-            }
-            _log_email_result(invoice, subject, request_id, result)
-            return result
-        except Exception as exc:
-            error_message = str(exc)
-            logger.error(
-                '[INVOICE EMAIL] Custom SMTP failed user_id=%s smtp_host=%s error=%s — falling back to Resend.',
-                user.pk, profile.custom_smtp_host, error_message,
-            )
-            # CLAUDE.md rule 4: immediately fall back (below), notify the
-            # user in-app (the CustomSmtpFailed handler in
-            # apps/invoices/notifications.py turns this into the exact
-            # specified copy + AuditLog entry the notification bell
-            # reads), and log user_id/smtp_host/error_message/
-            # fallback_used=True/timestamp (done here AND in the
-            # fallback's own _log_email_result call below).
-            emit(
-                'CustomSmtpFailed',
-                user_id=str(user.pk), invoice_id=str(invoice.pk),
-                client_name=invoice.client_name, client_email=invoice.client_email,
-                smtp_host=profile.custom_smtp_host, error_message=error_message,
-            )
-
     attachments = None
     if pdf_bytes:
-        attachments = [{'filename': attachment_filename, 'content_base64': base64.b64encode(pdf_bytes).decode('ascii')}]
+        attachment_filename = f'{invoice.invoice_number or "invoice"}.pdf'
+        attachments = [pdf_bytes_to_attachment(attachment_filename, pdf_bytes)]
 
-    detailed = send_email_detailed(
-        to=invoice.client_email, subject=subject, html_body=html_body, text_body=plain_body,
-        cc=[user.email], reply_to=reply_to, attachments=attachments,
-    )
-    result = {
-        'sent': detailed['sent'], 'sent_via': 'resend', 'smtp_host': None,
-        'provider_message_id': detailed['provider_message_id'],
-        'fallback_used': use_custom, 'error': detailed['error'],
-    }
-    _log_email_result(invoice, subject, request_id, result)
-    return result
-
-
-def _log_email_result(invoice, subject, request_id, result):
-    """
-    Full observability per CLAUDE.md's Observability Rules item 3:
-    request_id, recipient, subject, sent_via, smtp_host,
-    provider_message_id, status, timestamp — one structured log line,
-    correlatable by request_id with the rest of that request's timeline
-    exactly as core.middleware's own RequestLoggingMiddleware intends.
-    """
-    if not result['sent']:
-        status_label = 'failed'
-    elif result['fallback_used']:
-        status_label = 'fallback_used'
-    else:
-        status_label = 'sent'
-
-    logger.info(
-        '[INVOICE EMAIL] request_id=%s recipient=%s subject=%s sent_via=%s smtp_host=%s '
-        'provider_message_id=%s status=%s timestamp=%s',
-        request_id, invoice.client_email, subject, result['sent_via'], result['smtp_host'],
-        result['provider_message_id'], status_label, timezone.now().isoformat(),
+    return send_client_facing_email(
+        invoice.user, invoice.client_email, subject, html_body, plain_body,
+        cc=[invoice.user.email], reply_to=get_reply_to_address(invoice), attachments=attachments,
+        recipient_name=invoice.client_name, context_type='invoice', context_id=str(invoice.pk),
+        request_id=request_id,
     )

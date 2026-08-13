@@ -685,6 +685,60 @@ as a hex value via `RegexValidator`). `unique_together = [('user', 'name')]`.
 
 ---
 
+## `client_portal_sessions` (`ClientPortalSession`, in `apps.clients`)
+
+Step 11 — Client Portal Authentication. Structurally mirrors `apps.users.models.TrustedDevice`,
+scoped to `(client, device)` instead of `(user, device)`: a client's browser session on the portal,
+distinct from `Client.portal_token` itself (the persistent, non-expiring magic-link credential —
+already existed since Step 3 — that *mints* these sessions via `issue_or_renew_session`, never a
+session in its own right).
+
+**Schema**:
+```
+id, client (FK, CASCADE)
+token_hash        CharField(64), indexed  — SHA-256 of a random token in an httpOnly cookie, never stored raw
+device_name       CharField(300), blank  — system-generated label, e.g. "Chrome on macOS"
+ip_address        GenericIPAddressField, nullable
+user_agent        CharField(500), blank  — raw User-Agent header, display-only
+created_at, last_used_at, expires_at
+revoked_at        DateTimeField, nullable  — set by logout/logout-everywhere; row kept for history
+```
+
+1. **Mutable?** Yes — `last_used_at`/`expires_at` extend on every authenticated portal request (a
+   **sliding** 60-day window from last use, not fixed from creation — the same mechanic
+   `TrustedDevice` already uses at 30 days), `revoked_at` set once on logout.
+2. **Soft deleted?** N/A — `revoked_at` IS the soft-delete; a revoked row is kept (a future portal
+   "sessions" list, mirroring Settings > Sessions) rather than deleted.
+3. **Audit trail?** Not wired to `core.AuditLog` this step — no admin- or security-relevant surface
+   reads client-portal session history yet. Revisit if/when the portal grows its own session-
+   management UI.
+4. **Indexed?** `token_hash` (the hot lookup path, every authenticated portal request), `(client,
+   revoked_at)` (a client's own session list / logout-everywhere).
+5. **Encrypted?** No — `token_hash` is a one-way SHA-256 hash, identical treatment to
+   `Session.refresh_token_hash` / `TrustedDevice.token_hash` — nothing here needs to be reversible.
+6. **Cascade behavior?** `CASCADE` from `Client` — a session has no meaning independent of the
+   client it authenticates.
+
+**Session lifecycle** (`apps/clients/portal.py`): `issue_or_renew_session(client, request, response)`
+extends an existing session for the SAME client if the request's cookie already resolves to one
+(no redundant duplicate row for the same browser re-visiting the same magic link), otherwise mints a
+brand-new session and sets its cookie. `resolve_session_from_request(request)` is the read-path
+equivalent used to authenticate an ongoing portal request — verifies the cookie against a real,
+non-revoked, non-expired row, refreshes `last_used_at`/`expires_at` on success (the sliding-window
+mechanic), returns the `Client`. `revoke_session`/`revoke_all_sessions_for_client` back
+logout/logout-everywhere.
+
+**The freelancer-own-session guard** (`portal.is_freelancer_previewing_portal`) is a standalone,
+tested function built this step but **not yet wired to any real call site** — it detects whether the
+SAME browser carries both a valid `apps.users` session (the freelancer's own login) and a valid
+portal session at once (the freelancer previewing their own client's portal without logging out
+first), but its real consumers — skipping the invoice Sent→Viewed transition, skipping
+`InvoiceViewEvent` logging, labeling a comment/claim as "you, previewing" — all need real
+Invoice/InvoiceViewEvent/InvoiceComment data apps.clients deliberately doesn't reach into. Wiring
+happens in Steps 12-14. See `DECISIONS.md`.
+
+---
+
 ## `invoices` (`Invoice`, in `apps.invoices`)
 
 The Invoice Core, per `INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 5 — ported from

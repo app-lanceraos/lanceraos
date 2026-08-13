@@ -52,13 +52,31 @@ def _record_invoice_sent(invoice_id, user_id, via, **_extra):
 
 
 @on('CustomSmtpFailed')
-def _record_custom_smtp_failed(user_id, invoice_id, client_name, client_email, smtp_host, error_message, **_extra):
+def _record_custom_smtp_failed(user_id, recipient_email, smtp_host, error_message,
+                                recipient_name=None, context_type=None, context_id=None, **_extra):
     """
     The in-app notification CLAUDE.md's Custom Email Rule 4 requires,
     with its exact specified copy — this AuditLog write is what
     core/notifications.py's list_notifications endpoint (the bell) reads
     once 'custom_smtp_failed' is added to its NOTIFICATION_EVENTS/
-    EVENT_TITLES/EVENT_ACTION_URLS dicts (done in that file, this step).
+    EVENT_TITLES/EVENT_ACTION_URLS dicts (done in that file, Step 10).
+
+    core.email.send_client_facing_email (promoted out of this app's own
+    email_service.py this pass, Step 11) emits this event with generic
+    recipient_name/recipient_email/context_type/context_id kwargs now,
+    since it's no longer invoice-only — a client-portal magic-link resend
+    (apps.clients) can trigger the exact same failure/fallback and this
+    same handler processes it identically, with no import needed in
+    either direction (core/events.py's bus is app-agnostic by design).
+    This handler still writes the same AuditLog metadata SHAPE the
+    invoice call site always has (`invoice_id`/`client_name`/
+    `client_email` keys), preserved by construction rather than by
+    coincidence: apps/invoices/email_service.py's wrapper always passes
+    context_type='invoice', context_id=str(invoice.pk),
+    recipient_name=invoice.client_name — this handler maps context_id to
+    the `invoice_id` key only when context_type == 'invoice', so a
+    non-invoice caller's metadata simply omits it rather than storing a
+    misleading value.
     user_id/smtp_host/error_message/fallback_used=True/timestamp are all
     captured here — timestamp is AuditLog.created_at itself, not a
     separate field.
@@ -72,9 +90,9 @@ def _record_custom_smtp_failed(user_id, invoice_id, client_name, client_email, s
         return
 
     log_event('custom_smtp_failed', user=user, metadata={
-        'invoice_id': invoice_id,
-        'client_name': client_name,
-        'client_email': client_email,
+        'invoice_id': context_id if context_type == 'invoice' else None,
+        'client_name': recipient_name,
+        'client_email': recipient_email,
         'smtp_host': smtp_host,
         'error_message': error_message,
         'fallback_used': True,

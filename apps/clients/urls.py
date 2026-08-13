@@ -1,13 +1,21 @@
 # apps/clients/urls.py
 from django.urls import path
 
-from . import views
+from . import views, views_portal
 
 app_name = 'clients'
 
 urlpatterns = [
     path('', views.client_list, name='client_list'),
     path('tags/', views.client_tags, name='client_tags'),
+    # Literal-prefixed portal routes must come before <uuid:pk>/ and
+    # portal/<str:token>/ must come last among them — <str:token>
+    # otherwise greedily matches 'request-link'/'logout'/'logout-everywhere'
+    # as if they were token values, since str accepts any non-slash text.
+    path('portal/request-link/', views_portal.portal_request_link, name='portal_request_link'),
+    path('portal/logout-everywhere/', views_portal.portal_logout_everywhere, name='portal_logout_everywhere'),
+    path('portal/logout/', views_portal.portal_logout, name='portal_logout'),
+    path('portal/<str:token>/', views_portal.portal_enter, name='portal_enter'),
     path('<uuid:pk>/', views.client_detail, name='client_detail'),
     path('<uuid:pk>/archive/', views.client_archive, name='client_archive'),
     path('<uuid:pk>/restore/', views.client_restore, name='client_restore'),
