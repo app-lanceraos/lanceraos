@@ -70,12 +70,12 @@ def _send_portal_link_email(client):
     Custom Email Rules item 2 ("Client portal PIN" is explicitly one of
     the listed client-facing email categories this chain covers).
 
-    Link target is a placeholder frontend route (no portal frontend
-    exists yet, per this step's own scope) — will need revisiting the
-    moment Step 12+ builds the real page, flagged rather than treated as
-    final.
+    Link target is the real portal frontend route (Step 12,
+    frontend/src/pages/portal/PortalEnter.jsx) — /portal/enter/<token>/
+    calls GET /api/clients/portal/<token>/ on mount (this same magic-link
+    entry endpoint) and hands off to /portal, the real invoice list.
     """
-    link_url = f'{settings.FRONTEND_URL}/portal/{client.portal_token}/'
+    link_url = f'{settings.FRONTEND_URL}/portal/enter/{client.portal_token}/'
     subject = 'Your LanceraOS client portal link'
     html_body = f"""
 <p style="margin:0 0 16px;font-size:14px;color:#334155;line-height:1.7;">Hi {client.name},<br/><br/>

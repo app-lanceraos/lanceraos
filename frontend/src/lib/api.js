@@ -101,9 +101,21 @@ function flushQueue(error) {
 // These must never trigger a refresh-and-retry cycle: login/register
 // are meant to fail with a plain 401/400, and refresh itself must
 // never try to refresh-on-401-of-refresh (infinite loop).
+//
+// The two /portal/ prefixes are a real, necessary addition (Step 12):
+// client-portal pages authenticate via a completely separate cookie
+// (apps.clients.cookies.PORTAL_SESSION_COOKIE_NAME), never the
+// freelancer's own JWT — a real client visiting the portal with no
+// session at all has no lanceraos_refresh cookie either, so without this
+// skip, a 401 there would trigger a refresh attempt that ALSO fails,
+// which _forceLogout() below turns into a hard redirect to the
+// freelancer's own /login page. Portal pages handle their own 401s
+// directly (e.g. showing "request a new link"), matching how this same
+// interceptor already stays out of the way for /auth/login//register/.
 const SKIP_REFRESH_URLS = [
   '/auth/login/', '/auth/register/', '/auth/token/refresh/',
   '/auth/google/', '/auth/facebook/', '/auth/2fa/verify/',
+  '/clients/portal/', '/invoices/portal/',
 ]
 
 api.interceptors.response.use(

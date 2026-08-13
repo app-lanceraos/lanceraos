@@ -390,6 +390,20 @@ class Invoice(models.Model):
         return f'{settings.FRONTEND_URL}/pay/{self.view_token}'
 
     @property
+    def portal_view_url(self):
+        """
+        The real, live-rendered HTML view of this invoice (Step 12) — a
+        direct Django-served endpoint with no React wrapper (see
+        apps/invoices/views_portal.py's own docstring: clicking an
+        invoice in the portal list is a real browser navigation to this
+        URL, not a route the frontend reimplements). Backend's own
+        public URL (BACKEND_URL), not FRONTEND_URL — unlike
+        payment_page_url above, this page IS served directly by Django,
+        not the React app.
+        """
+        return f'{settings.BACKEND_URL}/api/invoices/portal/view/{self.view_token}/'
+
+    @property
     def client_currency_conversion(self):
         """
         Backs the PDF's "≈ {symbol}{converted_total} at rate {rate}" line

@@ -2974,3 +2974,136 @@ instructions (magic-link via Client.portal_token, no mention of a PIN anywhere).
 Architecture Decision Rule ("never silently change the architecture without recording the reason"),
 this is recorded here rather than the paragraph being quietly rewritten with no trace of what it used
 to say or why.
+
+Date: 13 August 2026 (fourth entry)
+Decision: Built the Client Portal's invoice content (Step 12) — the invoice list/detail JSON
+endpoints, the real rendered-HTML invoice-view page, the Sent->Viewed transition +
+`InvoiceViewEvent` logging wired to a real request path for the first time, Preview-as-Client, and
+the "View Invoice Online" email link — in `apps/invoices/` (`views_portal.py`, `serializers_portal.py`,
+`pdf_generator.py` additions), importing the session/identity utility from `apps.clients.portal`
+rather than the reverse. Confirmed directly (not assumed) that this holds: `apps/invoices/views_portal.py`
+imports `apps.clients.portal.{is_freelancer_previewing_portal, issue_or_renew_session,
+resolve_session_from_request}`; nothing under `apps/clients/` imports anything from `apps/invoices/`
+(re-ran the same AST-based check `apps/clients/tests/test_portal.py`'s
+`test_apps_clients_has_zero_apps_invoices_imports` already established Step 11 — still zero hits).
+Reason: this is the exact shape `INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 2 describes ("Portal
+content — viewing invoices, posting/reading comments, submitting payment claims — imports the
+client-identity/session utility from apps.clients") and the shape Step 11's own `is_freelancer_previewing_portal`
+was built ahead of time to be consumed by, per that function's own docstring.
+Documentation note, in the same spirit as this file's own past entries flagging premise mismatches
+rather than silently working around them: the task's cited "Section 4" (magic-link/portal design) and
+"decisions doc Section 10" (the one-HTML/CSS-renderer principle) do not exist as numbered sections in
+either `INVOICES_CLIENTS_TECHNICAL_SPEC.md` or this file — `INVOICES_CLIENTS_TECHNICAL_SPEC.md`'s own
+Section 4 is `apps/payments/`, and neither document has a "Section 10" at all. The referenced phrases
+("the freelancer-own-session guard," "generalized across all 4 places it's needed") ARE real and
+present in `INVOICES_CLIENTS_TECHNICAL_SPEC.md` Sections 3/5/8, just not under the cited numbering —
+most likely referring to an external "final decisions document" the spec's own header mentions as one
+of its three source inputs, which isn't a file present in this repo. Verified directly by grepping
+both documents rather than assumed; the actual substantive design content needed for this step was
+present regardless (Section 3's `ClientPortalSession`, Section 5's `InvoiceViewEvent` freelancer-guard
+note, Section 7's endpoint surface, Section 8's build-order items 11/12), so this did not block the
+work — flagged here purely so a future reader doesn't go looking for a "Section 10" that isn't there.
+
+**The shared-template, two-(now three-)renderers mechanism, as actually implemented.** `pdf_generator.py`
+already had `build_pdf_context(invoice)` (Step 7b) feeding both `render_invoice_pdf` and the design
+editor's live preview. This step adds `build_portal_context(invoice)` — calls `build_pdf_context`
+directly and swaps only `FONT_CONTEXT` (file:// URIs, WeasyPrint-only) for the new `PORTAL_FONT_CONTEXT`
+(real `/static/...` URLs via Django's `static()` helper, resolved through the existing app-directories
+finder against `apps/invoices/static/invoices/fonts/` — confirmed reachable with a real HTTP request
+against a throwaway dev server, 200 + correct `Content-Type`, not just `findstatic`). Every other
+context key (`invoice`, `freelancer`, `qr_code_data_uri`, `signature_url`) is untouched — the SAME
+Python objects, not re-derived. `render_invoice_portal_html(invoice)` then reuses the exact same
+`_select_template_name(invoice)` the PDF path uses and renders through `build_portal_context` instead
+of `build_pdf_context`. This function has exactly two callers: `portal_invoice_view_html` (the real
+public page) and `invoice_preview_as_client` (Preview-as-Client) — neither is a second, hand-built
+reimplementation of the invoice layout; both are the same one Django template, rendered twice with
+different font-URL contexts. `@page` CSS rules in the templates were left untouched (meaningless but
+harmless in a browser) rather than stripped for the portal path — stripping them would mean the two
+render paths' markup is no longer byte-for-byte the same template, which is the exact drift this
+design exists to prevent.
+Real wrinkle solved along the way: one font filename (`SpaceGrotesk[wght].ttf`) contains literal `[`/`]`
+characters — Django's `static()` correctly percent-encodes these (`%5Bwght%5D`), verified directly with
+both `findstatic` and a real HTTP request returning 200, not assumed to "probably just work."
+
+**One-time-client no-session scoping.** `portal_invoice_view_html` checks `invoice.client_id` — if
+set, calls `issue_or_renew_session(invoice.client, request, response)` (mints/renews a REAL
+`ClientPortalSession`, the same mechanism `Client.portal_token`'s own magic link uses, per the spec's
+"one click on any invoice link grants access to that client's entire portal"); if null (a genuine
+one-time client, `is_one_time_client=True`), NO session is created at all — there's no `Client` row to
+attach one to. The rendered page is identical either way (same template, same data); only the session
+side effect differs. Verified with a dedicated test proving a SECOND one-time invoice sharing the same
+client_name/client_email as a first one is reachable ONLY via its own separate `view_token` — visiting
+the first one creates zero `ClientPortalSession` rows, so there is nothing for a second invoice to be
+reachable through even if the two "look like" the same client from a human's perspective. This is a
+real, intentional gap (two one-time invoices for what's actually the same real client don't share
+access) — the correct fix if that client relationship becomes recurring is converting them to a real
+saved `Client` (the spec's own `convert-one-time` endpoint, not yet built), not silently linking
+one-time invoices to each other by matching email.
+
+**The deliberate non-SPA-navigation exception, called out explicitly per the task's own instruction.**
+`ClientPortal.jsx`'s invoice rows are plain `<a href={inv.portal_view_url}>` elements — a real browser
+navigation to a backend-served HTML page (`GET /api/invoices/portal/view/<token>/`), NOT a React
+Router `<Link>`, NOT an `onClick` handler that fetches and re-renders the response client-side. This is
+the ONE place in this frontend that intentionally does this — every other navigation in the app
+correctly uses client-side routing, and that general rule should NOT be "corrected" onto this specific
+link by someone applying it without this exception in mind. The reason is architectural, not
+performance-driven: the invoice document itself (line items, totals, notes, signature, QR) is the one
+shared render artifact across the PDF, the design editor's preview, and this portal page — rebuilding
+it a second time as a React component tree would be exactly the v1 duplication bug (hand-maintained
+ReportLab + hand-maintained React views drifting out of sync) this whole design exists to prevent. The
+list page itself (`ClientPortal.jsx`) IS real React/UI, correctly — the one-shared-renderer rule
+applies specifically to the invoice document, not the chrome around it.
+
+**A real, necessary frontend infrastructure fix found and fixed while building this**:
+`src/lib/api.js`'s global response interceptor treats ANY 401 as "the freelancer's JWT needs a silent
+refresh," and on refresh failure does a hard `window.location.href = '/login?session_expired=1'`
+redirect. A real client visiting the portal with no session at all has no `lanceraos_refresh` cookie
+either — without a fix, `GET /invoices/portal/me/`'s legitimate 401 would trigger a refresh attempt
+that ALSO fails, hard-redirecting a paying client to the FREELANCER's own login page. Fixed by adding
+`/clients/portal/` and `/invoices/portal/` to the existing `SKIP_REFRESH_URLS` allowlist (the same
+mechanism that already excludes `/auth/login/`/`/auth/register/` for the identical reason) — portal
+pages handle their own 401s directly (`ClientPortal.jsx`'s `needsLink` state -> the request-link form).
+Found by tracing the actual request lifecycle for a session-less portal visit, not by inspection alone
+— the bug would not have surfaced in either the backend test suite (no browser-side interceptor to
+exercise) or a superficial frontend read.
+
+**Preview-as-Client's separate-endpoint design, confirmed not to touch session/tracking state.**
+`invoice_preview_as_client` (freelancer-authenticated, `IsAuthenticated` + `user=request.user` scoping)
+calls `render_invoice_portal_html` directly and returns it — it does NOT import
+`apps.clients.portal.issue_or_renew_session` at all (confirmed by grep, and by a dedicated test:
+`ClientPortalSession.objects.count()` stays 0 across a preview request) and does NOT call
+`_record_invoice_view_if_appropriate` (confirmed: `InvoiceViewEvent` count stays 0, `status` never
+advances from `sent` to `viewed`). This was NOT achieved via `is_freelancer_previewing_portal` gating a
+shared code path — that guard requires BOTH a freelancer session AND a portal-session cookie to be
+present simultaneously, which is never true for Preview-as-Client (no portal session is ever minted on
+this path in the first place). The two endpoints are structurally separate on purpose: `portal_invoice_view_html`
+is the one real place session-minting/view-tracking side effects can happen at all, gated by ONE shared
+`is_freelancer_previewing_portal` check reused for both side effects (the Sent->Viewed transition and
+the `InvoiceViewEvent` write) — not two independent calls that could drift; `invoice_preview_as_client`
+simply has no such code path to guard. The frontend banner ("You're previewing as [client]") is pure
+React chrome rendered OUTSIDE an `<iframe src={previewUrl}>` pointed at this endpoint — the iframe's
+own document is byte-for-byte what `portal_invoice_view_html` would render for the same invoice, so the
+banner can never be mistaken for real portal chrome (the shared template has none of its own).
+
+**`Invoice.portal_view_url` and the new `BACKEND_URL` setting.** Mirrors `payment_page_url`'s existing
+property pattern exactly, but built from `settings.BACKEND_URL` rather than `FRONTEND_URL` — this page
+is served directly by Django, with no React wrapper (per the non-SPA-navigation exception above), so
+the link needs the backend's own public origin. `BACKEND_URL` is a genuinely new setting (default
+`http://localhost:8000`, matching `FRONTEND_URL`'s exact pattern) rather than reading the frontend's
+own `VITE_API_URL` (which holds the identical real value in production, `api.lanceraos.com`) — kept
+deliberately separate so Django's own settings never depend on a Vite-specific env-var naming
+convention, even though the two happen to agree today. Added to `.env.example` and CLAUDE.md's env
+var list in the same change.
+
+**`InvoiceViewEvent` and the Sent->Viewed transition are wired to a real request path for the first
+time.** Confirmed directly before writing any code: `InvoiceViewEvent.objects.create(...)` had zero
+call sites anywhere outside its own model definition (grepped the whole `apps/invoices/` tree), and the
+only existing code that ever set `status='viewed'` was a side effect inside `update_paid_status()`'s
+"all payments removed, restore to a sensible prior status" branch — never a direct "a view just
+happened" transition. `_record_invoice_view_if_appropriate` (`views_portal.py`) is the first real writer
+of both, called exactly once (from `portal_invoice_view_html`), gated by a single
+`is_freelancer_previewing_portal` check covering both side effects together. `GET /invoices/<pk>/pdf/`
+was checked and confirmed NOT the right place for this: it's `IsAuthenticated` + `user=request.user`
+scoped (the freelancer viewing their OWN invoice's PDF inside the app — the wizard's Preview PDF
+action, InvoiceDetailPanel's PDF link), never reachable by a real client at all, so wiring view-tracking
+there would misattribute every freelancer-side PDF check as a client view.

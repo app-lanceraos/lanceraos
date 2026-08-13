@@ -319,6 +319,14 @@ DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='LanceraOS <noreply@lance
 RESEND_FROM_NAME = env('RESEND_FROM_NAME', default='LanceraOS')
 
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:5173')
+# Step 12 — the portal invoice-view page is a real Django-served HTML
+# endpoint with no React wrapper (see apps/invoices/views_portal.py's own
+# docstring), so email links to it need the BACKEND's own public URL, not
+# FRONTEND_URL. Deliberately a separate setting from the frontend's own
+# VITE_API_URL (same real value in production, api.lanceraos.com) rather
+# than Django reading a Vite-prefixed var — keeps the two tools' configs
+# independent even though they happen to agree today.
+BACKEND_URL = env('BACKEND_URL', default='http://localhost:8000')
 
 # Because core/email.py bypasses Django's mail backend entirely (see
 # above), `manage.py test` needs its own safety net to guarantee no test

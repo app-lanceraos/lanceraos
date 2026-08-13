@@ -704,8 +704,27 @@ the custom-SMTP-vs-Resend routing chain out of `apps/invoices/email_service.py` 
 `core/email.py` (`send_client_facing_email`) so `apps.clients` never needs to import `apps.invoices`.
 Deliberately excludes Invoice.view_token as an alternate portal-entry credential, the portal's
 invoice list, and wiring the preview guard into real call sites — all Step 12's job, since they need
-real Invoice data this app doesn't reach into. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full
-design this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
+real Invoice data this app doesn't reach into. 13 August 2026 (Step 12) closed every one of those
+gaps, in `apps/invoices/` (importing FROM `apps.clients.portal`, never the reverse — confirmed with
+the same AST-based zero-import check Step 11 ran on itself): `GET /api/invoices/portal/me/` +
+`.../portal/<pk>/` (a real, minimal client-facing serializer, never the freelancer-facing one) +
+`.../portal/view/<view_token>/` (the actual rendered HTML page — `build_portal_context`/
+`render_invoice_portal_html`, `pdf_generator.py`, reuse the exact same template `_select_template_name`
+picks for the PDF, with real `/static/...` font URLs swapped in for WeasyPrint's `file://` ones — the
+"one HTML/CSS renderer, three outputs" principle, see DECISIONS.md); Invoice.view_token is now a
+second real portal-entry credential alongside `Client.portal_token`, mints/renews the same
+`ClientPortalSession` for a saved client and creates none at all for a one-time client (scoped to that
+one invoice's own token only); `is_freelancer_previewing_portal` is wired to its first real call
+sites — the Sent->Viewed transition and `InvoiceViewEvent` logging, both newly firing on a real
+request path for the first time, gated by one shared check; Preview-as-Client
+(`invoice_preview_as_client`) is a structurally separate, freelancer-authenticated endpoint reusing the
+same renderer but never minting a session or logging a view; the "View Invoice Online" link (closing a
+gap Step 10/11 explicitly flagged as stale) now appears in both the real send and every reminder tier.
+A real, necessary frontend fix landed alongside this: `src/lib/api.js`'s global 401-refresh interceptor
+would otherwise hard-redirect a session-less portal visitor to the freelancer's own `/login` — fixed by
+adding `/clients/portal/`/`/invoices/portal/` to its existing `SKIP_REFRESH_URLS` allowlist. See
+`INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design this is being built against, and `DECISIONS.md`
+for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
 
@@ -829,15 +848,31 @@ device: client self-serves a fresh copy of the SAME still-valid link via
 link/, rate-limited 5/email/hour + 20/IP/hour) - freelancer not
 involved. Existing sessions on other devices remain active when a new
 one is minted. "Log out everywhere" available (revokes every session
-for that client at once). Freelancer's own "Open Portal" preview button
-and its interaction with an already-authenticated freelancer session in
-the same browser is the "Preview mode" guard
-(apps.clients.portal.is_freelancer_previewing_portal) — built, tested
-standalone, NOT yet wired to any real call site (needs Step 12+'s
-Invoice-side call sites to gate).
+for that client at once). An invoice's own view_token link is the
+SECOND real portal entry point (Step 12) alongside Client.portal_token —
+visiting any invoice link mints/renews the same ClientPortalSession for
+a saved client (one click grants access to the client's entire portal,
+not just that invoice); a one-time client's invoice (client=null)
+creates NO session at all, scoped to that exact invoice's own
+view_token only, per the spec's "no portal, no session" rule. The
+freelancer-own-session guard
+(apps.clients.portal.is_freelancer_previewing_portal, built standalone
+in Step 11) is now wired to its first real call sites (Step 12): the
+Sent->Viewed status transition and InvoiceViewEvent logging, both gated
+by one shared check inside portal_invoice_view_html
+(apps/invoices/views_portal.py) — neither ever fired from any real
+request path before this. Preview-as-Client (freelancer-facing, inside
+the authenticated app) is a structurally separate endpoint
+(invoice_preview_as_client) that reuses the same HTML renderer but never
+mints a session or logs a view, with its own "You're previewing as
+[client]" banner rendered as pure React chrome around an iframe.
 
-Portal shows: all invoices with this freelancer, payment history,
-upcoming invoices, two-way message thread.
+Portal shows (Step 12, built): invoice list (GET /api/invoices/portal/me/)
+and the real rendered invoice document (GET /api/invoices/portal/view/<token>/,
+the SAME Django template the PDF renders, with browser-fetchable
+/static/ font URLs instead of WeasyPrint's file:// ones — see
+DECISIONS.md's "one HTML/CSS renderer" entry). Payment history and the
+two-way message thread are NOT built yet — Steps 13/14.
 
 Client Messaging (inside portal):
 Full two-way chat thread between client (in portal) and freelancer
@@ -889,16 +924,29 @@ Key API endpoints — apps/invoices/ (built, real — Step 9):
   via a `commit` flag on the same call; writes FreelancerProfile.signature_url/signature_public_id,
   Step 7b's fields. Backend only — no frontend upload UI yet, see DECISIONS.md)
 
+Key API endpoints — apps/invoices/ portal content (built, real — Step 12; imports
+apps.clients.portal's session utility, never the reverse — see DECISIONS.md):
+- GET /api/invoices/portal/me/ (the resolved client's own invoice list — minimal, client-safe
+  serializer, never the freelancer-facing InvoiceListSerializer)
+- GET /api/invoices/portal/<uuid:pk>/ (a single invoice's client-visible detail; real 404, not 403,
+  for another client's invoice)
+- GET /api/invoices/portal/view/<str:view_token>/ (the actual rendered HTML page — the SAME Django
+  template the PDF renders, via build_portal_context's browser-fetchable font URLs; mints/renews a
+  real ClientPortalSession for a saved client, creates none for a one-time client; also where the
+  Sent->Viewed transition + InvoiceViewEvent logging first fire for real, gated by the
+  freelancer-own-session guard built ahead of time in Step 11)
+- GET /api/invoices/{id}/preview-as-client/ (freelancer-facing, IsAuthenticated — renders the same
+  HTML inside the authenticated app; never mints a session, never logs a view)
+
 Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not stubbed):
-- POST /api/invoices/{id}/send/ (real send — needs core.email.send_email(), Step 10)
 - POST /api/invoices/{id}/acknowledge/, GET/POST .../comments/, GET/POST .../claims/ + confirm/reject,
-  WebSocket endpoints, all public/* portal endpoints, email/incoming webhook — each needs a later
-  step (portal auth Step 11, comments Step 13, claims Step 14) that hasn't landed yet.
+  WebSocket endpoints, email/incoming webhook — each needs a later step (comments Step 13, claims
+  Step 14) that hasn't landed yet.
 - Per-invoice design override at invoice-creation time — `InvoiceFormFields.jsx` has no design-picker
   field at all yet (confirmed directly), so there's genuinely nowhere for it to plug into today —
   flagged in DECISIONS.md's Step 8b entry rather than added as unplanned scope.
 - GET /api/clients/{id}/statement/pdf/ (needs real invoice data + WeasyPrint, later step)
-- GET/POST /api/clients/{id}/messages/, portal PIN endpoints — client portal, Step 11.
+- GET/POST /api/clients/{id}/messages/ — the two-way message thread, Step 13.
 
 **Design system (`InvoiceDesign.design_data`) — backend contract AND editor both built (Steps 8/8b)**:
 a documented two-zone JSON schema (`apps/invoices/design_schema.py`) — `zone_1` (logo/business_info/
@@ -1212,7 +1260,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; real `/send/` + custom-SMTP-vs-Resend routing + reminder Celery task, Step 10; combined `/finalise-and-send/` action + PDF fetch self-heal chain (re-upload+retry, then live-render fallback) + `Invoice.pdf_public_id` + a one-time backfill command, Step 10b; routing chain promoted to `core.email.send_client_facing_email` + Client Portal Authentication — magic-link entry/request-link/logout/logout-everywhere + `ClientPortalSession`, Step 11 — see DECISIONS.md for the confirmed, still-unresolved Cloudinary account-level ACL restriction Step 10b works around) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) built (Client CRM frontend, per-invoice design picker, signature upload UI, portal frontend not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 608 passing (`python manage.py test`). Frontend: 78 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`) + real browser-driven verification (not yet a committed E2E suite) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; real `/send/` + custom-SMTP-vs-Resend routing + reminder Celery task, Step 10; combined `/finalise-and-send/` action + PDF fetch self-heal chain (re-upload+retry, then live-render fallback) + `Invoice.pdf_public_id` + a one-time backfill command, Step 10b; routing chain promoted to `core.email.send_client_facing_email` + Client Portal Authentication — magic-link entry/request-link/logout/logout-everywhere + `ClientPortalSession`, Step 11; Client Portal invoice content — list/detail/rendered-HTML-view endpoints, Sent->Viewed + InvoiceViewEvent wired to the freelancer-own-session guard for the first time, Preview-as-Client, "View Invoice Online" email link, Step 12 — see DECISIONS.md for the confirmed, still-unresolved Cloudinary account-level ACL restriction Step 10b works around) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal in InvoiceDetailPanel.jsx + the standalone Client Portal frontend (`ClientPortal.jsx` list, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route — see DECISIONS.md's non-SPA-navigation exception), Step 12 built (Client CRM frontend, signature upload UI, portal messaging not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 633 passing (`python manage.py test`). Frontend: 91 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx component test file for Preview-as-Client, matching this component's existing convention for its other actions) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
@@ -1253,6 +1301,12 @@ FACEBOOK_APP_SECRET=
 VITE_API_URL=http://localhost:8000
 VITE_WS_URL=ws://localhost:8000
 FRONTEND_URL=http://localhost:5173
+BACKEND_URL=http://localhost:8000
+# Backend's own public URL (api.lanceraos.com in production) — used to
+# build email links to Django-served pages with no React wrapper (the
+# portal invoice-view page, Step 12). Deliberately separate from the
+# frontend's VITE_API_URL despite sharing the same real value in
+# production — see DECISIONS.md.
 
 ### Cookies (httpOnly JWT + CSRF — see DECISIONS.md)
 COOKIE_DOMAIN=

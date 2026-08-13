@@ -430,6 +430,13 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                   <button onClick={() => setModal({ kind: 'bad_debt' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><ShieldAlert size={13} /> Bad Debt</button>
                 </>
               )}
+              {/* "For any invoice with a client" — no status restriction,
+                  unlike Send/Mark-as-Sent above. A one-time-client invoice
+                  (invoice.client is null) has no portal identity to
+                  preview as, so this is absent rather than shown-disabled. */}
+              {invoice.client && (
+                <button onClick={() => setModal({ kind: 'preview_as_client' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Eye size={13} /> Preview as Client</button>
+              )}
               <button onClick={handleDuplicate} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Copy size={13} /> Duplicate</button>
               <button onClick={() => setModal({ kind: 'save_preset' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><BookmarkPlus size={13} /> Save as Preset</button>
               {['draft', 'created'].includes(invoice.status) && (
@@ -478,6 +485,9 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
           title={`Delete ${invoice.invoice_number || 'this draft'}?`} body="This permanently removes the invoice. This cannot be undone."
           confirmLabel="Delete" danger busy={busyKey === 'delete'} onConfirm={handleDelete} onClose={() => setModal(null)}
         />
+      )}
+      {modal?.kind === 'preview_as_client' && (
+        <PreviewAsClientModal invoice={invoice} onClose={() => setModal(null)} />
       )}
     </>
   )
@@ -634,6 +644,35 @@ function ModalShell({ title, onClose, children, maxWidth = 420 }) {
         </div>
         {children}
       </div>
+    </div>
+  )
+}
+
+// Full-screen, not ModalShell's card style — needs real room to show the
+// actual invoice document. The "You're previewing as..." banner lives
+// here, entirely OUTSIDE the iframe's own document (pure React chrome),
+// so it can never be mistaken for real portal chrome — the iframe's
+// content is the exact same bare invoice-document HTML the PDF/portal
+// renderer produces, which has no banner or navigation of its own.
+// This hits invoice_preview_as_client (apps/invoices/views_portal.py),
+// a freelancer-authenticated endpoint that never mints a real
+// ClientPortalSession and never logs a view — confirmed directly against
+// that endpoint's own docstring, not assumed from the URL alone.
+function PreviewAsClientModal({ invoice, onClose }) {
+  const previewUrl = `${api.defaults.baseURL}/invoices/${invoice.id}/preview-as-client/`
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: '14px 24px', background: 'var(--status-amber)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: 12 }}>
+        <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Eye size={15} /> You're previewing as {invoice.client_name || 'this client'} — this is not the real portal
+        </p>
+        <button onClick={onClose} className="fos-btn fos-btn-ghost" style={{ color: '#fff', padding: 6, flexShrink: 0 }} aria-label="Close preview"><X size={16} /></button>
+      </div>
+      <iframe
+        src={previewUrl}
+        title={`Preview as ${invoice.client_name || 'client'}`}
+        style={{ flex: 1, border: 'none', background: '#fff' }}
+      />
     </div>
   )
 }

@@ -37,15 +37,16 @@ REQUEST_TIMEOUT_SECONDS = 15
 # ══════════════════════════════════════════════════════════════════
 # EMAIL CONTENT — real send + reminders
 # ══════════════════════════════════════════════════════════════════
-# No "View Invoice Online" link in either template, unlike v1's own
-# version — v1 links to /invoice/<view_token>, but that public page
-# doesn't exist in v2 yet (needs the client portal, Step 11; confirmed
-# directly against CLAUDE.md's Module 2 status). The PDF is attached to
-# the real send (and its own QR code already encodes
-# Invoice.payment_page_url, Step 7b) — no dead link needed to view or pay
-# it. Same reasoning for the onboarding-message/portal-footer blocks v1
-# appends: both depend on the portal, so neither is ported here — see
-# DECISIONS.md.
+# "View Invoice Online" now links to invoice.portal_view_url (Step 12's
+# real, Django-served portal HTML page) — the client portal exists now,
+# closing the gap this comment used to flag ("v1 links to
+# /invoice/<view_token>, but that public page doesn't exist in v2 yet").
+# The PDF is still attached to the real send (and its own QR code still
+# encodes Invoice.payment_page_url, Step 7b) — the online link is an
+# addition, not a replacement. The onboarding-message/portal-footer
+# blocks v1 also appends are still NOT ported here — those depend on
+# richer portal content (the two-way message thread, Step 13) this step
+# doesn't build; see DECISIONS.md.
 
 def _fmt_money(amount, currency):
     symbol = CURRENCY_SYMBOLS.get(currency, currency + ' ')
@@ -102,8 +103,11 @@ def build_invoice_send_email(invoice):
     <td style="padding:12px 16px;font-size:14px;font-weight:600;color:#dc2626;">{due}</td>
   </tr>
 </table>
-<p style="margin:0;font-size:13px;color:#64748b;line-height:1.6;">
+<p style="margin:0 0 16px;font-size:13px;color:#64748b;line-height:1.6;">
   The invoice PDF is attached to this email.<br/>Reply to this email if you have any questions.
+</p>
+<p style="margin:0 0 20px;">
+  <a href="{invoice.portal_view_url}" style="color:#00c896;font-weight:600;text-decoration:none;">View Invoice Online &rarr;</a>
 </p>
 <p style="margin:20px 0 0;font-size:14px;color:#1e293b;">
   {sender}<br/><a href="mailto:{invoice.user.email}" style="color:#00c896;text-decoration:none;">{invoice.user.email}</a>
@@ -112,7 +116,8 @@ def build_invoice_send_email(invoice):
     plain = (
         f'Invoice from {sender}\n\nHi {invoice.client_name},\n\n'
         f'Invoice: {invoice.invoice_number}\nAmount:  {amount}\nDue:     {due}\n\n'
-        f'PDF attached. Reply to this email with any questions.\n\n{sender}\n{invoice.user.email}'
+        f'PDF attached. Reply to this email with any questions.\n\n'
+        f'View Invoice Online: {invoice.portal_view_url}\n\n{sender}\n{invoice.user.email}'
     )
     return subject, _html_wrapper(body), plain
 
@@ -132,14 +137,18 @@ def build_reminder_email(invoice, reminder_number):
     Subject/HTML/plain-text for an escalating reminder — tone ported
     directly from v1-reference/apps/invoices/email_service.py's
     send_invoice_reminder_email (polite -> firm -> formal -> final),
-    adapted only for v2's real days_overdue property (no stored
-    'overdue' status to reference) and the dropped view/portal links.
+    adapted for v2's real days_overdue property (no stored 'overdue'
+    status to reference). Every tier includes the "View Invoice Online"
+    link (invoice.portal_view_url) now that the portal exists — the
+    dropped-links note this docstring used to carry is stale (Step 12).
     Returns (subject, html, plain).
     """
     sender = sender_display_name(invoice.user, getattr(invoice.user, "profile", None))
     amount = _fmt_money(invoice.total, invoice.currency)
     due = invoice.due_date.strftime('%d %b %Y') if invoice.due_date else '—'
     days = invoice.days_overdue
+    view_link_html = f'<p style="margin:0 0 16px;"><a href="{invoice.portal_view_url}" style="color:#00c896;font-weight:600;text-decoration:none;">View Invoice Online &rarr;</a></p>'
+    view_link_plain = f'\n\nView Invoice Online: {invoice.portal_view_url}'
 
     if reminder_number == 1:
         subject = f'Reminder — Invoice {invoice.invoice_number} is {days} days overdue'
@@ -148,10 +157,11 @@ def build_reminder_email(invoice, reminder_number):
 <p style="margin:0 0 16px;font-size:14px;color:#334155;line-height:1.7;">Hi {invoice.client_name},<br/><br/>
 Just a friendly reminder that invoice <strong>{invoice.invoice_number}</strong> for <strong>{amount}</strong> was due on <strong>{due}</strong>.
 If you've already paid, please ignore this.</p>
+{view_link_html}
 <p style="margin:0;font-size:13px;color:#64748b;">{sender}</p>"""
         plain = (
             f'Hi {invoice.client_name},\n\nReminder: Invoice {invoice.invoice_number} for {amount} '
-            f'was due {due} and is {days} days overdue.\n\n{sender}'
+            f'was due {due} and is {days} days overdue.{view_link_plain}\n\n{sender}'
         )
     elif reminder_number == 2:
         subject = f'Invoice {invoice.invoice_number} — {days} days overdue'
@@ -160,10 +170,11 @@ If you've already paid, please ignore this.</p>
 <p style="margin:0 0 16px;font-size:14px;color:#334155;line-height:1.7;">Dear {invoice.client_name},<br/><br/>
 Invoice <strong>{invoice.invoice_number}</strong> for <strong>{amount}</strong> (due {due}) is now <strong>{days} days overdue</strong>.
 Please arrange payment or reply if there is an issue.</p>
+{view_link_html}
 <p style="margin:0;font-size:13px;color:#64748b;">{sender}</p>"""
         plain = (
             f'Dear {invoice.client_name},\n\nInvoice {invoice.invoice_number} for {amount} is '
-            f'{days} days overdue (due {due}). Please pay immediately.\n\n{sender}'
+            f'{days} days overdue (due {due}). Please pay immediately.{view_link_plain}\n\n{sender}'
         )
     elif reminder_number == 3:
         subject = f'URGENT — Invoice {invoice.invoice_number} — {days} days overdue'
@@ -175,10 +186,11 @@ Please arrange payment or reply if there is an issue.</p>
 <p style="margin:0 0 16px;font-size:14px;color:#334155;line-height:1.7;">Dear {invoice.client_name},<br/><br/>
 Invoice <strong>{invoice.invoice_number}</strong> for <strong>{amount}</strong> remains unpaid.
 Please respond within 48 hours or contact us immediately.</p>
+{view_link_html}
 <p style="margin:0;font-size:13px;color:#64748b;">{sender} &bull; <a href="mailto:{invoice.user.email}" style="color:#1a3a5c;">{invoice.user.email}</a></p>"""
         plain = (
             f'URGENT: Invoice {invoice.invoice_number} for {amount} is {days} days overdue. '
-            f'Please respond within 48 hours.\n\n{sender}\n{invoice.user.email}'
+            f'Please respond within 48 hours.{view_link_plain}\n\n{sender}\n{invoice.user.email}'
         )
     else:
         subject = f'FINAL NOTICE — Invoice {invoice.invoice_number} — {days} days overdue'
@@ -193,10 +205,11 @@ Please respond within 48 hours or contact us immediately.</p>
   <tr><td style="padding:6px 0;font-size:13px;color:#64748b;font-weight:600;">Original Due</td><td style="font-size:13px;color:#1e293b;">{due}</td></tr>
   <tr><td style="padding:6px 0;font-size:13px;color:#64748b;font-weight:600;">Days Overdue</td><td style="font-size:13px;font-weight:700;color:#dc2626;">{days}</td></tr>
 </table>
+{view_link_html}
 <p style="margin:0;font-size:13px;color:#64748b;">{sender} &bull; <a href="mailto:{invoice.user.email}" style="color:#1a3a5c;">{invoice.user.email}</a></p>"""
         plain = (
             f'FINAL NOTICE: Invoice {invoice.invoice_number} for {amount} is {days} days overdue. '
-            f'Payment required within 7 days.\n\n{sender}\n{invoice.user.email}'
+            f'Payment required within 7 days.{view_link_plain}\n\n{sender}\n{invoice.user.email}'
         )
 
     return subject, _html_wrapper(body), plain

@@ -24,6 +24,7 @@ from pathlib import Path
 
 import qrcode
 from django.template.loader import render_to_string
+from django.templatetags.static import static
 from weasyprint import HTML
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,25 @@ FONT_CONTEXT = {
     'font_source_serif_regular': _font_uri('SourceSerif4-Regular.ttf'),
     'font_source_serif_semibold': _font_uri('SourceSerif4-Semibold.ttf'),
     'font_space_grotesk': _font_uri('SpaceGrotesk[wght].ttf'),
+}
+
+# Same font files, same template variable names — only the URL SCHEME
+# differs from FONT_CONTEXT above. file:// URIs are correct for
+# WeasyPrint's own URL fetcher but meaningless (and blocked by real
+# browsers) outside of it; static() resolves through Django's normal
+# staticfiles machinery (apps/invoices/static/invoices/fonts/, confirmed
+# reachable via the app-directories finder — no separate STATICFILES_DIRS
+# entry needed) to a real browser-fetchable /static/... URL. Used by
+# build_portal_context, never build_pdf_context — WeasyPrint never sees
+# these.
+PORTAL_FONT_CONTEXT = {
+    'font_ibm_plex_sans_regular': static('invoices/fonts/IBMPlexSans-Regular.ttf'),
+    'font_ibm_plex_sans_semibold': static('invoices/fonts/IBMPlexSans-SemiBold.ttf'),
+    'font_ibm_plex_mono_regular': static('invoices/fonts/IBMPlexMono-Regular.ttf'),
+    'font_ibm_plex_mono_semibold': static('invoices/fonts/IBMPlexMono-SemiBold.ttf'),
+    'font_source_serif_regular': static('invoices/fonts/SourceSerif4-Regular.ttf'),
+    'font_source_serif_semibold': static('invoices/fonts/SourceSerif4-Semibold.ttf'),
+    'font_space_grotesk': static('invoices/fonts/SpaceGrotesk[wght].ttf'),
 }
 
 # Interim default template, per this step's explicit instruction: checked
@@ -131,6 +151,39 @@ def render_invoice_pdf(invoice):
     template_name = _select_template_name(invoice)
     html_string = render_to_string(template_name, build_pdf_context(invoice))
     return HTML(string=html_string).write_pdf()
+
+
+def build_portal_context(invoice):
+    """
+    Same context as build_pdf_context — same invoice/freelancer objects,
+    same QR data URI, same signature_url — with PORTAL_FONT_CONTEXT
+    swapped in for FONT_CONTEXT. This is the ENTIRE difference between
+    the PDF and the live-HTML render paths: everything else (which
+    template, which fields, how totals/dates format) comes from the same
+    single source, per the one-HTML/CSS-renderer principle this project
+    builds all three invoice outputs (editor preview, portal page, PDF)
+    against. @page CSS rules in the templates are meaningless in a
+    browser but deliberately left in — stripping them here would mean
+    the markup two render paths serve is no longer byte-for-byte the
+    same template, the exact drift this design exists to prevent.
+    """
+    context = build_pdf_context(invoice)
+    context.update(PORTAL_FONT_CONTEXT)
+    return context
+
+
+def render_invoice_portal_html(invoice):
+    """
+    Live-renders `invoice` as real browser-facing HTML — the same
+    template _select_template_name picks for the PDF, via
+    build_portal_context instead of build_pdf_context. Used by both the
+    real portal-view endpoint (apps/invoices/views_portal.py) and
+    Preview-as-Client (same module) — one shared renderer for both, per
+    the one-HTML/CSS-renderer principle: neither is a second,
+    hand-built reimplementation of the invoice layout.
+    """
+    template_name = _select_template_name(invoice)
+    return render_to_string(template_name, build_portal_context(invoice))
 
 
 def upload_pdf_bytes(invoice, pdf_bytes):

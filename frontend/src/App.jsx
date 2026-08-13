@@ -27,6 +27,8 @@ import DesignEditor from '@/pages/design-editor/DesignEditor'
 import Onboarding from '@/pages/Onboarding'
 import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
+import ClientPortal from '@/pages/portal/ClientPortal'
+import PortalEnter from '@/pages/portal/PortalEnter'
 
 export default function App() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -64,6 +66,17 @@ export default function App() {
         {/* Shell-less standalone flow — deliberately not wrapped in
             AppShell or a route guard (see DeletionReview.jsx). */}
         <Route path="/account/deletion-review" element={<DeletionReview />} />
+
+        {/* Client Portal (Step 12) — its own auth entirely (a portal-
+            session cookie, apps.clients.cookies), unrelated to
+            useAuthStore/PrivateRoute, so neither route is wrapped in
+            either. The individual invoice VIEW deliberately has NO
+            React route at all — clicking an invoice in ClientPortal.jsx
+            navigates directly to the backend's HTML-serving endpoint
+            (a plain <a href>, not client-side routing); see that file's
+            own comment and DECISIONS.md for why. */}
+        <Route path="/portal" element={<ClientPortal />} />
+        <Route path="/portal/enter/:token" element={<PortalEnter />} />
 
         {/* Private — require an active session */}
         {/* Onboarding is deliberately NOT wrapped in AppShell — it's a
