@@ -31,8 +31,10 @@ that same renderer too — one shared renderer, three total consumers
 """
 import logging
 
+from django.core.cache import cache
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -43,11 +45,31 @@ from core.observability import get_client_ip, get_user_agent
 
 from apps.clients.portal import is_freelancer_previewing_portal, issue_or_renew_session, resolve_session_from_request
 
-from .models import Invoice, InvoiceViewEvent
+from .comments import broadcast_comment, upload_comment_attachment
+from .models import Invoice, InvoiceComment, InvoiceViewEvent
 from .pdf_generator import render_invoice_portal_html
+from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
 from .serializers_portal import PortalInvoiceDetailSerializer, PortalInvoiceListSerializer
 
 logger = logging.getLogger(__name__)
+
+# Tighter than the freelancer side's 30/hour (_check_moderate_rate_limit,
+# views.py) but not as tight as Step 11's fully-anonymous 5/email-hr —
+# a portal comment poster already holds a real, unguessable
+# ClientPortalSession (harder to script-spam than a bare email field),
+# just with less accountability behind it than an authenticated
+# freelancer account. Keyed by client, not IP/email — the session
+# itself is the identity here.
+PORTAL_COMMENT_RATE_LIMIT_PER_HOUR = 15
+
+
+def _check_portal_comment_rate_limit(client):
+    key = f'ratelimit_portal_comment_{client.pk}'
+    count = cache.get(key, 0)
+    if count >= PORTAL_COMMENT_RATE_LIMIT_PER_HOUR:
+        return True
+    cache.set(key, count + 1, timeout=3600)
+    return False
 
 
 def _record_invoice_view_if_appropriate(invoice, request):
@@ -184,3 +206,66 @@ def invoice_preview_as_client(request, pk):
 
     html = render_invoice_portal_html(invoice)
     return HttpResponse(html, content_type='text/html')
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
+def portal_invoice_comments(request, pk):
+    """
+    The client's own side of the unified two-way thread
+    (apps/invoices/views.py's invoice_comments is the freelancer's side
+    of the exact same InvoiceComment rows). Portal-session-authenticated,
+    scoped to the resolved client's own invoices only — same 401/404
+    discipline Step 12 established (401 with no session at all; a real
+    404, not the client's own comments on someone else's invoice, since
+    get_object_or_404 is scoped to client=client).
+
+    GET marks every currently-unread, FREELANCER-authored comment as
+    read (read_by_client_at), mirroring invoice_comments' own read-
+    marking exactly, just the other direction.
+
+    POST creates a real, permanent InvoiceComment (author_type='client',
+    client_name/client_email snapshotted from the resolved Client —
+    never client-supplied, per serializers_comments.py's own docstring)
+    and broadcasts it to the invoice's WebSocket thread group. Rate
+    limited tighter than the freelancer side (see
+    PORTAL_COMMENT_RATE_LIMIT_PER_HOUR above).
+    """
+    client = resolve_session_from_request(request)
+    if client is None:
+        return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    invoice = get_object_or_404(Invoice, pk=pk, client=client)
+
+    if request.method == 'GET':
+        InvoiceComment.objects.filter(
+            invoice=invoice, author_type='freelancer', read_by_client_at__isnull=True,
+        ).update(read_by_client_at=timezone.now())
+        comments = invoice.comments.all()
+        return Response(InvoiceCommentSerializer(comments, many=True).data)
+
+    if _check_portal_comment_rate_limit(client):
+        return Response(
+            {'error': 'Too many messages. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    attachment_url = ''
+    file = request.FILES.get('attachment')
+    if file:
+        result = upload_comment_attachment(file)
+        if isinstance(result, Response):
+            return result
+        attachment_url = result
+
+    serializer = CommentCreateSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    comment = serializer.save(
+        invoice=invoice, author_type='client', client_name=client.name, client_email=client.email,
+        source='portal', attachment_url=attachment_url,
+    )
+    broadcast_comment(comment)
+    emit('CommentPosted', invoice_id=str(invoice.pk), user_id=str(invoice.user_id), comment_id=str(comment.pk), author_type='client')
+    logger.info('[INVOICES] Comment posted by client on invoice %s.', invoice.invoice_number)
+    return Response(InvoiceCommentSerializer(comment).data, status=status.HTTP_201_CREATED)

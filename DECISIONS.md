@@ -3107,3 +3107,137 @@ was checked and confirmed NOT the right place for this: it's `IsAuthenticated` +
 scoped (the freelancer viewing their OWN invoice's PDF inside the app — the wizard's Preview PDF
 action, InvoiceDetailPanel's PDF link), never reachable by a real client at all, so wiring view-tracking
 there would misattribute every freelancer-side PDF check as a client view.
+
+Date: 14 August 2026
+Decision: Built Comments (Step 13) — `InvoiceComment`'s two real write paths (freelancer,
+`apps/invoices/views.py`'s `invoice_comments`; client, `views_portal.py`'s `portal_invoice_comments`),
+the inbound email-reply webhook (`views_email.py`), the WebSocket thread
+(`apps/invoices/consumers.py`'s `ClientThreadConsumer`, `apps/invoices/routing.py`), the
+unread-after-1hr batched-email Celery task, and the real frontend on both sides
+(`CommentThread.jsx`, `src/hooks/useWebSocket.js`).
+Reason: closes the gap `apps/invoices/email_service.py`'s `get_reply_to_address` has been producing
+outbound addresses for since Step 10 with nothing on the receiving end, and gives the client portal
+(Step 12) its first genuinely interactive feature.
+
+**The WebSocket route uses the invoice's `view_token`, not its `pk`.** One side of this connection
+(a portal client) has no JWT identity at all — `view_token` is this codebase's already-established
+public-facing credential for exactly that situation (`GET .../portal/view/<view_token>/`, the
+`reply+<view_token>@` email address), so the WS route matches that existing convention rather than
+introducing a second public identifier scheme. This is a consistency choice, not the sole security
+boundary: `ClientThreadConsumer.connect()` still performs a real authorization check regardless of
+which identifier the route used (the invoice's own freelancer, or the invoice's own client) — a
+guessable route parameter alone grants nothing without a matching identity behind it.
+
+**The dual-identity WebSocket auth mechanism, as actually implemented.** The task's own framing was
+correct and is confirmed directly, not assumed: `CookieJWTAuthMiddleware`
+(`apps/users/ws_auth.py`), already wired globally in `config/asgi.py`, populates `scope['user']` for
+every WebSocket connection — reused exactly as-is for the freelancer path, zero new JWT-handling
+code written. The portal-client path is a second, parallel check built INSIDE `ClientThreadConsumer`
+itself, not a second global ASGI middleware — a `ClientPortalSession` identity is scoped to exactly
+this one consumer today, unlike freelancer auth, which every future WS route gets for free the
+moment it's added to `config/ws_routing.py`. Confirmed directly (per the task's own explicit
+instruction) that `apps.clients.portal.resolve_session_from_request` is reusable as-is: it only ever
+reads `request.COOKIES`, nothing else, so a minimal duck-typed shim (`_CookieOnlyRequest`, just a
+`.COOKIES` attribute) lets the real function run unmodified inside `database_sync_to_async` — the
+exact pattern `apps/users/ws_auth.py`'s own `_get_user_from_token` already established for a
+WS-context DB lookup. This means the sliding-window session renewal (`resolve_session_from_request`'s
+own `last_used_at`/`expires_at` update) fires correctly on every real WS connection too, for free,
+with no separate renewal logic written for the WS path.
+A one-time client's invoice (`client_id` is null) has no `ClientPortalSession` possible at all — per
+Step 12's "no portal, no session" rule, there is structurally no way for that client to authenticate
+into this consumer. Only the freelancer side can ever connect to a one-time-client invoice's thread.
+This is a real, inherent limitation of the one-time-client design, not an oversight introduced here —
+flagging it explicitly so it isn't later mistaken for a bug in `ClientThreadConsumer`.
+No pre-existing `NotificationConsumer`/`channel_layer.group_send` precedent was found anywhere in
+this codebase to mirror, despite the task's own framing assuming one exists — confirmed directly by
+grepping the whole repo (only `v1-reference/apps/invoices/consumers.py` has a same-named class, built
+against v1's now-replaced query-param-JWT auth, for a wholly different purpose — general notifications,
+not comment threads — and `frontend/src/hooks/useWebSocket.js` existed only as an empty placeholder
+file before this step, not the working hook CLAUDE.md's own frontend rules describe). `broadcast_comment`
+(`apps/invoices/comments.py`) instead follows Channels' own standard type-dispatch convention
+(`'type': 'comment.message'` -> `async def comment_message(self, event)`), verified end to end with a
+real `WebsocketCommunicator` test asserting a broadcast comment actually reaches a connected client —
+not just that the function runs without raising.
+Verified with Channels' own testing utilities (`channels.testing.WebsocketCommunicator`,
+`TransactionTestCase` — not `TestCase`, since the communicator runs the consumer in a genuinely
+separate async context that needs its own DB-transaction visibility into what the test method
+committed) — the first WebSocket tests anywhere in this codebase. All four real outcomes are covered
+directly: the invoice's own freelancer accepted, a different freelancer rejected (4001), the
+invoice's own client accepted, a different client's portal session rejected (4001), no identity at
+all rejected (4001), and an unknown `view_token` rejected with a distinct code (4004) so a client
+hitting a dead/mistyped link gets a different signal than "you're not authorized."
+
+**The inbound email-reply webhook's real authentication approach.** No pre-existing shared-secret
+setting, webhook route, or partial scaffolding existed anywhere before this step — confirmed directly
+(no `CLOUDFLARE_WEBHOOK_SECRET`, no `views_email.py`, no partial URL pattern), matching Step 10/12's
+own explicit deferral notes. Added `CLOUDFLARE_WEBHOOK_SECRET` (new setting, no default — an
+unset/empty value means the endpoint rejects every request, fails closed not open) checked against a
+real `X-Webhook-Secret` request header — the standard shared-secret pattern for this class of
+provider-to-backend webhook, chosen over alternatives (HMAC request signing, mutual TLS) as the
+simplest approach that still meaningfully authenticates the caller, matching this project's general
+preference for the standard/established approach over a bespoke one where no existing convention
+already pins the choice. The payload contract itself (`{"from", "to", "subject", "text", "html"}`) is
+also this step's own reasonable design, since no real Cloudflare Worker config exists yet to match
+against — it mirrors the shape virtually every inbound-email-webhook provider already uses (Postmark,
+SendGrid, Mailgun inbound parse), so a real Worker forwarding here needs only a thin translation
+layer, not a bespoke contract invented from nothing.
+Every validation failure is a real, specific, logged rejection, per the task's own instruction that
+this is public-facing and fully untrusted: missing/wrong secret -> 403 before parsing anything else;
+recipient not matching `reply+<token>@lanceraos.com` -> 400; unknown token -> 404; sender neither the
+invoice's own `client_email` nor its freelancer's own email -> 403 (a stranger somehow reaching this
+endpoint); empty body (both `text` and `html` blank) -> 400. Each case has its own dedicated test
+asserting both the status code AND that no `InvoiceComment` row was created.
+
+**The freelancer-vs-client notification-path distinction (item 7), confirmed correct before
+assuming.** A freelancer-recipient notification (the unread-after-1hr batch, when the FREELANCER is
+who's behind on reading) uses plain `core.email.send_email` — never `send_client_facing_email`/the
+custom-SMTP-vs-Resend chain. This was checked directly against how every other freelancer-facing
+notification in this app already works (2FA OTP, password reset, security alerts, `CustomSmtpFailed`'s
+own in-app + no client-routing) before writing this task's own version, not assumed from the task's
+phrasing alone: the custom-SMTP chain exists structurally to let a client-facing send go out "as" the
+freelancer's own business identity — a notification TO the freelancer about their own account has no
+sensible "as" party to route through, since the freelancer IS the recipient. A client-recipient
+notification (the freelancer's own unread replies) DOES use `send_client_facing_email`, per CLAUDE.md's
+Custom Email Rule 2 explicitly listing "Client messages" as one of the routed categories.
+**Symmetric by direction — a deliberate generalization beyond the original spec prose.**
+CLAUDE.md's own Client Messaging paragraph only describes one direction ("When client sends a
+message: immediate in-app notification to freelancer... unread after 1hr: one reminder email"). This
+step's own explicit instruction asked for both directions to be covered by the batched-email task, and
+a real two-way thread structurally needs this: a freelancer's own unread reply left the client hanging
+exactly as much as an unread client message leaves the freelancer hanging. Implemented as two
+independent, identically-shaped queries in `notify_unread_comments` (client-authored/unread-by-
+freelancer; freelancer-authored/unread-by-client), each with its own content builder
+(`build_unread_comments_email_for_freelancer`/`_for_client`, `email_service.py`) and its own routing
+choice per the paragraph above. The IMMEDIATE in-app bell ping, by contrast, stays asymmetric exactly
+as the original spec describes — client-authored only (`_record_comment_posted`'s own explicit
+`author_type != 'client': return` guard) — since there is no client-side "bell"/notification-center
+system for a freelancer's own post to immediately ping into; only the batched email (which needs no
+in-app UI to land in) generalizes to both directions.
+**Batching is per-invoice, not per-comment or global**, per the "no further reminders" rule needing a
+real per-comment "already notified" marker (`InvoiceComment.unread_reminder_sent_at`, confirmed via
+direct migration rather than assumed present) — grouped in Python via `itertools.groupby` over a
+queryset already ordered by `(invoice_id, created_at)`, proven with a dedicated test asserting TWO
+unread comments on the same invoice produce exactly ONE email, and a second task run against an
+already-notified comment sends zero further emails.
+
+Alternatives considered for the webhook auth: accepting the Cloudflare Worker's own IP range as the
+trust boundary instead of a shared secret (rejected — IP allowlisting is brittle against Cloudflare's
+own IP ranges changing, and a shared secret is simpler to rotate/verify without extra infrastructure
+config); putting the shared secret in the URL path itself as a pseudo-token (rejected — URLs end up
+in server logs, browser history, and Referer headers far more readily than a header does, a strictly
+worse exposure surface for a fixed shared secret that never rotates per-request the way `view_token`
+does).
+
+**A real, honest gap against CLAUDE.md's own original Client Messaging paragraph, flagged rather than
+silently dropped**: that paragraph describes "immediate in-app notification... If unread after
+exactly 1 hour: one reminder email + one in-app notification" — TWO separate bell notifications
+total for a client-authored comment, plus the email. This step built only the first (the immediate
+ping, `_record_comment_posted`) and the batched email at the 1-hour mark — no SECOND bell
+notification fires when that threshold is crossed. This step's own task instructions (item 7)
+described the 1-hour mechanism purely as an email batch and didn't ask for a second in-app
+notification alongside it, so that's what was built; the original CLAUDE.md text is the more complete
+spec and this is a real, deliberate narrowing against it, not an oversight. Worth closing in a future
+pass if a second "still unread" bell ping turns out to matter in practice — `unread_reminder_sent_at`
+already marks the exact right moment to fire it from, so no new marker would be needed, just a
+`log_event('comment_posted', ...)` call (or a dedicated event) alongside the existing email send in
+`notify_unread_comments`.

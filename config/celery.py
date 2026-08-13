@@ -42,6 +42,10 @@ app.conf.beat_schedule = {
         'task': 'apps.invoices.tasks.send_invoice_reminders',
         'schedule': crontab(hour=9, minute=0),
     },
+    'notify-unread-comments-every-15-minutes': {
+        'task': 'apps.invoices.tasks.notify_unread_comments',
+        'schedule': crontab(minute='*/15'),
+    },
 }
 
 app.conf.timezone = 'Asia/Karachi'

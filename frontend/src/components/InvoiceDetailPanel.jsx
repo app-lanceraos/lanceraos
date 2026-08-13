@@ -15,12 +15,13 @@
 import { useEffect, useState } from 'react'
 import {
   X, Send, Mail, CheckCircle2, Wallet, Undo2, Ban, ShieldAlert, Copy, BookmarkPlus,
-  Check, AlertTriangle, Pause, Play, Bell, BellOff, Trash2, Clock, Eye, Receipt, FileText,
+  Check, AlertTriangle, Pause, Play, Bell, BellOff, Trash2, Clock, Eye, Receipt, FileText, MessageCircle,
 } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTimedMessage from '@/hooks/useTimedMessage'
 import useInvoiceAutosave from '@/hooks/useInvoiceAutosave'
+import CommentThread from './CommentThread'
 import FormField from './FormField'
 import FormSelect from './FormSelect'
 import FosAlert from './FosAlert'
@@ -356,10 +357,20 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
               <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: '1px solid var(--border-subtle)' }}>
                 <TabButton icon={Receipt} label="Details" active={activeTab === 'details'} onClick={() => setActiveTab('details')} />
                 <TabButton icon={Clock} label="Timeline" active={activeTab === 'timeline'} onClick={() => setActiveTab('timeline')} />
+                <TabButton icon={MessageCircle} label="Comments" active={activeTab === 'comments'} onClick={() => setActiveTab('comments')} />
               </div>
 
               {activeTab === 'details' && <DetailsTab invoice={invoice} />}
               {activeTab === 'timeline' && <TimelineTab loaded={timelineLoaded} entries={timeline} />}
+              {activeTab === 'comments' && (
+                <div style={{ height: 420 }}>
+                  <CommentThread
+                    commentsUrl={`/invoices/${invoiceId}/comments/`}
+                    viewToken={invoice.view_token}
+                    viewerType="freelancer"
+                  />
+                </div>
+              )}
 
               {/* ── Recurring ── */}
               {invoice.is_recurring && (

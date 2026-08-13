@@ -813,7 +813,8 @@ class InvoiceComment(models.Model):
     IS mutable (see apps.clients.models.ClientNote and DECISIONS.md).
 
     6-question framework:
-    1. Mutable? No, append-only, except the two `read_by_*_at` timestamps.
+    1. Mutable? No, append-only, except the two `read_by_*_at` timestamps
+       and `unread_reminder_sent_at` (Step 13).
     2. Soft deleted? No — permanent record by design.
     3. Audit trail? The comment row itself is the record; posting also
        emits CommentPosted (handler wiring is a later step).
@@ -842,6 +843,14 @@ class InvoiceComment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     read_by_freelancer_at = models.DateTimeField(null=True, blank=True)
     read_by_client_at = models.DateTimeField(null=True, blank=True)
+    # Step 13 — the "already notified" marker the unread-after-1hr batched
+    # email task needs: without this, a comment still unread on the NEXT
+    # task run (every 15 min) would generate a second email, then a third,
+    # etc., violating the spec's "no further reminders" rule. Set once,
+    # the moment this comment is included in a batched reminder email —
+    # never cleared, never re-checked after that (matches read_by_*_at's
+    # own append-only spirit: this row is otherwise fully immutable).
+    unread_reminder_sent_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'invoice_comments'

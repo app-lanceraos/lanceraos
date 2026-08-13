@@ -22,6 +22,13 @@ NOTIFICATION_EVENTS = {
     # own handler docstring for why a self-triggered send doesn't need
     # a bell ping.
     'custom_smtp_failed',
+    # apps/invoices, Step 13 — the immediate in-app ping when a CLIENT
+    # posts a comment (per CLAUDE.md's Client Messaging spec: "When
+    # client sends a message: immediate in-app notification to
+    # freelancer"). The freelancer's own posts never self-notify, same
+    # reasoning as invoice_sent above — see apps/invoices/notifications.py's
+    # own handler.
+    'comment_posted',
 }
 
 EVENT_TITLES = {
@@ -34,6 +41,7 @@ EVENT_TITLES = {
     'deletion_confirmed': 'Account scheduled for deletion',
     'session_revoked': 'Session signed out',
     'custom_smtp_failed': 'Custom email delivery failed',
+    'comment_posted': 'New message',
 }
 
 # Where clicking each notification type navigates. Compulsory — every
@@ -56,7 +64,28 @@ EVENT_ACTION_URLS = {
     # the invoice itself (the client-facing email already went out fine,
     # via the Resend fallback).
     'custom_smtp_failed': '/settings?tab=smtp',
+    # Per INVOICES_CLIENTS_TECHNICAL_SPEC.md Section 6's own table entry
+    # for comment_posted.
+    'comment_posted': '/invoices/{id}?tab=comments',
 }
+
+
+def _action_url(log):
+    """
+    Every existing entry in EVENT_ACTION_URLS is a static string — this
+    is the first event (comment_posted, Step 13) whose real destination
+    needs the specific invoice's id, so this is the first real use of the
+    {id} placeholder. Falls back to the raw (unsubstituted) template if
+    metadata['invoice_id'] is somehow missing, rather than raising —
+    a slightly wrong link is far better than a 500 on the notification
+    bell for every user.
+    """
+    template = EVENT_ACTION_URLS.get(log.event)
+    if template and '{id}' in template:
+        invoice_id = (log.metadata or {}).get('invoice_id')
+        if invoice_id:
+            return template.replace('{id}', invoice_id)
+    return template
 
 
 def _describe(log):
@@ -73,6 +102,10 @@ def _describe(log):
             f'Your email to {client} was sent from noreply@lanceraos.com '
             f'because your custom email failed. Check your SMTP settings.'
         )
+    if log.event == 'comment_posted':
+        client = log.metadata.get('client_name') or 'Your client'
+        invoice_number = log.metadata.get('invoice_number') or 'an invoice'
+        return f'{client} sent a new message on {invoice_number}.'
     return ''
 
 
@@ -95,7 +128,7 @@ def list_notifications(request):
         'message': _describe(log),
         'created_at': log.created_at.isoformat(),
         'is_read': log.id in states,
-        'action_url': EVENT_ACTION_URLS.get(log.event),
+        'action_url': _action_url(log),
     } for log in visible_logs]
     unread_count = sum(1 for n in data if not n['is_read'])
     return Response({'notifications': data, 'unread_count': unread_count})

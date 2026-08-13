@@ -722,9 +722,25 @@ same renderer but never minting a session or logging a view; the "View Invoice O
 gap Step 10/11 explicitly flagged as stale) now appears in both the real send and every reminder tier.
 A real, necessary frontend fix landed alongside this: `src/lib/api.js`'s global 401-refresh interceptor
 would otherwise hard-redirect a session-less portal visitor to the freelancer's own `/login` — fixed by
-adding `/clients/portal/`/`/invoices/portal/` to its existing `SKIP_REFRESH_URLS` allowlist. See
-`INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design this is being built against, and `DECISIONS.md`
-for each step's reasoning as it lands.
+adding `/clients/portal/`/`/invoices/portal/` to its existing `SKIP_REFRESH_URLS` allowlist. 14 August
+2026 (Step 13) built Comments — `InvoiceComment`'s two real write paths (`invoice_comments`, `views.py`,
+freelancer; `portal_invoice_comments`, `views_portal.py`, client — both immutable, no edit/delete
+endpoint anywhere), the inbound email-reply webhook (`views_email.py`, a new `CLOUDFLARE_WEBHOOK_SECRET`
+shared-secret setting, no prior scaffolding existed), and this codebase's first real WebSocket feature
+(`apps/invoices/consumers.py`'s `ClientThreadConsumer`, dual freelancer-JWT/portal-session auth, routed
+by `view_token` not `pk` — see DECISIONS.md for the full reasoning on all three). Real-time delivery
+reuses Channels' own standard type-dispatch convention (no pre-existing `NotificationConsumer` was
+found anywhere in this codebase to mirror, despite that being assumed — confirmed directly). The
+unread-after-1hr batched email (`apps/invoices/tasks.py`'s `notify_unread_comments`, every 15 min, ONE
+email per invoice) is symmetric by direction — a deliberate generalization beyond CLAUDE.md's own
+original Client Messaging paragraph below, which only described client-authored comments; the
+immediate in-app bell ping stays client-authored-only as originally written, and there's a real,
+flagged gap where a SECOND bell ping at the 1-hour mark (the original paragraph's own wording) wasn't
+built, only the email — see DECISIONS.md's 14 August entry. Frontend: a real `CommentThread.jsx`
+(shared by both sides) and `src/hooks/useWebSocket.js` (built for real this pass — it existed only as
+an empty placeholder file before, despite CLAUDE.md's frontend rules already describing it as
+established convention). See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design this is being
+built against, and `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
 
@@ -874,13 +890,39 @@ the SAME Django template the PDF renders, with browser-fetchable
 DECISIONS.md's "one HTML/CSS renderer" entry). Payment history and the
 two-way message thread are NOT built yet — Steps 13/14.
 
-Client Messaging (inside portal):
-Full two-way chat thread between client (in portal) and freelancer
-(in main app). No account needed for client - messages tied to portal
-session. When client sends a message: immediate in-app notification to
-freelancer. If unread after exactly 1 hour: one reminder email + one
-in-app notification. No further reminders. Freelancer replies from
-within the app. Messages stored with sender, timestamp, read status.
+Client Messaging (inside portal) — BUILT, Step 13:
+Full two-way chat thread between client (in portal, ClientPortal.jsx's
+per-invoice Messages panel) and freelancer (InvoiceDetailPanel's
+Comments tab) — real InvoiceComment rows via GET/POST
+/api/invoices/{id}/comments/ (freelancer) and
+/api/invoices/portal/{id}/comments/ (client, portal-session-
+authenticated), plus a real inbound email-reply webhook
+(POST /api/invoices/email/incoming/, apps/invoices/views_email.py,
+authenticated via a CLOUDFLARE_WEBHOOK_SECRET shared-secret header) that
+turns a reply to reply+<view_token>@lanceraos.com into the same thread,
+tagged source='email_reply'. No account needed for client — messages
+tied to the portal session. Real-time delivery via WebSocket
+(ws/invoices/thread/<view_token>/, apps/invoices/consumers.py's
+ClientThreadConsumer — dual auth, freelancer JWT cookie OR portal
+session cookie, see DECISIONS.md), with a 15s polling fallback in the
+frontend if the socket doesn't connect. No edit/delete endpoint exists
+for InvoiceComment anywhere, by design (immutable, verified with a real
+405 test on both endpoints). One image attachment per comment (Cloudinary,
+same validation discipline as logo/signature uploads).
+When client sends a message: immediate in-app notification to freelancer
+(gated by their own notif_client_messages toggle). If EITHER side's
+comment is still unread after exactly 1 hour: one batched reminder email
+(apps/invoices/tasks.py's notify_unread_comments, every 15 min, ONE email
+per invoice covering everything unread at that threshold, never one per
+comment) — routed through send_email (freelancer recipient) or
+send_client_facing_email (client recipient), see DECISIONS.md for why
+those differ. No further reminders (InvoiceComment.unread_reminder_sent_at
+is the real "already notified" marker). NOTE: unlike this paragraph's
+original wording, only ONE in-app bell notification fires per client
+comment (the immediate one) — there is deliberately no SECOND bell ping
+at the 1-hour mark alongside the email; see DECISIONS.md's 14 August
+entry for the full reasoning and how to close this gap if it matters
+later.
 
 Key API endpoints — apps/clients/ (built, real):
 - GET/POST /api/clients/ (filter/search/sort per the Client CRM section above)
@@ -938,15 +980,26 @@ apps.clients.portal's session utility, never the reverse — see DECISIONS.md):
 - GET /api/invoices/{id}/preview-as-client/ (freelancer-facing, IsAuthenticated — renders the same
   HTML inside the authenticated app; never mints a session, never logs a view)
 
+Key API endpoints — apps/invoices/ Comments (built, real — Step 13):
+- GET/POST /api/invoices/{id}/comments/ (freelancer side — IsAuthenticated; GET marks unread
+  client-authored comments read_by_freelancer_at)
+- GET/POST /api/invoices/portal/{id}/comments/ (client side — portal-session-authenticated, rate
+  limited 15/hour per client session; GET marks unread freelancer-authored comments read_by_client_at)
+- POST /api/invoices/email/incoming/ (the inbound email-reply webhook — CLOUDFLARE_WEBHOOK_SECRET
+  shared-secret header required; parses reply+<view_token>@lanceraos.com, rejects untrusted/malformed
+  input with real 400/403/404s, see DECISIONS.md)
+- WS ws/invoices/thread/<view_token>/ (apps/invoices/consumers.py's ClientThreadConsumer — dual
+  auth: freelancer JWT cookie via the existing global CookieJWTAuthMiddleware, OR a portal-session
+  cookie checked inside the consumer itself; view_token, not pk — see DECISIONS.md)
+- No edit/delete endpoint exists anywhere for InvoiceComment, by design (immutable)
+
 Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not stubbed):
-- POST /api/invoices/{id}/acknowledge/, GET/POST .../comments/, GET/POST .../claims/ + confirm/reject,
-  WebSocket endpoints, email/incoming webhook — each needs a later step (comments Step 13, claims
-  Step 14) that hasn't landed yet.
+- POST /api/invoices/{id}/acknowledge/, GET/POST .../claims/ + confirm/reject — Payment Claims
+  (Step 14) and Client Acknowledgment (Step 15) haven't landed yet.
 - Per-invoice design override at invoice-creation time — `InvoiceFormFields.jsx` has no design-picker
   field at all yet (confirmed directly), so there's genuinely nowhere for it to plug into today —
   flagged in DECISIONS.md's Step 8b entry rather than added as unplanned scope.
 - GET /api/clients/{id}/statement/pdf/ (needs real invoice data + WeasyPrint, later step)
-- GET/POST /api/clients/{id}/messages/ — the two-way message thread, Step 13.
 
 **Design system (`InvoiceDesign.design_data`) — backend contract AND editor both built (Steps 8/8b)**:
 a documented two-zone JSON schema (`apps/invoices/design_schema.py`) — `zone_1` (logo/business_info/
@@ -1260,7 +1313,7 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; real `/send/` + custom-SMTP-vs-Resend routing + reminder Celery task, Step 10; combined `/finalise-and-send/` action + PDF fetch self-heal chain (re-upload+retry, then live-render fallback) + `Invoice.pdf_public_id` + a one-time backfill command, Step 10b; routing chain promoted to `core.email.send_client_facing_email` + Client Portal Authentication — magic-link entry/request-link/logout/logout-everywhere + `ClientPortalSession`, Step 11; Client Portal invoice content — list/detail/rendered-HTML-view endpoints, Sent->Viewed + InvoiceViewEvent wired to the freelancer-own-session guard for the first time, Preview-as-Client, "View Invoice Online" email link, Step 12 — see DECISIONS.md for the confirmed, still-unresolved Cloudinary account-level ACL restriction Step 10b works around) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal in InvoiceDetailPanel.jsx + the standalone Client Portal frontend (`ClientPortal.jsx` list, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route — see DECISIONS.md's non-SPA-navigation exception), Step 12 built (Client CRM frontend, signature upload UI, portal messaging not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 633 passing (`python manage.py test`). Frontend: 91 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx component test file for Preview-as-Client, matching this component's existing convention for its other actions) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; real `/send/` + custom-SMTP-vs-Resend routing + reminder Celery task, Step 10; combined `/finalise-and-send/` action + PDF fetch self-heal chain (re-upload+retry, then live-render fallback) + `Invoice.pdf_public_id` + a one-time backfill command, Step 10b; routing chain promoted to `core.email.send_client_facing_email` + Client Portal Authentication — magic-link entry/request-link/logout/logout-everywhere + `ClientPortalSession`, Step 11; Client Portal invoice content — list/detail/rendered-HTML-view endpoints, Sent->Viewed + InvoiceViewEvent wired to the freelancer-own-session guard for the first time, Preview-as-Client, "View Invoice Online" email link, Step 12; Comments — dual-write (freelancer/portal) + inbound email-reply webhook + real-time WebSocket delivery (dual freelancer/portal auth) + unread-after-1hr batched email, Step 13 — see DECISIONS.md for the confirmed, still-unresolved Cloudinary account-level ACL restriction Step 10b works around) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages IS real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides), Step 12/13 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 672 passing (`python manage.py test`, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 99 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx component test file for Preview-as-Client/Comments, matching this component's existing convention for its other actions) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

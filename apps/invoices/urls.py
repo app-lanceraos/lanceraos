@@ -1,7 +1,7 @@
 # apps/invoices/urls.py
 from django.urls import path
 
-from . import views, views_portal
+from . import views, views_email, views_portal
 
 app_name = 'invoices'
 
@@ -10,6 +10,7 @@ urlpatterns = [
     path('summary/', views.invoice_summary, name='invoice_summary'),
     path('aging-report/', views.invoice_aging_report, name='invoice_aging_report'),
     path('exchange-rate/', views.exchange_rate_lookup, name='exchange_rate_lookup'),
+    path('email/incoming/', views_email.email_incoming_webhook, name='email_incoming_webhook'),
 
     # Client Portal content (Step 12) — apps.invoices imports the
     # session/identity utility from apps.clients, never the reverse.
@@ -21,6 +22,7 @@ urlpatterns = [
     path('portal/me/', views_portal.portal_invoice_list, name='portal_invoice_list'),
     path('portal/view/<str:view_token>/', views_portal.portal_invoice_view_html, name='portal_invoice_view_html'),
     path('portal/<uuid:pk>/', views_portal.portal_invoice_detail, name='portal_invoice_detail'),
+    path('portal/<uuid:pk>/comments/', views_portal.portal_invoice_comments, name='portal_invoice_comments'),
 
     path('presets/', views.preset_list, name='preset_list'),
     path('presets/<uuid:pk>/', views.preset_detail, name='preset_detail'),
@@ -53,4 +55,5 @@ urlpatterns = [
     path('<uuid:pk>/resume-recurring/', views.invoice_resume_recurring, name='invoice_resume_recurring'),
     path('<uuid:pk>/timeline/', views.invoice_timeline, name='invoice_timeline'),
     path('<uuid:pk>/preview-as-client/', views_portal.invoice_preview_as_client, name='invoice_preview_as_client'),
+    path('<uuid:pk>/comments/', views.invoice_comments, name='invoice_comments'),
 ]

@@ -2,10 +2,9 @@
 from django.urls import path
 
 from core.ws_test_consumer import AuthEchoConsumer
+from apps.invoices.routing import websocket_urlpatterns as invoices_websocket_urlpatterns
 
 websocket_urlpatterns = [
     path('ws/echo/', AuthEchoConsumer.as_asgi()),
-    # Future modules add their own websocket routes here — e.g.:
-    # from apps.invoices.consumers import ClientThreadConsumer
-    # path('ws/invoices/thread/<uuid:thread_id>/', ClientThreadConsumer.as_asgi()),
+    *invoices_websocket_urlpatterns,
 ]

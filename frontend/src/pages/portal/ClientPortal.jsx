@@ -10,10 +10,11 @@
 // refresh-and-redirect-to-/login interceptor, which src/lib/api.js's
 // SKIP_REFRESH_URLS now explicitly excludes /invoices/portal/ from).
 import { useEffect, useState } from 'react'
-import { LogOut } from 'lucide-react'
+import { LogOut, MessageCircle, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
+import CommentThread from '@/components/CommentThread'
 import { formatMoney } from '@/pages/invoiceHelpers'
 import PortalLayout from './PortalLayout'
 import PortalRequestLinkForm from './PortalRequestLinkForm'
@@ -24,12 +25,26 @@ const STATUS_LABELS = {
   cancelled: 'Cancelled', refunded: 'Refunded', bad_debt: 'Bad Debt',
 }
 
+// PortalInvoiceListSerializer deliberately never exposes the raw
+// view_token as its own field (Step 12 — only pre-built URLs are
+// exposed to the client side, never the credential itself). The
+// comment thread's WebSocket route needs that token, so it's parsed
+// back out of the one URL that already legitimately contains it
+// (.../portal/view/<token>/) rather than adding a second field whose
+// only purpose would be handing the token to JS directly.
+function viewTokenFromPortalUrl(url) {
+  if (!url) return null
+  const segments = url.split('/').filter(Boolean)
+  return segments[segments.length - 1] || null
+}
+
 export default function ClientPortal() {
   useTitle('Your Invoices — LanceraOS')
   const [invoices, setInvoices] = useState(null)
   const [needsLink, setNeedsLink] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
+  const [messagesInvoice, setMessagesInvoice] = useState(null)
 
   useEffect(() => { load() }, [])
 
@@ -100,25 +115,26 @@ export default function ClientPortal() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {invoices.map((inv) => (
-            // Real browser navigation, not client-side routing — this
-            // <a> points directly at the backend's own HTML-serving
-            // endpoint (GET /api/invoices/portal/view/<token>/). A plain
-            // href, deliberately not a React Router <Link> or an
-            // onClick+navigate()+fetch: the invoice document itself is
-            // the one shared render artifact (PDF/portal/editor-preview),
-            // never a second React reimplementation of the layout — see
-            // DECISIONS.md. This is the one intentional exception to
-            // this app's otherwise-universal client-side routing.
-            <a
+            <div
               key={inv.id}
-              href={inv.portal_view_url}
               style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
                 padding: '14px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)',
-                textDecoration: 'none', color: 'inherit',
               }}
             >
-              <div>
+              {/* Real browser navigation, not client-side routing — this
+                  <a> points directly at the backend's own HTML-serving
+                  endpoint (GET /api/invoices/portal/view/<token>/). A
+                  plain href, deliberately not a React Router <Link> or
+                  an onClick+navigate()+fetch: the invoice document
+                  itself is the one shared render artifact (PDF/portal/
+                  editor-preview), never a second React reimplementation
+                  of the layout — see DECISIONS.md. This is the one
+                  intentional exception to this app's otherwise-
+                  universal client-side routing. Messages, below, are
+                  genuinely interactive UI with no such artifact to stay
+                  in sync with, so that part IS real React. */}
+              <a href={inv.portal_view_url} style={{ textDecoration: 'none', color: 'inherit', flex: 1, minWidth: 0 }}>
                 <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                   {inv.invoice_number || '(unnumbered)'}
                 </p>
@@ -126,14 +142,48 @@ export default function ClientPortal() {
                   {STATUS_LABELS[inv.status] || inv.status} · Due {inv.due_date || '—'}
                   {inv.days_overdue > 0 ? ` · ${inv.days_overdue}d overdue` : ''}
                 </p>
-              </div>
+              </a>
               <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                 {formatMoney(inv.total, inv.currency)}
               </p>
-            </a>
+              <button
+                onClick={() => setMessagesInvoice(inv)}
+                className="fos-btn fos-btn-ghost"
+                style={{ fontSize: '0.78rem', flexShrink: 0 }}
+                aria-label={`Messages for ${inv.invoice_number || 'this invoice'}`}
+              >
+                <MessageCircle size={14} />
+              </button>
+            </div>
           ))}
         </div>
       )}
+
+      {messagesInvoice && (
+        <MessagesModal invoice={messagesInvoice} onClose={() => setMessagesInvoice(null)} />
+      )}
     </PortalLayout>
+  )
+}
+
+function MessagesModal({ invoice, onClose }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '20px 24px', width: '100%', maxWidth: 480, height: 520, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+            {invoice.invoice_number || 'Messages'}
+          </h3>
+          <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <CommentThread
+            commentsUrl={`/invoices/portal/${invoice.id}/comments/`}
+            viewToken={viewTokenFromPortalUrl(invoice.portal_view_url)}
+            viewerType="client"
+          />
+        </div>
+      </div>
+    </div>
   )
 }

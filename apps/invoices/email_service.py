@@ -215,6 +215,61 @@ Please respond within 48 hours or contact us immediately.</p>
     return subject, _html_wrapper(body), plain
 
 
+# ══════════════════════════════════════════════════════════════════
+# EMAIL CONTENT — unread-comment batch notification (Step 13)
+# ══════════════════════════════════════════════════════════════════
+# ONE email per invoice, covering everything unread at the 1-hour
+# threshold (apps/invoices/tasks.py's notify_unread_comments) — never
+# one email per comment. Two builders, not one: the framing differs by
+# direction ("you have new messages" vs. "X sent you a new message"),
+# and the recipient determines which routing chain sends it (see
+# tasks.py's own docstring on the freelancer-vs-client distinction).
+
+def build_unread_comments_email_for_freelancer(invoice, comments):
+    """
+    To the freelancer themselves — routed through plain core.email.send_email
+    (tasks.py), never the custom-SMTP-vs-Resend chain. A notification
+    about the freelancer's OWN account activity can't sensibly go out
+    "as" the freelancer's own business identity to themselves — the
+    custom-SMTP chain exists specifically for CLIENT-facing sends,
+    structurally not applicable when the freelancer IS the recipient.
+    """
+    plural = 's' if len(comments) != 1 else ''
+    subject = f'{len(comments)} new message{plural} on Invoice {invoice.invoice_number}'
+    rows = ''.join(
+        f'<li style="margin-bottom:8px;"><strong>{c.client_name or "Your client"}:</strong> '
+        f'{(c.body_text or "")[:200]}</li>'
+        for c in comments
+    )
+    body = f"""
+<p style="margin:0 0 16px;font-size:16px;font-weight:700;color:#1e293b;">New message{plural} on Invoice {invoice.invoice_number}</p>
+<ul style="margin:0 0 20px;padding-left:20px;font-size:13px;color:#334155;">{rows}</ul>
+<p style="margin:0;font-size:13px;color:#64748b;">Reply from within LanceraOS to keep the conversation going.</p>"""
+    plain_lines = '\n'.join(f'{c.client_name or "Your client"}: {(c.body_text or "")[:200]}' for c in comments)
+    plain = f'{len(comments)} new message{plural} on Invoice {invoice.invoice_number}:\n\n{plain_lines}'
+    return subject, _html_wrapper(body), plain
+
+
+def build_unread_comments_email_for_client(invoice, comments):
+    """To the client — routed through send_client_facing_email (tasks.py), the standard client-facing routing chain, per CLAUDE.md's Custom Email Rule 2 ('Client messages' is explicitly listed)."""
+    sender = sender_display_name(invoice.user, getattr(invoice.user, 'profile', None))
+    plural = 's' if len(comments) != 1 else ''
+    subject = f'{len(comments)} new message{plural} from {sender}'
+    rows = ''.join(
+        f'<li style="margin-bottom:8px;">{(c.body_text or "")[:200]}</li>'
+        for c in comments
+    )
+    body = f"""
+<p style="margin:0 0 16px;font-size:16px;font-weight:700;color:#1e293b;">New message{plural} from {sender}</p>
+<ul style="margin:0 0 20px;padding-left:20px;font-size:13px;color:#334155;">{rows}</ul>
+<p style="margin:0;font-size:13px;color:#64748b;">
+  <a href="{invoice.portal_view_url}" style="color:#00c896;font-weight:600;text-decoration:none;">View and reply &rarr;</a>
+</p>"""
+    plain_lines = '\n'.join((c.body_text or '')[:200] for c in comments)
+    plain = f'{len(comments)} new message{plural} from {sender}:\n\n{plain_lines}\n\nView and reply: {invoice.portal_view_url}'
+    return subject, _html_wrapper(body), plain
+
+
 def get_reply_to_address(invoice):
     """
     reply+<view_token>@lanceraos.com — the established pattern, ported

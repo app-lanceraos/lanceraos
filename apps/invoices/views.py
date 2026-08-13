@@ -40,17 +40,19 @@ from apps.users.models import FreelancerProfile
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
 
 from .ai_design import seed_design_data_from_image
+from .comments import broadcast_comment, upload_comment_attachment
 from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
 from .email_service import build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email
 from .models import (
-    NON_OVERDUE_STATUSES, Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset,
-    InvoicePresetItem,
+    NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceItem, InvoicePartialPayment,
+    InvoicePreset, InvoicePresetItem,
 )
 from .pdf_generator import render_invoice_pdf, store_invoice_pdf
 from .serializers import (
     InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer, InvoicePresetSerializer,
     InvoiceSerializer,
 )
+from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
 from .signature_tool import remove_signature_background
 
 # Reference images for AI design seeding — a narrower set than logo uploads
@@ -917,9 +919,76 @@ def invoice_timeline(request, pk):
             'type': 'payment', 'timestamp': payment.recorded_at.isoformat(),
             'amount': str(payment.amount), 'currency': payment.currency, 'source': payment.source,
         })
+    for comment in invoice.comments.all():
+        entries.append({
+            'type': 'comment', 'timestamp': comment.created_at.isoformat(),
+            'author_type': comment.author_type, 'source': comment.source,
+        })
 
     entries.sort(key=lambda e: e['timestamp'])
     return Response({'results': entries})
+
+
+# ══════════════════════════════════════════════════════════════════
+# COMMENTS — Step 13. Freelancer side (portal side: views_portal.py)
+# ══════════════════════════════════════════════════════════════════
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def invoice_comments(request, pk):
+    """
+    The freelancer's own side of the unified two-way thread
+    (apps/invoices/views_portal.py's portal_invoice_comments is the
+    client's side of the exact same InvoiceComment rows).
+
+    GET marks every currently-unread, CLIENT-authored comment as read
+    (read_by_freelancer_at) as a side effect of fetching the list — no
+    separate mark-read endpoint, since reading the list genuinely can
+    double as the read action (checked directly against
+    InvoiceComment's own field shape before deciding, per this step's
+    own instruction). Never touches read_by_freelancer_at on the
+    freelancer's OWN comments — that field only has meaning for
+    comments they didn't write themselves.
+
+    POST creates a real, permanent InvoiceComment (author_type='freelancer',
+    author_user=request.user, source='app') and broadcasts it to the
+    invoice's WebSocket thread group. No edit/delete endpoint exists
+    anywhere for this model, by design — comments are immutable, per
+    InvoiceComment's own docstring ("no editing or deleting comments,
+    ever... consistent with the platform's whole trust/audit posture").
+    """
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+
+    if request.method == 'GET':
+        InvoiceComment.objects.filter(
+            invoice=invoice, author_type='client', read_by_freelancer_at__isnull=True,
+        ).update(read_by_freelancer_at=timezone.now())
+        comments = invoice.comments.all()
+        return Response(InvoiceCommentSerializer(comments, many=True).data)
+
+    if _check_moderate_rate_limit('post_comment', request.user):
+        return _too_many_requests('Too many comments posted. Please try again later.')
+
+    attachment_url = ''
+    file = request.FILES.get('attachment')
+    if file:
+        result = upload_comment_attachment(file)
+        if isinstance(result, Response):
+            return result
+        attachment_url = result
+
+    serializer = CommentCreateSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    comment = serializer.save(
+        invoice=invoice, author_type='freelancer', author_user=request.user,
+        source='app', attachment_url=attachment_url,
+    )
+    broadcast_comment(comment)
+    emit('CommentPosted', invoice_id=str(invoice.pk), user_id=str(request.user.pk), comment_id=str(comment.pk), author_type='freelancer')
+    logger.info('[INVOICES] Comment posted by freelancer on invoice %s.', invoice.invoice_number)
+    return Response(InvoiceCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
 
 
 # ══════════════════════════════════════════════════════════════════

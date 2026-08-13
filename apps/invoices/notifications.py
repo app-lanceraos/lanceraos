@@ -13,11 +13,11 @@ emit with nowhere to go without this file either.
 Registered via apps/invoices/apps.py's InvoicesConfig.ready() — importing
 this module is what runs its @on(...) decorators; nothing else imports it.
 
-WebSocket push (the other half of the spec's example) is NOT added here —
-core/notifications.py's own bell-list endpoint (list_notifications) reads
-AuditLog directly via polling, and frontend/src/hooks/useWebSocket.js is
-still "[not yet built]" per CLAUDE.md's own frontend rules — there is
-nothing to push to yet.
+WebSocket push for the bell itself (core/notifications.py's
+list_notifications) still isn't built — that endpoint reads AuditLog via
+polling. Step 13 DOES add a real WebSocket push, but for a narrower
+purpose (apps.invoices.comments.broadcast_comment, invoice-thread comment
+delivery only) — not a generalization of this bell.
 """
 import logging
 
@@ -96,4 +96,57 @@ def _record_custom_smtp_failed(user_id, recipient_email, smtp_host, error_messag
         'smtp_host': smtp_host,
         'error_message': error_message,
         'fallback_used': True,
+    })
+
+
+@on('CommentPosted')
+def _record_comment_posted(invoice_id, user_id, comment_id, author_type, **_extra):
+    """
+    The immediate in-app bell notification CLAUDE.md's Client Messaging
+    section requires: "When client sends a message: immediate in-app
+    notification to freelancer." Deliberately CLIENT-authored comments
+    only — a freelancer posting their own comment doesn't need a bell
+    ping about their own action, the same reasoning _record_invoice_sent
+    above already established for a self-triggered send.
+
+    Respects the recipient's notif_client_messages toggle (CLAUDE.md:
+    "comment_posted maps to notif_client_messages") at the write layer,
+    not just filtered out of the response later — every notification a
+    user receives beyond security alerts is one they've explicitly
+    enabled, so an opted-out freelancer should never even get the
+    AuditLog row written, matching this project's established
+    opt-out-means-truly-no-notification convention.
+
+    The batched unread-after-1hr email (apps/invoices/tasks.py's
+    notify_unread_comments) is a SEPARATE mechanism from this immediate
+    ping — this handler fires once, right away, regardless of whether
+    the freelancer ever reads it; the batch task is what covers "still
+    unread an hour later."
+    """
+    if author_type != 'client':
+        return
+
+    from .models import Invoice
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] CommentPosted handler: user_id=%s not found.', user_id)
+        return
+
+    try:
+        profile = user.profile
+    except Exception:
+        profile = None
+    if profile is not None and not profile.notif_client_messages:
+        return
+
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+
+    log_event('comment_posted', user=user, metadata={
+        'invoice_id': invoice_id,
+        'comment_id': comment_id,
+        'client_name': invoice.client_name if invoice else None,
+        'invoice_number': invoice.invoice_number if invoice else None,
     })

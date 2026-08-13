@@ -917,19 +917,34 @@ view layer (a later step), not on this model.
 ## `invoice_comments` (`InvoiceComment`, in `apps.invoices`)
 
 New — no v1 equivalent (v1 has no messaging at all, confirmed in an earlier session). The unified
-two-way message thread (portal + email-reply + in-app) per the spec.
+two-way message thread (portal + email-reply + in-app) per the spec — fully built Step 13:
+`GET/POST /api/invoices/<pk>/comments/` (freelancer), `GET/POST /api/invoices/portal/<pk>/comments/`
+(client), `POST /api/invoices/email/incoming/` (the inbound email-reply webhook), and real-time
+delivery via `apps/invoices/consumers.py`'s `ClientThreadConsumer`.
 
 **Schema**: `id`, `invoice` (FK, `CASCADE`), `author_type` (`freelancer`/`client`), `author_user`
 (FK → `User`, `SET_NULL`, nullable — set when `author_type='freelancer'`), `client_name`/
 `client_email` (snapshot, blank — set when `author_type='client'`), `source` (`portal`/
 `email_reply`/`app`), `body_text`, `body_html` (blank, only for `email_reply`), `attachment_url`,
-`created_at`, `read_by_freelancer_at`/`read_by_client_at`. **No `updated_at`** — deliberately
-different from `ClientNote` (which IS mutable): comments are immutable, never edited or deleted,
-per the decisions doc.
+`created_at`, `read_by_freelancer_at`/`read_by_client_at`, `unread_reminder_sent_at` (Step 13,
+new). **No `updated_at`** — deliberately different from `ClientNote` (which IS mutable): comments
+are immutable, never edited or deleted, per the decisions doc — confirmed with a real test
+(`test_no_edit_or_delete_endpoint_exists`) that PUT/DELETE/PATCH all 405 on both comment endpoints.
 
-1. **Mutable?** No, append-only, except the two `read_by_*_at` timestamps. 2. **Soft deleted?**
+**`unread_reminder_sent_at`** (Step 13 migration `0008_invoicecomment_unread_reminder_sent_at`) is
+the "already notified" marker `apps/invoices/tasks.py`'s `notify_unread_comments` Celery Beat task
+(every 15 minutes) needs: without it, a comment still unread on the next run would generate a
+second batched email, then a third, violating the "no further reminders" rule. Set once, the
+moment a comment is included in a batched unread-after-1hr email — never cleared, never
+re-checked, matching `read_by_*_at`'s own append-only spirit on an otherwise fully immutable row.
+
+1. **Mutable?** No, append-only, except the two `read_by_*_at` timestamps and
+   `unread_reminder_sent_at`. 2. **Soft deleted?**
    No — permanent record by design. 3. **Audit trail?** The row itself is the record; posting also
-   emits `CommentPosted` (handler wiring is a later step). 4. **Indexed?** `(invoice, created_at)`.
+   emits `CommentPosted` — now with a real registered handler (Step 13,
+   `apps/invoices/notifications.py`'s `_record_comment_posted`) writing the immediate in-app bell
+   notification for a client-authored comment, gated by the recipient's own `notif_client_messages`
+   toggle. 4. **Indexed?** `(invoice, created_at)`.
 5. **Encrypted?** No. 6. **Cascade behavior?** `CASCADE` from `Invoice`; `SET_NULL` from `User` (a
    comment survives its author's account being anonymized — verified directly with a test using a
    commenter distinct from the invoice's own owner, since deleting the invoice's owner would

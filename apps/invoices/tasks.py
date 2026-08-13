@@ -23,14 +23,20 @@ uses — rather than re-implementing that decision chain a second time
 here.
 """
 import logging
+from datetime import timedelta
+from itertools import groupby
 
 from celery import shared_task
 from django.utils import timezone
 
+from core.email import send_client_facing_email, send_email
 from core.events import emit
 
-from .email_service import build_reminder_email, send_invoice_related_email
-from .models import NON_OVERDUE_STATUSES, Invoice, InvoiceReminder
+from .email_service import (
+    build_reminder_email, build_unread_comments_email_for_client, build_unread_comments_email_for_freelancer,
+    send_invoice_related_email,
+)
+from .models import NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceReminder
 
 logger = logging.getLogger(__name__)
 
@@ -115,3 +121,89 @@ def send_invoice_reminders():
 
     logger.info('[INVOICES] send_invoice_reminders: sent %s reminder(s) for %s.', sent_count, today)
     return {'sent': sent_count, 'date': str(today)}
+
+
+@shared_task(name='apps.invoices.tasks.notify_unread_comments')
+def notify_unread_comments():
+    """
+    Runs every 15 minutes (see config/celery.py's beat_schedule) —
+    CLAUDE.md's Client Messaging spec: "If unread after exactly 1 hour:
+    one reminder email... No further reminders." ONE email per invoice,
+    covering everything unread at the threshold (batched, not one email
+    per comment) — grouped in Python via itertools.groupby over a
+    queryset already ordered by (invoice_id, created_at), not a separate
+    aggregation query.
+
+    InvoiceComment.unread_reminder_sent_at (Step 13 migration) is the
+    real "already notified" marker this needs: without it, a comment
+    still unread on the NEXT run (15 min later) would generate a second
+    email, then a third, etc. Set once, on every comment included in a
+    batch, right after that batch's email is sent — never cleared, never
+    re-checked.
+
+    Symmetric by direction, per this step's own explicit instruction —
+    the original spec prose only describes client-authored comments
+    notifying the freelancer, but a real two-way thread means the
+    freelancer's own unread replies should notify the client identically:
+      - author_type='client', unread by freelancer -> notify the
+        freelancer via plain core.email.send_email (never the custom-
+        SMTP-vs-Resend chain — a platform notification TO the freelancer
+        about their own account can't route "as" their own business
+        identity to themselves; that chain is structurally for
+        CLIENT-facing sends only, confirmed against how CustomSmtpFailed/
+        every other freelancer-facing notification already works).
+      - author_type='freelancer', unread by client -> notify the client
+        via send_client_facing_email (core/email.py), the standard
+        client-facing routing chain, per CLAUDE.md's Custom Email Rule 2
+        ("Client messages" is explicitly one of the listed categories).
+    """
+    cutoff = timezone.now() - timedelta(hours=1)
+    notified_count = 0
+
+    freelancer_pending = InvoiceComment.objects.filter(
+        author_type='client', created_at__lte=cutoff,
+        read_by_freelancer_at__isnull=True, unread_reminder_sent_at__isnull=True,
+    ).select_related('invoice', 'invoice__user').order_by('invoice_id', 'created_at')
+
+    for _invoice_id, group in groupby(freelancer_pending, key=lambda c: c.invoice_id):
+        comments = list(group)
+        invoice = comments[0].invoice
+        try:
+            subject, html_body, plain_body = build_unread_comments_email_for_freelancer(invoice, comments)
+            send_email(invoice.user.email, subject, html_body, plain_body)
+            InvoiceComment.objects.filter(pk__in=[c.pk for c in comments]).update(unread_reminder_sent_at=timezone.now())
+            notified_count += len(comments)
+            logger.info(
+                '[INVOICES] Unread-comment batch email sent to freelancer for invoice %s (%d comment(s)).',
+                invoice.invoice_number, len(comments),
+            )
+        except Exception:
+            logger.exception('[INVOICES] Error notifying freelancer of unread comments for invoice_id=%s.', invoice.pk)
+
+    client_pending = InvoiceComment.objects.filter(
+        author_type='freelancer', created_at__lte=cutoff,
+        read_by_client_at__isnull=True, unread_reminder_sent_at__isnull=True,
+    ).select_related('invoice', 'invoice__user').order_by('invoice_id', 'created_at')
+
+    for _invoice_id, group in groupby(client_pending, key=lambda c: c.invoice_id):
+        comments = list(group)
+        invoice = comments[0].invoice
+        if not invoice.client_email:
+            continue  # a one-time client with no email on record — nothing to notify
+        try:
+            subject, html_body, plain_body = build_unread_comments_email_for_client(invoice, comments)
+            send_client_facing_email(
+                invoice.user, invoice.client_email, subject, html_body, plain_body,
+                recipient_name=invoice.client_name, context_type='invoice', context_id=str(invoice.pk),
+            )
+            InvoiceComment.objects.filter(pk__in=[c.pk for c in comments]).update(unread_reminder_sent_at=timezone.now())
+            notified_count += len(comments)
+            logger.info(
+                '[INVOICES] Unread-comment batch email sent to client for invoice %s (%d comment(s)).',
+                invoice.invoice_number, len(comments),
+            )
+        except Exception:
+            logger.exception('[INVOICES] Error notifying client of unread comments for invoice_id=%s.', invoice.pk)
+
+    logger.info('[INVOICES] notify_unread_comments: notified for %d comment(s) across both directions.', notified_count)
+    return {'notified': notified_count}
