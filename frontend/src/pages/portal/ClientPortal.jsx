@@ -10,12 +10,15 @@
 // refresh-and-redirect-to-/login interceptor, which src/lib/api.js's
 // SKIP_REFRESH_URLS now explicitly excludes /invoices/portal/ from).
 import { useEffect, useState } from 'react'
-import { LogOut, MessageCircle, X } from 'lucide-react'
+import { CheckCircle2, LogOut, MessageCircle, Receipt, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import CommentThread from '@/components/CommentThread'
-import { formatMoney } from '@/pages/invoiceHelpers'
+import FormField from '@/components/FormField'
+import FormSelect from '@/components/FormSelect'
+import FosAlert from '@/components/FosAlert'
+import { PAYMENT_SOURCE_OPTIONS, formatMoney } from '@/pages/invoiceHelpers'
 import PortalLayout from './PortalLayout'
 import PortalRequestLinkForm from './PortalRequestLinkForm'
 
@@ -45,6 +48,7 @@ export default function ClientPortal() {
   const [loadError, setLoadError] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const [messagesInvoice, setMessagesInvoice] = useState(null)
+  const [claimInvoice, setClaimInvoice] = useState(null)
 
   useEffect(() => { load() }, [])
 
@@ -146,14 +150,26 @@ export default function ClientPortal() {
               <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                 {formatMoney(inv.total, inv.currency)}
               </p>
-              <button
-                onClick={() => setMessagesInvoice(inv)}
-                className="fos-btn fos-btn-ghost"
-                style={{ fontSize: '0.78rem', flexShrink: 0 }}
-                aria-label={`Messages for ${inv.invoice_number || 'this invoice'}`}
-              >
-                <MessageCircle size={14} />
-              </button>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                {inv.outstanding_amount > 0 && (
+                  <button
+                    onClick={() => setClaimInvoice(inv)}
+                    className="fos-btn fos-btn-ghost"
+                    style={{ fontSize: '0.78rem' }}
+                    aria-label={`Report a payment for ${inv.invoice_number || 'this invoice'}`}
+                  >
+                    <Receipt size={14} />
+                  </button>
+                )}
+                <button
+                  onClick={() => setMessagesInvoice(inv)}
+                  className="fos-btn fos-btn-ghost"
+                  style={{ fontSize: '0.78rem' }}
+                  aria-label={`Messages for ${inv.invoice_number || 'this invoice'}`}
+                >
+                  <MessageCircle size={14} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -161,6 +177,9 @@ export default function ClientPortal() {
 
       {messagesInvoice && (
         <MessagesModal invoice={messagesInvoice} onClose={() => setMessagesInvoice(null)} />
+      )}
+      {claimInvoice && (
+        <ClaimModal invoice={claimInvoice} onClose={() => setClaimInvoice(null)} />
       )}
     </PortalLayout>
   )
@@ -183,6 +202,83 @@ function MessagesModal({ invoice, onClose }) {
             viewerType="client"
           />
         </div>
+      </div>
+    </div>
+  )
+}
+
+// A saved client's own invoice — reachable only from within this
+// session-authenticated SPA, so this always hits
+// POST /invoices/portal/<pk>/claims/ with a valid portal-session
+// cookie, never the one-time-client view_token path (that path has no
+// real frontend surface yet — it exists on the backend for the same
+// reason Step 12's own view_token entry point did before this page's
+// equivalent landed, see DECISIONS.md).
+function ClaimModal({ invoice, onClose }) {
+  const [source, setSource] = useState('other')
+  const [amount, setAmount] = useState(invoice.outstanding_amount)
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  const [note, setNote] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+
+  async function submit() {
+    if (!amount || parseFloat(amount) <= 0) { setError('Enter a valid amount.'); return }
+    setError('')
+    setBusy(true)
+    try {
+      await api.post(`/invoices/portal/${invoice.id}/claims/`, {
+        payment_source: source, amount_claimed: amount, currency: invoice.currency,
+        payment_date: paymentDate, client_note: note,
+      })
+      setSubmitted(true)
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not submit — please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '20px 24px', width: '100%', maxWidth: 420 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+            Report a Payment
+          </h3>
+          <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
+        </div>
+
+        {submitted ? (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <CheckCircle2 size={28} style={{ color: 'var(--status-green-text)', marginBottom: 10 }} />
+            <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-primary)', fontWeight: 600 }}>Thanks — we've let them know.</p>
+            <p style={{ margin: '6px 0 16px', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+              They'll review this payment and confirm it on the invoice.
+            </p>
+            <button onClick={onClose} className="fos-btn fos-btn-primary" style={{ fontSize: '0.82rem' }}>Done</button>
+          </div>
+        ) : (
+          <>
+            <p style={{ margin: '0 0 14px', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
+              Outstanding balance: {formatMoney(invoice.outstanding_amount, invoice.currency)}
+            </p>
+            {error && <FosAlert type="error" style={{ marginBottom: 12 }}>{error}</FosAlert>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 18 }}>
+              <FormSelect label="How did you pay?" value={source} onChange={(e) => setSource(e.target.value)} options={PAYMENT_SOURCE_OPTIONS} />
+              <FormField label={`Amount (${invoice.currency})`} type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+              <FormField label="Payment Date" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+              <FormField label="Note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional — e.g. a reference number" />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button onClick={onClose} className="fos-btn fos-btn-ghost">Cancel</button>
+              <button onClick={submit} disabled={busy} className="fos-btn fos-btn-primary">
+                {busy ? <span className="fos-spinner" /> : <Receipt size={14} />} Submit
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

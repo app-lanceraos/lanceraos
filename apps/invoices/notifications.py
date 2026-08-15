@@ -150,3 +150,84 @@ def _record_comment_posted(invoice_id, user_id, comment_id, author_type, **_extr
         'client_name': invoice.client_name if invoice else None,
         'invoice_number': invoice.invoice_number if invoice else None,
     })
+
+
+@on('PaymentClaimSubmitted')
+def _notify_payment_claim_submitted(invoice_id, user_id, claim_id, **_extra):
+    """
+    Section 6's 'In-app + immediate' tier for payment_claim_submitted:
+    both the bell (AuditLog write, read by core/notifications.py's
+    list_notifications) and a real, immediate email to the freelancer —
+    unlike comment_posted's bell-only-now/email-batched-later split,
+    this event's own table row lists 'Email? Yes' with no batching
+    caveat, so both fire from the same handler, gated together behind
+    one notif_payments check (CLAUDE.md: "payment-related events" map to
+    notif_payments, not notif_client_messages, even though the claim
+    itself arrives via the client portal).
+    """
+    from apps.users.models import User
+    from core.email import send_email
+
+    from .email_service import build_payment_claim_submitted_email
+    from .models import Invoice, PaymentClaim
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] PaymentClaimSubmitted handler: user_id=%s not found.', user_id)
+        return
+
+    try:
+        profile = user.profile
+    except Exception:
+        profile = None
+    if profile is not None and not profile.notif_payments:
+        return
+
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+    claim = PaymentClaim.objects.filter(pk=claim_id).first()
+    if invoice is None or claim is None:
+        return
+
+    log_event('payment_claim_submitted', user=user, metadata={
+        'invoice_id': invoice_id,
+        'claim_id': claim_id,
+        'client_name': claim.client_name,
+        'invoice_number': invoice.invoice_number,
+        'amount_claimed': str(claim.amount_claimed),
+        'currency': claim.currency,
+    })
+
+    subject, html_body, plain_body = build_payment_claim_submitted_email(invoice, claim)
+    send_email(user.email, subject, html_body, plain_body)
+
+
+@on('PaymentClaimConfirmed')
+def _notify_payment_claim_confirmed(invoice_id, claim_id, **_extra):
+    """
+    Section 6's payment_claim_confirmed: email to the CLIENT (a separate
+    "thanks, confirmed" template), routed through
+    core.email.send_client_facing_email — the standard client-facing
+    chain, per CLAUDE.md's Custom Email Rule 2. No AuditLog/bell entry
+    here: the freelancer triggered this themselves by clicking Confirm
+    (same self-trigger exclusion InvoiceSent/CommentPosted already
+    establish elsewhere in this file), and there's no client-side bell
+    to notify into.
+    """
+    from core.email import send_client_facing_email
+
+    from .email_service import build_payment_claim_confirmed_email
+    from .models import Invoice, PaymentClaim
+
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+    claim = PaymentClaim.objects.filter(pk=claim_id).first()
+    if invoice is None or claim is None:
+        return
+    if not invoice.client_email:
+        return  # a one-time client with no email on record — nothing to notify
+
+    subject, html_body, plain_body = build_payment_claim_confirmed_email(invoice, claim)
+    send_client_facing_email(
+        invoice.user, invoice.client_email, subject, html_body, plain_body,
+        recipient_name=invoice.client_name, context_type='invoice', context_id=str(invoice.pk),
+    )

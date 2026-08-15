@@ -95,3 +95,47 @@ describe('ClientPortal — logout', () => {
     await waitFor(() => expect(mock.history.post.some((r) => r.url === '/clients/portal/logout-everywhere/')).toBe(true))
   })
 })
+
+describe('ClientPortal — payment claims', () => {
+  it('only shows the report-a-payment action on invoices with an outstanding balance', async () => {
+    mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    renderPortal()
+    await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+
+    // inv-1 has an outstanding balance, inv-2 (paid) does not.
+    expect(screen.getAllByRole('button', { name: /report a payment/i })).toHaveLength(1)
+  })
+
+  it('submits a claim with the entered fields and shows a success state', async () => {
+    mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    mock.onPost('/invoices/portal/inv-1/claims/').reply(201, {
+      id: 'claim-1', status: 'pending', amount_claimed: '500.00', currency: 'USD',
+    })
+    renderPortal()
+    await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /report a payment/i }))
+    await waitFor(() => expect(screen.getByText(/report a payment/i, { selector: 'h3' })).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }))
+
+    await waitFor(() => expect(mock.history.post.some((r) => r.url === '/invoices/portal/inv-1/claims/')).toBe(true))
+    const payload = JSON.parse(mock.history.post.find((r) => r.url === '/invoices/portal/inv-1/claims/').data)
+    expect(payload.amount_claimed).toBe('500.00')
+    expect(payload.currency).toBe('USD')
+
+    await waitFor(() => expect(screen.getByText(/we've let them know/i)).toBeTruthy())
+  })
+
+  it('shows a real error message when the backend rejects the claim', async () => {
+    mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    mock.onPost('/invoices/portal/inv-1/claims/').reply(429, { error: 'Too many claims submitted. Please try again later.' })
+    renderPortal()
+    await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /report a payment/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }))
+
+    await waitFor(() => expect(screen.getByText(/too many claims submitted/i)).toBeTruthy())
+  })
+})

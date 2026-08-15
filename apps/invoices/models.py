@@ -870,12 +870,15 @@ class InvoiceComment(models.Model):
 
 class PaymentClaim(models.Model):
     """
-    Ported directly from v1 — no changes. Kept as a separate, structured
-    flow per the decisions doc, not merged into InvoiceComment.
+    Ported directly from v1, plus one new field this step adds:
+    `review_note` (v1 had no equivalent — confirm/reject was a bare
+    status flip with nowhere to record why a claim was rejected). Kept
+    as a separate, structured flow per the decisions doc, not merged
+    into InvoiceComment.
 
     6-question framework:
-    1. Mutable? Yes — `status`/`reviewed_at` change once when the
-       freelancer confirms or rejects the claim.
+    1. Mutable? Yes — `status`/`reviewed_at`/`review_note` change once
+       when the freelancer confirms or rejects the claim.
     2. Soft deleted? No.
     3. Audit trail? Confirm/reject emits events at the view layer
        (Step 14); this row is itself the detailed record.
@@ -906,6 +909,10 @@ class PaymentClaim(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     submitted_at = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(
+        blank=True,
+        help_text='Freelancer note on confirm/reject — required on reject (why the claim was not accepted), optional on confirm.',
+    )
 
     class Meta:
         db_table = 'payment_claims'

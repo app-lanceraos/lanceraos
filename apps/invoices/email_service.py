@@ -270,6 +270,50 @@ def build_unread_comments_email_for_client(invoice, comments):
     return subject, _html_wrapper(body), plain
 
 
+def build_payment_claim_submitted_email(invoice, claim):
+    """
+    To the freelancer themselves — routed through plain core.email.send_email
+    (apps/invoices/notifications.py), never the custom-SMTP-vs-Resend chain,
+    for the exact same reason build_unread_comments_email_for_freelancer
+    above is: a notification about the freelancer's own account activity
+    can't sensibly go out "as" their own business identity to themselves.
+    """
+    amount = _fmt_money(claim.amount_claimed, claim.currency)
+    subject = f'{claim.client_name or "Your client"} reported a payment on Invoice {invoice.invoice_number}'
+    note_row = f'<p style="margin:12px 0 0;font-size:13px;color:#334155;">"{claim.client_note}"</p>' if claim.client_note else ''
+    body = f"""
+<p style="margin:0 0 16px;font-size:16px;font-weight:700;color:#1e293b;">Payment reported on Invoice {invoice.invoice_number}</p>
+<p style="margin:0 0 8px;font-size:13px;color:#334155;">
+  {claim.client_name or 'Your client'} says they paid <strong>{amount}</strong>
+  via {claim.get_payment_source_display()} on {claim.payment_date.strftime('%d %b %Y')}.
+</p>
+{note_row}
+<p style="margin:16px 0 0;font-size:13px;color:#64748b;">Review this claim from Invoice {invoice.invoice_number} in LanceraOS to confirm or reject it.</p>"""
+    plain = (
+        f'{claim.client_name or "Your client"} reported a payment on Invoice {invoice.invoice_number}: '
+        f'{amount} via {claim.get_payment_source_display()} on {claim.payment_date.strftime("%d %b %Y")}.'
+        + (f'\n\n"{claim.client_note}"' if claim.client_note else '')
+    )
+    return subject, _html_wrapper(body), plain
+
+
+def build_payment_claim_confirmed_email(invoice, claim):
+    """To the client — routed through send_client_facing_email, the standard client-facing routing chain, per CLAUDE.md's Custom Email Rule 2."""
+    sender = sender_display_name(invoice.user, getattr(invoice.user, 'profile', None))
+    amount = _fmt_money(claim.amount_claimed, claim.currency)
+    subject = f'Payment confirmed — Invoice {invoice.invoice_number}'
+    body = f"""
+<p style="margin:0 0 16px;font-size:16px;font-weight:700;color:#1e293b;">Thanks — your payment has been confirmed</p>
+<p style="margin:0 0 20px;font-size:13px;color:#334155;">
+  {sender} has confirmed your payment of <strong>{amount}</strong> for Invoice {invoice.invoice_number}.
+</p>
+<p style="margin:0;font-size:13px;color:#64748b;">
+  <a href="{invoice.portal_view_url}" style="color:#00c896;font-weight:600;text-decoration:none;">View invoice &rarr;</a>
+</p>"""
+    plain = f'{sender} has confirmed your payment of {amount} for Invoice {invoice.invoice_number}.\n\nView invoice: {invoice.portal_view_url}'
+    return subject, _html_wrapper(body), plain
+
+
 def get_reply_to_address(invoice):
     """
     reply+<view_token>@lanceraos.com — the established pattern, ported

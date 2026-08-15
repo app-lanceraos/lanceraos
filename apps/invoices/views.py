@@ -45,13 +45,14 @@ from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
 from .email_service import build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email
 from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceItem, InvoicePartialPayment,
-    InvoicePreset, InvoicePresetItem,
+    InvoicePreset, InvoicePresetItem, PaymentClaim,
 )
 from .pdf_generator import render_invoice_pdf, store_invoice_pdf
 from .serializers import (
     InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer, InvoicePresetSerializer,
     InvoiceSerializer,
 )
+from .serializers_claims import PaymentClaimSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
 from .signature_tool import remove_signature_background
 
@@ -924,6 +925,11 @@ def invoice_timeline(request, pk):
             'type': 'comment', 'timestamp': comment.created_at.isoformat(),
             'author_type': comment.author_type, 'source': comment.source,
         })
+    for claim in invoice.payment_claims.all():
+        entries.append({
+            'type': 'claim', 'timestamp': claim.submitted_at.isoformat(),
+            'status': claim.status, 'amount': str(claim.amount_claimed), 'currency': claim.currency,
+        })
 
     entries.sort(key=lambda e: e['timestamp'])
     return Response({'results': entries})
@@ -989,6 +995,106 @@ def invoice_comments(request, pk):
     emit('CommentPosted', invoice_id=str(invoice.pk), user_id=str(request.user.pk), comment_id=str(comment.pk), author_type='freelancer')
     logger.info('[INVOICES] Comment posted by freelancer on invoice %s.', invoice.invoice_number)
     return Response(InvoiceCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+
+
+# ══════════════════════════════════════════════════════════════════
+# PAYMENT CLAIMS — Step 14. Freelancer side (portal submission side:
+# views_portal.py's portal_invoice_claims).
+# ══════════════════════════════════════════════════════════════════
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def invoice_claims(request, pk):
+    """List every PaymentClaim submitted against this invoice, newest first (PaymentClaim.Meta.ordering)."""
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    return Response(PaymentClaimSerializer(invoice.payment_claims.all(), many=True).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_claim_confirm(request, pk, claim_id):
+    """
+    Confirms a pending claim: creates a real InvoicePartialPayment for
+    amount_claimed (the SAME InvoicePartialPaymentSerializer +
+    update_paid_status() path invoice_add_payment/invoice_mark_paid
+    already use — not a second, parallel payment-recording
+    implementation) and marks the claim confirmed. If amount_claimed no
+    longer fits the invoice's current outstanding balance (e.g. another
+    payment was recorded in the meantime), the same serializer validation
+    invoice_add_payment relies on rejects it here too, with the same
+    real error message — a freelancer confirming a stale claim gets a
+    real 400, not a silently wrong payment record.
+
+    Requires confirm:true, matching this module's established pattern
+    for every action that touches amount_paid (mark_paid, add_payment).
+    """
+    if _check_moderate_rate_limit('claim_confirm', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    if not request.data.get('confirm'):
+        return Response({'error': 'confirm: true is required to confirm this claim.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    claim = get_object_or_404(PaymentClaim, pk=claim_id, invoice=invoice)
+    if claim.status != 'pending':
+        return Response({'error': f'This claim has already been {claim.status}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    payload = {
+        'amount': str(claim.amount_claimed),
+        'currency': claim.currency,
+        'source': claim.payment_source,
+        'payment_date': claim.payment_date.isoformat(),
+        'notes': f'Confirmed from client payment claim (submitted {claim.submitted_at.date().isoformat()}).',
+    }
+    serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request, 'invoice': invoice})
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    serializer.save(invoice=invoice)
+
+    invoice.update_paid_status()
+    invoice.refresh_from_db()
+
+    claim.status = 'confirmed'
+    claim.reviewed_at = timezone.now()
+    claim.review_note = request.data.get('review_note', '')
+    claim.save(update_fields=['status', 'reviewed_at', 'review_note'])
+
+    emit('PaymentClaimConfirmed', invoice_id=str(invoice.pk), user_id=str(request.user.pk), claim_id=str(claim.pk))
+    logger.info('[INVOICES] Payment claim %s confirmed on invoice %s.', claim.pk, invoice.invoice_number)
+    return Response({'invoice': InvoiceListSerializer(invoice).data, 'claim': PaymentClaimSerializer(claim).data})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_claim_reject(request, pk, claim_id):
+    """
+    Rejects a pending claim with zero financial effect — no
+    InvoicePartialPayment is ever created. Requires a real reason
+    (review_note), so a rejected claim carries a record of why, not just
+    a bare status flip. Requires confirm:true, same as confirm above.
+    """
+    if _check_moderate_rate_limit('claim_reject', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    if not request.data.get('confirm'):
+        return Response({'error': 'confirm: true is required to reject this claim.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    review_note = (request.data.get('review_note') or '').strip()
+    if not review_note:
+        return Response({'error': 'A reason is required to reject a claim.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    claim = get_object_or_404(PaymentClaim, pk=claim_id, invoice=invoice)
+    if claim.status != 'pending':
+        return Response({'error': f'This claim has already been {claim.status}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    claim.status = 'rejected'
+    claim.reviewed_at = timezone.now()
+    claim.review_note = review_note
+    claim.save(update_fields=['status', 'reviewed_at', 'review_note'])
+
+    logger.info('[INVOICES] Payment claim %s rejected on invoice %s.', claim.pk, invoice.invoice_number)
+    return Response(PaymentClaimSerializer(claim).data)
 
 
 # ══════════════════════════════════════════════════════════════════

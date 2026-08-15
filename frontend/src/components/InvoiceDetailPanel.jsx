@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react'
 import {
   X, Send, Mail, CheckCircle2, Wallet, Undo2, Ban, ShieldAlert, Copy, BookmarkPlus,
   Check, AlertTriangle, Pause, Play, Bell, BellOff, Trash2, Clock, Eye, Receipt, FileText, MessageCircle,
+  Landmark, XCircle,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -43,6 +44,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
 
   const [timeline, setTimeline] = useState([])
   const [timelineLoaded, setTimelineLoaded] = useState(false)
+  const [claims, setClaims] = useState([])
   const [activeTab, setActiveTab] = useState('details')
 
   // ── Autosave (Step 6 rework; extracted to useInvoiceAutosave this
@@ -84,6 +86,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialMessage])
   useEffect(() => { loadTimeline() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadClaims() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The sole close path (X button + overlay click) — flushes first so
   // closing right after typing still saves, exactly like closing a Gmail
@@ -126,6 +129,15 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     }
   }
 
+  async function loadClaims() {
+    try {
+      const { data } = await api.get(`/invoices/${invoiceId}/claims/`)
+      setClaims(data || [])
+    } catch {
+      setClaims([])
+    }
+  }
+
   function notifyChanged(updated) {
     onChanged?.(updated)
   }
@@ -133,6 +145,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   async function refresh() {
     await loadInvoice()
     await loadTimeline()
+    await loadClaims()
   }
 
   async function runAction(key, fn, successMsg) {
@@ -196,6 +209,18 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     setInvoice(data); notifyChanged(data); setModal(null)
     await loadTimeline()
   }, 'Payment recorded.')
+
+  const handleConfirmClaim = (claimId) => runAction('confirm_claim', async () => {
+    const { data } = await api.post(`/invoices/${invoiceId}/claims/${claimId}/confirm/`, { confirm: true })
+    setInvoice(data.invoice); notifyChanged(data.invoice); setModal(null)
+    await loadTimeline(); await loadClaims()
+  }, 'Claim confirmed — payment recorded.')
+
+  const handleRejectClaim = (claimId, reviewNote) => runAction('reject_claim', async () => {
+    await api.post(`/invoices/${invoiceId}/claims/${claimId}/reject/`, { confirm: true, review_note: reviewNote })
+    setModal(null)
+    await loadClaims()
+  }, 'Claim rejected.')
 
   const handleUndoPayment = (confirmedOld) => runAction('undo_payment', async () => {
     const { data } = await api.delete(`/invoices/${invoiceId}/payments/undo/`, { data: confirmedOld ? { confirmed_old: true } : {} })
@@ -358,6 +383,10 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                 <TabButton icon={Receipt} label="Details" active={activeTab === 'details'} onClick={() => setActiveTab('details')} />
                 <TabButton icon={Clock} label="Timeline" active={activeTab === 'timeline'} onClick={() => setActiveTab('timeline')} />
                 <TabButton icon={MessageCircle} label="Comments" active={activeTab === 'comments'} onClick={() => setActiveTab('comments')} />
+                <TabButton
+                  icon={Landmark} label={`Claims${claims.filter((c) => c.status === 'pending').length > 0 ? ` (${claims.filter((c) => c.status === 'pending').length})` : ''}`}
+                  active={activeTab === 'claims'} onClick={() => setActiveTab('claims')}
+                />
               </div>
 
               {activeTab === 'details' && <DetailsTab invoice={invoice} />}
@@ -370,6 +399,13 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                     viewerType="freelancer"
                   />
                 </div>
+              )}
+              {activeTab === 'claims' && (
+                <ClaimsTab
+                  claims={claims} busy={busy}
+                  onConfirm={(claim) => setModal({ kind: 'confirm_claim', claim })}
+                  onReject={(claim) => setModal({ kind: 'reject_claim', claim })}
+                />
               )}
 
               {/* ── Recurring ── */}
@@ -500,6 +536,17 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       {modal?.kind === 'preview_as_client' && (
         <PreviewAsClientModal invoice={invoice} onClose={() => setModal(null)} />
       )}
+      {modal?.kind === 'confirm_claim' && (
+        <ConfirmModal
+          title="Confirm this claim?"
+          body={`Records ${formatMoney(modal.claim.amount_claimed, modal.claim.currency)} as a real payment on this invoice via ${modal.claim.payment_source}, using the same payment-recording path as Add Payment / Mark Paid.`}
+          confirmLabel="Confirm Claim" busy={busyKey === 'confirm_claim'}
+          onConfirm={() => handleConfirmClaim(modal.claim.id)} onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'reject_claim' && (
+        <RejectClaimModal claim={modal.claim} busy={busyKey === 'reject_claim'} onConfirm={handleRejectClaim} onClose={() => setModal(null)} />
+      )}
     </>
   )
 }
@@ -615,6 +662,61 @@ function TimelineTab({ loaded, entries }) {
   )
 }
 
+// ── ClaimsTab ─────────────────────────────────────────────────────
+const CLAIM_STATUS_STYLE = {
+  pending: { color: 'var(--status-amber-text)', label: 'Pending' },
+  confirmed: { color: 'var(--status-green-text)', label: 'Confirmed' },
+  rejected: { color: 'var(--status-red-text)', label: 'Rejected' },
+}
+
+function ClaimsTab({ claims, busy, onConfirm, onReject }) {
+  if (claims.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: 28, background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+        No payment claims yet. Claims your client submits from the portal will show up here.
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {claims.map((claim) => {
+        const meta = CLAIM_STATUS_STYLE[claim.status] || CLAIM_STATUS_STYLE.pending
+        return (
+          <div key={claim.id} style={{ padding: '12px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 6 }}>
+              <div>
+                <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  {formatMoney(claim.amount_claimed, claim.currency)}
+                </p>
+                <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+                  {claim.client_name || 'Client'} · via {claim.payment_source} · {claim.payment_date}
+                </p>
+              </div>
+              <span style={{ fontSize: '0.7rem', fontWeight: 600, color: meta.color }}>{meta.label}</span>
+            </div>
+            {claim.client_note && (
+              <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>"{claim.client_note}"</p>
+            )}
+            {claim.status !== 'pending' && claim.review_note && (
+              <p style={{ margin: '6px 0 0', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Note: {claim.review_note}</p>
+            )}
+            {claim.status === 'pending' && (
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button onClick={() => onConfirm(claim)} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem', color: 'var(--status-green-text)' }}>
+                  <CheckCircle2 size={13} /> Confirm
+                </button>
+                <button onClick={() => onReject(claim)} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem', color: 'var(--status-red-text)' }}>
+                  <XCircle size={13} /> Reject
+                </button>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function timelineIcon(type) {
   if (type === 'payment') return <Wallet size={12} />
   if (type === 'reminder') return <Bell size={12} />
@@ -622,6 +724,7 @@ function timelineIcon(type) {
   if (type === 'created') return <FileText size={12} />
   if (type === 'finalised') return <CheckCircle2 size={12} />
   if (type === 'sent') return <Send size={12} />
+  if (type === 'claim') return <Landmark size={12} />
   return null
 }
 
@@ -883,6 +986,33 @@ function UndoPaymentModal({ age, lastPayment, busy, onConfirm, onClose }) {
         <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
         <button className="fos-btn fos-btn-danger" onClick={() => onConfirm(isOld)} disabled={busy}>
           {busy ? <span className="fos-spinner" /> : <Undo2 size={14} />} {isOld ? 'Undo Anyway' : 'Undo Payment'}
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+function RejectClaimModal({ claim, busy, onConfirm, onClose }) {
+  const [reviewNote, setReviewNote] = useState('')
+  const [error, setError] = useState('')
+
+  function submit() {
+    if (!reviewNote.trim()) { setError('A reason is required to reject a claim.'); return }
+    setError('')
+    onConfirm(claim.id, reviewNote.trim())
+  }
+
+  return (
+    <ModalShell title="Reject this claim?" onClose={onClose}>
+      <p style={{ margin: '0 0 14px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        {formatMoney(claim.amount_claimed, claim.currency)} claimed via {claim.payment_source} will be marked rejected. No payment is recorded — this has zero financial effect.
+      </p>
+      {error && <FosAlert type="error" style={{ marginBottom: 12 }}>{error}</FosAlert>}
+      <FormField label="Reason" value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} placeholder="e.g. Amount doesn't match our records" required autoFocus />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="fos-btn fos-btn-danger" onClick={submit} disabled={busy}>
+          {busy ? <span className="fos-spinner" /> : <XCircle size={14} />} Reject Claim
         </button>
       </div>
     </ModalShell>

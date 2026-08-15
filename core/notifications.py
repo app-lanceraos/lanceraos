@@ -29,6 +29,13 @@ NOTIFICATION_EVENTS = {
     # reasoning as invoice_sent above — see apps/invoices/notifications.py's
     # own handler.
     'comment_posted',
+    # apps/invoices, Step 14 — a client submitted a payment claim.
+    # payment_claim_confirmed is deliberately NOT added here: the
+    # freelancer triggers that one themselves (clicking Confirm), same
+    # self-trigger exclusion as invoice_sent/comment_posted above, and
+    # its only real recipient is the client (a separate email, no bell
+    # entry) — see apps/invoices/notifications.py's own handlers.
+    'payment_claim_submitted',
 }
 
 EVENT_TITLES = {
@@ -42,6 +49,7 @@ EVENT_TITLES = {
     'session_revoked': 'Session signed out',
     'custom_smtp_failed': 'Custom email delivery failed',
     'comment_posted': 'New message',
+    'payment_claim_submitted': 'Payment reported',
 }
 
 # Where clicking each notification type navigates. Compulsory — every
@@ -67,6 +75,8 @@ EVENT_ACTION_URLS = {
     # Per INVOICES_CLIENTS_TECHNICAL_SPEC.md Section 6's own table entry
     # for comment_posted.
     'comment_posted': '/invoices/{id}?tab=comments',
+    # Per Section 6's own table entry for payment_claim_submitted.
+    'payment_claim_submitted': '/invoices/{id}?tab=claims',
 }
 
 
@@ -106,6 +116,10 @@ def _describe(log):
         client = log.metadata.get('client_name') or 'Your client'
         invoice_number = log.metadata.get('invoice_number') or 'an invoice'
         return f'{client} sent a new message on {invoice_number}.'
+    if log.event == 'payment_claim_submitted':
+        client = log.metadata.get('client_name') or 'Your client'
+        invoice_number = log.metadata.get('invoice_number') or 'an invoice'
+        return f'{client} reported a payment on {invoice_number}.'
     return ''
 
 

@@ -48,6 +48,7 @@ from apps.clients.portal import is_freelancer_previewing_portal, issue_or_renew_
 from .comments import broadcast_comment, upload_comment_attachment
 from .models import Invoice, InvoiceComment, InvoiceViewEvent
 from .pdf_generator import render_invoice_portal_html
+from .serializers_claims import PaymentClaimSerializer, PortalClaimCreateSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
 from .serializers_portal import PortalInvoiceDetailSerializer, PortalInvoiceListSerializer
 
@@ -67,6 +68,24 @@ def _check_portal_comment_rate_limit(client):
     key = f'ratelimit_portal_comment_{client.pk}'
     count = cache.get(key, 0)
     if count >= PORTAL_COMMENT_RATE_LIMIT_PER_HOUR:
+        return True
+    cache.set(key, count + 1, timeout=3600)
+    return False
+
+
+# Tighter still than comments — a payment claim is a deliberate,
+# infrequent action (not a back-and-forth conversation), so a lower
+# ceiling doesn't cost a real user anything. Keyed by client.pk for a
+# saved-client session, or invoice.pk for a one-time-client submission
+# (see portal_invoice_claims — there's no Client row to key by in that
+# case), never IP/email.
+PORTAL_CLAIM_RATE_LIMIT_PER_HOUR = 5
+
+
+def _check_portal_claim_rate_limit(identifier):
+    key = f'ratelimit_portal_claim_{identifier}'
+    count = cache.get(key, 0)
+    if count >= PORTAL_CLAIM_RATE_LIMIT_PER_HOUR:
         return True
     cache.set(key, count + 1, timeout=3600)
     return False
@@ -230,6 +249,15 @@ def portal_invoice_comments(request, pk):
     and broadcasts it to the invoice's WebSocket thread group. Rate
     limited tighter than the freelancer side (see
     PORTAL_COMMENT_RATE_LIMIT_PER_HOUR above).
+
+    Also rejects the freelancer-preview-mode case (Step 14 gap-closing —
+    Step 13 wired is_freelancer_previewing_portal into the Sent->Viewed
+    transition and InvoiceViewEvent logging only; this endpoint never got
+    it, confirmed directly against DECISIONS.md's own Step 13 entry
+    having no mention of it). A freelancer who clicked their own client's
+    real portal link without logging out of their own account first must
+    never have a message they post there misattributed as a real client
+    message.
     """
     client = resolve_session_from_request(request)
     if client is None:
@@ -243,6 +271,12 @@ def portal_invoice_comments(request, pk):
         ).update(read_by_client_at=timezone.now())
         comments = invoice.comments.all()
         return Response(InvoiceCommentSerializer(comments, many=True).data)
+
+    if is_freelancer_previewing_portal(request):
+        return Response(
+            {'error': "You're previewing this portal as its own freelancer — messages can't be posted from preview mode."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     if _check_portal_comment_rate_limit(client):
         return Response(
@@ -269,3 +303,75 @@ def portal_invoice_comments(request, pk):
     emit('CommentPosted', invoice_id=str(invoice.pk), user_id=str(invoice.user_id), comment_id=str(comment.pk), author_type='client')
     logger.info('[INVOICES] Comment posted by client on invoice %s.', invoice.invoice_number)
     return Response(InvoiceCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def portal_invoice_claims(request, pk):
+    """
+    Payment claim submission — Step 14 (freelancer-side list/confirm/
+    reject: apps/invoices/views.py's invoice_claims/invoice_claim_confirm/
+    invoice_claim_reject).
+
+    Reachable two ways, matching Step 12's own precedent for the two
+    real portal-entry shapes:
+      - A saved client, portal-session-authenticated (same 401/404
+        discipline as portal_invoice_comments — resolve_session_from_request,
+        scoped to that client's own invoices only).
+      - A ONE-TIME client's invoice (client_id is null, is_one_time_client
+        =True), which per Step 12's "no portal, no session" rule never
+        gets a ClientPortalSession at all — there's no session to check
+        here either. Access is instead proven by supplying that exact
+        invoice's own view_token in the request body, the same real
+        credential portal_invoice_view_html already trusts for this
+        invoice (a one-time client only ever learns this token by
+        visiting their own invoice link — an attacker guessing a bare
+        invoice id learns nothing without it). A mismatched/missing
+        token gets the same 401 a saved client with no session gets —
+        never a 404 that would confirm the invoice id exists.
+
+    Rejects the submission outright (never silently drops it) when
+    is_freelancer_previewing_portal(request) is True — the same guard
+    portal_invoice_view_html applies to view-tracking and this pass just
+    added to portal_invoice_comments, applied here for the same reason:
+    a freelancer clicking their own client's real portal link without
+    logging out first must never have a claim attributed to "the client"
+    that was actually them clicking around their own preview.
+    """
+    client = resolve_session_from_request(request)
+    if client is not None:
+        invoice = get_object_or_404(Invoice, pk=pk, client=client)
+        rate_limit_key = str(client.pk)
+        client_name, client_email = client.name, client.email
+    else:
+        # No session — try the one-time-client view_token path. Looked up
+        # by bare pk (not yet scoped to client__isnull/is_one_time_client)
+        # so a genuinely unknown pk still 404s; every other outcome
+        # (a saved-client invoice with no session, a one-time invoice
+        # with a missing/wrong token) normalizes to the same 401 a saved
+        # client with no session gets, never a 404 that would confirm
+        # which specific reason applies.
+        invoice = get_object_or_404(Invoice, pk=pk)
+        submitted_token = request.data.get('view_token')
+        if invoice.client_id or not invoice.is_one_time_client or not submitted_token or submitted_token != invoice.view_token:
+            return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
+        rate_limit_key = str(invoice.pk)
+        client_name, client_email = invoice.client_name, invoice.client_email
+
+    if is_freelancer_previewing_portal(request):
+        return Response(
+            {'error': "You're previewing this portal as its own freelancer — payment claims can't be submitted from preview mode."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if _check_portal_claim_rate_limit(rate_limit_key):
+        return Response({'error': 'Too many claims submitted. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    serializer = PortalClaimCreateSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    claim = serializer.save(invoice=invoice, client_name=client_name, client_email=client_email)
+    emit('PaymentClaimSubmitted', invoice_id=str(invoice.pk), user_id=str(invoice.user_id), claim_id=str(claim.pk))
+    logger.info('[INVOICES] Payment claim submitted on invoice %s.', invoice.invoice_number)
+    return Response(PaymentClaimSerializer(claim).data, status=status.HTTP_201_CREATED)

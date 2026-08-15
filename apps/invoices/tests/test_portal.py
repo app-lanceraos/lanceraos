@@ -22,7 +22,7 @@ from django.urls import reverse
 from apps.clients.cookies import PORTAL_SESSION_COOKIE_NAME
 from apps.clients.models import Client as ClientModel
 from apps.clients.models import ClientPortalSession
-from apps.invoices.models import Invoice, InvoiceItem, InvoiceViewEvent
+from apps.invoices.models import Invoice, InvoiceComment, InvoiceItem, InvoiceViewEvent
 from apps.invoices.tests.test_models import make_invoice
 from apps.users.models import User
 
@@ -274,6 +274,27 @@ class ViewTrackingGuardTests(TestCase):
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, 'paid')
         self.assertEqual(InvoiceViewEvent.objects.filter(invoice=invoice).count(), 1)
+
+    def test_comment_posting_guard_gap_from_step_13_is_now_closed(self):
+        """
+        Regression test — Step 13 wired is_freelancer_previewing_portal
+        into the Sent->Viewed transition and InvoiceViewEvent logging
+        only; portal_invoice_comments never got it (confirmed against
+        DECISIONS.md's own Step 13 entry, which doesn't mention it). Step
+        14 closes this gap alongside building it fresh for claims.
+        """
+        invoice = self._sent_invoice()
+        self._login_as_freelancer()
+        ClientPortalSession.create_for_client(self.portal_client, 'preview-comment-tok', device_name='', ip_address=None, user_agent='')
+        self.client.cookies[PORTAL_SESSION_COOKIE_NAME] = 'preview-comment-tok'
+
+        csrf_token = self._csrf_token()
+        resp = self.client.post(
+            reverse('invoices:portal_invoice_comments', kwargs={'pk': invoice.pk}),
+            data=json.dumps({'body_text': 'am I really the client?'}), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token,
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(InvoiceComment.objects.filter(invoice=invoice).count(), 0)
 
 
 # ══════════════════════════════════════════════════════════════════

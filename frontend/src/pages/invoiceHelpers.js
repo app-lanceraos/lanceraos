@@ -241,6 +241,7 @@ export function timelineDotColor(type) {
   return {
     payment: 'var(--status-green-text)', reminder: 'var(--status-amber-text)', view: 'var(--status-blue-text)',
     created: 'var(--text-tertiary)', finalised: 'var(--status-blue-text)', sent: 'var(--status-blue-text)',
+    claim: 'var(--status-amber-text)',
   }[type] || 'var(--text-tertiary)'
 }
 
@@ -257,6 +258,7 @@ export function timelineLabel(ev) {
   if (ev.type === 'created') return 'Invoice created'
   if (ev.type === 'finalised') return `Finalised${ev.invoice_number ? ` as ${ev.invoice_number}` : ''}`
   if (ev.type === 'sent') return ev.via === 'platform' ? 'Sent by LanceraOS' : 'Marked as sent by you'
+  if (ev.type === 'claim') return `Payment claim ${ev.status} — ${formatMoney(ev.amount, ev.currency)}`
   return ev.type
 }
 

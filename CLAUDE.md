@@ -739,8 +739,21 @@ flagged gap where a SECOND bell ping at the 1-hour mark (the original paragraph'
 built, only the email — see DECISIONS.md's 14 August entry. Frontend: a real `CommentThread.jsx`
 (shared by both sides) and `src/hooks/useWebSocket.js` (built for real this pass — it existed only as
 an empty placeholder file before, despite CLAUDE.md's frontend rules already describing it as
-established convention). See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the full design this is being
-built against, and `DECISIONS.md` for each step's reasoning as it lands.
+established convention). 15 August 2026 (Step 14) built Payment Claims — portal submission
+(`portal_invoice_claims`, `views_portal.py`, reachable for a saved client via its portal session OR
+a one-time client via that invoice's own `view_token`), freelancer list/confirm/reject (`invoice_claims`/
+`invoice_claim_confirm`/`invoice_claim_reject`, `views.py` — confirm reuses the exact
+`InvoicePartialPaymentSerializer` + `update_paid_status()` path `invoice_add_payment`/`invoice_mark_paid`
+already use, never a third parallel payment-recording implementation), both real notification tiers
+(`payment_claim_submitted` bell+email to the freelancer, `payment_claim_confirmed` email-only to the
+client), and a real Step 13 gap closed alongside it — `portal_invoice_comments` never had the
+freelancer-preview guard wired in; it does now, and so does the new claims endpoint. Also added
+`PaymentClaim.review_note` (new field, v1 had no equivalent — see DECISIONS.md). Frontend: a real
+"Report a Payment" form in `ClientPortal.jsx` (saved-client session path only — the one-time-client
+`view_token` path is real and tested at the API layer with no frontend surface reaching it yet, same
+honest gap Step 11's own portal-entry point had before Step 12) and a Claims tab in
+`InvoiceDetailPanel.jsx` with confirm/reject actions. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the
+full design this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
 
@@ -993,9 +1006,27 @@ Key API endpoints — apps/invoices/ Comments (built, real — Step 13):
   cookie checked inside the consumer itself; view_token, not pk — see DECISIONS.md)
 - No edit/delete endpoint exists anywhere for InvoiceComment, by design (immutable)
 
+Key API endpoints — apps/invoices/ Payment Claims (built, real — Step 14; also closed a real Step 13
+gap in this same pass — the freelancer-preview guard was never wired into portal_invoice_comments,
+see DECISIONS.md):
+- POST /api/invoices/portal/{id}/claims/ (portal submission — portal-session-authenticated for a
+  saved client, OR reachable for a one-time client via that exact invoice's own view_token supplied
+  in the request body, matching Step 12's own precedent since a one-time client has no
+  ClientPortalSession possible at all; rate limited 5/hour, tighter than comments; rejects the
+  freelancer-preview-mode case with a real 403)
+- GET /api/invoices/{id}/claims/ (freelancer list)
+- POST /api/invoices/{id}/claims/{claim_id}/confirm/ + /reject/ (freelancer review — confirm creates
+  a real InvoicePartialPayment via the exact same InvoicePartialPaymentSerializer +
+  update_paid_status() path invoice_add_payment/invoice_mark_paid already use, so a stale claim that
+  no longer fits the invoice's current outstanding balance is rejected with a real error rather than
+  silently over-crediting; reject has zero financial effect and requires a real review_note reason;
+  both require confirm:true)
+- Both payment_claim_submitted (bell + immediate email to the freelancer, gated by notif_payments)
+  and payment_claim_confirmed (immediate email to the client only, no bell — the freelancer
+  triggered it themselves) are real, wired notification tiers.
+
 Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not stubbed):
-- POST /api/invoices/{id}/acknowledge/, GET/POST .../claims/ + confirm/reject — Payment Claims
-  (Step 14) and Client Acknowledgment (Step 15) haven't landed yet.
+- POST /api/invoices/{id}/acknowledge/ — Client Acknowledgment (Step 15) hasn't landed yet.
 - Per-invoice design override at invoice-creation time — `InvoiceFormFields.jsx` has no design-picker
   field at all yet (confirmed directly), so there's genuinely nowhere for it to plug into today —
   flagged in DECISIONS.md's Step 8b entry rather than added as unplanned scope.
@@ -1313,7 +1344,11 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 | Module               | Backend | Frontend | Tests | Status      |
 |----------------------|---------|----------|-------|-------------|
 | Users / Auth (incl. admin panel) | Built | Built | 123 passing (`python manage.py test`, backend) | Complete |
-| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; real `/send/` + custom-SMTP-vs-Resend routing + reminder Celery task, Step 10; combined `/finalise-and-send/` action + PDF fetch self-heal chain (re-upload+retry, then live-render fallback) + `Invoice.pdf_public_id` + a one-time backfill command, Step 10b; routing chain promoted to `core.email.send_client_facing_email` + Client Portal Authentication — magic-link entry/request-link/logout/logout-everywhere + `ClientPortalSession`, Step 11; Client Portal invoice content — list/detail/rendered-HTML-view endpoints, Sent->Viewed + InvoiceViewEvent wired to the freelancer-own-session guard for the first time, Preview-as-Client, "View Invoice Online" email link, Step 12; Comments — dual-write (freelancer/portal) + inbound email-reply webhook + real-time WebSocket delivery (dual freelancer/portal auth) + unread-after-1hr batched email, Step 13 — see DECISIONS.md for the confirmed, still-unresolved Cloudinary account-level ACL restriction Step 10b works around) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages IS real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides), Step 12/13 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 672 passing (`python manage.py test`, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 99 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx component test file for Preview-as-Client/Comments, matching this component's existing convention for its other actions) | In progress |
+| Invoices + Clients   | apps/clients/ + apps/invoices/ (models + CRUD/lifecycle endpoints incl. real GET .../pdf/, `finalised_at` + PDF-freeze-at-finalise, design_data schema/CRUD + AI-seed/signature tool, Step 9; payment-amount-exceeds-due validation + client duplicate-email validation, Step 9c; real `/send/` + custom-SMTP-vs-Resend routing + reminder Celery task, Step 10; combined `/finalise-and-send/` action + PDF fetch self-heal chain (re-upload+retry, then live-render fallback) + `Invoice.pdf_public_id` + a one-time backfill command, Step 10b; routing chain promoted to `core.email.send_client_facing_email` + Client Portal Authentication — magic-link entry/request-link/logout/logout-everywhere + `ClientPortalSession`, Step 11; Client Portal invoice content — list/detail/rendered-HTML-view endpoints, Sent->Viewed + InvoiceViewEvent wired to the freelancer-own-session guard for the first time, Preview-as-Client, "View Invoice Online" email link, Step 12; Comments — dual-write (freelancer/portal) + inbound email-reply webhook + real-time WebSocket delivery (dual freelancer/portal auth) + unread-after-1hr batched email, Step 13; Payment Claims — portal submission (saved-client session OR
+one-time-client view_token), freelancer list/confirm/reject reusing the exact InvoicePartialPaymentSerializer
++ update_paid_status() path, both notification tiers, plus the Step 13 freelancer-preview-guard gap
+closed in portal_invoice_comments, Step 14 — see DECISIONS.md for the confirmed, still-unresolved
+Cloudinary account-level ACL restriction Step 10b works around) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides), Step 12/13/14 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 694 passing (`python manage.py test`, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 102 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx component test file for Preview-as-Client/Comments/Claims, matching this component's existing convention for its other actions) | In progress |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

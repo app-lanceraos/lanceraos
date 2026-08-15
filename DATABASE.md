@@ -954,17 +954,41 @@ re-checked, matching `read_by_*_at`'s own append-only spirit on an otherwise ful
 
 ## `payment_claims` (`PaymentClaim`, in `apps.invoices`)
 
-Ported directly from v1 — no changes. Kept as a separate, structured flow per the decisions doc,
-not merged into `InvoiceComment`.
+Ported directly from v1, plus one new field Step 14 adds: `review_note` (v1 had no equivalent —
+confirm/reject was a bare status flip with nowhere to record why a claim was rejected). Kept as a
+separate, structured flow per the decisions doc, not merged into `InvoiceComment`.
 
 **Schema**: `id`, `invoice` (FK, `CASCADE`), `client_email`, `client_name`, `amount_claimed`,
 `currency`, `payment_source` (7 choices), `payment_date`, `client_note`, `status` (`pending`/
-`confirmed`/`rejected`), `submitted_at`, `reviewed_at`.
+`confirmed`/`rejected`), `submitted_at`, `reviewed_at`, `review_note` (new, Step 14 —
+`0009_paymentclaim_review_note.py`; blank; freelancer's note on confirm/reject, required by the
+view layer on reject, optional on confirm).
 
-1. **Mutable?** Yes — `status`/`reviewed_at` change once, on confirm/reject. 2. **Soft deleted?**
-   No. 3. **Audit trail?** Confirm/reject emits events at the view layer (a later step); this row is
-   itself the detailed record. 4. **Indexed?** None beyond the implicit FK index yet. 5.
-   **Encrypted?** No. 6. **Cascade behavior?** `CASCADE` from `Invoice`.
+1. **Mutable?** Yes — `status`/`reviewed_at`/`review_note` change once, on confirm/reject.
+   2. **Soft deleted?** No. 3. **Audit trail?** Confirm/reject emits real events now
+   (`PaymentClaimSubmitted`/`PaymentClaimConfirmed`, `core/events.py`) — this row is itself the
+   detailed record. 4. **Indexed?** None beyond the implicit FK index yet. 5. **Encrypted?** No.
+   6. **Cascade behavior?** `CASCADE` from `Invoice`.
+
+**Submission (Step 14)**: `POST /api/invoices/portal/<pk>/claims/` (`apps/invoices/views_portal.py`'s
+`portal_invoice_claims`) — portal-session-authenticated for a saved client (`resolve_session_from_request`,
+scoped to that client's own invoices), OR reachable for a one-time client's invoice
+(`client_id` null, `is_one_time_client=True`) by supplying that exact invoice's own `view_token` in
+the request body — there's no `ClientPortalSession` possible for a one-time client at all (Step 12's
+"no portal, no session" rule), so the token itself is the credential, matching the trust model
+`portal_invoice_view_html` already uses for the same invoice. Gated by
+`is_freelancer_previewing_portal` (a real 403, never a silently-misattributed claim) and a
+5/hour rate limit keyed by client (or invoice, for the one-time path) — tighter than comments'
+15/hour, since a claim is a deliberate one-shot action, not a conversation.
+
+**Confirm/reject (Step 14)**: `POST /api/invoices/<pk>/claims/<claim_id>/confirm/` creates a real
+`InvoicePartialPayment` via the exact same `InvoicePartialPaymentSerializer` + `update_paid_status()`
+path `invoice_add_payment`/`invoice_mark_paid` already use — not a second, parallel payment-recording
+implementation — so a stale claim whose amount no longer fits the invoice's current outstanding
+balance is rejected with the same real validation error those endpoints already produce.
+`POST .../reject/` has zero financial effect and requires a real `review_note` (the freelancer's
+reason). Both require `confirm: true`, matching every other endpoint in this app that touches
+`amount_paid`.
 
 ---
 

@@ -3241,3 +3241,83 @@ pass if a second "still unread" bell ping turns out to matter in practice — `u
 already marks the exact right moment to fire it from, so no new marker would be needed, just a
 `log_event('comment_posted', ...)` call (or a dedicated event) alongside the existing email send in
 `notify_unread_comments`.
+
+Date: 15 August 2026
+Decision: Built Payment Claims (Step 14) — portal submission (`apps/invoices/views_portal.py`'s
+`portal_invoice_claims`), freelancer list/confirm/reject (`views.py`'s `invoice_claims`/
+`invoice_claim_confirm`/`invoice_claim_reject`), both notification tiers (`PaymentClaimSubmitted`/
+`PaymentClaimConfirmed`), and closed a real Step 13 gap (the freelancer-preview guard was never
+wired into `portal_invoice_comments`).
+Reason: gives a client a structured way to self-report a payment without an account, and gives the
+freelancer a real confirm/reject review flow that reuses the exact payment-recording path already
+established for manual entry — task's own explicit instruction.
+
+**`PaymentClaim.review_note` is a new field, not "unchanged from v1" as the model's own pre-existing
+docstring claimed.** Verified directly against the model before writing serializers, per this step's
+own instruction not to assume v1's shape carried over unchanged — it hadn't: v1's confirm/reject was
+a bare status flip with no field to record why a claim was rejected. Added via
+`0009_paymentclaim_review_note.py`, blank, required by the view layer (not the model) on reject and
+optional on confirm — a model-level `blank=True` with view-level enforcement matches this app's
+existing convention for conditionally-required fields (e.g. `PaymentClaim.client_note` itself, or
+`InvoiceComment.body_text`'s own empty-string rejection at the serializer layer).
+
+**Confirm reuses `InvoicePartialPaymentSerializer` + `update_paid_status()` verbatim — not a third,
+parallel payment-recording implementation.** `invoice_claim_confirm` builds the exact same payload
+shape `invoice_add_payment`/`invoice_mark_paid` already validate through (`amount`/`currency`/
+`source`/`payment_date`/`notes`), with `context={'invoice': invoice}` so
+`InvoicePartialPaymentSerializer.validate_amount`'s existing outstanding-balance check applies
+identically here — confirming a claim whose `amount_claimed` no longer fits the invoice's current
+outstanding balance (another payment landed in the meantime, or a second claim already confirmed)
+produces the exact same real 400 those other two endpoints already produce, not a silent
+over-credit. Verified with a dedicated test that first pays the invoice off a different way, then
+confirms the stale claim is rejected with the claim's own `status` never flipped.
+
+**Reachable for a one-time client via `view_token`, structurally, even though there's no real
+frontend surface for it yet — matching Step 12's own precedent.** A one-time client
+(`Invoice.client_id` null, `is_one_time_client=True`) has no `ClientPortalSession` possible at all
+(Step 12's "no portal, no session" rule — confirmed again directly against `portal_invoice_comments`,
+which genuinely cannot be reached by a one-time client today despite CLAUDE.md's Client Messaging
+prose implying otherwise; DECISIONS.md's own 14 August entry already flags the identical limitation
+for the WebSocket thread). `portal_invoice_claims` doesn't inherit that limitation: since a payment
+claim is a one-shot form, not an ongoing conversation gated behind the session-authenticated
+`ClientPortal.jsx` SPA, the endpoint accepts the invoice's own `view_token` — supplied in the request
+body — as a standalone credential for exactly that one invoice, the same trust model
+`portal_invoice_view_html` already established for the identical invoice. A genuinely unknown `pk`
+still 404s; every other failure (a saved-client invoice hit with no session, a one-time invoice with
+a missing/wrong token) normalizes to the same 401 a saved client with no session gets, so a
+mismatched token never confirms which specific reason applies. `ClientPortal.jsx`'s own `ClaimModal`
+only ever exercises the saved-client session path (it's mounted inside the session-authenticated SPA)
+— the one-time-client `view_token` path is real and tested at the API layer, but has no frontend
+entry point yet, the same honest gap Step 11's own `Invoice.view_token` portal-entry point had before
+Step 12 built its frontend. Flagging here rather than silently building unplanned scope (a
+server-rendered claim form embedded in `portal_invoice_view_html`'s own template) to reach it.
+
+**Closed a real, confirmed Step 13 gap: `portal_invoice_comments` never got the freelancer-preview
+guard.** The original decisions doc named four call sites needing `is_freelancer_previewing_portal`
+identically: "the Sent->Viewed status transition, InvoiceViewEvent logging, comment posting, and
+Payment Claim submission." Step 12 wired the first two; Step 13's own DECISIONS.md entry for
+Comments doesn't mention the guard at all, and grepping `portal_invoice_comments` confirmed it
+directly — no call anywhere. Fixed in this same pass (a 403 on the freelancer's own preview
+session, verified with a regression test in `test_portal.py` proving zero `InvoiceComment` rows are
+created), alongside wiring it fresh into `portal_invoice_claims`. This matters for the same reason it
+mattered for view-tracking: a freelancer who clicks their own client's real portal link without
+logging out of their own account first must never have an action they take there misattributed as
+real client behavior.
+
+**Notification routing, confirmed against the real `NOTIFICATION_EVENTS`/`EVENT_TITLES`/
+`EVENT_ACTION_URLS` dicts, not a section-number citation.** `payment_claim_submitted` (client
+submits, freelancer is notified) is added to the bell allowlist — in-app AuditLog write AND an
+immediate `core.email.send_email` to the freelancer, both gated behind the SAME `notif_payments`
+toggle check (CLAUDE.md: "payment-related events" map to `notif_payments`, not
+`notif_client_messages`, even though the claim itself arrives via the client portal). Unlike
+`comment_posted`'s bell-now/email-batched-later split, this event's own spec table row lists no
+batching caveat, so both fire together from one handler. `payment_claim_confirmed` (freelancer
+confirms, client is notified) gets NO bell entry at all — the freelancer triggered this themselves by
+clicking Confirm (the same self-trigger exclusion `InvoiceSent`/`CommentPosted` already establish
+elsewhere in this file), and there is no client-side bell to notify into; its only real recipient is
+the client, via `core.email.send_client_facing_email` (a separate "thanks, confirmed" template), per
+CLAUDE.md's Custom Email Rule 2 listing client payment-related messages as routed through that chain.
+
+**Claims extend the timeline feed additively, per `invoice_timeline`'s own docstring having already
+named this as Step 14's job.** A `type: 'claim'` entry (status/amount/currency) was added with zero
+change to any entry already there — confirmed with a dedicated test.
