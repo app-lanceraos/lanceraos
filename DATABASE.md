@@ -878,6 +878,16 @@ Ported directly from v1 — no changes.
 nullable — anchor-currency replacement for v1's `amount_pkr`/`exchange_rate`), `source` (7
 choices, unchanged from v1), `payment_date`, `notes`, `recorded_at`.
 
+**`rate_to_usd` is now actually populated (Step 18) — a real, found gap fixed, not a schema
+change.** This field's own `help_text` always claimed "captured at record time," but no call site
+anywhere (`invoice_add_payment`, `invoice_mark_paid`, `invoice_claim_confirm`) ever set it —
+confirmed directly by grep before writing Step 18's own analytics/statement work, which needed real
+per-payment conversion to be possible at all. Fixed via a new `apps.invoices.views._lookup_rate_to_usd`
+helper (mirrors `Invoice.capture_issue_rate()`'s own snapshot-selection logic — today's
+`ExchangeRateSnapshot`, falling back to the most recent), called at all three sites. Every payment
+recorded before this fix still has `rate_to_usd=NULL` — a real, permanent historical gap in old
+rows, not backfilled (no reliable historical rate to backfill from that wasn't already lost).
+
 1. **Mutable?** No — append-only; record/undo creates or deletes a row, never edits in place.
 2. **Soft deleted?** No — deletion IS the undo mechanism (see `Invoice.update_paid_status()`'s
    `pre_payment_status` restore path). 3. **Audit trail?** Record/undo emits events at the view

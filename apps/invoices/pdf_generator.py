@@ -20,12 +20,16 @@ Two entry points, deliberately separate responsibilities:
 import base64
 import io
 import logging
+from decimal import Decimal
 from pathlib import Path
 
 import qrcode
 from django.template.loader import render_to_string
 from django.templatetags.static import static
+from django.utils import timezone
 from weasyprint import HTML
+
+from core.money import Money
 
 logger = logging.getLogger(__name__)
 
@@ -229,3 +233,114 @@ def upload_pdf_bytes(invoice, pdf_bytes):
 def store_invoice_pdf(invoice):
     """Renders once and uploads the result — see upload_pdf_bytes for the upload half's own documentation."""
     return upload_pdf_bytes(invoice, render_invoice_pdf(invoice))
+
+
+# ══════════════════════════════════════════════════════════════════
+# CLIENT STATEMENT — Step 19. Same WeasyPrint pipeline, same
+# FONT_CONTEXT/font-sourcing convention as the invoice templates above
+# — no separate font logic for this document type.
+# ══════════════════════════════════════════════════════════════════
+# Kept local to this module rather than importing apps.invoices.models.
+# CURRENCY_SYMBOLS to avoid a needless models import here (pdf_generator.py
+# otherwise only imports Invoice lazily, inside build_statement_context,
+# matching this file's existing convention elsewhere) — same 4
+# currencies this app already supports, same symbols.
+CURRENCY_SYMBOLS_STATEMENT = {'USD': '$', 'EUR': '€', 'GBP': '£', 'PKR': 'Rs '}
+
+
+def _invoice_amounts_in_client_currency(invoice, target_currency):
+    """
+    Converts total/amount_paid/outstanding_amount into target_currency —
+    generalizes Invoice.client_currency_conversion (which only converts
+    `total`) to every figure a statement needs, via the SAME underlying
+    mechanism (core.money.Money, anchored on the invoice's own FROZEN
+    rate_to_usd_at_issue + exchange_rate_snapshot — never today's rate),
+    not a second, independent conversion implementation. Returns None
+    for every figure when no real conversion is possible (same
+    currency needs no conversion and is handled separately by the
+    caller; no frozen rate/snapshot means nothing safe to convert) —
+    never guessed, matching client_currency_conversion's own contract.
+    """
+    if invoice.rate_to_usd_at_issue is None or not invoice.exchange_rate_snapshot:
+        return None
+    if target_currency not in invoice.exchange_rate_snapshot.rates_to_usd:
+        return None
+
+    def convert(amount):
+        money = Money(amount, invoice.currency, invoice.rate_to_usd_at_issue)
+        return money.convert(target_currency, invoice.exchange_rate_snapshot).amount.quantize(Decimal('0.01'))
+
+    return {'total': convert(invoice.total), 'amount_paid': convert(invoice.amount_paid), 'outstanding': convert(invoice.outstanding_amount)}
+
+
+def build_statement_context(client, start_date, end_date):
+    """
+    Every non-draft invoice for `client` with issue_date inside
+    [start_date, end_date] (inclusive), oldest first. Each row shows a
+    running balance — the cumulative OUTSTANDING total across the listed
+    invoices in chronological order (this invoice's own outstanding
+    amount added to everything before it in the range), not a full
+    interleaved invoice+payment ledger — see DECISIONS.md for why that
+    narrower, simpler definition was chosen.
+
+    Amounts are shown in the CLIENT's own default_currency — same
+    currency needs no conversion at all; a different currency converts
+    via _invoice_amounts_in_client_currency above. A row with no real
+    conversion available (invoice.currency differs from the client's own
+    AND no frozen rate was ever captured) is still LISTED (never
+    silently dropped) but contributes nothing to the running balance or
+    totals, and increments `unconverted_count` — an honest, visible gap
+    rather than a wrong number.
+    """
+    from .models import Invoice
+
+    invoices = list(
+        Invoice.objects.filter(client=client, issue_date__gte=start_date, issue_date__lte=end_date)
+        .exclude(status='draft')
+        .order_by('issue_date', 'created_at')
+    )
+
+    target_currency = client.default_currency
+    running_balance = Decimal('0')
+    total_invoiced = Decimal('0')
+    total_paid = Decimal('0')
+    unconverted_count = 0
+    rows = []
+
+    for invoice in invoices:
+        if invoice.currency == target_currency:
+            amounts = {'total': invoice.total, 'amount_paid': invoice.amount_paid, 'outstanding': invoice.outstanding_amount}
+        else:
+            amounts = _invoice_amounts_in_client_currency(invoice, target_currency)
+
+        if amounts is None:
+            unconverted_count += 1
+            rows.append({'invoice': invoice, 'amounts': None, 'running_balance': None})
+            continue
+
+        running_balance += amounts['outstanding']
+        total_invoiced += amounts['total']
+        total_paid += amounts['amount_paid']
+        rows.append({'invoice': invoice, 'amounts': amounts, 'running_balance': running_balance.quantize(Decimal('0.01'))})
+
+    return {
+        'client': client,
+        'freelancer': client.user.profile,
+        'start_date': start_date,
+        'end_date': end_date,
+        'target_currency': target_currency,
+        'currency_symbol': CURRENCY_SYMBOLS_STATEMENT.get(target_currency, target_currency + ' '),
+        'rows': rows,
+        'total_invoiced': total_invoiced.quantize(Decimal('0.01')),
+        'total_paid': total_paid.quantize(Decimal('0.01')),
+        'total_outstanding': (total_invoiced - total_paid).quantize(Decimal('0.01')),
+        'unconverted_count': unconverted_count,
+        'generated_at': timezone.now(),
+        **FONT_CONTEXT,
+    }
+
+
+def render_client_statement_pdf(client, start_date, end_date):
+    """Live-rendered on every call — no frozen-artifact concept here, unlike a sent invoice's PDF. A statement reflects current data for whatever range is requested."""
+    html_string = render_to_string('invoices/statement.html', build_statement_context(client, start_date, end_date))
+    return HTML(string=html_string).write_pdf()

@@ -19,5 +19,13 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // A real, found gap (Step 18): src/test-setup.js has existed since
+    // Step 8b (its own header comment already calls it "global test
+    // infrastructure, not a one-off mock local to a single test file"),
+    // but setupFiles was never actually pointed at it — every test file
+    // that happened to avoid rendering useTheme()/AuthLayout.jsx never
+    // noticed. InvoiceAnalytics.jsx (this step) is the first component
+    // under test that calls useTheme(), which is what surfaced it.
+    setupFiles: ['./src/test-setup.js'],
   },
 })

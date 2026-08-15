@@ -15,7 +15,7 @@
 // is a components/ file that isn't a route either.
 import { useEffect, useState } from 'react'
 import {
-  X, Flag, Archive, RotateCcw, Pencil, Plus, FileText, StickyNote, BarChart3, Tag as TagIcon,
+  X, Flag, Archive, RotateCcw, Pencil, Plus, FileText, StickyNote, BarChart3, Tag as TagIcon, FileDown,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -73,6 +73,8 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
   const [flagForm, setFlagForm] = useState({ flag_type: 'payment_risk', flag_reason: '' })
   const [flagError, setFlagError] = useState('')
   const [flagSaving, setFlagSaving] = useState(false)
+
+  const [showStatementModal, setShowStatementModal] = useState(false)
 
   const [actionBusy, setActionBusy] = useState(false)
 
@@ -353,6 +355,9 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
                     <RotateCcw size={14} /> Restore
                   </button>
                 )}
+                <button className="fos-btn fos-btn-ghost" onClick={() => setShowStatementModal(true)}>
+                  <FileDown size={14} /> Statement
+                </button>
               </div>
 
               {/* ── Tags ── */}
@@ -467,6 +472,10 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
           onFlag={handleFlag}
           onClose={() => { setFlagging(false); setFlagError('') }}
         />
+      )}
+
+      {showStatementModal && client && (
+        <StatementModal clientId={client.id} onClose={() => setShowStatementModal(false)} />
       )}
     </>
   )
@@ -720,6 +729,64 @@ function FlagClientModal({ clientName, form, error, saving, onChange, onFlag, on
           <button className="fos-btn fos-btn-danger" onClick={onFlag} disabled={saving}>
             {saving ? <span className="fos-spinner" /> : <Flag size={14} />}
             {saving ? 'Flagging…' : 'Flag Client'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── StatementModal ────────────────────────────────────────────────
+// GET /api/clients/<pk>/statement/pdf/ is auth-cookie-protected but
+// deliberately reached via a plain browser navigation (window.open),
+// never an Axios blob-fetch dance — the httpOnly session cookie already
+// travels on a normal top-level GET navigation to the API's own origin
+// (COOKIE_SAMESITE=Lax explicitly allows this), the exact same real
+// precedent ClientPortal.jsx's own portal_view_url <a href> already
+// established for a protected/credentialed PDF-ish document. The
+// endpoint responds with Content-Disposition: attachment, so the
+// browser downloads it directly — no client-side blob/save-as code
+// needed either.
+const ONE_YEAR_AGO = (() => {
+  const d = new Date()
+  d.setFullYear(d.getFullYear() - 1)
+  return d.toISOString().slice(0, 10)
+})()
+const TODAY = new Date().toISOString().slice(0, 10)
+
+function StatementModal({ clientId, onClose }) {
+  const [start, setStart] = useState(ONE_YEAR_AGO)
+  const [end, setEnd] = useState(TODAY)
+  const [error, setError] = useState('')
+
+  function handleDownload() {
+    if (start > end) { setError('Start date must be on or before the end date.'); return }
+    setError('')
+    const url = `${api.defaults.baseURL}/clients/${clientId}/statement/pdf/?start=${start}&end=${end}`
+    window.open(url, '_blank')
+    onClose()
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '24px 28px', width: '100%', maxWidth: 400, animation: 'modal-in 0.2s cubic-bezier(0.22,1,0.36,1)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h2 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)' }}>Generate Statement</h2>
+          <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="settings-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <FormField label="Start Date" type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+            <FormField label="End Date" type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
+          </div>
+          {error && <p className="fos-error">{error}</p>}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 24 }}>
+          <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="fos-btn fos-btn-accent" onClick={handleDownload}>
+            <FileDown size={14} /> Download PDF
           </button>
         </div>
       </div>

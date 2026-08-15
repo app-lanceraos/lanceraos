@@ -21,10 +21,12 @@ import os
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
+from dateutil.relativedelta import relativedelta
 from PIL import Image as PILImage
 from PIL import UnidentifiedImageError
 from django.core.cache import cache
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
+from django.db.models.functions import TruncMonth
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -35,6 +37,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from core.events import emit
+from core.money import Money
+from apps.clients.models import Client
+from apps.clients.scoring import EXCLUDED_STATUSES as CLIENT_SCORING_EXCLUDED_STATUSES
 from apps.payments.models import ExchangeRateSnapshot
 from apps.users.models import FreelancerProfile
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
@@ -91,6 +96,34 @@ def _check_moderate_rate_limit(action, user):
 
 def _too_many_requests(message):
     return Response({'error': message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+def _lookup_rate_to_usd(currency):
+    """
+    Real, server-side anchor-currency lookup for a payment recorded right
+    now — mirrors Invoice.capture_issue_rate()'s own snapshot-selection
+    logic (today's snapshot, falling back to the most recent one) rather
+    than duplicating a second, subtly different version of it. Used to
+    actually populate InvoicePartialPayment.rate_to_usd, a real, found
+    gap: that field's own help_text has always claimed "captured at
+    record time," but no call site anywhere in this app ever set it
+    (confirmed directly, not assumed, before writing this) — every real
+    payment recorded before this fix has rate_to_usd=NULL. Returns None
+    only when truly unavailable (no snapshot exists yet, or this specific
+    currency is missing from the snapshot's own rates_to_usd) — never
+    raises, since a missing rate must not block recording the payment
+    itself.
+    """
+    if currency == 'USD':
+        return Decimal('1')
+    snapshot = (
+        ExchangeRateSnapshot.objects.filter(date=timezone.now().date()).first()
+        or ExchangeRateSnapshot.objects.order_by('-date').first()
+    )
+    if snapshot is None:
+        return None
+    rate = snapshot.rates_to_usd.get(currency)
+    return Decimal(str(rate)) if rate is not None else None
 
 
 def _parse_date_param(raw, default=None):
@@ -624,7 +657,7 @@ def invoice_mark_paid(request, pk):
     serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request})
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    serializer.save(invoice=invoice)
+    serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(invoice.currency))
 
     invoice.update_paid_status()
     invoice.refresh_from_db()
@@ -649,7 +682,13 @@ def invoice_add_payment(request, pk):
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    payment = serializer.save(invoice=invoice)
+    # 'currency' is omitted from validated_data entirely (not defaulted
+    # to 'USD') when the request doesn't supply it — DRF only injects a
+    # serializer-field default when one is explicitly declared, which
+    # this field isn't (it relies on the MODEL's own default=). Falls
+    # back to the same 'USD' the model itself would use on save().
+    payment_currency = serializer.validated_data.get('currency', 'USD')
+    payment = serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(payment_currency))
     invoice.update_paid_status()
     invoice.refresh_from_db()
 
@@ -1199,7 +1238,7 @@ def invoice_claim_confirm(request, pk, claim_id):
     serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request, 'invoice': invoice})
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    serializer.save(invoice=invoice)
+    serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(claim.currency))
 
     invoice.update_paid_status()
     invoice.refresh_from_db()
@@ -1390,6 +1429,199 @@ def exchange_rate_lookup(request):
         'rates_to_usd': snapshot.rates_to_usd,
         'source': snapshot.source,
         'fetched_at': snapshot.fetched_at.isoformat(),
+    })
+
+
+# ══════════════════════════════════════════════════════════════════
+# ANALYTICS — Step 18. Distinct from invoice_summary's simple KPI strip
+# (real grouping queries, an ORM aggregation for ranking, and a genuine
+# currency-unified total — see invoice_analytics' own docstring).
+# ══════════════════════════════════════════════════════════════════
+
+def _build_monthly_trend(user, months):
+    """
+    Real grouping, not a client-side reduction of the full invoice list:
+    two separate queries (invoiced vs collected), each fetching only the
+    raw fields needed to convert per-row via core.money.Money, then
+    bucketed by month in Python — a pure-SQL Sum() can't do the currency
+    conversion itself, since rate_to_usd(_at_issue) varies per row.
+
+    "Invoiced": every non-draft invoice (finalised_at is set the moment
+    an invoice leaves draft), bucketed by finalised_at's own month,
+    converted via each invoice's own FROZEN rate_to_usd_at_issue —
+    matching this app's anchor-currency design elsewhere (capture_issue_rate,
+    client_currency_conversion): a past month's invoiced total should
+    reflect what the rate genuinely was back then, not today's rate.
+    Excludes apps.clients.scoring.EXCLUDED_STATUSES ('cancelled',
+    'refunded') — reused directly, not redefined, matching Client.payment_stats'
+    own "not real business" definition.
+
+    "Collected": every InvoicePartialPayment, bucketed by its own
+    payment_date, converted via ITS OWN frozen rate_to_usd (now real —
+    see DECISIONS.md for the found-and-fixed gap this relies on).
+    Deliberately NOT filtered by the invoice's current status — matches
+    invoice_summary's own established rule ("money already received
+    isn't erased by a later status change"). Refunds aren't netted out
+    month-by-month: refunded_amount is a single field on Invoice, not a
+    dated event in this data model, so there's no honest month to
+    attribute a refund to — see DECISIONS.md.
+
+    A row with no captured conversion rate is skipped, never guessed —
+    an invoice/payment predating this step's rate_to_usd fix, or issued
+    before any ExchangeRateSnapshot existed.
+    """
+    today = timezone.now().date()
+    window_start = today.replace(day=1) - relativedelta(months=months - 1)
+
+    buckets = {}
+    cursor = window_start
+    for _ in range(months):
+        key = cursor.strftime('%Y-%m')
+        buckets[key] = {'invoiced': Decimal('0'), 'collected': Decimal('0')}
+        cursor += relativedelta(months=1)
+
+    invoiced_qs = (
+        Invoice.objects.filter(user=user, finalised_at__date__gte=window_start)
+        .exclude(status='draft').exclude(status__in=CLIENT_SCORING_EXCLUDED_STATUSES)
+        .values('finalised_at', 'total', 'currency', 'rate_to_usd_at_issue')
+    )
+    for row in invoiced_qs:
+        key = row['finalised_at'].strftime('%Y-%m')
+        if key not in buckets or row['rate_to_usd_at_issue'] is None:
+            continue
+        buckets[key]['invoiced'] += Money(row['total'], row['currency'], row['rate_to_usd_at_issue']).to_usd()
+
+    collected_qs = (
+        InvoicePartialPayment.objects.filter(invoice__user=user, payment_date__gte=window_start)
+        .values('payment_date', 'amount', 'currency', 'rate_to_usd')
+    )
+    for row in collected_qs:
+        key = row['payment_date'].strftime('%Y-%m')
+        if key not in buckets or row['rate_to_usd'] is None:
+            continue
+        buckets[key]['collected'] += Money(row['amount'], row['currency'], row['rate_to_usd']).to_usd()
+
+    return [
+        {
+            'month': key,
+            'invoiced': str(val['invoiced'].quantize(Decimal('0.01'))),
+            'collected': str(val['collected'].quantize(Decimal('0.01'))),
+        }
+        for key, val in sorted(buckets.items())
+    ]
+
+
+def _build_top_clients(user, limit=5):
+    """
+    Ranked by total amount_paid converted to USD (core.money.Money) —
+    genuinely currency-aware, unlike Client.payment_stats' own
+    total_paid/total_invoiced (a raw, unconverted sum across whatever
+    currencies that client's invoices happen to use — fine for a
+    single-client reliability view where currency usually doesn't vary,
+    not safe to reuse here where ranking ACROSS clients in mixed
+    currencies is the entire point). reliability_score/breakdown IS
+    reused directly from Client.payment_stats for each of the top N
+    only (never reimplemented) — a real, non-trivial tiered-points
+    formula with no reason to exist twice, and cheap here since it's
+    only called for a handful of clients, not the whole client list.
+    """
+    invoices = (
+        Invoice.objects.filter(user=user, client__isnull=False)
+        .exclude(status='draft').exclude(status__in=CLIENT_SCORING_EXCLUDED_STATUSES)
+        .select_related('client')
+    )
+    totals = {}
+    for inv in invoices:
+        if inv.rate_to_usd_at_issue is None or inv.amount_paid == 0:
+            continue
+        usd_paid = Money(inv.amount_paid, inv.currency, inv.rate_to_usd_at_issue).to_usd()
+        entry = totals.setdefault(inv.client_id, {'client': inv.client, 'total_paid_usd': Decimal('0')})
+        entry['total_paid_usd'] += usd_paid
+
+    ranked = sorted(totals.values(), key=lambda e: e['total_paid_usd'], reverse=True)[:limit]
+    results = []
+    for entry in ranked:
+        client = entry['client']
+        stats = client.payment_stats
+        results.append({
+            'client_id': str(client.pk),
+            'name': client.name,
+            'total_paid_usd': str(entry['total_paid_usd'].quantize(Decimal('0.01'))),
+            'reliability_score': stats['reliability_score'],
+        })
+    return results
+
+
+def _build_currency_breakdown(user):
+    """
+    Per-currency silos (count + native total) AND one real unified total
+    in USD via core.money.Money — the anchor-currency conversion the
+    task explicitly asks for, not a per-currency-only view pretending to
+    be "unified." unconverted_count is a real, honest signal: invoices
+    excluded from unified_total_usd because they have no frozen
+    rate_to_usd_at_issue (never finalised via the real flow, or issued
+    before any ExchangeRateSnapshot existed) — surfaced rather than
+    silently dropped.
+    """
+    invoices = (
+        Invoice.objects.filter(user=user)
+        .exclude(status='draft').exclude(status__in=CLIENT_SCORING_EXCLUDED_STATUSES)
+    )
+    by_currency = {
+        row['currency']: {'count': row['count'], 'total': str(row['total'])}
+        for row in invoices.values('currency').annotate(count=Count('id'), total=Sum('total'))
+    }
+
+    unified_total_usd = Decimal('0')
+    unconverted_count = 0
+    for inv in invoices.only('total', 'currency', 'rate_to_usd_at_issue'):
+        if inv.rate_to_usd_at_issue is None:
+            unconverted_count += 1
+            continue
+        unified_total_usd += Money(inv.total, inv.currency, inv.rate_to_usd_at_issue).to_usd()
+
+    return {
+        'by_currency': by_currency,
+        'unified_total_usd': str(unified_total_usd.quantize(Decimal('0.01'))),
+        'unconverted_count': unconverted_count,
+    }
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def invoice_analytics(request):
+    """
+    Cross-invoice analytics dashboard — Step 18. Genuinely distinct from
+    invoice_summary above (a simple KPI strip): month-over-month
+    invoiced/collected trends via real grouping queries, top clients by
+    revenue via a real ORM-driven ranking (reusing Client.payment_stats
+    only for the reliability-score half, per that helper's own
+    docstring), and a currency breakdown with one real anchor-currency-
+    unified USD total via core.money.Money — that value object's first
+    real consumer anywhere in this codebase (built in Foundations,
+    never actually used until now — see DECISIONS.md).
+
+    ?months=<int>, default 6, clamped to [1, 24] — matches apps.health's
+    own ?months= query param convention (GET /api/health/score/?months=12)
+    for a trend window, rather than inventing a new parameter shape.
+
+    Deliberately does NOT include the cross-invoice "unread comments
+    overview" (flagged in the original planning as its own future
+    addition, not part of this build) or anything resembling v1's Cash
+    Flow Forecast/Currency Diversification sections (excluded back at
+    Step 6, not reconsidered here).
+    """
+    months_param = request.query_params.get('months', '6')
+    try:
+        months = int(months_param)
+    except ValueError:
+        return Response({'error': 'months must be a real integer.'}, status=status.HTTP_400_BAD_REQUEST)
+    months = max(1, min(months, 24))
+
+    return Response({
+        'monthly_trend': _build_monthly_trend(request.user, months),
+        'top_clients': _build_top_clients(request.user),
+        'currency_breakdown': _build_currency_breakdown(request.user),
     })
 
 

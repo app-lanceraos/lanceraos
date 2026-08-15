@@ -393,3 +393,25 @@ def _record_formal_notice_sent(invoice_id, user_id, **_extra):
         return
 
     log_event('formal_notice_sent', user=user, metadata={'invoice_id': invoice_id})
+
+
+@on('StaleDraftsDigest')
+def _notify_stale_drafts_digest(user_id, draft_count, breakdown, **_extra):
+    """
+    Step 18 — the weekly nudge for drafts sitting unsent too long
+    (apps/invoices/tasks.py's notify_stale_drafts). In-app + immediate
+    email, gated by notif_invoice_events like every other lifecycle
+    notification in this file (this is genuinely one-per-week at most,
+    never frequent enough to warrant a separate opt-out).
+    """
+    from core.email import send_email
+
+    from .email_service import build_stale_drafts_email
+
+    user, should_notify = _get_user_and_gate(user_id, 'notif_invoice_events')
+    if user is None or not should_notify:
+        return
+
+    log_event('stale_drafts_digest', user=user, metadata={'draft_count': draft_count, 'breakdown': breakdown})
+    subject, html_body, plain_body = build_stale_drafts_email(draft_count, breakdown)
+    send_email(user.email, subject, html_body, plain_body)

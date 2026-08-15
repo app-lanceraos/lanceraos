@@ -56,6 +56,13 @@ app.conf.beat_schedule = {
         'task': 'apps.invoices.tasks.notify_unread_comments',
         'schedule': crontab(minute='*/15'),
     },
+    # Monday morning, after the day's own 9:00 reminder run — a weekly
+    # (not daily) nudge, so it deliberately doesn't collide with any
+    # daily-scheduled task's own slot.
+    'notify-stale-drafts-weekly': {
+        'task': 'apps.invoices.tasks.notify_stale_drafts',
+        'schedule': crontab(hour=9, minute=30, day_of_week='monday'),
+    },
 }
 
 app.conf.timezone = 'Asia/Karachi'

@@ -778,8 +778,31 @@ firmer-toned email reusing the same send-email routing chain, trackable via a ne
 UI). Frontend: acknowledge button/permanent-state in `ClientPortal.jsx`; an escalation banner +
 dismiss + Formal Notice actions, an "Edit Series" modal for a recurring root, and acknowledgment/
 escalation/formal-notice timeline entries in `InvoiceDetailPanel.jsx`; the Formal Notice toggle in
-Settings > Business's "Invoicing Defaults" card. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the
-full design this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
+Settings > Business's "Invoicing Defaults" card. 15 August 2026 (third pass) built the module's last
+two functionally-new steps before bug-hardening + Admin. Step 18, Analytics: a weekly stale-draft
+digest (`apps.invoices.tasks.notify_stale_drafts`, Monday 9:30 AM PKT, one batched notification per
+user, per-currency breakdown never summed across currencies) and a real cross-invoice analytics
+dashboard (`GET /api/invoices/analytics/`) distinct from `invoice_summary`'s own KPI strip —
+month-over-month invoiced/collected trends (real grouping queries), top clients by revenue (a real
+ORM ranking, reusing `Client.payment_stats` only for the reliability-score half), and a currency
+breakdown with one genuine anchor-currency-unified USD total via `core.money.Money` — that value
+object's first real consumer anywhere in this codebase (built in Foundations, never actually used
+until now). Found and fixed a real, blocking gap along the way:
+`InvoicePartialPayment.rate_to_usd` was never populated by any call site despite its own `help_text`
+claiming otherwise — fixed via a new `_lookup_rate_to_usd` helper wired into `invoice_add_payment`/
+`invoice_mark_paid`/`invoice_claim_confirm`. Frontend: Recharts installed for real (CLAUDE.md's tech
+stack already named it, just never installed) — a new `/invoices/analytics` page with a real,
+validated 2-color trend chart, a top-clients list, and a currency-breakdown card, reached via a new
+"Analytics" header button in `Invoices.jsx`. Step 19, Client Statement PDF: `GET /api/clients/<pk>/statement/pdf/?start=&end=`
+(freelancer-facing only — confirmed directly, no client-portal-facing equivalent is named anywhere in
+the spec), live-rendered on every call (no frozen-artifact concept, unlike a sent invoice), reusing
+the same WeasyPrint pipeline/font-sourcing convention and the same anchor-currency mechanism
+`Invoice.client_currency_conversion` is built on (generalized to total/paid/outstanding via a new
+`_invoice_amounts_in_client_currency` helper). A running balance is the cumulative outstanding total
+across the listed invoices in chronological order. Frontend: a "Generate Statement" action + date-
+range modal in `ClientDetailPanel.jsx`, downloading via a plain browser navigation (the httpOnly
+session cookie already travels on a same-site top-level GET). See `INVOICES_CLIENTS_TECHNICAL_SPEC.md`
+for the full design this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
 
@@ -886,8 +909,9 @@ as a filter option but returns empty until apps/invoices exists — there's no o
 returning "all clients" instead would be misleading); search by name/email/company; sort by
 name/recent now, total_invoiced/overdue fall back to name-sort until apps/invoices exists (both need
 real invoice data to mean anything).
-Client statement PDF (WeasyPrint) and one-time-client conversion are NOT built yet — both need real
-invoice data and are scoped to a later step in this module's build order.
+Client statement PDF is built (Step 19 — see this module's own Step 19 entry above and the
+Key API endpoints list below). One-time-client conversion (the spec's own `convert-one-time`
+endpoint) is NOT built yet — scoped to a later step in this module's build order.
 
 Client Portal (secure, magic-link-authenticated):
 SUPERSEDED from this section's original PIN-based description — see
@@ -1079,11 +1103,29 @@ Key API endpoints — apps/invoices/ Escalation + Formal Notice (built, real —
   blocks a deliberate re-send; a real, server-enforced FreelancerProfile.formal_notice_enabled kill
   switch, not just hidden client-side — Settings > Business's "Invoicing Defaults" card)
 
+Key API endpoints — apps/invoices/ Analytics (built, real — Step 18):
+- GET /api/invoices/analytics/?months=<int> (default 6, clamped [1,24] — month-over-month
+  invoiced/collected trend via real grouping queries, top 5 clients by USD-converted amount_paid
+  reusing Client.payment_stats only for the reliability-score half, and a currency breakdown with one
+  real anchor-currency-unified USD total via core.money.Money, that value object's first real
+  consumer anywhere in this codebase)
+- Celery task apps.invoices.tasks.notify_stale_drafts, weekly (Monday 9:30 AM PKT) — one batched
+  in-app + email notification per user with any draft invoice older than 7 days, per-currency
+  breakdown never summed across currencies
+
+Key API endpoints — apps/clients/ Statement PDF (built, real — Step 19; the view lives in
+apps.invoices, registered at this clients-prefixed URL directly in config/urls.py — see DECISIONS.md
+for why):
+- GET /api/clients/{id}/statement/pdf/?start=&end= (freelancer-facing only, confirmed directly — no
+  client-portal-facing equivalent is named anywhere in the spec; both params optional, defaulting to
+  a real trailing year, never "all time"; live-rendered on every call, no frozen-artifact concept;
+  reuses the same WeasyPrint pipeline/font-sourcing convention and the same anchor-currency mechanism
+  Invoice.client_currency_conversion is built on, generalized to total/paid/outstanding)
+
 Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not stubbed):
 - Per-invoice design override at invoice-creation time — `InvoiceFormFields.jsx` has no design-picker
   field at all yet (confirmed directly), so there's genuinely nowhere for it to plug into today —
   flagged in DECISIONS.md's Step 8b entry rather than added as unplanned scope.
-- GET /api/clients/{id}/statement/pdf/ (needs real invoice data + WeasyPrint, later step)
 
 **Design system (`InvoiceDesign.design_data`) — backend contract AND editor both built (Steps 8/8b)**:
 a documented two-zone JSON schema (`apps/invoices/design_schema.py`) — `zone_1` (logo/business_info/
@@ -1405,7 +1447,7 @@ Cloudinary account-level ACL restriction Step 10b works around; Client Acknowled
 portal action, Step 15), Recurring Invoice generation (Celery task + root-settings-read model +
 calendar-accurate scheduling + 3-strikes failure handling, Step 16), and Escalation notification +
 Formal Notice (a real, distinct, manual-only email with its own enforced disable setting, Step 17))
-built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form + acknowledge action, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims/Acknowledge ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides) + an escalation banner/dismiss/Formal-Notice action + an "Edit Series" modal for a recurring root + a Formal Notice enable toggle in Settings > Business, Step 12/13/14/15/16/17 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 750 passing (`python manage.py test`, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 104 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx component test file for Preview-as-Client/Comments/Claims/Escalation/Formal-Notice, matching this component's existing convention for its other actions) | In progress — Analytics dashboard, Client statement PDF, Admin panel screens, and the full-module verification pass (Section 8, steps 18-21) remain |
+built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form + acknowledge action, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims/Acknowledge ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides) + an escalation banner/dismiss/Formal-Notice action + an "Edit Series" modal for a recurring root + a Formal Notice enable toggle in Settings > Business + a new `/invoices/analytics` page (Recharts, installed for real this pass) + a "Generate Statement" action + date-range modal in ClientDetailPanel.jsx, Step 12/13/14/15/16/17/18/19 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 792 passing (`python manage.py test`, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 110 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx/ClientDetailPanel.jsx component test file for their own newer actions, matching this component's existing convention for its other actions) | In progress — Admin panel screens and the full-module verification pass (Section 8, steps 20-21) remain |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

@@ -80,6 +80,16 @@ html { font-size: 16px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoot
   --status-gray-bg:     rgba(107, 114, 128, 0.12);
   --status-gray-text:   #6b7280;
 
+  /* ── Charts (Step 18's Analytics dashboard — the first chart in this
+     app) — a real, validated 2-slot categorical pair, not a reuse of
+     the status colors above (reserved for state, per the dataviz
+     skill's own rule) or a single guessed hue. Validated with
+     scripts/validate_palette.js against both this surface and the dark
+     one below: CVD ΔE 23.1/19.6, normal-vision ΔE 24.0/20.9 — clear of
+     every floor in both modes. */
+  --chart-series-invoiced:  #2a78d6;
+  --chart-series-collected: #1baf7a;
+
   /* ── Auth card (navy header) ── */
   --card-header-from: #1e3a5f;
   --card-header-to:   #2563a8;
@@ -254,6 +264,12 @@ html { font-size: 16px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoot
   --accent-glow:      rgba(0, 229, 160, 0.10);
   --accent-glow-md:   rgba(0, 229, 160, 0.18);
   --accent-glow-lg:   rgba(0, 229, 160, 0.28);
+
+  /* ── Charts — the dark-surface steps of the same validated pair
+     above, not a separate palette (dataviz skill: "its own steps from
+     the same ramps, validated against the dark surface"). */
+  --chart-series-invoiced:  #3987e5;
+  --chart-series-collected: #199e70;
 
   /* ── Backgrounds ── */
   --bg-page:          #0d0d16;

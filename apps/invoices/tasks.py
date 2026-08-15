@@ -25,6 +25,7 @@ here.
 import logging
 from collections import namedtuple
 from datetime import timedelta
+from decimal import Decimal
 from itertools import groupby
 
 from celery import shared_task
@@ -380,3 +381,56 @@ def generate_recurring_invoices():
 
     logger.info('[INVOICES] generate_recurring_invoices: generated %d, failed %d.', generated_count, failed_count)
     return {'generated': generated_count, 'failed': failed_count}
+
+
+# ══════════════════════════════════════════════════════════════════
+# STALE DRAFTS — Step 18
+# ══════════════════════════════════════════════════════════════════
+# Matches UNDO_CONFIRMATION_AGE_DAYS' own established "meaningfully old"
+# precedent (apps/invoices/views.py) — 7 days, not a fresh number picked
+# for this task alone.
+STALE_DRAFT_THRESHOLD_DAYS = 7
+
+
+@shared_task(name='apps.invoices.tasks.notify_stale_drafts')
+def notify_stale_drafts():
+    """
+    Runs weekly (Monday, see config/celery.py's beat_schedule). ONE
+    batched notification per user with any status='draft' invoice older
+    than STALE_DRAFT_THRESHOLD_DAYS — never one per draft, same batching
+    principle notify_unread_comments already established for its own
+    per-invoice grouping.
+
+    Per-currency breakdown, not a single unified total: a draft's
+    rate_to_usd_at_issue is only ever captured at FINALISE time
+    (Invoice.capture_issue_rate(), called from _finalise_invoice) — a
+    still-draft invoice genuinely has no frozen conversion rate to sum
+    against a draft in a different currency honestly. A live snapshot
+    lookup here would be real, unscoped complexity for a simple weekly
+    nudge (currency unification is Step 18's ANALYTICS dashboard's own,
+    separate, deliberate scope) — see DECISIONS.md.
+
+    Emits StaleDraftsDigest per user (real notification/email logic
+    lives in the registered handler, apps/invoices/notifications.py —
+    same emit-then-handle pattern every other notification-worthy event
+    in this module already uses, not a one-off direct send here).
+    """
+    cutoff = timezone.now() - timedelta(days=STALE_DRAFT_THRESHOLD_DAYS)
+    notified_count = 0
+
+    stale = Invoice.objects.filter(status='draft', created_at__lt=cutoff).order_by('user_id')
+    for user_id, group in groupby(stale, key=lambda inv: inv.user_id):
+        invoices = list(group)
+        breakdown = {}
+        for invoice in invoices:
+            breakdown[invoice.currency] = breakdown.get(invoice.currency, Decimal('0')) + invoice.total
+
+        emit(
+            'StaleDraftsDigest', user_id=str(user_id), draft_count=len(invoices),
+            breakdown={currency: str(total) for currency, total in breakdown.items()},
+        )
+        notified_count += 1
+        logger.info('[INVOICES] Stale-draft digest queued for user_id=%s (%d draft(s)).', user_id, len(invoices))
+
+    logger.info('[INVOICES] notify_stale_drafts: notified %d user(s).', notified_count)
+    return {'notified': notified_count}

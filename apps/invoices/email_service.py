@@ -329,6 +329,36 @@ invoice when you're ready.</p>"""
 
 
 # ══════════════════════════════════════════════════════════════════
+# EMAIL CONTENT — stale-draft weekly digest (Step 18)
+# ══════════════════════════════════════════════════════════════════
+
+def build_stale_drafts_email(draft_count, breakdown):
+    """
+    `breakdown`: {currency: Decimal total}, one line per currency —
+    never summed together into one figure across different currencies
+    (see notify_unread_comments... no, see notify_stale_drafts' own
+    docstring for why: a still-draft invoice has no frozen conversion
+    rate to sum against a draft in a different currency honestly).
+    """
+    plural = 's' if draft_count != 1 else ''
+    subject = f'{draft_count} unsent draft invoice{plural} waiting'
+    totals_html = ''.join(
+        f'<li style="margin-bottom:4px;">{_fmt_money(total, currency)}</li>'
+        for currency, total in breakdown.items()
+    )
+    body = f"""
+<p style="margin:0 0 16px;font-size:16px;font-weight:700;color:#1e293b;">You have {draft_count} unsent draft{plural}</p>
+<p style="margin:0 0 12px;font-size:13px;color:#334155;">
+  These invoices have been sitting as drafts for over a week, totaling:
+</p>
+<ul style="margin:0 0 20px;padding-left:20px;font-size:13px;color:#334155;">{totals_html}</ul>
+<p style="margin:0;font-size:13px;color:#64748b;">Finish and send them from your Invoices list whenever you're ready.</p>"""
+    totals_plain = '\n'.join(f'{_fmt_money(total, currency)}' for currency, total in breakdown.items())
+    plain = f'You have {draft_count} unsent draft{plural}, totaling:\n{totals_plain}\n\nFinish and send them from your Invoices list.'
+    return subject, _html_wrapper(body), plain
+
+
+# ══════════════════════════════════════════════════════════════════
 # EMAIL CONTENT — unread-comment batch notification (Step 13)
 # ══════════════════════════════════════════════════════════════════
 # ONE email per invoice, covering everything unread at the 1-hour

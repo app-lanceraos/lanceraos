@@ -3489,3 +3489,165 @@ happens (`_record_formal_notice_sent`, `log_event('formal_notice_sent', ...)`) f
 but `'formal_notice_sent'` is deliberately never added to `core/notifications.py`'s
 `NOTIFICATION_EVENTS` allowlist — verified with a dedicated test asserting both halves directly
 (a real `AuditLog` row exists, AND the event string is absent from the bell allowlist).
+
+Date: 15 August 2026 (third entry)
+Decision: Built Analytics (Step 18 — stale-draft weekly digest + the cross-invoice analytics
+dashboard) and Client Statement PDF (Step 19) — the last functionally-new steps in Module 2's build
+order before the dedicated bug-hardening pass and Admin.
+Reason: task's own explicit instruction. Both steps needed a real, working anchor-currency
+conversion mechanism across MULTIPLE invoices/payments at once, which surfaced a real, found gap
+(`InvoicePartialPayment.rate_to_usd` was never actually populated anywhere) that both steps were
+structurally blocked on — fixed as a prerequisite, not a tangent.
+
+**`core.money.Money` gets its first real consumer, ever.** Built in Foundations (Step 1), explicitly
+described in CLAUDE.md's own project tree as "USD-anchored currency conversion" — confirmed directly
+before writing any Step 18/19 code that nothing anywhere in this codebase actually imported it
+(`Invoice.client_currency_conversion`, the one place that does per-invoice currency conversion,
+reimplements the same math inline instead). Both new features (the analytics currency breakdown/
+trend, the statement's per-row conversion) now use it directly — `_build_monthly_trend`/
+`_build_top_clients`/`_build_currency_breakdown` (`apps/invoices/views.py`) and
+`_invoice_amounts_in_client_currency` (`apps/invoices/pdf_generator.py`).
+
+**A real, found gap: `InvoicePartialPayment.rate_to_usd` was never populated anywhere.** That
+field's own `help_text` has always claimed "captured at record time" (a documented INTENT from
+whichever earlier step added the field), but grepping every call site that creates a row
+(`invoice_add_payment`, `invoice_mark_paid`, `invoice_claim_confirm`) confirmed none of them ever set
+it — every real payment recorded before this step has `rate_to_usd=NULL`. Fixed via a new
+`_lookup_rate_to_usd(currency)` helper (`views.py`) mirroring `Invoice.capture_issue_rate()`'s own
+snapshot-selection logic (today's `ExchangeRateSnapshot`, falling back to the most recent), wired
+into all three call sites. A real regression this surfaced while wiring it in:
+`serializer.validated_data['currency']` raised `KeyError` for a request that omitted `currency`
+entirely (relying on the model's own `default='USD'`) — DRF only injects a value into
+`validated_data` for a field with an explicit serializer-level `default=`, which `currency` doesn't
+have (only the model does); fixed with `.get('currency', 'USD')`, caught by the pre-existing test
+suite, not a new test written to find it.
+
+**A real, found-but-deliberately-not-fixed-here gap in `Invoice.client_currency_conversion`,
+surfaced while cross-checking Step 19's own statement math against it.** That property quantizes the
+conversion RATE to 2 decimal places BEFORE multiplying it against `self.total` — correct for rates
+≥ 0.01 (EUR/GBP/PKR-as-source-currency all land there), but for a rate below 0.01 (e.g. PKR-as-
+TARGET... no, PKR-as-SOURCE-currency converting to USD, rate ≈0.0036) the rate itself rounds to
+0.00, silently zeroing `converted_total` regardless of the real amount. Confirmed directly with a
+failing test before deciding what to do about it — not fixed in this pass: it's pre-existing, already-
+shipped, already-tested code from Step 7b, genuinely out of Step 18/19's own stated scope, and the
+two existing tests asserting `at rate 300.00`/`at rate 277.78` in rendered invoice HTML would need
+deliberate updating (not just a wider Decimal comparison, which already passes regardless of trailing
+precision — the STRING match in the rendered template is what would break) if the rate's own display
+precision changed. Step 19's own new conversion helper
+(`_invoice_amounts_in_client_currency`) does NOT inherit this bug — it converts via
+`core.money.Money.convert()` directly, never through an intermediately-rounded rate — confirmed with a
+dedicated test using a PKR-magnitude rate. Flagged here explicitly so this doesn't read as an
+oversight later: a real, scoped fix for `client_currency_conversion` itself (full-precision total,
+higher-precision displayed rate) is straightforward whenever someone picks it up, but touching the
+two existing template-string-matching tests deliberately wasn't bundled into this already-large step.
+
+**Stale-draft threshold: 7 days**, matching `UNDO_CONFIRMATION_AGE_DAYS`'s own established
+"meaningfully old" precedent (`apps/invoices/views.py`) rather than picking a fresh number — the two
+are conceptually the same judgment ("has enough time passed that this needs a nudge/confirmation"),
+so reusing the existing precedent is more consistent than inventing a second one.
+**Per-currency breakdown, not a single mixed-currency total, for the digest itself** — a still-draft
+invoice's `rate_to_usd_at_issue` is only ever captured at FINALISE time
+(`Invoice.capture_issue_rate()`), so a draft genuinely has no frozen rate to convert against another
+draft in a different currency honestly; a live snapshot lookup for this one weekly nudge would be
+real, unscoped complexity the analytics dashboard's OWN currency-unification already covers for real
+(non-draft) invoices. Weekly, Monday 9:30 AM PKT — after the day's own 9:00 reminder run, no
+collision with any daily task's own slot. Follows the SAME `emit()`-then-handler pattern every other
+notification-worthy event in this module already uses (`StaleDraftsDigest` -> `apps/invoices/notifications.py`'s
+`_notify_stale_drafts_digest`), not a one-off direct send inside the task itself.
+
+**Analytics dashboard's real query shape, decided explicitly rather than left implicit.** Three
+independent pieces, each a real grouping/aggregation, never a client-side reduction of the full
+invoice list:
+- **Monthly trend** (`?months=`, default 6, clamped [1,24] — matches `apps.health`'s own `?months=`
+  convention): "invoiced" buckets by `finalised_at`'s own month (a draft has none, naturally excluding
+  it); "collected" buckets by each `InvoicePartialPayment.payment_date` — deliberately NOT filtered by
+  the invoice's CURRENT status, matching `invoice_summary`'s own established rule ("money already
+  received isn't erased by a later status change"). Refunds aren't netted out month-by-month —
+  `refunded_amount` is a single field on `Invoice`, not a dated event in this data model, so there's
+  no honest month to attribute a refund to.
+- **Top clients** (hardcoded top 5): ranked by `amount_paid` converted to USD via `Money` — genuinely
+  currency-aware, unlike `Client.payment_stats`' own `total_paid`/`total_invoiced` (a raw, unconverted
+  sum across whatever currencies that client's invoices happen to use — fine for a single-client
+  view where currency rarely varies, not safe for ranking ACROSS clients in mixed currencies, which is
+  the entire point here). `reliability_score`/`reliability_breakdown` ARE reused directly from
+  `Client.payment_stats` for each of the top 5 only (never reimplemented) — cheap at that scale,
+  wrong to duplicate a real tiered-points formula.
+- **Currency breakdown**: per-currency silos (count + native total) PLUS one real anchor-currency-
+  unified USD total (`Money`, each invoice's own frozen `rate_to_usd_at_issue`) — `unconverted_count`
+  surfaces invoices excluded from that unified total (no frozen rate captured) honestly, rather than
+  silently dropping or guessing them.
+All three exclude `apps.clients.scoring.EXCLUDED_STATUSES` (`cancelled`/`refunded`) — reused directly,
+not redefined, matching `Client.payment_stats`' own "not real business" definition. Explicitly
+excluded from this dashboard, confirmed already decided rather than reconsidered: the cross-invoice
+"unread comments overview" (flagged in the original planning as its own future addition) and
+anything resembling v1's Cash Flow Forecast/Currency Diversification sections (excluded back at Step
+6).
+
+**Recharts installed for real — CLAUDE.md's own tech stack already named it, just never
+installed.** Confirmed directly (`grep` across `package.json`) before adding it: no charting library
+existed in this codebase at all. A real, validated 2-slot categorical color pair (the dataviz skill's
+`scripts/validate_palette.js` — CVD ΔE 23.1 light/19.6 dark, normal-vision ΔE 24.0/20.9, both clear of
+every floor) backs the trend chart's two series, added as `--chart-series-invoiced`/
+`--chart-series-collected` in `theme.css` (light + `[data-theme="dark"]`, matching `--accent`'s own
+existing light/dark-pair convention) — deliberately NOT a reuse of the `--status-*` tokens, which are
+reserved for state, not series identity. Read as plain hex constants in `InvoiceAnalytics.jsx` rather
+than via `var(--chart-series-invoiced)` directly on Recharts' `stroke`/`fill` props — SVG presentation
+attributes don't reliably resolve CSS custom properties across browsers the way a real `style`
+property does, so the light/dark hex pair is mirrored in JS and selected via `useTheme()`.
+
+**A real, found, pre-existing gap: `vite.config.js` never wired `src/test-setup.js` into vitest's
+`setupFiles` at all.** That file has existed since Step 8b, with its own header comment already
+calling it "global test infrastructure, not a one-off mock local to a single test file" (a
+`window.matchMedia` polyfill `useTheme.js`/`AuthLayout.jsx` both depend on) — but no test file had
+ever rendered a `useTheme()`-consuming component under test before `InvoiceAnalytics.jsx` (this step),
+so nothing had surfaced the gap. Fixed by adding `setupFiles: ['./src/test-setup.js']` to
+`vite.config.js`'s own `test` block — confirmed the fix doesn't change any other existing test's
+outcome (full suite re-run, same pass count plus the new tests).
+
+**Step 19 — freelancer-facing only, confirmed directly, not assumed.**
+`INVOICES_CLIENTS_TECHNICAL_SPEC.md` Section 7 lists `GET /api/clients/<uuid:pk>/statement/pdf/`
+under `apps/clients/`'s own freelancer-authenticated endpoint group only — no client-portal-facing
+equivalent is named anywhere in that document's portal endpoint group, and CLAUDE.md's own module
+status text only ever describes this as a freelancer action. Also confirmed: the spec's own citation
+("Section 15 #6 — content/layout design happens here") points at a section that doesn't exist
+anywhere in `INVOICES_CLIENTS_TECHNICAL_SPEC.md` (it has no numbered section past 8) — the same kind
+of stale cross-reference `DATABASE.md`'s `invoice_designs` entry already flagged for "Section 9/10."
+Built freelancer-side only; a portal-facing version is a real, deliberate gap for a future step if
+ever needed, not silently decided either way.
+**The view lives in `apps.invoices` (needs `Invoice`/`InvoicePartialPayment` data + the shared
+WeasyPrint pipeline), registered at a `/api/clients/...`-prefixed URL directly in `config/urls.py`** —
+the same "a view that doesn't cleanly belong to one app's own `urls.py` gets wired at the root"
+precedent `core/notifications.py`'s own endpoints (`list_notifications` et al.) already established.
+This satisfies the spec's exact URL shape without `apps.clients` ever importing from `apps.invoices`
+— the established one-directional dependency rule stays intact.
+**Running balance definition, decided explicitly**: the cumulative OUTSTANDING total across the
+listed invoices in chronological order (each row's own outstanding amount added to everything before
+it in the range) — not a full interleaved invoice-plus-payment ledger. A true ledger would need every
+`InvoicePartialPayment` interleaved by its own date alongside each invoice's issue date, which the
+task's own content list ("every invoice in that range... a running balance") reads as scoped to
+invoice ROWS, not a generalized transaction ledger; the simpler, invoice-row-scoped definition was
+chosen as the honest reading of that scope, not a shortcut.
+**Date range defaults to a real, bounded trailing year (`DEFAULT_STATEMENT_WINDOW_DAYS = 365`) when
+`start`/`end` are omitted — never "all time."** Both remain fully overridable via real query params.
+Filtered by `issue_date` (not `finalised_at`, unlike the analytics trend's own deliberate choice) —
+a statement's natural per-row date is the same `issue_date` already printed on the invoice PDF
+itself, matching what a client would expect to see reconciling a statement against invoices they
+already have copies of.
+**Currency conversion reuses the SAME anchor-currency mechanism `Invoice.client_currency_conversion`
+is built on (`core.money.Money`, the invoice's own frozen `rate_to_usd_at_issue` + `exchange_rate_snapshot`
+— never today's rate), generalized to `total`/`amount_paid`/`outstanding_amount` uniformly via a new
+`_invoice_amounts_in_client_currency` helper** (`pdf_generator.py`) rather than calling that property
+directly — it only ever converts `total`, where a statement needs all three figures per row. A row
+with no real conversion available is still LISTED (never silently dropped), contributes nothing to
+the running balance/totals, and is counted in `unconverted_count` — same honest-gap-surfacing
+convention Step 18's own currency breakdown established.
+**Same font-sourcing convention as the invoice templates, no separate font logic** — `statement.html`
+reuses `pdf_generator.py`'s existing `FONT_CONTEXT` unchanged, confirmed with a dedicated
+font-embedding test (opens the real rendered PDF via PyMuPDF and checks its font table directly,
+matching Step 7b's own standard — not "no warning was logged").
+**"Generate Statement" downloads via a plain browser navigation (`window.open`), never an Axios
+blob-fetch** — the httpOnly session cookie already travels on a normal top-level GET navigation to
+the API's own origin (`COOKIE_SAMESITE=Lax` explicitly permits this), the same real precedent
+`ClientPortal.jsx`'s own `portal_view_url` `<a href>` already established for a protected,
+credentialed document. `Content-Disposition: attachment` on the response means the browser downloads
+it directly with zero client-side blob/save-as code needed.

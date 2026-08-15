@@ -1,0 +1,159 @@
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  /* Same font-sourcing convention as the invoice templates
+     (professional.html etc.) — real filesystem file:// URIs, computed
+     in pdf_generator.py's FONT_CONTEXT. No separate font logic for this
+     document type. */
+  @font-face { font-family: 'IBM Plex Sans'; src: url('{{ font_ibm_plex_sans_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('{{ font_ibm_plex_sans_semibold }}'); font-weight: 600; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 16mm 16mm 16mm 16mm;
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages) " · Generated via LanceraOS";
+      font-family: 'IBM Plex Mono';
+      font-size: 7pt;
+      color: #94a3b8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+    color: #1e293b;
+    font-size: 9.5pt;
+    line-height: 1.5;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2px solid #1e293b;
+    padding-bottom: 14pt;
+    margin-bottom: 18pt;
+  }
+  .header .logo { max-height: 40pt; max-width: 140pt; margin-bottom: 6pt; }
+  .header h1 { margin: 0 0 2pt; font-size: 15pt; font-weight: 600; }
+  .header .sub { font-size: 8pt; color: #64748b; line-height: 1.6; }
+  .header .doc-title { text-align: right; }
+  .header .doc-title h2 { margin: 0 0 4pt; font-size: 18pt; font-weight: 600; letter-spacing: 0.5pt; }
+  .header .doc-title .range { font-size: 8.5pt; color: #64748b; font-family: 'IBM Plex Mono'; }
+
+  .parties { display: flex; justify-content: space-between; margin-bottom: 20pt; }
+  .parties .block { font-size: 8.5pt; color: #334155; line-height: 1.6; }
+  .parties .label { font-size: 7pt; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3pt; }
+
+  table.ledger { width: 100%; border-collapse: collapse; margin-bottom: 18pt; }
+  table.ledger thead th {
+    text-align: left; font-size: 7.5pt; font-weight: 600; color: #64748b; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 6pt 8pt; border-bottom: 1.5pt solid #1e293b;
+  }
+  table.ledger thead th.num { text-align: right; }
+  table.ledger tbody td { padding: 7pt 8pt; border-bottom: 0.75pt solid #e2e8f0; font-size: 8.5pt; }
+  table.ledger tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.ledger tbody tr.unconverted td { color: #94a3b8; font-style: italic; }
+  .status-pill {
+    display: inline-block; padding: 1pt 6pt; border-radius: 8pt; font-size: 7pt; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.03em; background: #f1f5f9; color: #475569;
+  }
+
+  .totals { display: flex; justify-content: flex-end; margin-bottom: 16pt; }
+  .totals table { border-collapse: collapse; }
+  .totals td { padding: 4pt 10pt; font-size: 9pt; }
+  .totals td.label { color: #64748b; text-align: right; }
+  .totals td.value { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 80pt; }
+  .totals tr.grand td { border-top: 1.5pt solid #1e293b; font-size: 10.5pt; font-weight: 700; padding-top: 7pt; }
+
+  .empty { text-align: center; padding: 30pt 0; color: #94a3b8; font-size: 9pt; }
+  .footnote { font-size: 7.5pt; color: #94a3b8; margin-top: 6pt; }
+  .generated { font-size: 7.5pt; color: #94a3b8; margin-top: 20pt; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      {% if freelancer.logo %}<img class="logo" src="{{ freelancer.logo }}" alt="">{% endif %}
+      <h1>{{ freelancer.business_name|default:freelancer.display_name }}</h1>
+      <div class="sub">
+        {% if freelancer.display_name and freelancer.business_name %}{{ freelancer.display_name }}<br>{% endif %}
+        {% if freelancer.address_line1 %}{{ freelancer.address_line1 }}<br>{% endif %}
+        {% if freelancer.city or freelancer.country %}{{ freelancer.city }}{% if freelancer.city and freelancer.country %}, {% endif %}{{ freelancer.country }}<br>{% endif %}
+        {{ client.user.email }}
+      </div>
+    </div>
+    <div class="doc-title">
+      <h2>Statement of Account</h2>
+      <div class="range">{{ start_date|date:"d M Y" }} – {{ end_date|date:"d M Y" }}</div>
+    </div>
+  </div>
+
+  <div class="parties">
+    <div class="block">
+      <div class="label">Statement For</div>
+      <strong>{{ client.name }}</strong><br>
+      {% if client.company %}{{ client.company }}<br>{% endif %}
+      {{ client.email }}<br>
+      {% if client.address %}{{ client.address }}<br>{% endif %}
+    </div>
+    <div class="block" style="text-align:right;">
+      <div class="label">Amounts Shown In</div>
+      <strong>{{ target_currency }}</strong>
+    </div>
+  </div>
+
+  {% if rows %}
+  <table class="ledger">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Invoice</th>
+        <th>Status</th>
+        <th class="num">Amount</th>
+        <th class="num">Paid</th>
+        <th class="num">Outstanding</th>
+        <th class="num">Balance</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr{% if not row.amounts %} class="unconverted"{% endif %}>
+        <td>{{ row.invoice.issue_date|date:"d M Y" }}</td>
+        <td>{{ row.invoice.invoice_number|default:"—" }}</td>
+        <td><span class="status-pill">{{ row.invoice.get_status_display }}</span></td>
+        {% if row.amounts %}
+          <td class="num">{{ currency_symbol }}{{ row.amounts.total|floatformat:2|intcomma }}</td>
+          <td class="num">{{ currency_symbol }}{{ row.amounts.amount_paid|floatformat:2|intcomma }}</td>
+          <td class="num">{{ currency_symbol }}{{ row.amounts.outstanding|floatformat:2|intcomma }}</td>
+          <td class="num">{{ currency_symbol }}{{ row.running_balance|floatformat:2|intcomma }}</td>
+        {% else %}
+          <td class="num" colspan="4">No exchange rate captured for this invoice — excluded from totals</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <table>
+      <tr><td class="label">Total Invoiced</td><td class="value">{{ currency_symbol }}{{ total_invoiced|floatformat:2|intcomma }}</td></tr>
+      <tr><td class="label">Total Paid</td><td class="value">{{ currency_symbol }}{{ total_paid|floatformat:2|intcomma }}</td></tr>
+      <tr class="grand"><td class="label">Outstanding</td><td class="value">{{ currency_symbol }}{{ total_outstanding|floatformat:2|intcomma }}</td></tr>
+    </table>
+  </div>
+
+  {% if unconverted_count %}
+  <p class="footnote">{{ unconverted_count }} invoice{{ unconverted_count|pluralize }} excluded from the totals above — no exchange rate was captured for {{ unconverted_count|pluralize:"it,them" }} at issue time.</p>
+  {% endif %}
+  {% else %}
+  <div class="empty">No invoices for {{ client.name }} in this date range.</div>
+  {% endif %}
+
+  <div class="generated">Generated {{ generated_at|date:"d M Y, H:i" }} · LanceraOS</div>
+</body>
+</html>

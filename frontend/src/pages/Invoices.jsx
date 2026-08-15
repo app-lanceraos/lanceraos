@@ -55,7 +55,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Search, X, Plus, FileText, ChevronDown, ChevronUp, Layers, BookmarkPlus, LayoutTemplate,
+  Search, X, Plus, FileText, ChevronDown, ChevronUp, Layers, BookmarkPlus, LayoutTemplate, BarChart3,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -295,6 +295,9 @@ export default function Invoices() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <button className="fos-btn fos-btn-ghost header-analytics-btn" onClick={() => navigate('/invoices/analytics')}>
+            <BarChart3 size={15} /> Analytics
+          </button>
           <button className="fos-btn fos-btn-ghost header-designs-btn" onClick={() => navigate('/invoices/designs')}>
             <LayoutTemplate size={15} /> Manage Designs
           </button>

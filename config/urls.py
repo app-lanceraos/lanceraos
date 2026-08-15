@@ -4,6 +4,7 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from apps.invoices.views_statement import client_statement_pdf
 from core.notifications import (
     dismiss_notifications,
     list_notifications,
@@ -17,6 +18,14 @@ urlpatterns = [
     path('api/auth/', include('apps.users.urls')),
     path('api/admin/', include('apps.admin_panel.urls')),
     path('api/clients/', include('apps.clients.urls')),
+    # Registered here, not in apps/clients/urls.py — the view itself
+    # lives in apps.invoices (needs Invoice/InvoicePartialPayment data
+    # + the shared WeasyPrint pipeline), and apps.clients can never
+    # import from apps.invoices (the established one-directional
+    # dependency rule). Matches the spec's own URL shape
+    # (/api/clients/<pk>/statement/pdf/) exactly regardless of which
+    # app's code implements it — see views_statement.py's own docstring.
+    path('api/clients/<uuid:pk>/statement/pdf/', client_statement_pdf, name='client_statement_pdf'),
     path('api/invoices/', include('apps.invoices.urls')),
     # Lives at the root, not under api/auth/ — matches what the frontend
     # (AppShell.jsx) already calls directly via api.get('/notifications/'),

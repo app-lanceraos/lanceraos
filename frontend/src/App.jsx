@@ -22,6 +22,7 @@ import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
 import Clients from '@/pages/Clients'
 import Invoices from '@/pages/Invoices'
+import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
 import DesignGallery from '@/pages/DesignGallery'
 import DesignEditor from '@/pages/design-editor/DesignEditor'
 import Onboarding from '@/pages/Onboarding'
@@ -106,6 +107,10 @@ export default function App() {
         <Route
           path="/invoices/designs"
           element={<PrivateRoute><AppShell><DesignGallery /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/invoices/analytics"
+          element={<PrivateRoute><AppShell><InvoiceAnalytics /></AppShell></PrivateRoute>}
         />
         {/* Step 8b's canvas editor — deliberately NOT wrapped in AppShell,
             same shell-less pattern as /account/deletion-review above (see

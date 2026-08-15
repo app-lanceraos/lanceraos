@@ -50,6 +50,8 @@ NOTIFICATION_EVENTS = {
     # 'formal_notice_sent' is deliberately NOT added here — the
     # freelancer triggers it themselves, same self-trigger exclusion as
     # invoice_sent above.
+    # apps/invoices, Step 18 — the weekly stale-draft nudge.
+    'stale_drafts_digest',
 }
 
 EVENT_TITLES = {
@@ -69,6 +71,7 @@ EVENT_TITLES = {
     'recurring_invoice_generated': 'Recurring invoice generated',
     'recurring_generation_failed': 'Recurring invoice generation failed',
     'recurring_generation_paused': 'Recurring invoices paused',
+    'stale_drafts_digest': 'Unsent drafts waiting',
 }
 
 # Where clicking each notification type navigates. Compulsory — every
@@ -105,6 +108,7 @@ EVENT_ACTION_URLS = {
     # not the failed occurrence, since no occurrence was ever created).
     'recurring_generation_failed': '/invoices/?filter=recurring',
     'recurring_generation_paused': '/invoices/?filter=recurring',
+    'stale_drafts_digest': '/invoices/?status=draft',
 }
 
 
@@ -165,6 +169,10 @@ def _describe(log):
     if log.event == 'recurring_generation_paused':
         invoice_number = log.metadata.get('invoice_number') or 'a recurring invoice'
         return f'The recurring series based on {invoice_number} was paused after 3 failed attempts.'
+    if log.event == 'stale_drafts_digest':
+        count = log.metadata.get('draft_count') or 0
+        plural = 's' if count != 1 else ''
+        return f'You have {count} unsent draft invoice{plural} sitting for over a week.'
     return ''
 
 
