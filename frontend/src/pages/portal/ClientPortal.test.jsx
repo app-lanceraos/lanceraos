@@ -139,3 +139,34 @@ describe('ClientPortal — payment claims', () => {
     await waitFor(() => expect(screen.getByText(/too many claims submitted/i)).toBeTruthy())
   })
 })
+
+describe('ClientPortal — acknowledgment', () => {
+  it('hides the acknowledge action once already acknowledged, shows the permanent state instead', async () => {
+    mock.onGet('/invoices/portal/me/').reply(200, [
+      { ...SAMPLE_INVOICES[0], client_acknowledged: true, client_acknowledged_at: '2026-01-05T00:00:00Z' },
+      SAMPLE_INVOICES[1],
+    ])
+    renderPortal()
+    await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+
+    expect(screen.getAllByRole('button', { name: /^acknowledge/i })).toHaveLength(1)  // only inv-2, not the already-acknowledged inv-1
+    expect(screen.getByText(/acknowledged 1\/5\/2026/i)).toBeTruthy()
+  })
+
+  it('acknowledging updates the row to the permanent state without a page reload', async () => {
+    mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    mock.onPost('/invoices/portal/inv-1/acknowledge/').reply(201, {
+      client_acknowledged: true, client_acknowledged_at: '2026-02-01T00:00:00Z',
+    })
+    renderPortal()
+    await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+
+    fireEvent.click(screen.getAllByRole('button', { name: /^acknowledge/i })[0])
+    fireEvent.click(screen.getByRole('button', { name: /i acknowledge this invoice/i }))
+
+    await waitFor(() => expect(mock.history.post.some((r) => r.url === '/invoices/portal/inv-1/acknowledge/')).toBe(true))
+    await waitFor(() => expect(screen.getByText(/acknowledged 2\/1\/2026/i)).toBeTruthy())
+    // The button for inv-1 specifically is gone now — only inv-2's remains.
+    expect(screen.getAllByRole('button', { name: /^acknowledge/i })).toHaveLength(1)
+  })
+})

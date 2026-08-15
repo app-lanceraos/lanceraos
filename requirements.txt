@@ -80,3 +80,13 @@ qrcode[pil]==8.2
 # font-sourcing test opens the real output PDF and checks its font table
 # directly, not the render log.
 pymupdf==1.28.*
+# Calendar-accurate month arithmetic for recurring invoice generation
+# (apps/invoices/tasks.py's generate_recurring_invoices, Step 16) —
+# every-2-months/quarterly/annually intervals must advance by real
+# calendar months, not a naive days-multiplication that drifts against
+# month length. Already present transitively (a Celery/other dependency
+# pulls it in) but not previously a direct, declared import anywhere in
+# this codebase — added explicitly now that apps.invoices genuinely
+# imports it, per this file's own "everything here is actually imported"
+# rule.
+python-dateutil==2.9.*

@@ -752,7 +752,33 @@ freelancer-preview guard wired in; it does now, and so does the new claims endpo
 "Report a Payment" form in `ClientPortal.jsx` (saved-client session path only — the one-time-client
 `view_token` path is real and tested at the API layer with no frontend surface reaching it yet, same
 honest gap Step 11's own portal-entry point had before Step 12) and a Claims tab in
-`InvoiceDetailPanel.jsx` with confirm/reject actions. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the
+`InvoiceDetailPanel.jsx` with confirm/reject actions. 15 August 2026 (second pass) built the module's
+final three pieces. Step 15, Client Acknowledgment: `POST /invoices/portal/<pk>/acknowledge/`
+(`portal_invoice_acknowledge`) — same saved-client-session-or-one-time-client-view_token access model
+as claims (now shared via a `_resolve_portal_write_access` helper both endpoints call), idempotent
+(a repeat call returns the existing timestamp with 200, never an error), no unacknowledge path
+anywhere. Step 16, Recurring Invoices: `apps/invoices/tasks.py`'s `generate_recurring_invoices`
+(daily, 8:30 AM PKT) — series settings (interval/auto_send/design) are read LIVE from the invoice's
+own recurring root (`Invoice.get_recurring_root()`) at generation time, never copied onto a generated
+child; `_duplicate_invoice_core` (extracted from `invoice_duplicate`, reused by both) creates each
+occurrence, auto-send reuses `_finalise_invoice`/`_send_invoice_now` from Step 10/10b; calendar-month-
+accurate advancement via `dateutil.relativedelta` for the 2-month/quarterly/annual intervals (a new
+explicit dependency, `python-dateutil`); per-invoice failure isolation with 3-strikes auto-pause
+(`recurring_failure_count`, new field); "edit the whole series" is a narrow allowance on the EXISTING
+`PUT /api/invoices/<pk>/` (a recurring root, past its own draft status, may still change exactly
+`recurring_interval_days`/`recurring_auto_send` via a new `RecurringSeriesSettingsSerializer`).
+Step 17, Escalation + Formal Notice: confirmed `escalation_required` was already being set correctly
+by Step 10's reminder task — only the notification handler was missing, now built
+(`invoice_escalation_required`, bell+email); `POST /invoices/<pk>/dismiss-escalation/` clears the
+prompt without erasing the historical flag; Formal Notice (`POST /invoices/<pk>/send-formal-notice/`,
+manual-only, `confirm:true`, gated on `escalation_required OR status='bad_debt'`) is a real, distinct
+firmer-toned email reusing the same send-email routing chain, trackable via a new
+`Invoice.formal_notice_sent_at` (never blocks a deliberate re-send) and a real, enforced
+`FreelancerProfile.formal_notice_enabled` kill switch (checked server-side, not just hidden in the
+UI). Frontend: acknowledge button/permanent-state in `ClientPortal.jsx`; an escalation banner +
+dismiss + Formal Notice actions, an "Edit Series" modal for a recurring root, and acknowledgment/
+escalation/formal-notice timeline entries in `InvoiceDetailPanel.jsx`; the Formal Notice toggle in
+Settings > Business's "Invoicing Defaults" card. See `INVOICES_CLIENTS_TECHNICAL_SPEC.md` for the
 full design this is being built against, and `DECISIONS.md` for each step's reasoning as it lands.
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
@@ -1025,8 +1051,35 @@ see DECISIONS.md):
   and payment_claim_confirmed (immediate email to the client only, no bell — the freelancer
   triggered it themselves) are real, wired notification tiers.
 
+Key API endpoints — apps/invoices/ Client Acknowledgment (built, real — Step 15):
+- POST /api/invoices/portal/{id}/acknowledge/ (same saved-client-session-or-one-time-client-view_token
+  access model as claims, via a shared _resolve_portal_write_access helper; idempotent — a repeat
+  call returns the existing client_acknowledged_at with a 200, never an error; no unacknowledge path
+  exists anywhere; rate limited 5/hour; rejects the freelancer-preview-mode case with a real 403)
+
+Key API endpoints — apps/invoices/ Recurring Invoices (built, real — Step 16):
+- Celery task apps.invoices.tasks.generate_recurring_invoices, daily at 8:30 AM PKT — series settings
+  (interval/auto_send/design) read live from Invoice.get_recurring_root() at generation time, never
+  copied onto a generated child; calendar-month-accurate advancement for 2-month/quarterly/annual
+  intervals; per-invoice failure isolation with 3-strikes auto-pause (recurring_failure_count)
+- PUT /api/invoices/{id}/ — a recurring ROOT invoice past its own draft status may still change
+  exactly recurring_interval_days/recurring_auto_send here ("edit the whole series going forward"),
+  via a narrow RecurringSeriesSettingsSerializer allowance; every other field/invoice still hits the
+  ordinary is_editable 403
+
+Key API endpoints — apps/invoices/ Escalation + Formal Notice (built, real — Step 17):
+- escalation_required was already being set correctly by Step 10's reminder task at the real day-30
+  threshold — only the notification handler (invoice_escalation_required, bell + immediate email)
+  was missing; built this pass
+- POST /api/invoices/{id}/dismiss-escalation/ (clears the PROMPT only — escalation_required itself,
+  the historical fact, is never reset; idempotent)
+- POST /api/invoices/{id}/send-formal-notice/ (manual-only, confirm:true, gated on
+  escalation_required OR status='bad_debt'; a real, distinct, firmer-toned email reusing the same
+  send-email routing chain every other invoice email uses; tracked via formal_notice_sent_at, never
+  blocks a deliberate re-send; a real, server-enforced FreelancerProfile.formal_notice_enabled kill
+  switch, not just hidden client-side — Settings > Business's "Invoicing Defaults" card)
+
 Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not stubbed):
-- POST /api/invoices/{id}/acknowledge/ — Client Acknowledgment (Step 15) hasn't landed yet.
 - Per-invoice design override at invoice-creation time — `InvoiceFormFields.jsx` has no design-picker
   field at all yet (confirmed directly), so there's genuinely nowhere for it to plug into today —
   flagged in DECISIONS.md's Step 8b entry rather than added as unplanned scope.
@@ -1348,7 +1401,11 @@ all six apps.users tables, and apps.admin_panel's admin_sessions table
 one-time-client view_token), freelancer list/confirm/reject reusing the exact InvoicePartialPaymentSerializer
 + update_paid_status() path, both notification tiers, plus the Step 13 freelancer-preview-guard gap
 closed in portal_invoice_comments, Step 14 — see DECISIONS.md for the confirmed, still-unresolved
-Cloudinary account-level ACL restriction Step 10b works around) built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides), Step 12/13/14 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 694 passing (`python manage.py test`, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 102 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx component test file for Preview-as-Client/Comments/Claims, matching this component's existing convention for its other actions) | In progress |
+Cloudinary account-level ACL restriction Step 10b works around; Client Acknowledgment (idempotent
+portal action, Step 15), Recurring Invoice generation (Celery task + root-settings-read model +
+calendar-accurate scheduling + 3-strikes failure handling, Step 16), and Escalation notification +
+Formal Notice (a real, distinct, manual-only email with its own enforced disable setting, Step 17))
+built | Invoices list/detail/lifecycle/aging report/timeline + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form + acknowledge action, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims/Acknowledge ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides) + an escalation banner/dismiss/Formal-Notice action + an "Edit Series" modal for a recurring root + a Formal Notice enable toggle in Settings > Business, Step 12/13/14/15/16/17 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 750 passing (`python manage.py test`, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 104 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx component test file for Preview-as-Client/Comments/Claims/Escalation/Formal-Notice, matching this component's existing convention for its other actions) | In progress — Analytics dashboard, Client statement PDF, Admin panel screens, and the full-module verification pass (Section 8, steps 18-21) remain |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

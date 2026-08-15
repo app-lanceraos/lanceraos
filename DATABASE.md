@@ -178,6 +178,13 @@ notif_invoice_events, notif_client_messages, notif_payments
 # Future-module fields already present
 client_onboarding_enabled, client_onboarding_message, income_type
 
+# Formal Notice (apps.invoices Step 17) — a real, user-facing kill
+# switch for the feature, per the decisions doc's "every email type
+# must be mutable" rule. Default True. Checked both client-side (hides
+# the action in InvoiceDetailPanel.jsx) and server-side
+# (invoice_send_formal_notice, the real enforced gate).
+formal_notice_enabled
+
 last_email_changed_at, created_at, updated_at
 ```
 
@@ -762,9 +769,12 @@ nullable), `view_token` (unique, indexed), `client_name`/`client_email`/`client_
 `issue_date`/`due_date`/`paid_date`/`sent_at`, `notes`/`terms`, `reminders_enabled`/
 `reminder_count`/`last_reminder_sent_at`, `late_fee_enabled`/`late_fee_rate`, `is_recurring`/
 `recurring_interval_days`/`recurring_auto_send`/`recurring_paused`, `parent_invoice` (self FK,
-`SET_NULL`), `next_recurring_date`, `escalation_required`/`escalation_dismissed`,
+`SET_NULL`), `next_recurring_date`, `recurring_failure_count` (new, Step 16 —
+`0010_invoice_formal_notice_sent_at_and_more.py`; consecutive failed generation attempts, reset to 0
+on success, triggers an auto-pause at 3), `escalation_required`/`escalation_dismissed`,
 `is_one_time_client`, `pre_payment_status`, `client_acknowledged`/`client_acknowledged_at`,
-`created_at`/`updated_at`.
+`formal_notice_sent_at` (new, Step 17 — same migration; one-shot timestamp, same pattern as
+`finalised_at`/`sent_at`, never blocks a deliberate second send), `created_at`/`updated_at`.
 
 **`status` choices** (exactly 9, no `overdue`): `draft`, `created`, `sent`, `viewed`,
 `partially_paid`, `paid`, `cancelled`, `refunded`, `bad_debt`. `days_overdue` stays a pure

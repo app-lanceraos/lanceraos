@@ -24,6 +24,7 @@ urlpatterns = [
     path('portal/<uuid:pk>/', views_portal.portal_invoice_detail, name='portal_invoice_detail'),
     path('portal/<uuid:pk>/comments/', views_portal.portal_invoice_comments, name='portal_invoice_comments'),
     path('portal/<uuid:pk>/claims/', views_portal.portal_invoice_claims, name='portal_invoice_claims'),
+    path('portal/<uuid:pk>/acknowledge/', views_portal.portal_invoice_acknowledge, name='portal_invoice_acknowledge'),
 
     path('presets/', views.preset_list, name='preset_list'),
     path('presets/<uuid:pk>/', views.preset_detail, name='preset_detail'),
@@ -60,4 +61,6 @@ urlpatterns = [
     path('<uuid:pk>/claims/', views.invoice_claims, name='invoice_claims'),
     path('<uuid:pk>/claims/<uuid:claim_id>/confirm/', views.invoice_claim_confirm, name='invoice_claim_confirm'),
     path('<uuid:pk>/claims/<uuid:claim_id>/reject/', views.invoice_claim_reject, name='invoice_claim_reject'),
+    path('<uuid:pk>/dismiss-escalation/', views.invoice_dismiss_escalation, name='invoice_dismiss_escalation'),
+    path('<uuid:pk>/send-formal-notice/', views.invoice_send_formal_notice, name='invoice_send_formal_notice'),
 ]

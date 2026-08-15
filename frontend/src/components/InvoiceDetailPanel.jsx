@@ -16,10 +16,11 @@ import { useEffect, useState } from 'react'
 import {
   X, Send, Mail, CheckCircle2, Wallet, Undo2, Ban, ShieldAlert, Copy, BookmarkPlus,
   Check, AlertTriangle, Pause, Play, Bell, BellOff, Trash2, Clock, Eye, Receipt, FileText, MessageCircle,
-  Landmark, XCircle,
+  Landmark, XCircle, UserCheck, AlertOctagon, Gavel, Settings2,
 } from 'lucide-react'
 
 import api from '@/lib/api'
+import useAuthStore from '@/store/authStore'
 import useTimedMessage from '@/hooks/useTimedMessage'
 import useInvoiceAutosave from '@/hooks/useInvoiceAutosave'
 import CommentThread from './CommentThread'
@@ -30,14 +31,15 @@ import InvoiceFormFields from './InvoiceFormFields'
 import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
-  PAYMENT_SOURCE_OPTIONS, UNDO_CONFIRMATION_AGE_DAYS, daysSince, getSendBannerCopy, invoiceToForm,
-  timelineDotColor, timelineLabel,
+  PAYMENT_SOURCE_OPTIONS, RECURRING_INTERVAL_OPTIONS, UNDO_CONFIRMATION_AGE_DAYS, daysSince,
+  getSendBannerCopy, invoiceToForm, timelineDotColor, timelineLabel,
 } from '@/pages/invoiceHelpers'
 
 const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']
 const NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']
 
 export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPresetSaved, initialMessage, onInitialMessageShown }) {
+  const formalNoticeEnabled = useAuthStore((s) => s.user?.formal_notice_enabled ?? true)
   const [invoice, setInvoice] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -260,6 +262,27 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     setInvoice(data); notifyChanged(data)
   })
 
+  // Only reachable for a recurring ROOT (is_recurring, no parent_invoice) —
+  // invoice_detail's PUT handler allows exactly these 2 fields through
+  // regardless of the root's own status, per Step 16's own narrow allowance.
+  const handleUpdateSeries = (intervalDays, autoSend) => runAction('update_series', async () => {
+    const { data } = await api.put(`/invoices/${invoiceId}/`, {
+      recurring_interval_days: intervalDays, recurring_auto_send: autoSend,
+    })
+    setInvoice(data); notifyChanged(data); setModal(null)
+  }, 'Series settings updated.')
+
+  const handleDismissEscalation = () => runAction('dismiss_escalation', async () => {
+    const { data } = await api.post(`/invoices/${invoiceId}/dismiss-escalation/`)
+    setInvoice(data); notifyChanged(data)
+  })
+
+  const handleSendFormalNotice = () => runAction('send_formal_notice', async () => {
+    const { data } = await api.post(`/invoices/${invoiceId}/send-formal-notice/`, { confirm: true })
+    setInvoice(data); notifyChanged(data); setModal(null)
+    await loadTimeline()
+  }, 'Formal notice sent.')
+
   const handleSaveAsPreset = (name, includeClient) => runAction('save_preset', async () => {
     // Read from the just-flushed row, not the `invoice` closure var directly —
     // setInvoice() inside saveNow() won't be reflected here until the next
@@ -340,10 +363,31 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
             <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
               {invoice.client_name || 'No client yet'} · Due {invoice.due_date || '—'}
             </p>
+            {invoice.client_acknowledged && (
+              <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--status-green-text)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <UserCheck size={12} /> Acknowledged on {new Date(invoice.client_acknowledged_at).toLocaleDateString()}
+              </p>
+            )}
           </div>
 
           {sendBannerCopy && (
             <FosAlert type="warning" style={{ marginBottom: 16 }}>{sendBannerCopy}</FosAlert>
+          )}
+
+          {invoice.escalation_required && !invoice.escalation_dismissed && (
+            <FosAlert type="error" style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span>This invoice is severely overdue and has gone through the full reminder schedule.</span>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                  <button onClick={handleDismissEscalation} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.72rem' }}>Dismiss</button>
+                  {formalNoticeEnabled && (
+                    <button onClick={() => setModal({ kind: 'formal_notice' })} disabled={busy} className="fos-btn fos-btn-danger" style={{ fontSize: '0.72rem' }}>
+                      <Gavel size={12} /> Send Formal Notice
+                    </button>
+                  )}
+                </div>
+              </div>
+            </FosAlert>
           )}
 
           {toast && <FosAlert type={toast.type} onDismiss={clearToast} style={{ marginBottom: 16 }}>{toast.text}</FosAlert>}
@@ -410,16 +454,25 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
 
               {/* ── Recurring ── */}
               {invoice.is_recurring && (
-                <div style={{ marginTop: 16, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                <div style={{ marginTop: 16, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <div>
                     <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>
                       {invoice.recurring_paused ? 'Recurring — paused' : `Recurring — next ${invoice.next_recurring_date || 'unscheduled'}`}
                     </p>
                   </div>
-                  <button onClick={handlePauseResume} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-                    {invoice.recurring_paused ? <Play size={13} /> : <Pause size={13} />}
-                    {invoice.recurring_paused ? 'Resume' : 'Pause'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {/* Only a ROOT invoice (no parent) owns the series settings —
+                        a generated occurrence is independent from that point on. */}
+                    {!invoice.parent_invoice && (
+                      <button onClick={() => setModal({ kind: 'edit_series' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+                        <Settings2 size={13} /> Edit Series
+                      </button>
+                    )}
+                    <button onClick={handlePauseResume} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+                      {invoice.recurring_paused ? <Play size={13} /> : <Pause size={13} />}
+                      {invoice.recurring_paused ? 'Resume' : 'Pause'}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -476,6 +529,18 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                   <button onClick={() => setModal({ kind: 'cancel' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><Ban size={13} /> Cancel</button>
                   <button onClick={() => setModal({ kind: 'bad_debt' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><ShieldAlert size={13} /> Bad Debt</button>
                 </>
+              )}
+              {/* Also reachable here (not just the escalation banner above)
+                  once escalation_dismissed — dismissing the PROMPT doesn't
+                  mean the invoice stopped being severely overdue, per
+                  invoice_send_formal_notice's own gating rule. Hidden
+                  entirely, not shown-disabled, when the freelancer has
+                  turned the feature off in Settings — the real, enforced
+                  gate is still server-side either way. */}
+              {(invoice.escalation_required || invoice.status === 'bad_debt') && formalNoticeEnabled && (
+                <button onClick={() => setModal({ kind: 'formal_notice' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}>
+                  <Gavel size={13} /> Formal Notice
+                </button>
               )}
               {/* "For any invoice with a client" — no status restriction,
                   unlike Send/Mark-as-Sent above. A one-time-client invoice
@@ -546,6 +611,12 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       )}
       {modal?.kind === 'reject_claim' && (
         <RejectClaimModal claim={modal.claim} busy={busyKey === 'reject_claim'} onConfirm={handleRejectClaim} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === 'edit_series' && (
+        <EditSeriesModal invoice={invoice} busy={busyKey === 'update_series'} onConfirm={handleUpdateSeries} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === 'formal_notice' && (
+        <FormalNoticeModal invoice={invoice} busy={busyKey === 'send_formal_notice'} onConfirm={handleSendFormalNotice} onClose={() => setModal(null)} />
       )}
     </>
   )
@@ -725,6 +796,9 @@ function timelineIcon(type) {
   if (type === 'finalised') return <CheckCircle2 size={12} />
   if (type === 'sent') return <Send size={12} />
   if (type === 'claim') return <Landmark size={12} />
+  if (type === 'acknowledged') return <UserCheck size={12} />
+  if (type === 'escalation') return <AlertOctagon size={12} />
+  if (type === 'formal_notice') return <Gavel size={12} />
   return null
 }
 
@@ -1013,6 +1087,66 @@ function RejectClaimModal({ claim, busy, onConfirm, onClose }) {
         <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
         <button className="fos-btn fos-btn-danger" onClick={submit} disabled={busy}>
           {busy ? <span className="fos-spinner" /> : <XCircle size={14} />} Reject Claim
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+// "Edit the whole series going forward" — only recurring_interval_days/
+// recurring_auto_send are sent, matching invoice_detail's own narrow PUT
+// allowance for a recurring root past its own draft status exactly.
+function EditSeriesModal({ invoice, busy, onConfirm, onClose }) {
+  const [intervalDays, setIntervalDays] = useState(invoice.recurring_interval_days || 30)
+  const [autoSend, setAutoSend] = useState(invoice.recurring_auto_send)
+
+  return (
+    <ModalShell title="Edit Recurring Series" onClose={onClose}>
+      <p style={{ margin: '0 0 16px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        Changes apply going forward, starting with the next generated occurrence. Any invoice already
+        generated from this series is unaffected.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
+        <FormSelect
+          label="Repeats" value={intervalDays}
+          onChange={(e) => setIntervalDays(Number(e.target.value))}
+          options={RECURRING_INTERVAL_OPTIONS}
+        />
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '10px 12px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
+          <input type="checkbox" checked={autoSend} onChange={(e) => setAutoSend(e.target.checked)} style={{ marginTop: 3, accentColor: 'var(--accent)', width: 14, height: 14 }} />
+          <div>
+            <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)' }}>Auto-send new occurrences</p>
+            <p style={{ margin: '2px 0 0', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Off leaves each generated invoice as a draft for you to review first.</p>
+          </div>
+        </label>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+        <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="fos-btn fos-btn-accent" onClick={() => onConfirm(intervalDays, autoSend)} disabled={busy}>
+          {busy ? <span className="fos-spinner" /> : <Settings2 size={14} />} Save
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+function FormalNoticeModal({ invoice, busy, onConfirm, onClose }) {
+  return (
+    <ModalShell title="Send Formal Notice" onClose={onClose}>
+      <p style={{ margin: '0 0 14px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        This sends a firmer, formal email to <strong>{invoice.client_name || 'the client'}</strong> stating the
+        amount owed and days overdue, and referencing the invoice thread for a response. This is a real,
+        deliberate escalation — not part of the automatic reminder schedule.
+      </p>
+      {invoice.formal_notice_sent_at && (
+        <FosAlert type="warning" style={{ marginBottom: 14 }}>
+          A formal notice was already sent on {new Date(invoice.formal_notice_sent_at).toLocaleString()}. Sending again is allowed, but make sure it's intentional.
+        </FosAlert>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+        <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="fos-btn fos-btn-danger" onClick={onConfirm} disabled={busy}>
+          {busy ? <span className="fos-spinner" /> : <Gavel size={14} />} Send Formal Notice
         </button>
       </div>
     </ModalShell>

@@ -273,6 +273,14 @@ class Invoice(models.Model):
         'self', null=True, blank=True, on_delete=models.SET_NULL, related_name='recurring_children',
     )
     next_recurring_date = models.DateField(null=True, blank=True)
+    # Step 16 — consecutive failed generation attempts for THIS invoice
+    # (the one whose next_recurring_date keeps getting checked; in
+    # practice always the series root, since a generated child never
+    # gets its own next_recurring_date set — see generate_recurring_invoices'
+    # own docstring). Reset to 0 on a successful generation; at 3, the
+    # task auto-pauses the series (recurring_paused=True) rather than
+    # retrying forever.
+    recurring_failure_count = models.SmallIntegerField(default=0)
 
     # ── Escalation ─────────────────────────────────────────────────
     escalation_required = models.BooleanField(
@@ -280,6 +288,13 @@ class Invoice(models.Model):
     )
     escalation_dismissed = models.BooleanField(
         default=False, help_text='Set when the freelancer dismisses the escalation prompt without acting.',
+    )
+
+    # ── Formal Notice (Step 17 — manual-only, never automatic) ──────
+    formal_notice_sent_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Set once a formal notice email is sent. Does not block a deliberate second send — '
+                   'only surfaces that one already went out, same one-shot-timestamp pattern as finalised_at/sent_at.',
     )
 
     # ── Client options ─────────────────────────────────────────────
@@ -489,6 +504,23 @@ class Invoice(models.Model):
         else:
             next_num = 1
         return f'{prefix}{str(next_num).zfill(4)}'
+
+    def get_recurring_root(self):
+        """
+        Walks parent_invoice back to the invoice with no parent — the
+        series' single source of truth for recurring_interval_days/
+        recurring_auto_send/design (Step 16's own design decision: series
+        settings are read live from the root at generation time, never
+        copied/frozen onto each generated child). A root invoice
+        (parent_invoice is None) returns itself. Bounded by construction —
+        parent_invoice is only ever set once, at creation, to an
+        already-existing invoice, so a cycle is not reachable through
+        normal use of this field.
+        """
+        node = self
+        while node.parent_invoice_id:
+            node = node.parent_invoice
+        return node
 
     # ── Business logic ─────────────────────────────────────────────
 

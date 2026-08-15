@@ -42,7 +42,9 @@ from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTE
 from .ai_design import seed_design_data_from_image
 from .comments import broadcast_comment, upload_comment_attachment
 from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
-from .email_service import build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email
+from .email_service import (
+    build_formal_notice_email, build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email,
+)
 from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceItem, InvoicePartialPayment,
     InvoicePreset, InvoicePresetItem, PaymentClaim,
@@ -50,7 +52,7 @@ from .models import (
 from .pdf_generator import render_invoice_pdf, store_invoice_pdf
 from .serializers import (
     InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer, InvoicePresetSerializer,
-    InvoiceSerializer,
+    InvoiceSerializer, RecurringSeriesSettingsSerializer,
 )
 from .serializers_claims import PaymentClaimSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
@@ -192,6 +194,14 @@ def invoice_detail(request, pk):
     frontend-trusted. All three methods share this one path per the
     spec's endpoint table (GET/PUT/DELETE all on /api/invoices/<pk>/,
     not a separate /delete/ sub-path).
+
+    Step 16's one narrow exception: a recurring ROOT invoice
+    (is_recurring, no parent_invoice) past its own draft status may still
+    have exactly its recurring_interval_days/recurring_auto_send fields
+    changed here — "edit the whole series going forward" — via
+    RecurringSeriesSettingsSerializer, never the general InvoiceSerializer.
+    A non-root invoice, or a request touching any other field, still hits
+    the ordinary is_editable rejection below.
     """
     invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
 
@@ -209,6 +219,18 @@ def invoice_detail(request, pk):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     if not invoice.is_editable:
+        is_recurring_root = invoice.is_recurring and invoice.parent_invoice_id is None
+        allowed_series_fields = {'recurring_interval_days', 'recurring_auto_send'}
+        submitted_fields = set(request.data.keys())
+        if is_recurring_root and submitted_fields and submitted_fields.issubset(allowed_series_fields):
+            if _check_moderate_rate_limit('update', request.user):
+                return _too_many_requests('Too many updates. Please try again later.')
+            serializer = RecurringSeriesSettingsSerializer(invoice, data=request.data, partial=True)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            serializer.save()
+            logger.info('[INVOICES] Updated recurring series settings on root invoice %s.', invoice.pk)
+            return Response(InvoiceListSerializer(invoice).data)
         return Response(
             {'error': 'This invoice can no longer be edited — only draft invoices can be changed.'},
             status=status.HTTP_403_FORBIDDEN,
@@ -787,17 +809,27 @@ def invoice_mark_bad_debt(request, pk):
     return Response(InvoiceListSerializer(invoice).data)
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def invoice_duplicate(request, pk):
-    """New draft copy. Resets pdf_url/pdf_generated_at/view_token/invoice_number/sent_via_platform/status per Step 4's model docstring — a duplicate hasn't been sent yet in its own right."""
-    if _check_moderate_rate_limit('duplicate', request.user):
-        return _too_many_requests('Too many actions. Please try again later.')
+def _duplicate_invoice_core(original, **overrides):
+    """
+    The shared duplication mechanism — extracted this pass (Step 16) so
+    generate_recurring_invoices (tasks.py) can reuse the exact same
+    content-copy logic invoice_duplicate has always used, rather than a
+    second, parallel implementation. `overrides` lets a caller override
+    or add any field on top of the copied defaults (Step 16 passes
+    parent_invoice/design/issue_date/due_date/is_recurring=False/etc.;
+    invoice_duplicate itself passes none, preserving its exact
+    pre-existing behavior).
 
-    original = get_object_or_404(Invoice, pk=pk, user=request.user)
-
-    new_invoice = Invoice.objects.create(
-        user=request.user,
+    Resets pdf_url/pdf_generated_at/view_token/invoice_number/
+    sent_via_platform/status per Step 4's model docstring — a duplicate
+    (plain or series-generated) hasn't been sent yet in its own right.
+    NOT copied — explicitly reset: status (defaults to 'draft'),
+    invoice_number (defaults to None), view_token (fresh, via save()),
+    pdf_url/pdf_generated_at/finalised_at (blank/None), sent_via_platform
+    (False), amount_paid (0), client_acknowledged/_at (False/None).
+    """
+    defaults = dict(
+        user=original.user,
         client=original.client,
         client_name=original.client_name, client_email=original.client_email,
         client_company=original.client_company, client_address=original.client_address,
@@ -812,18 +844,27 @@ def invoice_duplicate(request, pk):
         is_recurring=original.is_recurring, recurring_interval_days=original.recurring_interval_days,
         recurring_auto_send=original.recurring_auto_send,
         is_one_time_client=original.is_one_time_client,
-        # NOT copied — explicitly reset: status (defaults to 'draft'),
-        # invoice_number (defaults to None), view_token (fresh, via
-        # save()), pdf_url/pdf_generated_at/finalised_at (blank/None —
-        # finalised_at added this pass, confirmed with a real test that
-        # it stays None on the new draft even when the original had a
-        # real value), sent_via_platform (False), amount_paid (0).
     )
+    defaults.update(overrides)
+
+    new_invoice = Invoice.objects.create(**defaults)
     for item in original.items.all():
         InvoiceItem.objects.create(
             invoice=new_invoice, description=item.description,
             quantity=item.quantity, unit_price=item.unit_price, sort_order=item.sort_order,
         )
+    return new_invoice
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_duplicate(request, pk):
+    """New draft copy. Resets pdf_url/pdf_generated_at/view_token/invoice_number/sent_via_platform/status per Step 4's model docstring — a duplicate hasn't been sent yet in its own right."""
+    if _check_moderate_rate_limit('duplicate', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    original = get_object_or_404(Invoice, pk=pk, user=request.user)
+    new_invoice = _duplicate_invoice_core(original)
 
     emit('InvoiceCreated', invoice_id=str(new_invoice.pk), user_id=str(request.user.pk), duplicated_from=str(original.pk))
     logger.info('[INVOICES] Duplicated invoice %s into new draft %s.', original.invoice_number, new_invoice.pk)
@@ -871,6 +912,96 @@ def invoice_resume_recurring(request, pk):
 
     invoice.recurring_paused = False
     invoice.save(update_fields=['recurring_paused', 'updated_at'])
+    return Response(InvoiceListSerializer(invoice).data)
+
+
+# ══════════════════════════════════════════════════════════════════
+# ESCALATION + FORMAL NOTICE — Step 17
+# ══════════════════════════════════════════════════════════════════
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_dismiss_escalation(request, pk):
+    """
+    Clears escalation_required's prompt without the freelancer taking
+    further action — sets escalation_dismissed=True, leaves
+    escalation_required itself untouched (it's the historical record of
+    "this invoice did cross the day-30 threshold at some point"; only
+    the UI PROMPT is dismissed, not that fact). Idempotent — dismissing
+    an already-dismissed escalation just returns the current state, no
+    error, same "a client clicking twice shouldn't see a failure"
+    reasoning Step 15's acknowledge endpoint uses.
+    """
+    if _check_moderate_rate_limit('dismiss_escalation', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    if not invoice.escalation_required:
+        return Response({'error': 'This invoice has no escalation to dismiss.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not invoice.escalation_dismissed:
+        invoice.escalation_dismissed = True
+        invoice.save(update_fields=['escalation_dismissed', 'updated_at'])
+        logger.info('[INVOICES] Escalation dismissed for invoice %s.', invoice.invoice_number)
+    return Response(InvoiceListSerializer(invoice).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_send_formal_notice(request, pk):
+    """
+    Manual-only, never automatic — the freelancer's own deliberate
+    action, gated behind the SAME severity threshold the escalation
+    prompt itself uses (escalation_required, regardless of whether it
+    was later dismissed — dismissing the PROMPT doesn't mean the
+    invoice stopped being severely overdue) OR status='bad_debt'.
+    Requires confirm:true given the seriousness, matching every other
+    action in this app that has real, hard-to-undo real-world
+    consequences (send/mark-sent/refund).
+
+    Requires FreelancerProfile.formal_notice_enabled — a real, enforced
+    server-side check, not just a UI hide, per the decisions doc's
+    "every email type must be mutable" rule. formal_notice_sent_at is
+    set on success but never blocks a second, deliberate send — it only
+    surfaces, in the response, that one already went out (the frontend
+    uses this to show a warning before the freelancer confirms again,
+    not to prevent the action).
+    """
+    if not request.data.get('confirm'):
+        return Response({'error': 'confirm: true is required to send a formal notice.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if _check_moderate_rate_limit('send_formal_notice', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+
+    try:
+        formal_notice_enabled = invoice.user.profile.formal_notice_enabled
+    except Exception:
+        formal_notice_enabled = True
+    if not formal_notice_enabled:
+        return Response(
+            {'error': 'Formal Notice is disabled in your Settings. Enable it under Invoicing Defaults to use this.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if not (invoice.escalation_required or invoice.status == 'bad_debt'):
+        return Response(
+            {'error': 'A formal notice can only be sent once an invoice has escalated (severely overdue) or is marked bad debt.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    subject, html_body, plain_body = build_formal_notice_email(invoice)
+    result = send_invoice_related_email(invoice, subject, html_body, plain_body)
+    if not result['sent']:
+        detail = result['error'] or 'the email provider rejected the request'
+        return Response({'error': f'Could not send the formal notice: {detail}.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+    invoice.formal_notice_sent_at = timezone.now()
+    invoice.save(update_fields=['formal_notice_sent_at', 'updated_at'])
+
+    emit('FormalNoticeSent', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
+    logger.info('[INVOICES] Formal notice sent for invoice %s.', invoice.invoice_number)
     return Response(InvoiceListSerializer(invoice).data)
 
 
@@ -930,6 +1061,25 @@ def invoice_timeline(request, pk):
             'type': 'claim', 'timestamp': claim.submitted_at.isoformat(),
             'status': claim.status, 'amount': str(claim.amount_claimed), 'currency': claim.currency,
         })
+    if invoice.client_acknowledged_at:
+        entries.append({'type': 'acknowledged', 'timestamp': invoice.client_acknowledged_at.isoformat()})
+    if invoice.escalation_required:
+        # No dedicated timestamp field exists for escalation itself (see
+        # DECISIONS.md — a new column was deliberately not added since
+        # this moment is already fully reconstructable): escalation is
+        # set at the exact same instant the day-30 (reminder_number=4)
+        # InvoiceReminder row is created, so that row's own sent_at IS
+        # the real escalation timestamp. Omitted entirely if that
+        # reminder row is somehow missing (defensive — should not happen
+        # given both are written together in the same task run).
+        escalation_reminder = invoice.reminders.filter(reminder_number=4).first()
+        if escalation_reminder:
+            entries.append({
+                'type': 'escalation', 'timestamp': escalation_reminder.sent_at.isoformat(),
+                'dismissed': invoice.escalation_dismissed,
+            })
+    if invoice.formal_notice_sent_at:
+        entries.append({'type': 'formal_notice', 'timestamp': invoice.formal_notice_sent_at.isoformat()})
 
     entries.sort(key=lambda e: e['timestamp'])
     return Response({'results': entries})

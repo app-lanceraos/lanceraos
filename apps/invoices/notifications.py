@@ -231,3 +231,165 @@ def _notify_payment_claim_confirmed(invoice_id, claim_id, **_extra):
         invoice.user, invoice.client_email, subject, html_body, plain_body,
         recipient_name=invoice.client_name, context_type='invoice', context_id=str(invoice.pk),
     )
+
+
+def _get_user_and_gate(user_id, toggle_field):
+    """
+    Shared lookup for the freelancer-lifecycle handlers below (Steps
+    15-17): fetches the User, and reports whether their own
+    FreelancerProfile toggle (notif_invoice_events for all four of
+    these — none of them are payment- or client-message-specific per
+    CLAUDE.md's own mapping rule) permits notifying them. Returns
+    (user, should_notify) — user is None if not found (caller should
+    just return); should_notify defaults True if the profile itself is
+    somehow missing, matching every other handler's own defensive
+    fallback in this file.
+    """
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return None, False
+
+    try:
+        should_notify = getattr(user.profile, toggle_field)
+    except Exception:
+        should_notify = True
+    return user, should_notify
+
+
+@on('InvoiceAcknowledged')
+def _notify_invoice_acknowledged(invoice_id, user_id, **_extra):
+    """CLAUDE.md Section 6: invoice_acknowledged — in-app + immediate email to the freelancer. The client triggered this, so (unlike InvoiceSent/FormalNoticeSent) it's a real bell-worthy event, not a self-trigger."""
+    from core.email import send_email
+
+    from .email_service import build_invoice_acknowledged_email
+    from .models import Invoice
+
+    user, should_notify = _get_user_and_gate(user_id, 'notif_invoice_events')
+    if user is None or not should_notify:
+        return
+
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+    if invoice is None:
+        return
+
+    log_event('invoice_acknowledged', user=user, metadata={
+        'invoice_id': invoice_id, 'client_name': invoice.client_name, 'invoice_number': invoice.invoice_number,
+    })
+    subject, html_body, plain_body = build_invoice_acknowledged_email(invoice)
+    send_email(user.email, subject, html_body, plain_body)
+
+
+@on('EscalationRequired')
+def _notify_escalation_required(invoice_id, user_id, **_extra):
+    """CLAUDE.md Section 6: invoice_escalation_required — in-app + immediate email. Emitted by tasks.py's send_invoice_reminders at the day-30/reminder_number=4 threshold; this is the first handler it's ever had (confirmed directly — no @on('EscalationRequired') existed anywhere before this step)."""
+    from core.email import send_email
+
+    from .email_service import build_escalation_required_email
+    from .models import Invoice
+
+    user, should_notify = _get_user_and_gate(user_id, 'notif_invoice_events')
+    if user is None or not should_notify:
+        return
+
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+    if invoice is None:
+        return
+
+    log_event('invoice_escalation_required', user=user, metadata={
+        'invoice_id': invoice_id, 'invoice_number': invoice.invoice_number,
+    })
+    subject, html_body, plain_body = build_escalation_required_email(invoice)
+    send_email(user.email, subject, html_body, plain_body)
+
+
+@on('RecurringInvoiceGenerated')
+def _notify_recurring_invoice_generated(invoice_id, user_id, generated_from, **_extra):
+    """CLAUDE.md Section 6: recurring_invoice_generated — in-app ONLY, no email (this is routine, expected activity, not something that needs to interrupt the freelancer's inbox)."""
+    from .models import Invoice
+
+    user, should_notify = _get_user_and_gate(user_id, 'notif_invoice_events')
+    if user is None or not should_notify:
+        return
+
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+    log_event('recurring_invoice_generated', user=user, metadata={
+        'invoice_id': invoice_id, 'invoice_number': invoice.invoice_number if invoice else None,
+        'generated_from': generated_from,
+    })
+
+
+@on('RecurringGenerationFailed')
+def _notify_recurring_generation_failed(invoice_id, user_id, failure_count, **_extra):
+    """CLAUDE.md Section 6: recurring_generation_failed — in-app + immediate email. One per failed attempt (attempts 1-2 of MAX_RECURRING_FAILURES); the 3rd and final attempt instead fires RecurringGenerationPaused below, not this event."""
+    from core.email import send_email
+
+    from .email_service import build_recurring_generation_failed_email
+    from .models import Invoice
+
+    user, should_notify = _get_user_and_gate(user_id, 'notif_invoice_events')
+    if user is None or not should_notify:
+        return
+
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+    if invoice is None:
+        return
+
+    log_event('recurring_generation_failed', user=user, metadata={
+        'invoice_id': invoice_id, 'invoice_number': invoice.invoice_number, 'failure_count': failure_count,
+    })
+    subject, html_body, plain_body = build_recurring_generation_failed_email(invoice, failure_count)
+    send_email(user.email, subject, html_body, plain_body)
+
+
+@on('RecurringGenerationPaused')
+def _notify_recurring_generation_paused(invoice_id, user_id, failure_count, **_extra):
+    """
+    New event, beyond CLAUDE.md's original catalog — a deliberate
+    generalization this step's own task explicitly asked for (a
+    distinctly-worded notification once 3 consecutive failures
+    auto-pause the series, separate from the per-attempt
+    recurring_generation_failed above). In-app + immediate email, same
+    tier as its sibling event.
+    """
+    from core.email import send_email
+
+    from .email_service import build_recurring_generation_paused_email
+    from .models import Invoice
+
+    user, should_notify = _get_user_and_gate(user_id, 'notif_invoice_events')
+    if user is None or not should_notify:
+        return
+
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+    if invoice is None:
+        return
+
+    log_event('recurring_generation_paused', user=user, metadata={
+        'invoice_id': invoice_id, 'invoice_number': invoice.invoice_number, 'failure_count': failure_count,
+    })
+    subject, html_body, plain_body = build_recurring_generation_paused_email(invoice)
+    send_email(user.email, subject, html_body, plain_body)
+
+
+@on('FormalNoticeSent')
+def _record_formal_notice_sent(invoice_id, user_id, **_extra):
+    """
+    AuditLog write only, same self-trigger-exclusion precedent
+    InvoiceSent's own handler (_record_invoice_sent, top of this file)
+    already establishes — the freelancer triggered this themselves by
+    clicking Send Formal Notice, so a bell ping about their own action
+    isn't useful. Not added to core/notifications.py's NOTIFICATION_EVENTS
+    allowlist for the identical reason InvoiceSent isn't.
+    """
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] FormalNoticeSent handler: user_id=%s not found.', user_id)
+        return
+
+    log_event('formal_notice_sent', user=user, metadata={'invoice_id': invoice_id})

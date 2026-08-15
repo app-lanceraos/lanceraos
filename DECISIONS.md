@@ -3321,3 +3321,171 @@ CLAUDE.md's Custom Email Rule 2 listing client payment-related messages as route
 **Claims extend the timeline feed additively, per `invoice_timeline`'s own docstring having already
 named this as Step 14's job.** A `type: 'claim'` entry (status/amount/currency) was added with zero
 change to any entry already there — confirmed with a dedicated test.
+
+Date: 15 August 2026 (second entry)
+Decision: Built Client Acknowledgment (Step 15), Recurring Invoice Generation (Step 16), and
+Escalation + Formal Notice (Step 17) — the last three pieces of Module 2's original build order.
+Reason: task's own explicit instruction. Step 16 and Step 17 each resolve one item the original
+planning had explicitly left open (the recurring-series settings-ownership model, and Formal
+Notice's entire design) — closing both is recorded here in full, not deferred again.
+
+**Step 15 — Acknowledgment reuses claims' exact access model, and closes no new gap (the
+freelancer-preview guard was already applied consistently by Step 14).** `portal_invoice_acknowledge`
+is the fifth real call site for `is_freelancer_previewing_portal`, per the original decisions doc's
+own list of four ("the Sent->Viewed status transition, InvoiceViewEvent logging, comment posting,
+and Payment Claim submission") plus this one. The saved-client-session-vs-one-time-client-view_token
+resolution was extracted into a shared `_resolve_portal_write_access` helper (`views_portal.py`) this
+pass — `portal_invoice_claims` (Step 14) had this exact logic hand-copied inline; refactoring it
+before writing a third near-identical copy for acknowledge matches this project's own reuse
+discipline, applied retroactively rather than left to compound a second time.
+**Idempotency, not error-on-repeat.** `client_acknowledged`/`client_acknowledged_at` are set exactly
+once; every later call returns the EXISTING timestamp with a 200 (`client_acknowledged: true` in the
+body either way) — a client double-clicking, or the frontend retrying after a flaky network response,
+must never see a failure for an action that, semantically, already succeeded. The rate limiter is
+checked AFTER the idempotency short-circuit, not before — a repeat acknowledgment of an already-
+acknowledged invoice costs zero rate-limit budget, only a genuinely NEW acknowledgment attempt does
+(verified with a dedicated test using 6 distinct invoices, since testing the limiter via repeated
+calls against the SAME invoice would only ever exercise the idempotent path).
+**No unacknowledge path exists anywhere, by design** — matching `InvoiceComment`'s own immutability
+and the frozen-PDF principle: this is a permanent record of what the client agreed to, not a toggle.
+**Notification tier**: `invoice_acknowledged` is in-app + immediate email to the freelancer (CLAUDE.md
+Section 6's own table entry) — the CLIENT triggered this, so it's a real bell-worthy event, unlike
+the freelancer's own self-triggered actions (`InvoiceSent`, `FormalNoticeSent` below) which
+deliberately stay bell-silent.
+
+**Step 16 — where series settings live, resolved as: read live from the root at generation time,
+never copied/frozen onto a generated child.** `Invoice.get_recurring_root()` (a new model method,
+walks `parent_invoice` back to `None`) is the single source of truth `generate_recurring_invoices`
+reads `recurring_interval_days`/`recurring_auto_send`/`design` from on every run. A generated child
+gets these three fields explicitly RESET (`is_recurring=False`, `recurring_interval_days=None`,
+`recurring_auto_send=False`, and `next_recurring_date` simply never set) rather than copied — a bare
+`_duplicate_invoice_core` call without these overrides would otherwise inherit `invoice_duplicate`'s
+own pre-existing default of copying them verbatim (correct for that endpoint's plain, one-off
+duplicate; wrong here, where a copied `is_recurring=True` on every child would create an ever-
+branching tree of independent series instead of one linear one).
+**"Chain-linked, not always the root" turned out to collapse to always-the-root in practice, by
+construction, not by special-casing it.** `parent_invoice` on each generated child is written
+generically as "the invoice that triggered THIS generation" (`invoice`, the loop variable) — never
+hand-coded to `root.pk`. But because a generated child's own `next_recurring_date` is never set (see
+above), it can never independently satisfy `generate_recurring_invoices`' own query filter
+(`next_recurring_date__lte=today` — SQL `NULL` comparisons are always false), so only the ROOT ever
+recurs, and `invoice` in every real run IS the root. The mechanism stays honestly generic rather than
+asserting "parent_invoice = root" as a hard invariant that would silently break if a future change
+ever gave a child its own schedule.
+**"Edit the whole series" reuses the EXISTING `PUT /api/invoices/<pk>/` endpoint, per the task's own
+explicit instruction, via a narrow, explicit-fields carve-out — not a new endpoint, and not a
+body-content-sniffing hack bolted onto `InvoiceSerializer`.** `invoice_detail`'s PUT handler checks,
+only when `is_editable` is already False: is this invoice a recurring root
+(`is_recurring and parent_invoice_id is None`), AND does the submitted body contain ONLY
+`recurring_interval_days`/`recurring_auto_send` keys? If both hold, a small, separate
+`RecurringSeriesSettingsSerializer` (`fields = ['recurring_interval_days', 'recurring_auto_send']`,
+`partial=True`) applies the change; otherwise the ordinary `is_editable` 403 fires exactly as before.
+A request mixing an allowed field with any other field is rejected outright (the whole request, not a
+partial apply) — matching this app's general "no silent partial success" posture. "Edit one pending
+occurrence" needed no new mechanism at all: a freshly-generated child is a genuinely standalone
+`status='draft'` `Invoice`, already fully editable via the SAME endpoint's ordinary `is_editable`
+path — verified with a dedicated test that edits one generated child and confirms neither the root
+nor a subsequently-generated second child are affected.
+**`due_date` is recomputed, not copied verbatim — a real, scoped correctness fix, not scope creep.**
+`invoice_duplicate`'s own existing behavior (`due_date=original.due_date`) is correct for a manual,
+freelancer-reviewed one-off duplicate (the user sees the stale date and fixes it before finalising).
+For an UNATTENDED recurring generation — especially the `recurring_auto_send=True` path, which
+finalises and sends with no human in the loop at all — a verbatim copy would make every auto-
+generated invoice instantly overdue the moment it's created. `generate_recurring_invoices` computes
+its own `due_date` instead: the same `(due_date - issue_date)` offset the triggering invoice already
+had (i.e. its original payment terms), applied to today's date. `_duplicate_invoice_core`'s general
+default (verbatim copy) is untouched for `invoice_duplicate` itself — this fix is passed in as an
+explicit `due_date=` override at this one call site, not a change to the shared default.
+**Calendar-month math, not naive day-multiplication, for the month-based intervals.**
+`RECURRING_INTERVAL_CHOICES`' `60`/`90`/`365` day-counts are approximations of "every 2 months" /
+"quarterly" / "annually" — advancing them by literally adding that many days drifts against real
+month length within a year (verified directly: `date(2026,1,31) + 90 days` lands on Apr 30, which
+IS correct by coincidence for 90, but `+60` days from Jan 31 lands on Apr 1, not "2 months later"
+Mar 31). `_advance_recurring_date` (`tasks.py`) special-cases `{30:1, 60:2, 90:3, 365:12}` through
+`dateutil.relativedelta` (a new, now-explicit dependency — see `requirements.txt`'s own comment: it
+was already present transitively but never a direct import before this step); `7`/`14`
+(weekly/fortnightly) stay plain `timedelta` addition, since those genuinely are day-based, not
+month-based. Anchored from the invoice's own PREVIOUS `next_recurring_date`, never from "today" —
+a late-running Celery Beat (an outage, a deploy) must not compound schedule drift into the series
+itself.
+**Failure handling, exactly as decided: per-invoice isolation, retry-by-default, 3-strikes auto-
+pause — with one refinement found while implementing it.** Each due invoice is wrapped in its own
+try/except (matching `send_invoice_reminders`' own established pattern); a raised exception leaves
+`next_recurring_date` UNCHANGED (the next run retries the same cycle) and increments
+`recurring_failure_count`, which at 3 auto-pauses the series (`recurring_paused=True`) and fires
+`RecurringGenerationPaused` (a distinctly-worded notification) instead of the per-attempt
+`RecurringGenerationFailed`. The refinement: a failure is only counted this way if it comes from the
+actual GENERATION step (`_duplicate_invoice_core` itself raising — no child row was ever created).
+A failure AFTER that point — the `recurring_auto_send=True` path's own `_finalise_invoice`/
+`_send_invoice_now` call raising — is caught in its OWN, inner try/except and only logged, never
+propagated to the outer failure-counting logic. Reason: the occurrence genuinely WAS generated (a
+real draft invoice exists, ready for the freelancer to finalise/send manually) — counting that as a
+"generation failure" and leaving `next_recurring_date` unchanged would make the NEXT run generate a
+SECOND, duplicate child for the same cycle, compounding the exact problem this mechanism exists to
+avoid. Verified with a dedicated test proving a downstream auto-send exception leaves
+`recurring_failure_count` at 0 and still advances the schedule.
+**Reuses `_duplicate_invoice_core`/`_finalise_invoice`/`_send_invoice_now` from `views.py` — no third,
+parallel implementation of duplication or finalise-and-send.** `_duplicate_invoice_core` is a new
+extraction from `invoice_duplicate`'s own previously-inline body (behavior-preserving — confirmed via
+`invoice_duplicate`'s own pre-existing test suite passing unchanged); `_finalise_invoice`/
+`_send_invoice_now` already existed from Step 10/10b and needed no changes at all, only a
+`_TaskRequest` duck-typed stand-in (`namedtuple('_TaskRequest', ['user', 'request_id'])`) for the
+`.user`/`.request_id` attributes `_send_invoice_now` reads from what is normally a real HTTP request —
+the same shim pattern `apps/invoices/consumers.py` already established for the identical "reuse an
+HTTP-shaped function outside a real request" problem (see this document's own 14 August entry).
+Imported locally inside `generate_recurring_invoices` (not at module level) purely to keep
+`tasks.py`'s top-level imports focused; confirmed there is no real circular-import risk either
+direction (`views.py` has zero dependency on `tasks.py`).
+**Schedule slot: 8:30 AM PKT**, between the exchange-rate fetch (8:00) and reminders (9:00) —
+deliberately ordered so a same-day auto-generated-and-sent invoice exists before that day's reminder
+pass runs, even though there's no actual functional collision today (a brand-new invoice's `due_date`
+is always in the future).
+
+**Step 17 — `escalation_required` was ALREADY being set correctly by Step 10's `send_invoice_reminders`
+at the real day-30/`reminder_number=4` threshold — confirmed directly before writing anything, not
+assumed "likely missing" as the task's own framing guessed.** What was genuinely missing was the
+HANDLER: `emit('EscalationRequired', ...)` had existed since Step 10 with zero registered listener
+(confirmed by grep, same method used to confirm `InvoiceSent` had none before Step 13's
+`notifications.py` existed) — so the flag was flipping correctly but nothing ever told the freelancer.
+`_notify_escalation_required` (`apps/invoices/notifications.py`) is the first real handler, doing both
+the bell write and an immediate email, gated by `notif_invoice_events` (not `notif_payments` — an
+overdue-invoice escalation is a lifecycle event about the INVOICE, not a payment-specific
+notification like the claim-related ones, per CLAUDE.md's own three-way mapping rule).
+**No new field for "when did escalation happen" — deliberately reconstructed instead of added.**
+`escalation_required`/`escalation_dismissed` are booleans with no timestamp of their own. Rather than
+adding a redundant `escalation_required_at` column, `invoice_timeline` derives the moment from the
+`InvoiceReminder(reminder_number=4)` row's own `sent_at` — the two are set in the exact same
+`send_invoice_reminders` code path, at the same instant, so the reminder row's timestamp IS the real
+escalation timestamp, with zero schema growth. `dismiss-escalation` clears the PROMPT only
+(`escalation_dismissed=True`) — `escalation_required` itself is never reset, since it's the honest
+historical record that this invoice DID cross the threshold; Formal Notice's own gating deliberately
+checks `escalation_required` (not `escalation_required and not escalation_dismissed`) for exactly
+this reason — dismissing the prompt doesn't mean the invoice stopped being severely overdue.
+**Formal Notice — the full design, resolved here, closing the item the original planning left
+completely open.** Manual-only (`POST /api/invoices/<pk>/send-formal-notice/`, `confirm: true`
+required, matching every other consequential action in this app); gated on `escalation_required OR
+status == 'bad_debt'` — the same severity bar the escalation prompt itself uses, so the action is
+never reachable for a merely-somewhat-overdue invoice. Content (`build_formal_notice_email`,
+`email_service.py`) is a real, distinct template — firmer tone than even reminder tier 4's "final
+notice," states days overdue and amount owed explicitly, links to the invoice's own portal/comment
+thread for the client to respond — reusing `send_invoice_related_email`, the SAME custom-SMTP-vs-
+Resend routing function every other invoice email in this app uses, never a new delivery path.
+**`FreelancerProfile.formal_notice_enabled`** (new field, default `True`) is the real, user-facing
+kill switch the decisions doc's "every email type must be mutable" rule requires — checked in TWO
+places: `InvoiceDetailPanel.jsx` hides the action entirely when off (via a new
+`UserSerializer.formal_notice_enabled` method field, so the frontend doesn't need a second round-trip
+to `/auth/profile/` just to decide whether to show a button), AND `invoice_send_formal_notice`
+rejects with a real 403 server-side regardless of what the client sent — verified with a dedicated
+test that disables the setting and confirms the endpoint still rejects the request even with
+`confirm: true` present.
+**`formal_notice_sent_at`** (new field, one-shot timestamp, same pattern as `finalised_at`/`sent_at`)
+surfaces a prior send in the confirmation modal as a warning, but never blocks a second, deliberate
+send — per the task's own explicit instruction ("not blocking a deliberate second send, just
+surfacing that it already happened"), verified with a test proving two consecutive real sends both
+succeed and produce two different timestamps.
+**No bell notification for `FormalNoticeSent`, by the same self-trigger exclusion `InvoiceSent`
+already established** — the freelancer clicked the button themselves; an `AuditLog` write still
+happens (`_record_formal_notice_sent`, `log_event('formal_notice_sent', ...)`) for the audit trail,
+but `'formal_notice_sent'` is deliberately never added to `core/notifications.py`'s
+`NOTIFICATION_EVENTS` allowlist — verified with a dedicated test asserting both halves directly
+(a real `AuditLog` row exists, AND the event string is absent from the bell allowlist).

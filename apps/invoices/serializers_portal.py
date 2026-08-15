@@ -34,6 +34,7 @@ class PortalInvoiceListSerializer(serializers.ModelSerializer):
             'id', 'invoice_number', 'status', 'currency',
             'total', 'amount_paid', 'outstanding_amount',
             'issue_date', 'due_date', 'days_overdue', 'portal_view_url',
+            'client_acknowledged', 'client_acknowledged_at',
         ]
 
 

@@ -246,6 +246,13 @@ class UserSerializer(serializers.ModelSerializer):
     is_oauth_only = serializers.SerializerMethodField()
     onboarding_completed = serializers.SerializerMethodField()
     linked_providers = serializers.SerializerMethodField()
+    # apps.invoices Step 17 — a lightweight profile-adjacent boolean
+    # surfaced here (same pattern as onboarding_completed above) so
+    # InvoiceDetailPanel.jsx can decide whether to even offer the Send
+    # Formal Notice action, without a second round-trip to /auth/profile/.
+    # The real, enforced gate is still server-side (invoice_send_formal_notice) —
+    # this only controls whether the UI offers the action at all.
+    formal_notice_enabled = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -271,6 +278,7 @@ class UserSerializer(serializers.ModelSerializer):
             # "(super-admin)" label — this serializer backs both the main
             # app's /me/ and admin_panel's /me/ + login responses.
             'is_super_admin',
+            'formal_notice_enabled',
         ]
         read_only_fields = fields
 
@@ -285,6 +293,12 @@ class UserSerializer(serializers.ModelSerializer):
             return obj.profile.onboarding_completed
         except FreelancerProfile.DoesNotExist:
             return False
+
+    def get_formal_notice_enabled(self, obj):
+        try:
+            return obj.profile.formal_notice_enabled
+        except FreelancerProfile.DoesNotExist:
+            return True
 
     def get_linked_providers(self, obj):
         return list(obj.social_accounts.values_list('provider', flat=True))

@@ -91,6 +91,24 @@ def _check_portal_claim_rate_limit(identifier):
     return False
 
 
+# Same 5/hour-by-client-or-invoice shape as claims (Step 15's own
+# instruction — a real, if minor, attack surface regardless of low
+# stakes; consistency with the established pattern matters more here
+# than a bespoke lighter limit) — a genuinely separate counter/cache-key
+# prefix, though, so submitting claims and acknowledging don't share one
+# budget and starve each other.
+PORTAL_ACKNOWLEDGE_RATE_LIMIT_PER_HOUR = 5
+
+
+def _check_portal_acknowledge_rate_limit(identifier):
+    key = f'ratelimit_portal_acknowledge_{identifier}'
+    count = cache.get(key, 0)
+    if count >= PORTAL_ACKNOWLEDGE_RATE_LIMIT_PER_HOUR:
+        return True
+    cache.set(key, count + 1, timeout=3600)
+    return False
+
+
 def _record_invoice_view_if_appropriate(invoice, request):
     """
     The one real "a client viewed this invoice" side effect, called
@@ -305,30 +323,50 @@ def portal_invoice_comments(request, pk):
     return Response(InvoiceCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
 
 
+def _resolve_portal_write_access(request, pk):
+    """
+    Shared access resolution for portal-side WRITE actions that need one
+    of the two real portal-entry shapes Step 12 established — a saved
+    client's portal session, OR a one-time client proving ownership of
+    that exact invoice via its own view_token in the request body (per
+    Step 12's "no portal, no session" rule: a one-time client never gets
+    a ClientPortalSession at all, so the token itself is the credential —
+    the same real one portal_invoice_view_html already trusts for this
+    invoice). Extracted this pass (Step 15) since portal_invoice_claims
+    (Step 14) and portal_invoice_acknowledge (Step 15) both need the
+    identical resolution, not a second hand-copied version of it.
+
+    Looks up by bare pk first (not yet scoped to client__isnull/
+    is_one_time_client) so a genuinely unknown pk still 404s; every other
+    outcome (a saved-client invoice with no session, a one-time invoice
+    with a missing/wrong token) normalizes to the same 401, never a 404
+    that would confirm which specific reason applies.
+
+    Returns (invoice, client_name, client_email, rate_limit_key) on
+    success, or a Response (401) on failure — callers check
+    isinstance(result, Response), the same convention
+    upload_comment_attachment already established in this module.
+    """
+    client = resolve_session_from_request(request)
+    if client is not None:
+        invoice = get_object_or_404(Invoice, pk=pk, client=client)
+        return invoice, client.name, client.email, str(client.pk)
+
+    invoice = get_object_or_404(Invoice, pk=pk)
+    submitted_token = request.data.get('view_token')
+    if invoice.client_id or not invoice.is_one_time_client or not submitted_token or submitted_token != invoice.view_token:
+        return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
+    return invoice, invoice.client_name, invoice.client_email, str(invoice.pk)
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def portal_invoice_claims(request, pk):
     """
     Payment claim submission — Step 14 (freelancer-side list/confirm/
     reject: apps/invoices/views.py's invoice_claims/invoice_claim_confirm/
-    invoice_claim_reject).
-
-    Reachable two ways, matching Step 12's own precedent for the two
-    real portal-entry shapes:
-      - A saved client, portal-session-authenticated (same 401/404
-        discipline as portal_invoice_comments — resolve_session_from_request,
-        scoped to that client's own invoices only).
-      - A ONE-TIME client's invoice (client_id is null, is_one_time_client
-        =True), which per Step 12's "no portal, no session" rule never
-        gets a ClientPortalSession at all — there's no session to check
-        here either. Access is instead proven by supplying that exact
-        invoice's own view_token in the request body, the same real
-        credential portal_invoice_view_html already trusts for this
-        invoice (a one-time client only ever learns this token by
-        visiting their own invoice link — an attacker guessing a bare
-        invoice id learns nothing without it). A mismatched/missing
-        token gets the same 401 a saved client with no session gets —
-        never a 404 that would confirm the invoice id exists.
+    invoice_claim_reject). Access resolution shared with
+    portal_invoice_acknowledge via _resolve_portal_write_access above.
 
     Rejects the submission outright (never silently drops it) when
     is_freelancer_previewing_portal(request) is True — the same guard
@@ -338,25 +376,10 @@ def portal_invoice_claims(request, pk):
     logging out first must never have a claim attributed to "the client"
     that was actually them clicking around their own preview.
     """
-    client = resolve_session_from_request(request)
-    if client is not None:
-        invoice = get_object_or_404(Invoice, pk=pk, client=client)
-        rate_limit_key = str(client.pk)
-        client_name, client_email = client.name, client.email
-    else:
-        # No session — try the one-time-client view_token path. Looked up
-        # by bare pk (not yet scoped to client__isnull/is_one_time_client)
-        # so a genuinely unknown pk still 404s; every other outcome
-        # (a saved-client invoice with no session, a one-time invoice
-        # with a missing/wrong token) normalizes to the same 401 a saved
-        # client with no session gets, never a 404 that would confirm
-        # which specific reason applies.
-        invoice = get_object_or_404(Invoice, pk=pk)
-        submitted_token = request.data.get('view_token')
-        if invoice.client_id or not invoice.is_one_time_client or not submitted_token or submitted_token != invoice.view_token:
-            return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
-        rate_limit_key = str(invoice.pk)
-        client_name, client_email = invoice.client_name, invoice.client_email
+    result = _resolve_portal_write_access(request, pk)
+    if isinstance(result, Response):
+        return result
+    invoice, client_name, client_email, rate_limit_key = result
 
     if is_freelancer_previewing_portal(request):
         return Response(
@@ -375,3 +398,51 @@ def portal_invoice_claims(request, pk):
     emit('PaymentClaimSubmitted', invoice_id=str(invoice.pk), user_id=str(invoice.user_id), claim_id=str(claim.pk))
     logger.info('[INVOICES] Payment claim submitted on invoice %s.', invoice.invoice_number)
     return Response(PaymentClaimSerializer(claim).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def portal_invoice_acknowledge(request, pk):
+    """
+    Client Acknowledgment — Step 15. Same access model as claims (a
+    saved client's portal session, or a one-time client's invoice via
+    its own view_token), and the identical freelancer-preview guard
+    (this is the fifth real call site for is_freelancer_previewing_portal,
+    per this step's own task framing — after the Sent->Viewed transition,
+    InvoiceViewEvent logging, comment posting, and claim submission).
+
+    ONE-TIME only: sets client_acknowledged=True/client_acknowledged_at=now()
+    the first time. Idempotent on every later call — a client clicking
+    twice (or the frontend re-POSTing after a flaky network response)
+    gets back the EXISTING timestamp with a 200, never a 409/400. There
+    is no unacknowledge path anywhere in this app, by design — a
+    permanent record, same trust posture as InvoiceComment's own
+    immutability and the frozen PDF.
+    """
+    result = _resolve_portal_write_access(request, pk)
+    if isinstance(result, Response):
+        return result
+    invoice, _client_name, _client_email, rate_limit_key = result
+
+    if is_freelancer_previewing_portal(request):
+        return Response(
+            {'error': "You're previewing this portal as its own freelancer — this invoice can't be acknowledged from preview mode."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if invoice.client_acknowledged:
+        return Response({'client_acknowledged': True, 'client_acknowledged_at': invoice.client_acknowledged_at})
+
+    if _check_portal_acknowledge_rate_limit(rate_limit_key):
+        return Response({'error': 'Too many attempts. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    invoice.client_acknowledged = True
+    invoice.client_acknowledged_at = timezone.now()
+    invoice.save(update_fields=['client_acknowledged', 'client_acknowledged_at'])
+
+    emit('InvoiceAcknowledged', invoice_id=str(invoice.pk), user_id=str(invoice.user_id))
+    logger.info('[INVOICES] Invoice %s acknowledged by client.', invoice.invoice_number)
+    return Response(
+        {'client_acknowledged': True, 'client_acknowledged_at': invoice.client_acknowledged_at},
+        status=status.HTTP_201_CREATED,
+    )

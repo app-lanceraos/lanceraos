@@ -419,6 +419,15 @@ class FreelancerProfile(models.Model):
 
     default_send_method = models.CharField(max_length=10, choices=SEND_METHOD_CHOICES, default='email')
 
+    # ── Formal Notice (apps.invoices Step 17) ───────────────────────
+    # Per the decisions doc's "every email type must be mutable" rule —
+    # a real, user-facing kill switch for the Formal Notice feature,
+    # checked both before the action is offered in the UI AND enforced
+    # server-side in invoice_send_formal_notice (never just hidden
+    # client-side). Defaults True — an opt-out toggle for a real,
+    # deliberately manual-only feature, not an opt-in one.
+    formal_notice_enabled = models.BooleanField(default=True)
+
     # ── SRO 586 / tax profile ───────────────────────────────────────
     income_type = models.CharField(
         max_length=50, blank=True, default='it_services',

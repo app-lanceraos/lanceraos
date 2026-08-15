@@ -241,7 +241,8 @@ export function timelineDotColor(type) {
   return {
     payment: 'var(--status-green-text)', reminder: 'var(--status-amber-text)', view: 'var(--status-blue-text)',
     created: 'var(--text-tertiary)', finalised: 'var(--status-blue-text)', sent: 'var(--status-blue-text)',
-    claim: 'var(--status-amber-text)',
+    claim: 'var(--status-amber-text)', acknowledged: 'var(--status-green-text)',
+    escalation: 'var(--status-red-text)', formal_notice: 'var(--status-red-text)',
   }[type] || 'var(--text-tertiary)'
 }
 
@@ -259,6 +260,9 @@ export function timelineLabel(ev) {
   if (ev.type === 'finalised') return `Finalised${ev.invoice_number ? ` as ${ev.invoice_number}` : ''}`
   if (ev.type === 'sent') return ev.via === 'platform' ? 'Sent by LanceraOS' : 'Marked as sent by you'
   if (ev.type === 'claim') return `Payment claim ${ev.status} — ${formatMoney(ev.amount, ev.currency)}`
+  if (ev.type === 'acknowledged') return 'Acknowledged by client'
+  if (ev.type === 'escalation') return `Escalated${ev.dismissed ? ' (dismissed)' : ''} — final reminder sent with no payment`
+  if (ev.type === 'formal_notice') return 'Formal Notice sent'
   return ev.type
 }
 

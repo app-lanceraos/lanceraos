@@ -216,6 +216,119 @@ Please respond within 48 hours or contact us immediately.</p>
 
 
 # ══════════════════════════════════════════════════════════════════
+# EMAIL CONTENT — Formal Notice (Step 17, manual-only)
+# ══════════════════════════════════════════════════════════════════
+
+def build_formal_notice_email(invoice):
+    """
+    Firmer than even reminder_number==4's "final notice" tier — this is a
+    deliberate, freelancer-triggered escalation, not an automated part of
+    the day-3/7/14/30 schedule. States days overdue and amount owed
+    explicitly, and points the client at the real comment thread/portal
+    link to respond (invoice.portal_view_url — the same shared renderer,
+    with Messages reachable from there for a saved client). No PDF
+    attachment, matching build_reminder_email's own precedent ("v1 never
+    attaches a PDF to reminder emails either").
+    """
+    sender = sender_display_name(invoice.user, getattr(invoice.user, 'profile', None))
+    amount = _fmt_money(invoice.total, invoice.currency)
+    due = invoice.due_date.strftime('%d %b %Y') if invoice.due_date else '—'
+    days = invoice.days_overdue
+
+    subject = f'Formal Notice — Invoice {invoice.invoice_number} ({days} days overdue)'
+    body = f"""
+<div style="background:#7f1d1d;border-radius:6px;padding:10px 14px;margin:0 0 20px;">
+  <p style="margin:0;font-size:13px;font-weight:700;color:#fff;">FORMAL NOTICE OF OVERDUE PAYMENT</p>
+</div>
+<p style="margin:0 0 16px;font-size:14px;color:#334155;line-height:1.7;">Dear {invoice.client_name},<br/><br/>
+This is a formal notice regarding invoice <strong>{invoice.invoice_number}</strong>, which remains
+<strong>unpaid</strong> and is now <strong>{days} days overdue</strong>. Immediate payment is required.</p>
+<table style="width:100%;border-collapse:collapse;margin:0 0 16px;">
+  <tr><td style="padding:6px 0;font-size:13px;color:#64748b;font-weight:600;width:40%;">Invoice</td><td style="font-size:13px;color:#1e293b;">{invoice.invoice_number}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:#64748b;font-weight:600;">Amount Owed</td><td style="font-size:13px;font-weight:700;color:#dc2626;">{amount}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:#64748b;font-weight:600;">Original Due Date</td><td style="font-size:13px;color:#1e293b;">{due}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:#64748b;font-weight:600;">Days Overdue</td><td style="font-size:13px;font-weight:700;color:#dc2626;">{days}</td></tr>
+</table>
+<p style="margin:0 0 16px;font-size:13px;color:#334155;line-height:1.7;">
+If there is a dispute or reason for non-payment, please respond via the invoice's own message thread
+as soon as possible — we would rather resolve this directly.</p>
+<p style="margin:0 0 16px;"><a href="{invoice.portal_view_url}" style="color:#00c896;font-weight:600;text-decoration:none;">View Invoice &amp; Respond &rarr;</a></p>
+<p style="margin:0;font-size:13px;color:#64748b;">{sender} &bull; <a href="mailto:{invoice.user.email}" style="color:#1a3a5c;">{invoice.user.email}</a></p>"""
+    plain = (
+        f'FORMAL NOTICE: Invoice {invoice.invoice_number} for {amount} (due {due}) remains unpaid and is '
+        f'{days} days overdue. Immediate payment is required.\n\n'
+        f'Respond via the invoice thread: {invoice.portal_view_url}\n\n{sender}\n{invoice.user.email}'
+    )
+    return subject, _html_wrapper(body), plain
+
+
+# ══════════════════════════════════════════════════════════════════
+# EMAIL CONTENT — freelancer-facing lifecycle notifications
+# (acknowledgment / escalation / recurring generation, Steps 15-17)
+# ══════════════════════════════════════════════════════════════════
+# All four are TO the freelancer about their own account activity —
+# routed through plain core.email.send_email in notifications.py, never
+# the custom-SMTP-vs-Resend chain, same reasoning
+# build_unread_comments_email_for_freelancer's own docstring already
+# gives (a notification about the freelancer's own account can't
+# sensibly go out "as" their own business identity to themselves).
+
+def build_invoice_acknowledged_email(invoice):
+    subject = f'{invoice.client_name} acknowledged Invoice {invoice.invoice_number}'
+    body = f"""
+<p style="margin:0 0 16px;font-size:16px;font-weight:700;color:#1e293b;">Invoice acknowledged</p>
+<p style="margin:0;font-size:13px;color:#334155;line-height:1.7;">
+{invoice.client_name} has acknowledged Invoice <strong>{invoice.invoice_number}</strong> and its terms.</p>"""
+    plain = f'{invoice.client_name} has acknowledged Invoice {invoice.invoice_number} and its terms.'
+    return subject, _html_wrapper(body), plain
+
+
+def build_escalation_required_email(invoice):
+    amount = _fmt_money(invoice.total, invoice.currency)
+    subject = f'Action needed — Invoice {invoice.invoice_number} is severely overdue'
+    body = f"""
+<p style="margin:0 0 16px;font-size:16px;font-weight:700;color:#dc2626;">Invoice needs your attention</p>
+<p style="margin:0 0 16px;font-size:13px;color:#334155;line-height:1.7;">
+Invoice <strong>{invoice.invoice_number}</strong> for <strong>{amount}</strong> is now {invoice.days_overdue} days
+overdue and has gone through the full reminder schedule with no payment. Consider following up directly, or
+sending a Formal Notice from the invoice.</p>"""
+    plain = (
+        f'Invoice {invoice.invoice_number} for {amount} is {invoice.days_overdue} days overdue and has gone '
+        f'through the full reminder schedule with no payment. Consider a Formal Notice.'
+    )
+    return subject, _html_wrapper(body), plain
+
+
+def build_recurring_generation_failed_email(invoice, failure_count):
+    subject = f'A recurring invoice failed to generate ({invoice.invoice_number})'
+    body = f"""
+<p style="margin:0 0 16px;font-size:16px;font-weight:700;color:#dc2626;">Recurring invoice generation failed</p>
+<p style="margin:0;font-size:13px;color:#334155;line-height:1.7;">
+The next occurrence of your recurring series based on Invoice <strong>{invoice.invoice_number}</strong> failed
+to generate (attempt {failure_count} of 3). LanceraOS will automatically retry on the next scheduled run.</p>"""
+    plain = (
+        f'The next occurrence of your recurring series based on Invoice {invoice.invoice_number} failed to '
+        f'generate (attempt {failure_count} of 3). LanceraOS will retry automatically.'
+    )
+    return subject, _html_wrapper(body), plain
+
+
+def build_recurring_generation_paused_email(invoice):
+    subject = f'Recurring invoices paused — {invoice.invoice_number}'
+    body = f"""
+<p style="margin:0 0 16px;font-size:16px;font-weight:700;color:#dc2626;">Your recurring series has been paused</p>
+<p style="margin:0;font-size:13px;color:#334155;line-height:1.7;">
+The recurring series based on Invoice <strong>{invoice.invoice_number}</strong> failed to generate 3 times in a
+row and has been automatically paused so it doesn't keep failing silently. Review and resume it from the
+invoice when you're ready.</p>"""
+    plain = (
+        f'The recurring series based on Invoice {invoice.invoice_number} failed to generate 3 times in a row '
+        f'and has been automatically paused. Review and resume it from the invoice when ready.'
+    )
+    return subject, _html_wrapper(body), plain
+
+
+# ══════════════════════════════════════════════════════════════════
 # EMAIL CONTENT — unread-comment batch notification (Step 13)
 # ══════════════════════════════════════════════════════════════════
 # ONE email per invoice, covering everything unread at the 1-hour

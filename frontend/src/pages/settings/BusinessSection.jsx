@@ -38,11 +38,17 @@ const FIELD_NAMES = [
   'address_line1', 'address_line2', 'city', 'country',
   'default_currency', 'default_payment_terms', 'language', 'timezone',
   'bank_name', 'bank_account_number', 'jazzcash_number', 'easypaisa_number', 'payoneer_email',
+  'formal_notice_enabled',
 ]
 
 function extractDraft(profile) {
   const draft = {}
-  FIELD_NAMES.forEach((f) => { draft[f] = profile?.[f] ?? (f === 'country' ? 'Pakistan' : f === 'default_currency' ? 'USD' : f === 'default_payment_terms' ? 30 : f === 'language' ? 'en' : f === 'timezone' ? 'Asia/Karachi' : '') })
+  FIELD_NAMES.forEach((f) => {
+    draft[f] = profile?.[f] ?? (
+      f === 'country' ? 'Pakistan' : f === 'default_currency' ? 'USD' : f === 'default_payment_terms' ? 30
+        : f === 'language' ? 'en' : f === 'timezone' ? 'Asia/Karachi' : f === 'formal_notice_enabled' ? true : ''
+    )
+  })
   return draft
 }
 
@@ -144,6 +150,19 @@ export default function BusinessSection({ profile, loading, onProfileUpdate }) {
           <FormSelect label="Language" value={draft.language} onChange={(e) => handleChange('language', e.target.value)} options={LANGUAGES} />
           <FormSelect label="Timezone (display only)" value={draft.timezone} onChange={(e) => handleChange('timezone', e.target.value)} options={TIMEZONES} />
         </div>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginTop: 16, padding: '10px 12px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
+          <input
+            type="checkbox" checked={!!draft.formal_notice_enabled}
+            onChange={(e) => handleChange('formal_notice_enabled', e.target.checked)}
+            style={{ marginTop: 3, accentColor: 'var(--accent)', width: 14, height: 14 }}
+          />
+          <div>
+            <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)' }}>Allow sending Formal Notice emails</p>
+            <p style={{ margin: '2px 0 0', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
+              A firmer, manual-only email for severely overdue invoices. Turning this off hides the action and blocks it on the backend too.
+            </p>
+          </div>
+        </label>
       </Card>
 
       <Card title="Payment Methods" subtitle="How clients can pay you, and where LanceraOS shows these on invoices">

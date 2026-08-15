@@ -38,6 +38,16 @@ app.conf.beat_schedule = {
         'task': 'apps.payments.tasks.fetch_exchange_rates',
         'schedule': crontab(hour=8, minute=0),
     },
+    # 8:30 — deliberately between the exchange-rate fetch (8:00) and
+    # reminders (9:00): a freshly auto-generated-and-sent recurring
+    # invoice should exist before that same day's reminder pass runs,
+    # not after (no functional collision either way today, since a
+    # brand-new invoice's due_date is always in the future, but this is
+    # the more sensible ordering going forward).
+    'generate-recurring-invoices-daily': {
+        'task': 'apps.invoices.tasks.generate_recurring_invoices',
+        'schedule': crontab(hour=8, minute=30),
+    },
     'send-invoice-reminders-daily': {
         'task': 'apps.invoices.tasks.send_invoice_reminders',
         'schedule': crontab(hour=9, minute=0),

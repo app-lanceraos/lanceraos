@@ -23,10 +23,12 @@ uses — rather than re-implementing that decision chain a second time
 here.
 """
 import logging
+from collections import namedtuple
 from datetime import timedelta
 from itertools import groupby
 
 from celery import shared_task
+from dateutil.relativedelta import relativedelta
 from django.utils import timezone
 
 from core.email import send_client_facing_email, send_email
@@ -39,6 +41,14 @@ from .email_service import (
 from .models import NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceReminder
 
 logger = logging.getLogger(__name__)
+
+# A minimal duck-typed stand-in for the HTTP request object
+# _send_invoice_now (views.py) reads .user/.request_id from — there is no
+# real request in a Celery task's execution context. Mirrors the
+# _CookieOnlyRequest shim apps/invoices/consumers.py already established
+# for the identical "reuse an HTTP-shaped function outside an HTTP
+# request" problem (see DECISIONS.md).
+_TaskRequest = namedtuple('_TaskRequest', ['user', 'request_id'])
 
 # day-overdue threshold -> (reminder_number, template key) — matches
 # InvoiceReminder.TEMPLATE_CHOICES exactly (models.py) and
@@ -207,3 +217,166 @@ def notify_unread_comments():
 
     logger.info('[INVOICES] notify_unread_comments: notified for %d comment(s) across both directions.', notified_count)
     return {'notified': notified_count}
+
+
+# ══════════════════════════════════════════════════════════════════
+# RECURRING GENERATION — Step 16
+# ══════════════════════════════════════════════════════════════════
+# Some of Invoice.RECURRING_INTERVAL_CHOICES' day-counts are really
+# calendar-month approximations (60 = "every 2 months", 90 =
+# "quarterly", 365 = "annually") — advancing those by a naive
+# days-multiplication drifts against real month length over a year.
+# Advanced via dateutil.relativedelta instead. 7/14 (weekly/fortnightly)
+# are genuinely day-based and advance by timedelta directly.
+MONTH_BASED_RECURRING_INTERVALS = {30: 1, 60: 2, 90: 3, 365: 12}
+
+# After this many CONSECUTIVE failed generation attempts for the same
+# triggering invoice, the series auto-pauses rather than retrying
+# forever — see generate_recurring_invoices' own docstring.
+MAX_RECURRING_FAILURES = 3
+
+
+def _advance_recurring_date(base_date, interval_days):
+    """Anchored from base_date (the invoice's own PREVIOUS next_recurring_date), never from today — so a late-running task doesn't compound drift into the schedule itself."""
+    months = MONTH_BASED_RECURRING_INTERVALS.get(interval_days)
+    if months:
+        return base_date + relativedelta(months=months)
+    return base_date + timedelta(days=interval_days)
+
+
+@shared_task(name='apps.invoices.tasks.generate_recurring_invoices')
+def generate_recurring_invoices():
+    """
+    Runs daily (see config/celery.py's beat_schedule). For every invoice
+    with is_recurring=True, recurring_paused=False, and
+    next_recurring_date<=today, processed independently — one invoice's
+    failure never blocks the others in the same run (each iteration has
+    its own try/except, same pattern send_invoice_reminders already
+    established above).
+
+    Series settings (recurring_interval_days/recurring_auto_send/design)
+    are read LIVE from the invoice's own recurring root
+    (Invoice.get_recurring_root()) at generation time, never copied or
+    frozen onto a generated child — DECISIONS.md's own Step 16 design
+    decision. In practice the triggering invoice here IS always the
+    root: a generated child never gets its own next_recurring_date set
+    (see the is_recurring=False/recurring_interval_days=None override
+    below), so it can never independently satisfy this query's filter —
+    only the root ever does. parent_invoice on each generated child is
+    still written generically as "the invoice that triggered this
+    generation" rather than hand-coded to Invoice.pk-of-root, so the
+    mechanism stays correct even if that ever changes.
+
+    Reuses _duplicate_invoice_core/_finalise_invoice/_send_invoice_now
+    from views.py — the exact same duplication and finalise-and-send
+    mechanics invoice_duplicate/invoice_finalise_and_send already use,
+    never a third, parallel implementation. Imported locally (not at
+    module level) purely to keep this file's own top-level import list
+    reminder/comment-task-focused; there is no real circular-import risk
+    either way (views.py has no dependency on tasks.py).
+
+    due_date on the new child is recomputed from the SAME (due_date -
+    issue_date) offset the triggering invoice already had, applied to
+    today's date — invoice_duplicate's own existing behavior (copying
+    due_date verbatim) is correct for a manually-reviewed one-off
+    duplicate, but would make every auto-generated recurring invoice
+    instantly overdue, so this task computes its own due_date instead of
+    relying on _duplicate_invoice_core's copied default.
+
+    Failure handling: an exception raised by the actual generation step
+    (_duplicate_invoice_core itself — no child row created at all) is
+    what counts as a real failure: next_recurring_date is left UNCHANGED
+    so the next run retries the same cycle, recurring_failure_count
+    increments, and at MAX_RECURRING_FAILURES the series auto-pauses
+    with a distinctly-worded notification. A failure AFTER the child
+    invoice already exists (auto-send's own finalise/send hiccup) is
+    deliberately NOT treated as a generation failure — the occurrence
+    was genuinely generated (a real draft invoice exists for the
+    freelancer to review/send manually), so treating it as a retry-able
+    failure would create a SECOND duplicate child for the same cycle on
+    the next run. That case is only logged, never raises out of this
+    task's outer try/except.
+    """
+    from .views import _duplicate_invoice_core, _finalise_invoice, _send_invoice_now
+
+    today = timezone.now().date()
+    generated_count = 0
+    failed_count = 0
+
+    due = Invoice.objects.filter(
+        is_recurring=True, recurring_paused=False, next_recurring_date__lte=today,
+    ).select_related('user', 'user__profile', 'parent_invoice')
+
+    for invoice in due:
+        try:
+            root = invoice.get_recurring_root()
+            interval_days = root.recurring_interval_days
+            if not interval_days:
+                logger.warning('[INVOICES] Recurring invoice %s has no recurring_interval_days on its root — skipping.', invoice.pk)
+                continue
+
+            if invoice.due_date and invoice.issue_date:
+                terms_days = max((invoice.due_date - invoice.issue_date).days, 0)
+                new_due_date = today + timedelta(days=terms_days)
+            else:
+                new_due_date = None
+
+            new_invoice = _duplicate_invoice_core(
+                invoice,
+                parent_invoice=invoice,
+                design=root.design,
+                due_date=new_due_date,
+                # Series-level settings, deliberately NOT copied onto the
+                # occurrence — always read live from the root instead.
+                is_recurring=False, recurring_interval_days=None, recurring_auto_send=False,
+            )
+
+            if root.recurring_auto_send:
+                try:
+                    _finalise_invoice(new_invoice, force_reminders_off=False)
+                    send_response = _send_invoice_now(new_invoice, _TaskRequest(user=new_invoice.user, request_id=None))
+                    if send_response.status_code != 200:
+                        logger.error(
+                            '[INVOICES] Recurring auto-send failed for generated invoice %s (from %s): %s',
+                            new_invoice.pk, invoice.invoice_number, getattr(send_response, 'data', None),
+                        )
+                except Exception:
+                    logger.exception(
+                        '[INVOICES] Recurring auto-finalise/send raised for generated invoice %s (from %s) — '
+                        'the draft was created and needs manual finalise/send.',
+                        new_invoice.pk, invoice.invoice_number,
+                    )
+            else:
+                emit(
+                    'RecurringInvoiceGenerated', invoice_id=str(new_invoice.pk), user_id=str(invoice.user_id),
+                    generated_from=str(invoice.pk),
+                )
+
+            invoice.next_recurring_date = _advance_recurring_date(invoice.next_recurring_date, interval_days)
+            invoice.recurring_failure_count = 0
+            invoice.save(update_fields=['next_recurring_date', 'recurring_failure_count'])
+
+            generated_count += 1
+            logger.info('[INVOICES] Generated recurring invoice %s from %s.', new_invoice.pk, invoice.invoice_number)
+
+        except Exception:
+            logger.exception('[INVOICES] Error generating recurring invoice for invoice_id=%s.', invoice.pk)
+            failed_count += 1
+            invoice.recurring_failure_count += 1
+            if invoice.recurring_failure_count >= MAX_RECURRING_FAILURES:
+                invoice.recurring_paused = True
+                invoice.save(update_fields=['recurring_failure_count', 'recurring_paused'])
+                emit(
+                    'RecurringGenerationPaused', invoice_id=str(invoice.pk), user_id=str(invoice.user_id),
+                    failure_count=invoice.recurring_failure_count,
+                )
+            else:
+                invoice.save(update_fields=['recurring_failure_count'])
+                emit(
+                    'RecurringGenerationFailed', invoice_id=str(invoice.pk), user_id=str(invoice.user_id),
+                    failure_count=invoice.recurring_failure_count,
+                )
+            continue
+
+    logger.info('[INVOICES] generate_recurring_invoices: generated %d, failed %d.', generated_count, failed_count)
+    return {'generated': generated_count, 'failed': failed_count}

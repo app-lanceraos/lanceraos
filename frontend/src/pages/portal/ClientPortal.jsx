@@ -10,7 +10,7 @@
 // refresh-and-redirect-to-/login interceptor, which src/lib/api.js's
 // SKIP_REFRESH_URLS now explicitly excludes /invoices/portal/ from).
 import { useEffect, useState } from 'react'
-import { CheckCircle2, LogOut, MessageCircle, Receipt, X } from 'lucide-react'
+import { CheckCircle2, LogOut, MessageCircle, Receipt, UserCheck, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
@@ -49,6 +49,14 @@ export default function ClientPortal() {
   const [loggingOut, setLoggingOut] = useState(false)
   const [messagesInvoice, setMessagesInvoice] = useState(null)
   const [claimInvoice, setClaimInvoice] = useState(null)
+  const [ackInvoice, setAckInvoice] = useState(null)
+
+  function handleAcknowledged(invoiceId, acknowledgedAt) {
+    setInvoices((prev) => prev.map((inv) => (
+      inv.id === invoiceId ? { ...inv, client_acknowledged: true, client_acknowledged_at: acknowledgedAt } : inv
+    )))
+    setAckInvoice(null)
+  }
 
   useEffect(() => { load() }, [])
 
@@ -146,11 +154,26 @@ export default function ClientPortal() {
                   {STATUS_LABELS[inv.status] || inv.status} · Due {inv.due_date || '—'}
                   {inv.days_overdue > 0 ? ` · ${inv.days_overdue}d overdue` : ''}
                 </p>
+                {inv.client_acknowledged && (
+                  <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--status-green-text)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <UserCheck size={11} /> Acknowledged {new Date(inv.client_acknowledged_at).toLocaleDateString()}
+                  </p>
+                )}
               </a>
               <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                 {formatMoney(inv.total, inv.currency)}
               </p>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                {!inv.client_acknowledged && (
+                  <button
+                    onClick={() => setAckInvoice(inv)}
+                    className="fos-btn fos-btn-ghost"
+                    style={{ fontSize: '0.78rem' }}
+                    aria-label={`Acknowledge ${inv.invoice_number || 'this invoice'}`}
+                  >
+                    <UserCheck size={14} />
+                  </button>
+                )}
                 {inv.outstanding_amount > 0 && (
                   <button
                     onClick={() => setClaimInvoice(inv)}
@@ -180,6 +203,9 @@ export default function ClientPortal() {
       )}
       {claimInvoice && (
         <ClaimModal invoice={claimInvoice} onClose={() => setClaimInvoice(null)} />
+      )}
+      {ackInvoice && (
+        <AcknowledgeModal invoice={ackInvoice} onAcknowledged={handleAcknowledged} onClose={() => setAckInvoice(null)} />
       )}
     </PortalLayout>
   )
@@ -279,6 +305,52 @@ function ClaimModal({ invoice, onClose }) {
             </div>
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+// A ONE-TIME, permanent action — no unacknowledge path exists anywhere
+// (apps/invoices/views_portal.py's portal_invoice_acknowledge, Step 15).
+// Idempotent server-side, so a stray double-click here is harmless, but
+// the button still disappears (see the row above) the moment
+// client_acknowledged is true, matching "a permanent 'Acknowledged on
+// [date]' state, not a re-clickable button."
+function AcknowledgeModal({ invoice, onAcknowledged, onClose }) {
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit() {
+    setBusy(true)
+    setError('')
+    try {
+      const { data } = await api.post(`/invoices/portal/${invoice.id}/acknowledge/`)
+      onAcknowledged(invoice.id, data.client_acknowledged_at)
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not acknowledge — please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '20px 24px', width: '100%', maxWidth: 400 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>Acknowledge Invoice</h3>
+          <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
+        </div>
+        {error && <FosAlert type="error" style={{ marginBottom: 12 }}>{error}</FosAlert>}
+        <p style={{ margin: '0 0 18px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+          Confirming this records that you've reviewed {invoice.invoice_number || 'this invoice'} and agree to
+          its terms. This is permanent and can't be undone.
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button onClick={onClose} className="fos-btn fos-btn-ghost">Cancel</button>
+          <button onClick={submit} disabled={busy} className="fos-btn fos-btn-primary">
+            {busy ? <span className="fos-spinner" /> : <UserCheck size={14} />} I Acknowledge This Invoice and Its Terms
+          </button>
+        </div>
       </div>
     </div>
   )

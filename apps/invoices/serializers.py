@@ -140,6 +140,23 @@ class InvoiceSerializer(serializers.ModelSerializer):
         return instance
 
 
+class RecurringSeriesSettingsSerializer(serializers.ModelSerializer):
+    """
+    Step 16 — the narrow allowance invoice_detail's PUT handler uses for a
+    recurring ROOT invoice past its own draft status: exactly these two
+    fields, nothing else, regardless of the root's own status (a root may
+    be long past Created/Sent by the time someone wants to change the
+    series going forward). Deliberately its own small serializer rather
+    than teaching InvoiceSerializer to conditionally allow more fields
+    for one specific case — matching this app's own explicit-fields
+    discipline (see this module's own top docstring) rather than a
+    body-content-sniffing exception bolted onto the general-purpose one.
+    """
+    class Meta:
+        model = Invoice
+        fields = ['recurring_interval_days', 'recurring_auto_send']
+
+
 class InvoiceListSerializer(serializers.ModelSerializer):
     """
     Read representation for list/detail GET responses — includes the
@@ -164,9 +181,10 @@ class InvoiceListSerializer(serializers.ModelSerializer):
             'reminders_enabled', 'reminder_count', 'last_reminder_sent_at',
             'late_fee_enabled', 'late_fee_rate',
             'is_recurring', 'recurring_interval_days', 'recurring_auto_send', 'recurring_paused',
-            'next_recurring_date',
+            'next_recurring_date', 'recurring_failure_count', 'parent_invoice',
             'escalation_required', 'escalation_dismissed',
             'is_one_time_client', 'client_acknowledged', 'client_acknowledged_at',
+            'formal_notice_sent_at',
             'days_overdue', 'outstanding_amount', 'is_editable',
             'items', 'created_at', 'updated_at',
         ]

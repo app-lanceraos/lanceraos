@@ -36,6 +36,20 @@ NOTIFICATION_EVENTS = {
     # its only real recipient is the client (a separate email, no bell
     # entry) — see apps/invoices/notifications.py's own handlers.
     'payment_claim_submitted',
+    # apps/invoices, Step 15 — a client acknowledged an invoice.
+    'invoice_acknowledged',
+    # apps/invoices, Step 17 — an invoice crossed the day-30/final-
+    # reminder threshold with no payment.
+    'invoice_escalation_required',
+    # apps/invoices, Step 16 — recurring invoice generation. Generated
+    # is in-app only (routine, expected activity); failed/paused are
+    # in-app + immediate email — see apps/invoices/notifications.py's
+    # own handlers for the failed-vs-paused distinction (one per attempt
+    # vs. the final, series-pausing one).
+    'recurring_invoice_generated', 'recurring_generation_failed', 'recurring_generation_paused',
+    # 'formal_notice_sent' is deliberately NOT added here — the
+    # freelancer triggers it themselves, same self-trigger exclusion as
+    # invoice_sent above.
 }
 
 EVENT_TITLES = {
@@ -50,6 +64,11 @@ EVENT_TITLES = {
     'custom_smtp_failed': 'Custom email delivery failed',
     'comment_posted': 'New message',
     'payment_claim_submitted': 'Payment reported',
+    'invoice_acknowledged': 'Invoice acknowledged',
+    'invoice_escalation_required': 'Invoice needs attention',
+    'recurring_invoice_generated': 'Recurring invoice generated',
+    'recurring_generation_failed': 'Recurring invoice generation failed',
+    'recurring_generation_paused': 'Recurring invoices paused',
 }
 
 # Where clicking each notification type navigates. Compulsory — every
@@ -77,6 +96,15 @@ EVENT_ACTION_URLS = {
     'comment_posted': '/invoices/{id}?tab=comments',
     # Per Section 6's own table entry for payment_claim_submitted.
     'payment_claim_submitted': '/invoices/{id}?tab=claims',
+    'invoice_acknowledged': '/invoices/{id}',
+    'invoice_escalation_required': '/invoices/{id}',
+    'recurring_invoice_generated': '/invoices/{id}',
+    # Per Section 6's own table entry for recurring_generation_failed —
+    # /invoices/?filter=recurring, not a specific invoice id (the
+    # metadata's own invoice_id refers to the TRIGGERING/root invoice,
+    # not the failed occurrence, since no occurrence was ever created).
+    'recurring_generation_failed': '/invoices/?filter=recurring',
+    'recurring_generation_paused': '/invoices/?filter=recurring',
 }
 
 
@@ -120,6 +148,23 @@ def _describe(log):
         client = log.metadata.get('client_name') or 'Your client'
         invoice_number = log.metadata.get('invoice_number') or 'an invoice'
         return f'{client} reported a payment on {invoice_number}.'
+    if log.event == 'invoice_acknowledged':
+        client = log.metadata.get('client_name') or 'Your client'
+        invoice_number = log.metadata.get('invoice_number') or 'an invoice'
+        return f'{client} acknowledged {invoice_number}.'
+    if log.event == 'invoice_escalation_required':
+        invoice_number = log.metadata.get('invoice_number') or 'An invoice'
+        return f'{invoice_number} is severely overdue and needs your attention.'
+    if log.event == 'recurring_invoice_generated':
+        invoice_number = log.metadata.get('invoice_number') or 'A new invoice'
+        return f'{invoice_number} was generated from your recurring series.'
+    if log.event == 'recurring_generation_failed':
+        invoice_number = log.metadata.get('invoice_number') or 'a recurring invoice'
+        count = log.metadata.get('failure_count')
+        return f'Failed to generate the next occurrence of {invoice_number}{f" (attempt {count} of 3)" if count else ""}.'
+    if log.event == 'recurring_generation_paused':
+        invoice_number = log.metadata.get('invoice_number') or 'a recurring invoice'
+        return f'The recurring series based on {invoice_number} was paused after 3 failed attempts.'
     return ''
 
 
