@@ -58,10 +58,42 @@ class InvoiceSendGatingTests(InvoicesAPITestCase):
                 resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
                 self.assertEqual(resp.status_code, 400)
 
-    def test_requires_a_pdf_url(self):
+    @patch('requests.post')
+    def test_blank_pdf_url_self_heals_via_live_render_instead_of_failing_fast(self, mock_post):
+        """
+        Real behavior change (item 15 of the verification pass):
+        _finalise_invoice now fires its PDF render+store as a background
+        Celery task instead of blocking the request, so pdf_url is
+        routinely still blank the moment /send/ runs immediately after
+        (e.g. via /finalise-and-send/). fetch_invoice_pdf_bytes now
+        treats a blank pdf_url exactly like a failed fetch of a real
+        URL — it falls into the same self-heal chain (render, upload,
+        retry) rather than failing fast — so the send must still
+        succeed, using the freshly-rendered bytes.
+        """
+        fake_resend_response = MagicMock(status_code=200, text='')
+        fake_resend_response.json.return_value = {'id': 'x'}
+        mock_post.return_value = fake_resend_response
         invoice = _sendable_invoice(self.user, pdf_url='')
-        resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
-        self.assertEqual(resp.status_code, 400)
+
+        with patch('apps.invoices.email_service.upload_pdf_bytes') as mock_upload:
+            mock_upload.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/healed.pdf', 'public_id': 'lanceraos/invoices/healed.pdf'}
+            resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
+
+        self.assertEqual(resp.status_code, 200)
+        mock_upload.assert_called_once()
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'sent')
+        self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/healed.pdf')
+
+    def test_blank_pdf_url_and_a_failed_render_still_returns_502(self):
+        """The genuine total-failure case, now reachable from a blank pdf_url too, not just a failed fetch of a real one."""
+        invoice = _sendable_invoice(self.user, pdf_url='')
+        with patch('apps.invoices.email_service.render_invoice_pdf', side_effect=RuntimeError('weasyprint broken')):
+            resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp.status_code, 502)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'created')
 
     @patch('apps.invoices.email_service.requests.get')
     def test_pdf_fetch_failure_self_heals_via_reupload_and_still_sends(self, mock_get):
@@ -157,7 +189,7 @@ class InvoiceSendGatingTests(InvoicesAPITestCase):
         mock_get.return_value = _mock_pdf_fetch_response()
         invoice = _sendable_invoice(self.user)
         with patch('apps.invoices.views.render_invoice_pdf') as mock_render, \
-             patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+             patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
             resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
             self.assertEqual(resp.status_code, 200)
             mock_render.assert_not_called()
@@ -685,7 +717,7 @@ class SendEmailDetailedTests(InvoicesAPITestCase):
 class InvoiceSerializerFieldSafetyTests(InvoicesAPITestCase):
     EXPECTED_FIELDS = {
         'id', 'client', 'client_name', 'client_email', 'client_company', 'client_address',
-        'client_phone', 'currency', 'tax_rate', 'discount_amount', 'due_date', 'notes', 'terms',
+        'client_phone', 'currency', 'tax_rate', 'discount_amount', 'issue_date', 'due_date', 'notes', 'terms',
         'reminders_enabled', 'late_fee_enabled', 'late_fee_rate', 'is_recurring',
         'recurring_interval_days', 'recurring_auto_send', 'is_one_time_client', 'items',
     }

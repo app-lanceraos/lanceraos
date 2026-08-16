@@ -45,6 +45,15 @@ def make_test_image_bytes():
     return buf.read()
 
 
+def make_test_pdf_bytes():
+    import fitz  # PyMuPDF — same real dependency apps/invoices/comments.py validates PDF attachments with
+    doc = fitz.open()
+    doc.new_page()
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
 class FreelancerCommentsAPITestCase(TestCase):
     def setUp(self):
         cache.clear()
@@ -173,6 +182,30 @@ class FreelancerCommentsAPITestCase(TestCase):
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(resp.json()['attachment_url'], 'https://res.cloudinary.com/demo/image/upload/comment.png')
         mock_upload.assert_called_once()
+
+    # ── PDF attachments (item 9 of the verification pass) ──────────
+
+    @patch('cloudinary.uploader.upload')
+    def test_attachment_uploads_a_real_pdf_and_sets_attachment_url(self, mock_upload):
+        mock_upload.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/comment.pdf', 'public_id': 'x'}
+        real_pdf = io.BytesIO(make_test_pdf_bytes())
+        real_pdf.name = 'receipt.pdf'
+        resp = self._post_multipart(reverse('invoices:invoice_comments', kwargs={'pk': self.invoice.pk}), {
+            'body_text': 'see attached receipt', 'attachment': real_pdf,
+        })
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['attachment_url'], 'https://res.cloudinary.com/demo/raw/upload/comment.pdf')
+        mock_upload.assert_called_once()
+        self.assertEqual(mock_upload.call_args.kwargs.get('resource_type'), 'raw')
+
+    def test_attachment_rejects_content_that_is_not_really_a_pdf(self):
+        fake_file = io.BytesIO(b'this is definitely not a real pdf')
+        fake_file.name = 'fake.pdf'
+        resp = self._post_multipart(reverse('invoices:invoice_comments', kwargs={'pk': self.invoice.pk}), {
+            'body_text': 'see attached', 'attachment': fake_file,
+        })
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('pdf', resp.json()['error'].lower())
 
 
 class PortalCommentsAPITestCase(TestCase):

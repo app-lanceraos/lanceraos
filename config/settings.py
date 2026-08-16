@@ -1,5 +1,6 @@
 # config/settings.py
 import os
+import sys
 from datetime import timedelta
 
 import cloudinary
@@ -391,6 +392,27 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Asia/Karachi'
+
+# `manage.py test` never has a real worker consuming the broker, so any
+# .delay() call (e.g. apps.invoices.tasks.render_and_store_invoice_pdf,
+# fired from _finalise_invoice — item 15 of the verification pass) would
+# otherwise just queue silently and never run, breaking every test that
+# asserts on its result. Standard Django+Celery testing practice — task
+# code still runs through the exact same shared_task machinery, just
+# synchronously and in-process; production is untouched, since this is
+# gated on the test runner actually being invoked, not an env flag
+# someone could leave on by accident.
+#
+# Deliberately NOT also setting CELERY_TASK_EAGER_PROPAGATES: that flag
+# changes .apply()'s own behavior too (not just eager .delay()), and
+# apps/payments/tests.py's test_fetch_retries_on_request_failure already
+# relies on the default (False) — a task's exception, once self.retry()
+# exhausts its max_retries and re-raises, must land in the returned
+# EagerResult (result.result / result.successful()) rather than
+# propagating out of .apply() itself. Confirmed directly: turning this on
+# breaks that pre-existing, deliberately-designed test.
+if 'test' in sys.argv:
+    CELERY_TASK_ALWAYS_EAGER = True
 
 CHANNEL_LAYERS = {
     'default': {

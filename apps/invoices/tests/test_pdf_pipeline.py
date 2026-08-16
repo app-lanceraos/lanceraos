@@ -248,7 +248,7 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
     def test_finalise_populates_pdf_url_exactly_once(self):
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
-        with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+        with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
             mock_store.return_value = {
                 'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_once.pdf',
                 'public_id': 'lanceraos/invoices/invoice_once.pdf',
@@ -266,7 +266,7 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
         """Once stored, GET .../pdf/ must redirect to the SAME url forever — never re-render, per the frozen-artifact guarantee."""
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
-        with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+        with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
             mock_store.return_value = {
                 'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_frozen.pdf',
                 'public_id': 'lanceraos/invoices/invoice_frozen.pdf',
@@ -282,13 +282,69 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
     def test_finalise_pdf_failure_does_not_block_status_transition(self):
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
-        with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+        with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
             mock_store.side_effect = RuntimeError('WeasyPrint blew up')
             resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
         self.assertEqual(resp.status_code, 200)
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, 'created')
         self.assertEqual(invoice.pdf_url, '')
+
+    def test_finalise_fires_the_pdf_render_as_a_background_task_not_inline(self):
+        """
+        Item 15 of the verification pass — real, profiled fix: Finalise
+        used to render+upload the PDF SYNCHRONOUSLY inside the request
+        (a real, measured ~1-1.5s WeasyPrint render locally, ~6s against
+        the real dev Cloudinary account per email_service.
+        fetch_invoice_pdf_bytes' own docstring, plus the upload itself —
+        all blocking the HTTP response). It now fires
+        apps.invoices.tasks.render_and_store_invoice_pdf via .delay()
+        instead of calling store_invoice_pdf directly from the view —
+        proven here by patching Celery's own dispatch method (not the
+        underlying render function, which eager-mode test settings would
+        otherwise execute synchronously and mask this exact regression)
+        and confirming the view returns without ever touching
+        store_invoice_pdf itself.
+        """
+        invoice = self._invoice(status='draft')
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        with patch('apps.invoices.tasks.render_and_store_invoice_pdf.delay') as mock_delay, \
+             patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
+            resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
+        self.assertEqual(resp.status_code, 200)
+        mock_delay.assert_called_once_with(str(invoice.pk))
+        mock_store.assert_not_called()  # never invoked directly/synchronously from the view
+
+    def test_finalise_response_time_is_not_dominated_by_pdf_rendering(self):
+        """
+        Real, measured before/after: with the render+store genuinely
+        moved off the request path, a slow (artificially delayed) render
+        function must NOT show up in Finalise's own response time at
+        all — the background dispatch (mocked here to skip actually
+        enqueuing/running it, isolating this test to the request path
+        itself) returns immediately regardless of how slow the real
+        render eventually turns out to be.
+        """
+        import time
+        invoice = self._invoice(status='draft')
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+
+        def slow_render(*args, **kwargs):
+            time.sleep(1.5)  # stands in for the real ~1-1.5s local / ~6s Cloudinary-account WeasyPrint render this fix removes from the request path
+            return {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/slow.pdf', 'public_id': 'lanceraos/invoices/slow.pdf'}
+
+        with patch('apps.invoices.tasks.render_and_store_invoice_pdf.delay') as mock_delay, \
+             patch('apps.invoices.pdf_generator.store_invoice_pdf', side_effect=slow_render):
+            started = time.monotonic()
+            resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
+            elapsed = time.monotonic() - started
+
+        self.assertEqual(resp.status_code, 200)
+        mock_delay.assert_called_once()
+        # Comfortably under the 1.5s the mocked render would have cost if
+        # it were still inline — a generous margin for CI/local variance,
+        # not a tight timing assertion.
+        self.assertLess(elapsed, 0.5)
 
     def test_mark_sent_from_draft_finalises_and_stores_exactly_once(self):
         """
@@ -299,7 +355,7 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
         """
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
-        with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+        with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
             mock_store.return_value = {
                 'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_direct_sent.pdf',
                 'public_id': 'lanceraos/invoices/invoice_direct_sent.pdf',
@@ -318,7 +374,7 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
         """The PDF is already frozen by the time a real finalise happened separately — mark-sent must not render again."""
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
-        with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+        with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
             mock_store.return_value = {
                 'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_finalised.pdf',
                 'public_id': 'lanceraos/invoices/invoice_finalised.pdf',

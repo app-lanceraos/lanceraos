@@ -24,6 +24,7 @@ import useAuthStore from '@/store/authStore'
 import useTimedMessage from '@/hooks/useTimedMessage'
 import useInvoiceAutosave from '@/hooks/useInvoiceAutosave'
 import CommentThread from './CommentThread'
+import ErrorBoundary from './ErrorBoundary'
 import FormField from './FormField'
 import FormSelect from './FormSelect'
 import FosAlert from './FosAlert'
@@ -434,7 +435,11 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
               </div>
 
               {activeTab === 'details' && <DetailsTab invoice={invoice} />}
-              {activeTab === 'timeline' && <TimelineTab loaded={timelineLoaded} entries={timeline} />}
+              {activeTab === 'timeline' && (
+                <ErrorBoundary key={invoiceId}>
+                  <TimelineTab loaded={timelineLoaded} entries={timeline} />
+                </ErrorBoundary>
+              )}
               {activeTab === 'comments' && (
                 <div style={{ height: 420 }}>
                   <CommentThread
@@ -452,44 +457,57 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                 />
               )}
 
-              {/* ── Recurring ── */}
-              {invoice.is_recurring && (
-                <div style={{ marginTop: 16, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <div>
-                    <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-                      {invoice.recurring_paused ? 'Recurring — paused' : `Recurring — next ${invoice.next_recurring_date || 'unscheduled'}`}
-                    </p>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {/* Only a ROOT invoice (no parent) owns the series settings —
-                        a generated occurrence is independent from that point on. */}
-                    {!invoice.parent_invoice && (
-                      <button onClick={() => setModal({ kind: 'edit_series' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-                        <Settings2 size={13} /> Edit Series
-                      </button>
-                    )}
-                    <button onClick={handlePauseResume} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-                      {invoice.recurring_paused ? <Play size={13} /> : <Pause size={13} />}
-                      {invoice.recurring_paused ? 'Resume' : 'Pause'}
+              {/* ── Recurring + Reminders toggle — Details tab ONLY (real,
+                  found bug this pass: both used to render unconditionally
+                  below the tab switch, so they showed up on Timeline/
+                  Comments/Claims too, not just Details). ── */}
+              {activeTab === 'details' && (
+                <>
+                  {invoice.is_recurring && (
+                    <div style={{ marginTop: 16, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <div>
+                        <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                          {invoice.recurring_paused ? 'Recurring — paused' : `Recurring — next ${invoice.next_recurring_date || 'unscheduled'}`}
+                        </p>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {/* Only a ROOT invoice (no parent) owns the series settings —
+                            a generated occurrence is independent from that point on. */}
+                        {!invoice.parent_invoice && (
+                          <button onClick={() => setModal({ kind: 'edit_series' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+                            <Settings2 size={13} /> Edit Series
+                          </button>
+                        )}
+                        <button onClick={handlePauseResume} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+                          {invoice.recurring_paused ? <Play size={13} /> : <Pause size={13} />}
+                          {invoice.recurring_paused ? 'Resume' : 'Pause'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)' }}>Automatic reminders</p>
+                    <button onClick={handleToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+                      {invoice.reminders_enabled ? <Bell size={13} /> : <BellOff size={13} />}
+                      {invoice.reminders_enabled ? 'On' : 'Off'}
                     </button>
                   </div>
-                </div>
+                </>
               )}
-
-              {/* ── Reminders toggle ── */}
-              <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)' }}>Automatic reminders</p>
-                <button onClick={handleToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-                  {invoice.reminders_enabled ? <Bell size={13} /> : <BellOff size={13} />}
-                  {invoice.reminders_enabled ? 'On' : 'Off'}
-                </button>
-              </div>
             </>
           )}
         </div>
 
-        {/* ── Actions footer ── */}
-        <div style={{ position: 'sticky', bottom: 0, padding: '12px 24px', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-surface)' }}>
+        {/* ── Actions footer — reorganized into 3 groups this pass (item 9
+            of the verification pass): primary lifecycle actions (move the
+            invoice forward) first and most prominent; secondary/utility
+            actions (never change the invoice's own state) in the middle;
+            destructive/terminal actions last, visually separated by a
+            divider and consistently red-toned so they read as a distinct,
+            deliberate zone rather than blending into the rest. ── */}
+        <div style={{ position: 'sticky', bottom: 0, padding: '12px 24px', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* Primary lifecycle actions */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {invoice.status === 'draft' && (
                 <button onClick={handleFinalise} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
@@ -521,27 +539,10 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
               {Number(invoice.amount_paid) > 0 && !['cancelled', 'bad_debt'].includes(invoice.status) && (
                 <button onClick={requestUndoPayment} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Undo2 size={13} /> Undo Payment</button>
               )}
-              {['paid', 'partially_paid'].includes(invoice.status) && (
-                <button onClick={() => setModal({ kind: 'refund' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Undo2 size={13} /> Refund</button>
-              )}
-              {ACTIVE_STATUSES.includes(invoice.status) && (
-                <>
-                  <button onClick={() => setModal({ kind: 'cancel' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><Ban size={13} /> Cancel</button>
-                  <button onClick={() => setModal({ kind: 'bad_debt' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><ShieldAlert size={13} /> Bad Debt</button>
-                </>
-              )}
-              {/* Also reachable here (not just the escalation banner above)
-                  once escalation_dismissed — dismissing the PROMPT doesn't
-                  mean the invoice stopped being severely overdue, per
-                  invoice_send_formal_notice's own gating rule. Hidden
-                  entirely, not shown-disabled, when the freelancer has
-                  turned the feature off in Settings — the real, enforced
-                  gate is still server-side either way. */}
-              {(invoice.escalation_required || invoice.status === 'bad_debt') && formalNoticeEnabled && (
-                <button onClick={() => setModal({ kind: 'formal_notice' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}>
-                  <Gavel size={13} /> Formal Notice
-                </button>
-              )}
+            </div>
+
+            {/* Secondary / utility actions — never change the invoice's own lifecycle state */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {/* "For any invoice with a client" — no status restriction,
                   unlike Send/Mark-as-Sent above. A one-time-client invoice
                   (invoice.client is null) has no portal identity to
@@ -551,10 +552,40 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
               )}
               <button onClick={handleDuplicate} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Copy size={13} /> Duplicate</button>
               <button onClick={() => setModal({ kind: 'save_preset' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><BookmarkPlus size={13} /> Save as Preset</button>
-              {['draft', 'created'].includes(invoice.status) && (
-                <button onClick={() => setModal({ kind: 'delete' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><Trash2 size={13} /> Delete</button>
-              )}
             </div>
+
+            {/* Destructive / terminal actions — visually separated */}
+            {(['paid', 'partially_paid'].includes(invoice.status)
+              || ACTIVE_STATUSES.includes(invoice.status)
+              || ((invoice.escalation_required || invoice.status === 'bad_debt') && formalNoticeEnabled)
+              || ['draft', 'created'].includes(invoice.status)) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, paddingTop: 8, borderTop: '1px dashed var(--border-subtle)' }}>
+                {['paid', 'partially_paid'].includes(invoice.status) && (
+                  <button onClick={() => setModal({ kind: 'refund' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><Undo2 size={13} /> Refund</button>
+                )}
+                {ACTIVE_STATUSES.includes(invoice.status) && (
+                  <>
+                    <button onClick={() => setModal({ kind: 'cancel' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><Ban size={13} /> Cancel</button>
+                    <button onClick={() => setModal({ kind: 'bad_debt' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><ShieldAlert size={13} /> Bad Debt</button>
+                  </>
+                )}
+                {/* Also reachable here (not just the escalation banner above)
+                    once escalation_dismissed — dismissing the PROMPT doesn't
+                    mean the invoice stopped being severely overdue, per
+                    invoice_send_formal_notice's own gating rule. Hidden
+                    entirely, not shown-disabled, when the freelancer has
+                    turned the feature off in Settings — the real, enforced
+                    gate is still server-side either way. */}
+                {(invoice.escalation_required || invoice.status === 'bad_debt') && formalNoticeEnabled && (
+                  <button onClick={() => setModal({ kind: 'formal_notice' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}>
+                    <Gavel size={13} /> Formal Notice
+                  </button>
+                )}
+                {['draft', 'created'].includes(invoice.status) && (
+                  <button onClick={() => setModal({ kind: 'delete' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><Trash2 size={13} /> Delete</button>
+                )}
+              </div>
+            )}
         </div>
       </div>
 

@@ -55,7 +55,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Search, X, Plus, FileText, ChevronDown, ChevronUp, Layers, BookmarkPlus, LayoutTemplate, BarChart3,
+  Search, X, Plus, FileText, BookmarkPlus, LayoutTemplate, BarChart3,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -69,7 +69,18 @@ import {
   STATUS_FILTER_OPTIONS, SORT_OPTIONS, formatAggregate, daysOverdueLabel,
 } from './invoiceHelpers'
 
-const LIMIT = 60
+// Real, tiered pagination (item 5 of the verification pass — replaces
+// the earlier flat "60, then +60" Load More): 10 most recent by default;
+// Show More loads 10 more client-side (append, matching the existing
+// "loaded, filtered client-side" architecture the header comment above
+// describes for status/Overdue filtering); beyond COMPACT_MAX total
+// available, the UI switches to real server-paged navigation in pages of
+// PAGE_SIZE — each page a fresh, REPLACING fetch (never an append) with
+// its own offset — rather than trying to "load more" indefinitely. Show
+// fewer collapses back to the first COMPACT_INITIAL from anywhere.
+const COMPACT_INITIAL = 10
+const COMPACT_MAX = 20
+const PAGE_SIZE = 20
 
 export default function Invoices() {
   useTitle('LanceraOS | Invoices')
@@ -80,6 +91,12 @@ export default function Invoices() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [loadingMore, setLoadingMore] = useState(false)
+  // 'compact': 10 -> (Show More) -> 20, client-side append, matches the
+  //   status/Overdue filter's own "whatever's currently loaded" model.
+  // 'paged': real server-paged navigation, PAGE_SIZE per page, each page
+  //   REPLACES the loaded set rather than appending to it.
+  const [viewMode, setViewMode] = useState('compact')
+  const [page, setPage] = useState(1)
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -89,9 +106,6 @@ export default function Invoices() {
   const [presets, setPresets] = useState([])
 
   const [summary, setSummary] = useState(null)
-  const [agingOpen, setAgingOpen] = useState(false)
-  const [aging, setAging] = useState(null)
-  const [agingLoading, setAgingLoading] = useState(false)
 
   const [createError, setCreateError] = useState(null)
   const [showPresetPicker, setShowPresetPicker] = useState(false)
@@ -119,7 +133,7 @@ export default function Invoices() {
     const requestId = ++latestRequestId.current
     if (append) setLoadingMore(true); else { setLoading(true); setError(null) }
     try {
-      const { data } = await api.get('/invoices/', { params: { limit: LIMIT, ...params } })
+      const { data } = await api.get('/invoices/', { params })
       if (requestId !== latestRequestId.current) return // superseded by a newer request — discard
       setInvoices((prev) => (append ? [...prev, ...(data.results || [])] : data.results || []))
       setTotal(data.total ?? 0)
@@ -136,14 +150,19 @@ export default function Invoices() {
   // Deliberately no `status`/`overdue` params — those are applied
   // entirely client-side now (see `visibleInvoices` and the header
   // comment above). Only search/sort/pagination ever reach the server.
-  function buildParams(offset = 0) {
-    const params = { offset }
+  function buildParams(offset, limit) {
+    const params = { offset, limit }
     if (search) params.search = search
     if (sort) params.sort = sort
     return params
   }
 
-  useEffect(() => { load(buildParams(0)) }, [sort]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setViewMode('compact')
+    setPage(1)
+    load(buildParams(0, COMPACT_INITIAL))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sort])
 
   // Client-side view over whatever's currently loaded — never a network
   // call, never touches `loading`. See the header comment for the full
@@ -170,35 +189,53 @@ export default function Invoices() {
     setSearch(value)
     clearTimeout(searchTimer.current)
     searchTimer.current = setTimeout(() => {
-      load({ ...buildParams(0), search: value || undefined })
+      setViewMode('compact')
+      setPage(1)
+      load({ ...buildParams(0, COMPACT_INITIAL), search: value || undefined })
     }, 300)
   }
 
-  function loadMore() {
-    load(buildParams(invoices.length), true)
+  // Compact mode's own "load a few more, append" step — 10 -> 20, never
+  // past COMPACT_MAX. Once 20 are loaded and more still exist on the
+  // server, real page controls take over instead (see the render below).
+  function showMore() {
+    load(buildParams(invoices.length, COMPACT_MAX - invoices.length), true)
+  }
+
+  // Real server-paged navigation — REPLACES the loaded set (append=false),
+  // unlike showMore above. Reachable once total exceeds COMPACT_MAX.
+  function goToPage(n) {
+    setViewMode('paged')
+    setPage(n)
+    load(buildParams((n - 1) * PAGE_SIZE, PAGE_SIZE))
+  }
+
+  // Collapses back to the first COMPACT_INITIAL, from either compact/20
+  // or any page of paged mode — a real fresh fetch, not a client-side
+  // slice, since paged mode's current page may not even include the
+  // true first COMPACT_INITIAL invoices.
+  function showFewer() {
+    setViewMode('compact')
+    setPage(1)
+    load(buildParams(0, COMPACT_INITIAL))
+  }
+
+  // Re-fetches whatever's currently visible, in place — a real page stays
+  // on that same page (paged mode); compact mode keeps its current 10-or-
+  // 20 count rather than silently collapsing back to 10 after an edit.
+  // Shared by refreshAfterChange (below) and the error banner's Retry.
+  function reloadCurrentView() {
+    if (viewMode === 'paged') {
+      load(buildParams((page - 1) * PAGE_SIZE, PAGE_SIZE))
+    } else {
+      const count = invoices.length > COMPACT_INITIAL ? COMPACT_MAX : COMPACT_INITIAL
+      load(buildParams(0, count))
+    }
   }
 
   function refreshAfterChange() {
-    load(buildParams(0))
+    reloadCurrentView()
     api.get('/invoices/summary/').then(({ data }) => setSummary(data)).catch(() => {})
-    if (agingOpen) loadAging()
-  }
-
-  function toggleAging() {
-    setAgingOpen((v) => !v)
-    if (!aging && !agingOpen) loadAging()
-  }
-
-  async function loadAging() {
-    setAgingLoading(true)
-    try {
-      const { data } = await api.get('/invoices/aging-report/')
-      setAging(data)
-    } catch {
-      setAging(null)
-    } finally {
-      setAgingLoading(false)
-    }
   }
 
   // A draft is still being built, so it opens in the same guided wizard a
@@ -317,24 +354,6 @@ export default function Invoices() {
       {/* ── Dashboard KPI strip ── */}
       <SummaryStrip summary={summary} />
 
-      {/* ── AR Aging report — collapsible ── */}
-      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', marginBottom: 20, overflow: 'hidden' }}>
-        <button
-          onClick={toggleAging}
-          style={{ width: '100%', padding: '12px 16px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--text-primary)' }}
-        >
-          <span style={{ fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Layers size={15} /> Accounts Receivable Aging
-          </span>
-          {agingOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-        </button>
-        {agingOpen && (
-          <div style={{ padding: '0 16px 16px' }}>
-            <AgingReport data={aging} loading={agingLoading} />
-          </div>
-        )}
-      </div>
-
       {/* ── Search ── */}
       <div style={{ position: 'relative', marginBottom: 14 }}>
         <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
@@ -436,7 +455,7 @@ export default function Invoices() {
         <div style={{ padding: 32, textAlign: 'center' }}>
           <FosAlert type="error" style={{ display: 'inline-flex', marginBottom: 12 }}>{error}</FosAlert>
           <br />
-          <button className="fos-btn fos-btn-ghost" onClick={() => load(buildParams(0))}>Retry</button>
+          <button className="fos-btn fos-btn-ghost" onClick={reloadCurrentView}>Retry</button>
         </div>
       )}
 
@@ -444,18 +463,27 @@ export default function Invoices() {
         <>
           {error && (
             <FosAlert type="error" style={{ marginBottom: 12 }}>
-              {error} <button className="fos-btn fos-btn-ghost" style={{ marginLeft: 8 }} onClick={() => load(buildParams(0))}>Retry</button>
+              {error} <button className="fos-btn fos-btn-ghost" style={{ marginLeft: 8 }} onClick={reloadCurrentView}>Retry</button>
             </FosAlert>
           )}
 
           {/* Honest, not silent: a client-side status/overdue filter only
-              searches what's already loaded — if there's more on the
-              server than what's been fetched so far, say so rather than
-              quietly under-reporting matches. */}
-          {(statusFilter || overdueOnly) && invoices.length < total && (
-            <FosAlert type="info" style={{ marginBottom: 12 }}>
-              Searching the {invoices.length} most recently loaded invoices (of {total} total) — Load More below to search further back.
-            </FosAlert>
+              searches what's already loaded — compact mode, that's
+              whatever's been fetched so far; paged mode, that's only the
+              CURRENT page's PAGE_SIZE invoices, not the whole list. Say so
+              rather than quietly under-reporting matches either way. */}
+          {(statusFilter || overdueOnly) && (
+            viewMode === 'paged'
+              ? invoices.length < total && (
+                <FosAlert type="info" style={{ marginBottom: 12 }}>
+                  Searching only this page's {invoices.length} invoices (of {total} total) — switch pages below to search further.
+                </FosAlert>
+              )
+              : invoices.length < total && (
+                <FosAlert type="info" style={{ marginBottom: 12 }}>
+                  Searching the {invoices.length} most recently loaded invoices (of {total} total) — Show More below to search further back.
+                </FosAlert>
+              )
           )}
 
           {visibleInvoices.length === 0 ? (
@@ -473,14 +501,11 @@ export default function Invoices() {
             </div>
           )}
 
-          {invoices.length < total && (
-            <div style={{ textAlign: 'center', marginTop: 20 }}>
-              <button className="fos-btn fos-btn-ghost" onClick={loadMore} disabled={loadingMore || loading}>
-                {loadingMore ? <span className="fos-spinner" /> : null}
-                {loadingMore ? 'Loading…' : `Load More (${invoices.length} of ${total})`}
-              </button>
-            </div>
-          )}
+          <PaginationControls
+            viewMode={viewMode} page={page} total={total} invoicesLength={invoices.length}
+            loading={loading} loadingMore={loadingMore}
+            onShowMore={showMore} onGoToPage={goToPage} onShowFewer={showFewer}
+          />
         </>
       )}
 
@@ -545,13 +570,15 @@ export default function Invoices() {
 }
 
 // ── SummaryStrip ──────────────────────────────────────────────────
-// Deliberately no currency symbol: invoice_summary sums raw totals across
-// every invoice's own currency with no conversion and returns no currency
-// field at all (verified directly against apps/invoices/views.py) — see
-// formatAggregate's own docstring in invoiceHelpers.js.
+// REVERSAL + real bug fix this pass (items 1/12, see DECISIONS.md):
+// Outstanding/Past-Due no longer gate on sent_via_platform, and every
+// figure is now a real anchor-currency-unified total in the freelancer's
+// own FreelancerProfile.default_currency (summary.currency) — never a
+// raw cross-currency sum. formatAggregate now takes that real currency
+// label instead of rendering a bare, unlabeled number.
 function SummaryStrip({ summary }) {
   const cards = [
-    { label: 'Outstanding', data: summary?.outstanding, hint: 'sent_via_platform invoices — always zero until Step 10 (/send/) exists', statusKey: 'amber' },
+    { label: 'Outstanding', data: summary?.outstanding, hint: 'Sent, viewed, or partially paid — not yet resolved', statusKey: 'amber' },
     { label: 'Total Paid', data: summary?.total_paid, hint: 'All-time, net of refunds', statusKey: 'green' },
     { label: 'Past-Due', data: summary?.past_due, hint: 'Outstanding + overdue', statusKey: 'red' },
   ]
@@ -564,9 +591,12 @@ function SummaryStrip({ summary }) {
             {summary ? (
               <>
                 <p className="kpi-card-value" style={{ margin: '5px 0 2px', fontSize: '1.3rem', fontWeight: 800, color: `var(--status-${c.statusKey}-text)`, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-                  {formatAggregate(c.data?.total)}
+                  {formatAggregate(c.data?.total, summary?.currency)}
                 </p>
-                <p className="kpi-card-count" style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>{c.data?.count ?? 0} invoice{c.data?.count !== 1 ? 's' : ''}</p>
+                <p className="kpi-card-count" style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
+                  {c.data?.count ?? 0} invoice{c.data?.count !== 1 ? 's' : ''}
+                  {c.data?.unconverted_count > 0 && ` · ${c.data.unconverted_count} excluded (no exchange rate)`}
+                </p>
               </>
             ) : (
               <div style={{ height: 34, marginTop: 6, background: 'var(--bg-surface-3)', borderRadius: 'var(--radius-sm)', animation: 'skeleton-pulse 1.4s ease-in-out infinite' }} />
@@ -605,31 +635,42 @@ function SummaryStrip({ summary }) {
   )
 }
 
-// ── AgingReport ───────────────────────────────────────────────────
-const AGING_BUCKETS = [
-  { key: 'current', label: 'Current', statusKey: 'blue' },
-  { key: '1_30', label: '1-30 Days', statusKey: 'amber' },
-  { key: '31_60', label: '31-60 Days', statusKey: 'amber' },
-  { key: '61_90', label: '61-90 Days', statusKey: 'red' },
-  { key: 'over_90', label: '90+ Days', statusKey: 'red' },
-]
-function AgingReport({ data, loading }) {
-  if (loading || !data) {
-    return (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
-        {AGING_BUCKETS.map((b) => <div key={b.key} style={{ height: 64, background: 'var(--bg-surface-3)', borderRadius: 'var(--radius-md)', animation: 'skeleton-pulse 1.4s ease-in-out infinite' }} />)}
-      </div>
-    )
-  }
+// ── PaginationControls ──────────────────────────────────────────────
+// Item 5 of the verification pass. Three states, each visible only when
+// actually reachable:
+//   1. compact, < COMPACT_MAX loaded, more exist -> "Show More".
+//   2. compact at COMPACT_MAX with more beyond it, OR already paged ->
+//      real Prev/Next + "Page X of Y (total)".
+//   3. more than COMPACT_INITIAL currently shown (either state above) ->
+//      "Show fewer", always available to collapse back down.
+function PaginationControls({ viewMode, page, total, invoicesLength, loading, loadingMore, onShowMore, onGoToPage, onShowFewer }) {
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const showShowMore = viewMode === 'compact' && invoicesLength < Math.min(total, COMPACT_MAX)
+  const showPager = (viewMode === 'compact' && invoicesLength >= COMPACT_MAX && total > COMPACT_MAX) || viewMode === 'paged'
+  const showShowFewer = invoicesLength > COMPACT_INITIAL || viewMode === 'paged'
+
+  if (!showShowMore && !showPager && !showShowFewer) return null
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
-      {AGING_BUCKETS.map((b) => (
-        <div key={b.key} style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>
-          <p style={{ margin: 0, fontSize: '0.66rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{b.label}</p>
-          <p style={{ margin: '4px 0 2px', fontSize: '1.05rem', fontWeight: 800, color: `var(--status-${b.statusKey}-text)`, fontVariantNumeric: 'tabular-nums' }}>{formatAggregate(data[b.key]?.total)}</p>
-          <p style={{ margin: 0, fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>{data[b.key]?.count ?? 0} invoice{data[b.key]?.count !== 1 ? 's' : ''}</p>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, marginTop: 20 }}>
+      {showShowMore && (
+        <button className="fos-btn fos-btn-ghost" onClick={onShowMore} disabled={loadingMore || loading}>
+          {loadingMore ? <span className="fos-spinner" /> : null}
+          {loadingMore ? 'Loading…' : `Show More (${invoicesLength} of ${total})`}
+        </button>
+      )}
+
+      {showPager && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button className="fos-btn fos-btn-ghost" disabled={loading || page <= 1} onClick={() => onGoToPage(page - 1)}>Prev</button>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>Page {page} of {totalPages} ({total} total)</span>
+          <button className="fos-btn fos-btn-ghost" disabled={loading || page >= totalPages} onClick={() => onGoToPage(page + 1)}>Next</button>
         </div>
-      ))}
+      )}
+
+      {showShowFewer && (
+        <button className="fos-btn fos-btn-ghost" onClick={onShowFewer} disabled={loading}>Show fewer</button>
+      )}
     </div>
   )
 }

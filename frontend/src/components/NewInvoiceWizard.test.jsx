@@ -42,9 +42,16 @@ afterEach(() => {
 // FormField renders required labels as "<label>{label}<span>*</span></label>",
 // so the accessible name includes a trailing "*" for every required field
 // (Client Name, Client Email, Description) — match with a prefix regex.
+//
+// due_date is now required (item 6 of the verification pass) — filled
+// here alongside client fields since both live on stage 1, the crossing
+// point every test that ever needs to reach stage 3's Finalise button
+// already calls this through. A fixed future date, always safely after
+// issue_date's own "today" default regardless of when this test runs.
 function fillClient(name = 'Wizard Test Client', email = 'wizardtest@example.com') {
   fireEvent.change(screen.getByLabelText(/^client name/i), { target: { value: name } })
   fireEvent.change(screen.getByLabelText(/^client email/i), { target: { value: email } })
+  fireEvent.change(screen.getByLabelText(/^due date/i), { target: { value: '2099-01-01' } })
 }
 
 describe('NewInvoiceWizard — delayed record creation threshold', () => {
@@ -260,6 +267,40 @@ describe('NewInvoiceWizard — Finalise unreachable with incomplete data; Mark-a
     expect(screen.getByRole('button', { name: /^finalise$/i }).disabled).toBe(false)
   })
 
+  it('Finalise stays disabled with a client and item but no due date (item 6 of the verification pass)', async () => {
+    mock.onPost('/invoices/').reply(201, { id: 'inv-6b' })
+    render(<NewInvoiceWizard onClose={vi.fn()} onFinalised={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText(/^client name/i), { target: { value: 'No Due Date Co' } })
+    fireEvent.change(screen.getByLabelText(/^client email/i), { target: { value: 'nodue@example.com' } })
+    // Due date deliberately left blank — no fillClient() helper here.
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => expect(screen.getByLabelText(/^description/i)).toBeTruthy())
+    fireEvent.change(screen.getByLabelText(/^description/i), { target: { value: 'Real work' } })
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^finalise$/i })).toBeTruthy())
+    expect(screen.getByRole('button', { name: /^finalise$/i }).disabled).toBe(true)
+  })
+
+  it('Finalise stays disabled with a due date on or before the issue date', async () => {
+    mock.onPost('/invoices/').reply(201, { id: 'inv-6c' })
+    render(<NewInvoiceWizard onClose={vi.fn()} onFinalised={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText(/^client name/i), { target: { value: 'Bad Date Co' } })
+    fireEvent.change(screen.getByLabelText(/^client email/i), { target: { value: 'baddate@example.com' } })
+    const issueDate = screen.getByLabelText(/^issue date/i).value
+    fireEvent.change(screen.getByLabelText(/^due date/i), { target: { value: issueDate } })
+    expect(screen.getByText(/due date must be after the issue date/i)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => expect(screen.getByLabelText(/^description/i)).toBeTruthy())
+    fireEvent.change(screen.getByLabelText(/^description/i), { target: { value: 'Real work' } })
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^finalise$/i })).toBeTruthy())
+    expect(screen.getByRole('button', { name: /^finalise$/i }).disabled).toBe(true)
+  })
+
   it('navigating back to stage 1 and away from a valid client re-disables Finalise', async () => {
     mock.onPost('/invoices/').reply(201, { id: 'inv-7' })
     mock.onPut(/\/invoices\/inv-7\//).reply(200, { id: 'inv-7' })
@@ -415,7 +456,16 @@ describe('NewInvoiceWizard — reminders default: ON in the wizard, forced off a
     expect(body.reminders_enabled).toBe(true)
   })
 
-  it('the reminders toggle is visibly checked by default on stage 3', async () => {
+  // REVERSAL (item 9 of the verification pass — see DECISIONS.md): the
+  // stage-3 "Reminders enabled" toggle was removed from the wizard
+  // entirely. It was genuinely inert either way — standalone Finalise
+  // always forces reminders_enabled to False regardless of what this
+  // form held (FinaliseTests, apps/invoices/tests/test_views.py), and
+  // Finalise & Send has its own dedicated confirm-step checkbox
+  // (FinaliseAndSendModal, covered by this file's own "Finalise & Send"
+  // describe block above). The two tests this replaces exercised that
+  // now-removed control directly; this confirms it's actually gone.
+  it('the reminders toggle does not render anywhere in the wizard, including stage 3', async () => {
     mock.onPost('/invoices/').reply(201, { id: 'inv-9b' })
     render(<NewInvoiceWizard onClose={vi.fn()} onFinalised={vi.fn()} />)
 
@@ -425,37 +475,8 @@ describe('NewInvoiceWizard — reminders default: ON in the wizard, forced off a
     fireEvent.change(screen.getByLabelText(/^description/i), { target: { value: 'Work' } })
     fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
 
-    await waitFor(() => expect(screen.getByText(/reminders enabled/i)).toBeTruthy())
-    const toggle = screen.getByText(/reminders enabled/i).closest('label').querySelector('input[type="checkbox"]')
-    expect(toggle.checked).toBe(true)
-  })
-
-  it('respects an explicit user choice to turn reminders off before crossing the threshold', async () => {
-    mock.onPost('/invoices/').reply(201, { id: 'inv-9c' })
-    mock.onPut(/\/invoices\/inv-9c\//).reply(200, { id: 'inv-9c' })
-    mock.onPost('/invoices/inv-9c/finalise/').reply(200, { id: 'inv-9c' })
-    render(<NewInvoiceWizard onClose={vi.fn()} onFinalised={vi.fn()} />)
-
-    fillClient()
-    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
-    await waitFor(() => expect(screen.getByLabelText(/^description/i)).toBeTruthy())
-    fireEvent.change(screen.getByLabelText(/^description/i), { target: { value: 'Work' } })
-    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
-    await waitFor(() => expect(screen.getByText(/reminders enabled/i)).toBeTruthy())
-
-    const toggle = screen.getByText(/reminders enabled/i).closest('label').querySelector('input[type="checkbox"]')
-    fireEvent.click(toggle) // explicit user choice: turn it off
-
-    fireEvent.click(screen.getByRole('button', { name: /^finalise$/i }))
-    await waitFor(() => expect(mock.history.post.some((r) => r.url === '/invoices/inv-9c/finalise/')).toBe(true))
-
-    // The explicit off-choice must have been autosaved (flushPendingSave,
-    // called before the finalise POST) — the most recent PUT to the
-    // invoice must carry it.
-    const puts = mock.history.put.filter((r) => r.url === '/invoices/inv-9c/')
-    expect(puts.length).toBeGreaterThan(0)
-    const lastPut = JSON.parse(puts[puts.length - 1].data)
-    expect(lastPut.reminders_enabled).toBe(false)
+    await waitFor(() => expect(screen.getByText(/late fee/i)).toBeTruthy())
+    expect(screen.queryByText(/^reminders enabled$/i)).toBeNull()
   })
 })
 

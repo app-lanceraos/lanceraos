@@ -34,7 +34,8 @@ const SAMPLE_RESPONSE = {
   ],
   currency_breakdown: {
     by_currency: { USD: { count: 2, total: '1500.00' }, PKR: { count: 1, total: '28000.00' } },
-    unified_total_usd: '1600.80',
+    currency: 'USD',
+    unified_total: '1600.80',
     unconverted_count: 0,
   },
 }
@@ -52,13 +53,23 @@ describe('InvoiceAnalytics', () => {
     expect(req.url).toContain('months=6')
   })
 
-  it('shows the unified USD total and per-currency rows', async () => {
+  it('shows the unified total in the freelancer\'s own currency and per-currency rows', async () => {
     mock.onGet(/\/invoices\/analytics\//).reply(200, SAMPLE_RESPONSE)
     renderPage()
 
     await waitFor(() => expect(screen.getByText(/USD 1,601/)).toBeTruthy())
     expect(screen.getByText('USD')).toBeTruthy()
     expect(screen.getByText('PKR')).toBeTruthy()
+  })
+
+  it('labels the unified total with whatever currency the backend reports, not a hardcoded USD', async () => {
+    mock.onGet(/\/invoices\/analytics\//).reply(200, {
+      ...SAMPLE_RESPONSE,
+      currency_breakdown: { ...SAMPLE_RESPONSE.currency_breakdown, currency: 'PKR', unified_total: '444444.00' },
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/Unified Total \(PKR\)/)).toBeTruthy())
+    expect(screen.getByText(/PKR 444,444/)).toBeTruthy()
   })
 
   it('switching the month window re-fetches with the new value', async () => {
@@ -73,7 +84,7 @@ describe('InvoiceAnalytics', () => {
   it('shows an empty state when there is no client revenue yet', async () => {
     mock.onGet(/\/invoices\/analytics\//).reply(200, {
       monthly_trend: [], top_clients: [],
-      currency_breakdown: { by_currency: {}, unified_total_usd: '0.00', unconverted_count: 0 },
+      currency_breakdown: { by_currency: {}, currency: 'USD', unified_total: '0.00', unconverted_count: 0 },
     })
     renderPage()
     await waitFor(() => expect(screen.getByText(/no client revenue recorded yet/i)).toBeTruthy())

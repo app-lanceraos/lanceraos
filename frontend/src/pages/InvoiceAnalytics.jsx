@@ -213,11 +213,15 @@ function CurrencyBreakdown({ breakdown }) {
         ))}
       </div>
       <div style={{ padding: '12px 14px', background: 'var(--bg-surface-2)', borderRadius: 'var(--radius-md)' }}>
+        {/* Real fix (item 13 of the verification pass): this used to be
+            hardcoded to USD regardless of the freelancer's own
+            FreelancerProfile.default_currency setting — now follows
+            breakdown.currency, the real value the backend unifies into. */}
         <p style={{ margin: '0 0 2px', fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Unified Total (USD)
+          Unified Total ({breakdown.currency})
         </p>
         <p style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-          {formatMoney(breakdown.unified_total_usd, 'USD')}
+          {formatMoney(breakdown.unified_total, breakdown.currency)}
         </p>
         {breakdown.unconverted_count > 0 && (
           <p style={{ margin: '4px 0 0', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>

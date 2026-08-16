@@ -345,3 +345,99 @@ describe('Invoices — honest "not all loaded" notice when filtering an incomple
     expect(screen.queryByText(/most recently loaded/i)).toBeNull()
   })
 })
+
+// Item 5 of the verification pass: 10 most recent by default, Show More
+// to 20 (client-side append), real server-paged navigation beyond that,
+// Show fewer collapses back to 10.
+describe('Invoices — tiered pagination', () => {
+  function makeInvoices(count, prefix = 'INV') {
+    return Array.from({ length: count }, (_, i) => invoiceFixture({ id: `${prefix}-${i}`, invoice_number: `${prefix}-${i}` }))
+  }
+
+  it('requests exactly 10 on the initial load', async () => {
+    mock.onGet('/invoices/').reply(200, { results: makeInvoices(10), total: 10 })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('INV-0')).toBeTruthy())
+
+    const req = mock.history.get.find((r) => r.url === '/invoices/')
+    expect(req.params.limit).toBe(10)
+    expect(req.params.offset).toBe(0)
+    expect(screen.queryByText(/show more/i)).toBeNull() // exactly 10 total — nothing more to show
+  })
+
+  it('Show More appends 10 more (up to 20), client-side — never a full reload', async () => {
+    mock.onGet('/invoices/').replyOnce(200, { results: makeInvoices(10), total: 35 })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('INV-0')).toBeTruthy())
+
+    mock.onGet('/invoices/').replyOnce(200, { results: makeInvoices(10, 'MORE'), total: 35 })
+    fireEvent.click(screen.getByRole('button', { name: /show more/i }))
+
+    await waitFor(() => expect(screen.getByText('MORE-0')).toBeTruthy())
+    expect(screen.getByText('INV-0')).toBeTruthy() // the original 10 are still there — appended, not replaced
+    const secondReq = mock.history.get.filter((r) => r.url === '/invoices/')[1]
+    expect(secondReq.params.limit).toBe(10)
+    expect(secondReq.params.offset).toBe(10)
+  })
+
+  it('switches to real page controls once 20 are loaded and more exist beyond that', async () => {
+    mock.onGet('/invoices/').replyOnce(200, { results: makeInvoices(10), total: 35 })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('INV-0')).toBeTruthy())
+
+    mock.onGet('/invoices/').replyOnce(200, { results: makeInvoices(10, 'MORE'), total: 35 })
+    fireEvent.click(screen.getByRole('button', { name: /show more/i }))
+    await waitFor(() => expect(screen.getByText('MORE-0')).toBeTruthy())
+
+    expect(screen.getByText(/page 1 of 2 \(35 total\)/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /show more/i })).toBeNull()
+  })
+
+  it('Next fetches a real, fresh page — REPLACING the loaded set, not appending', async () => {
+    mock.onGet('/invoices/').replyOnce(200, { results: makeInvoices(20), total: 45 })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('INV-0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/page 1 of 3/i)).toBeTruthy())
+
+    mock.onGet('/invoices/').replyOnce(200, { results: makeInvoices(20, 'PAGE2'), total: 45 })
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+
+    await waitFor(() => expect(screen.getByText('PAGE2-0')).toBeTruthy())
+    expect(screen.queryByText('INV-0')).toBeNull() // replaced, not appended
+    const pageReq = mock.history.get.filter((r) => r.url === '/invoices/')[1]
+    expect(pageReq.params.limit).toBe(20)
+    expect(pageReq.params.offset).toBe(20)
+    expect(screen.getByText(/page 2 of 3/i)).toBeTruthy()
+  })
+
+  it('Show fewer collapses back to a fresh 10, from paged mode', async () => {
+    mock.onGet('/invoices/').replyOnce(200, { results: makeInvoices(20), total: 45 })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText(/page 1 of 3/i)).toBeTruthy())
+
+    mock.onGet('/invoices/').replyOnce(200, { results: makeInvoices(20, 'PAGE2'), total: 45 })
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => expect(screen.getByText('PAGE2-0')).toBeTruthy())
+
+    mock.onGet('/invoices/').replyOnce(200, { results: makeInvoices(10, 'FRESH'), total: 45 })
+    fireEvent.click(screen.getByRole('button', { name: /show fewer/i }))
+
+    await waitFor(() => expect(screen.getByText('FRESH-0')).toBeTruthy())
+    expect(screen.queryByText('PAGE2-0')).toBeNull()
+    const collapseReq = mock.history.get.filter((r) => r.url === '/invoices/').pop()
+    expect(collapseReq.params.limit).toBe(10)
+    expect(collapseReq.params.offset).toBe(0)
+    expect(screen.queryByRole('button', { name: /show fewer/i })).toBeNull() // back to exactly 10 — nothing left to collapse
+  })
+
+  it('a status pill click never triggers a network call, at any pagination depth', async () => {
+    mock.onGet('/invoices/').reply(200, { results: makeInvoices(10), total: 10 })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('INV-0')).toBeTruthy())
+
+    const countBefore = mock.history.get.length
+    fireEvent.click(screen.getByRole('button', { name: /^draft$/i }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mock.history.get.length).toBe(countBefore) // pure client-side filter, no request at all
+  })
+})

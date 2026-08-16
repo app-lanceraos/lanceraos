@@ -434,3 +434,49 @@ def notify_stale_drafts():
 
     logger.info('[INVOICES] notify_stale_drafts: notified %d user(s).', notified_count)
     return {'notified': notified_count}
+
+
+# ══════════════════════════════════════════════════════════════════
+# ASYNC PDF RENDER+STORE — item 15 of the verification pass. Real,
+# profiled fix, not a guess: Finalise/Finalise & Send were slow even on
+# localhost because _finalise_invoice (apps/invoices/views.py) ran
+# WeasyPrint's render (~1-1.5s locally, ~6s against the real dev
+# Cloudinary account per email_service.fetch_invoice_pdf_bytes' own
+# profiling note) AND the Cloudinary upload SYNCHRONOUSLY inside the
+# HTTP request before ever returning a response. Neither step needs to
+# block "you clicked Finalise" — fetch_invoice_pdf_bytes/invoice_pdf
+# already had a render-on-demand fallback for a missing pdf_url before
+# this change (built for the Cloudinary-ACL self-heal case), so a
+# request for the PDF that arrives before this task finishes just falls
+# back to rendering synchronously at that point instead — correctness
+# never depended on this task's timing, only speed did.
+# ══════════════════════════════════════════════════════════════════
+
+@shared_task(name='apps.invoices.tasks.render_and_store_invoice_pdf')
+def render_and_store_invoice_pdf(invoice_id):
+    """
+    Fired immediately after _finalise_invoice commits the draft->created
+    transition, instead of that function rendering+uploading inline.
+    Non-fatal by design, same as the synchronous version it replaces —
+    a WeasyPrint/Cloudinary hiccup must never be able to retry-loop this
+    task into repeatedly failing; invoice_pdf's own GET and
+    fetch_invoice_pdf_bytes' own self-heal chain both already treat a
+    blank pdf_url as "render live instead," not an error state.
+    """
+    from .pdf_generator import store_invoice_pdf
+
+    try:
+        invoice = Invoice.objects.get(pk=invoice_id)
+    except Invoice.DoesNotExist:
+        logger.warning('[INVOICES] render_and_store_invoice_pdf: invoice %s no longer exists.', invoice_id)
+        return
+
+    try:
+        pdf_result = store_invoice_pdf(invoice)
+        invoice.pdf_url = pdf_result['secure_url']
+        invoice.pdf_public_id = pdf_result['public_id']
+        invoice.pdf_generated_at = timezone.now()
+        invoice.save(update_fields=['pdf_url', 'pdf_public_id', 'pdf_generated_at'])
+        logger.info('[INVOICES] Background PDF render+store completed for invoice %s.', invoice.invoice_number)
+    except Exception:
+        logger.exception('[INVOICES] Background PDF render+store failed for invoice %s — pdf_url left blank, next fetch will render on demand.', invoice_id)

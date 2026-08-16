@@ -347,6 +347,79 @@ class FinaliseTests(InvoicesAPITestCase):
         self.assertTrue(resp.json()['reminders_enabled'])
 
 
+class DueDateValidationTests(InvoicesAPITestCase):
+    """
+    Item 6 of the verification pass: due_date is now REQUIRED to finalise
+    (server-side, mirrored client-side in NewInvoiceWizard.jsx's
+    hasValidDueDate), and must be strictly after issue_date whenever
+    either is actually being set — both validated here, not just assumed
+    from the frontend.
+    """
+    def test_finalise_rejects_missing_due_date(self):
+        invoice = self._invoice(status='draft', invoice_number=None, due_date=None)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'draft')
+
+    def test_finalise_and_send_rejects_missing_due_date(self):
+        invoice = self._invoice(status='draft', invoice_number=None, due_date=None)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self._post(reverse('invoices:invoice_finalise_and_send', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_mark_sent_from_draft_rejects_missing_due_date(self):
+        invoice = self._invoice(status='draft', invoice_number=None, due_date=None)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self._post(reverse('invoices:invoice_mark_sent', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_finalise_succeeds_once_due_date_is_set(self):
+        invoice = self._invoice(status='draft', invoice_number=None, due_date=date(2027, 1, 1))
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+
+    def test_update_rejects_due_date_not_after_issue_date(self):
+        invoice = self._invoice(status='draft', issue_date=date(2027, 1, 15))
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-01-15'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('due_date', resp.json())
+
+    def test_update_rejects_due_date_before_issue_date(self):
+        invoice = self._invoice(status='draft', issue_date=date(2027, 1, 15))
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-01-01'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_update_accepts_due_date_strictly_after_issue_date(self):
+        invoice = self._invoice(status='draft', issue_date=date(2027, 1, 15))
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-01-16'})
+        self.assertEqual(resp.status_code, 200)
+
+    def test_update_can_set_issue_date_and_due_date_together(self):
+        invoice = self._invoice(status='draft')
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {
+            'issue_date': '2027-02-01', 'due_date': '2027-02-15',
+        })
+        self.assertEqual(resp.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.issue_date, date(2027, 2, 1))
+        self.assertEqual(invoice.due_date, date(2027, 2, 15))
+
+    def test_update_of_unrelated_field_does_not_re_validate_a_legacy_due_date(self):
+        """
+        A pre-existing invoice whose stored due_date/issue_date pair
+        predates this rule (or is simply stale relative to "today", since
+        issue_date has no stored history of its own) must stay editable
+        for every OTHER field without being blocked by a comparison
+        neither field of which this request even touches.
+        """
+        invoice = self._invoice(status='draft', issue_date=date(2027, 6, 1), due_date=date(2020, 1, 1))
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'notes': 'Updated notes'})
+        self.assertEqual(resp.status_code, 200)
+
+
 # ══════════════════════════════════════════════════════════════════
 # FINALISE & SEND — the combined action. reminders_enabled must NOT be
 # forced off here, unlike standalone Finalise (see FinaliseTests above).
@@ -374,17 +447,29 @@ class FinaliseAndSendTests(InvoicesAPITestCase):
         self.assertEqual(resp.status_code, 400)
 
     def test_combined_action_finalises_and_sends_in_one_call(self):
-        """Full flow: draft -> created -> sent, invoice_number assigned, PDF frozen, sent_via_platform set — all in one request."""
+        """
+        Full flow: draft -> created -> sent, invoice_number assigned, PDF
+        frozen, sent_via_platform set — all in one request.
+
+        PDF freezing (item 15 of the verification pass): _finalise_invoice
+        now fires the render+store as a BACKGROUND task rather than
+        blocking this request, so the in-memory `invoice` object
+        _send_invoice_now receives still has a blank pdf_url the moment
+        it runs — this is real, intended behavior for the combined
+        action specifically (it deliberately doesn't wait for the
+        background task), not a race to paper over. fetch_invoice_pdf_bytes'
+        own self-heal chain (render live, upload, retry) is what actually
+        produces the sent email's attachment and the final stored
+        pdf_url here — mocked at its own real call site
+        (email_service.upload_pdf_bytes), not pdf_generator.store_invoice_pdf.
+        """
         from unittest.mock import MagicMock, patch
         invoice = self._invoice(status='draft', invoice_number=None)
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
 
-        from apps.invoices.tests.test_send import _mock_pdf_fetch_response
-        with patch('apps.invoices.views.store_invoice_pdf') as mock_store, \
-             patch('apps.invoices.email_service.requests.get') as mock_get, \
+        with patch('apps.invoices.email_service.upload_pdf_bytes') as mock_upload, \
              patch('requests.post') as mock_post:
-            mock_store.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/combined.pdf', 'public_id': 'lanceraos/invoices/combined.pdf'}
-            mock_get.return_value = _mock_pdf_fetch_response()
+            mock_upload.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/combined.pdf', 'public_id': 'lanceraos/invoices/combined.pdf'}
             fake_resend = MagicMock(status_code=200, text='')
             fake_resend.json.return_value = {'id': 'x'}
             mock_post.return_value = fake_resend
@@ -402,6 +487,42 @@ class FinaliseAndSendTests(InvoicesAPITestCase):
         self.assertIsNotNone(invoice.sent_at)
         self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/combined.pdf')
 
+    def test_finalise_background_task_freezes_pdf_when_it_completes_before_send(self):
+        """
+        The other real timing case: when the background render+store DOES
+        complete before /send/'s own fetch runs (e.g. a slow human
+        clicking Send well after Finalise, or — as here — a fast local
+        Celery worker), the frozen pdf_url from the background task is
+        what actually gets used, and fetch_invoice_pdf_bytes never
+        touches the self-heal/live-render path at all.
+        """
+        from unittest.mock import patch
+        from apps.invoices.tests.test_send import _mock_pdf_fetch_response
+        invoice = self._invoice(status='draft', invoice_number=None)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+
+        with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
+            mock_store.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/already-frozen.pdf', 'public_id': 'lanceraos/invoices/already-frozen.pdf'}
+            resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/already-frozen.pdf')
+
+        with patch('apps.invoices.email_service.requests.get') as mock_get, \
+             patch('apps.invoices.email_service.render_invoice_pdf') as mock_render, \
+             patch('requests.post') as mock_post:
+            mock_get.return_value = _mock_pdf_fetch_response()
+            from unittest.mock import MagicMock
+            fake_resend = MagicMock(status_code=200, text='')
+            fake_resend.json.return_value = {'id': 'x'}
+            mock_post.return_value = fake_resend
+            resp = self._post(reverse('invoices:invoice_send', kwargs={'pk': invoice.pk}), {'confirm': True})
+
+        self.assertEqual(resp.status_code, 200)
+        mock_render.assert_not_called()  # the already-frozen pdf_url is used as-is, no live render needed
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/already-frozen.pdf')
+
     def test_combined_action_respects_current_reminders_toggle_not_forced_off(self):
         """
         The core item-6 distinction: standalone Finalise always forces
@@ -416,7 +537,7 @@ class FinaliseAndSendTests(InvoicesAPITestCase):
             with self.subTest(starting_value=starting_value):
                 invoice = self._invoice(status='draft', invoice_number=None, reminders_enabled=starting_value)
                 InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
-                with patch('apps.invoices.views.store_invoice_pdf') as mock_store, \
+                with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store, \
                      patch('apps.invoices.email_service.requests.get') as mock_get, \
                      patch('requests.post') as mock_post:
                     mock_store.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/x.pdf', 'public_id': 'lanceraos/invoices/x.pdf'}
@@ -444,7 +565,7 @@ class FinaliseAndSendTests(InvoicesAPITestCase):
         invoice = self._invoice(status='draft', invoice_number=None, reminders_enabled=True)
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
 
-        with patch('apps.invoices.views.store_invoice_pdf') as mock_store:
+        with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
             mock_store.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/y.pdf', 'public_id': 'lanceraos/invoices/y.pdf'}
             resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
         self.assertFalse(resp.json()['reminders_enabled'])  # forced off by the standalone finalise
@@ -905,57 +1026,61 @@ class TimelineTests(InvoicesAPITestCase):
 
 class DashboardSummaryRulesTests(InvoicesAPITestCase):
     """
-    One test per rule from the real decisions-document Section 6, supplied
-    explicitly in the Step 5 review — not the guessed, unconditional
-    version this endpoint originally shipped with.
+    REVERSAL (see DECISIONS.md): Outstanding/Past-Due no longer gate on
+    sent_via_platform at all — confirmed directly with the founder, a
+    real reversal of the earlier Section 6 rule, not a bug fix to it.
+    Every figure below is also unified into the freelancer's own
+    FreelancerProfile.default_currency (default 'USD' for these tests,
+    so single-currency USD fixtures below convert trivially) — see
+    MultiCurrencyKPITests for the real cross-currency coverage.
     """
     def _summary(self):
         return self._get(reverse('invoices:invoice_summary')).json()
 
-    # ── Outstanding: sent_via_platform=True AND status in ACTIVE_STATUSES ──
+    # ── Outstanding: status in ACTIVE_STATUSES, regardless of sent_via_platform ──
 
-    def test_outstanding_requires_sent_via_platform_true(self):
-        """The core correction: a sent-but-not-platform-sent invoice must NOT count."""
+    def test_outstanding_counts_manually_marked_sent_invoices_too(self):
+        """The core reversal: a sent-but-not-platform-sent invoice now DOES count."""
         self._invoice(status='sent', sent_via_platform=False, sent_at=timezone.now(), total=Decimal('100'))
-        self.assertEqual(self._summary()['outstanding']['count'], 0)
+        summary = self._summary()
+        self.assertEqual(summary['outstanding']['count'], 1)
+        self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('100'))
 
-    def test_outstanding_counts_sent_via_platform_true_invoices(self):
+    def test_outstanding_counts_platform_sent_invoices(self):
         self._invoice(status='sent', sent_via_platform=True, sent_at=timezone.now(), total=Decimal('100'))
         summary = self._summary()
         self.assertEqual(summary['outstanding']['count'], 1)
         self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('100'))
 
     def test_outstanding_counts_remaining_balance_not_full_total(self):
-        self._invoice(
-            status='partially_paid', sent_via_platform=True, total=Decimal('100'), amount_paid=Decimal('40'),
-        )
+        self._invoice(status='partially_paid', total=Decimal('100'), amount_paid=Decimal('40'))
         summary = self._summary()
         self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('60'))
 
     def test_outstanding_excludes_draft(self):
-        self._invoice(status='draft', sent_via_platform=True, total=Decimal('100'))
+        self._invoice(status='draft', total=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
     def test_outstanding_excludes_created(self):
-        self._invoice(status='created', sent_via_platform=True, total=Decimal('100'))
+        self._invoice(status='created', total=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
     def test_outstanding_excludes_paid(self):
-        self._invoice(status='paid', sent_via_platform=True, total=Decimal('100'), amount_paid=Decimal('100'))
+        self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
     def test_outstanding_excludes_cancelled(self):
-        """Cancelled has no remaining balance owed, even with sent_via_platform=True."""
-        self._invoice(status='cancelled', sent_via_platform=True, total=Decimal('100'))
+        """Cancelled has no remaining balance owed."""
+        self._invoice(status='cancelled', total=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
     def test_outstanding_excludes_bad_debt(self):
-        """Identical treatment to cancelled, per the restated rules."""
-        self._invoice(status='bad_debt', sent_via_platform=True, total=Decimal('100'))
+        """Identical treatment to cancelled."""
+        self._invoice(status='bad_debt', total=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
     def test_outstanding_excludes_refunded(self):
-        self._invoice(status='refunded', sent_via_platform=True, total=Decimal('100'), amount_paid=Decimal('100'))
+        self._invoice(status='refunded', total=Decimal('100'), amount_paid=Decimal('100'))
         self.assertEqual(self._summary()['outstanding']['count'], 0)
 
     # ── Total Paid: sum(amount_paid) all invoices (any sent_via_platform), minus sum(refunded_amount) ──
@@ -995,16 +1120,19 @@ class DashboardSummaryRulesTests(InvoicesAPITestCase):
         summary = self._summary()
         self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('120'))
 
-    # ── Past-Due Amount: same filter as Outstanding, further filtered to days_overdue > 0 ──
+    # ── Past-Due Amount: same new scope as Outstanding, further filtered to days_overdue > 0 ──
 
-    def test_past_due_requires_sent_via_platform_true(self):
+    def test_past_due_counts_manually_marked_sent_invoices_too(self):
+        """The core reversal, mirrored for Past-Due."""
         self._invoice(
             status='sent', sent_via_platform=False, sent_at=timezone.now(),
             due_date=date(2020, 1, 1), total=Decimal('100'),
         )
-        self.assertEqual(self._summary()['past_due']['count'], 0)
+        summary = self._summary()
+        self.assertEqual(summary['past_due']['count'], 1)
+        self.assertEqual(Decimal(summary['past_due']['total']), Decimal('100'))
 
-    def test_past_due_counts_sent_via_platform_true_and_overdue(self):
+    def test_past_due_counts_platform_sent_and_overdue(self):
         self._invoice(
             status='sent', sent_via_platform=True, sent_at=timezone.now(),
             due_date=date(2020, 1, 1), total=Decimal('100'),
@@ -1015,94 +1143,86 @@ class DashboardSummaryRulesTests(InvoicesAPITestCase):
 
     def test_past_due_excludes_not_yet_due(self):
         future = timezone.now().date() + timedelta(days=10)
-        self._invoice(status='sent', sent_via_platform=True, sent_at=timezone.now(), due_date=future, total=Decimal('100'))
+        self._invoice(status='sent', sent_at=timezone.now(), due_date=future, total=Decimal('100'))
         self.assertEqual(self._summary()['past_due']['count'], 0)
 
     def test_past_due_excludes_paid_even_with_a_past_due_date(self):
-        self._invoice(
-            status='paid', sent_via_platform=True, due_date=date(2020, 1, 1),
-            total=Decimal('100'), amount_paid=Decimal('100'),
-        )
+        self._invoice(status='paid', due_date=date(2020, 1, 1), total=Decimal('100'), amount_paid=Decimal('100'))
         self.assertEqual(self._summary()['past_due']['count'], 0)
+
+    def test_past_due_includes_partially_paid_overdue_invoice_at_remaining_balance(self):
+        """
+        Real, separately-reported bug (item 2 of the verification pass):
+        a partially-paid, overdue invoice (total 100, paid 50, remaining
+        50) was going missing from Past-Due entirely. Confirmed it was
+        never excluded by status (partially_paid was already in
+        ACTIVE_STATUSES) — only by the now-removed sent_via_platform
+        gate — and that the amount counted is the REMAINING balance, not
+        the invoice's full original total.
+        """
+        self._invoice(
+            status='partially_paid', due_date=date(2020, 1, 1), total=Decimal('100'), amount_paid=Decimal('50'),
+        )
+        summary = self._summary()
+        self.assertEqual(summary['past_due']['count'], 1)
+        self.assertEqual(Decimal(summary['past_due']['total']), Decimal('50'))
 
     # ── Draft/Created excluded from every figure, unconditionally ──
 
     def test_draft_excluded_from_every_figure(self):
-        self._invoice(status='draft', sent_via_platform=True, total=Decimal('100'), due_date=date(2020, 1, 1))
+        self._invoice(status='draft', total=Decimal('100'), due_date=date(2020, 1, 1))
         summary = self._summary()
         self.assertEqual(summary['outstanding']['count'], 0)
         self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('0'))
         self.assertEqual(summary['past_due']['count'], 0)
 
     def test_created_excluded_from_every_figure(self):
-        self._invoice(status='created', sent_via_platform=True, total=Decimal('100'), due_date=date(2020, 1, 1))
+        self._invoice(status='created', total=Decimal('100'), due_date=date(2020, 1, 1))
         summary = self._summary()
         self.assertEqual(summary['outstanding']['count'], 0)
         self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('0'))
         self.assertEqual(summary['past_due']['count'], 0)
 
 
-# ══════════════════════════════════════════════════════════════════
-# AGING REPORT — boundary-day tests
-# ══════════════════════════════════════════════════════════════════
+class MultiCurrencyKPITests(InvoicesAPITestCase):
+    """
+    Real, confirmed bug (item 12): invoice_summary used to sum raw
+    Decimal totals across mixed currencies (e.g. $64 + Rs.100 showing as
+    "164"). Now every figure is unified into the freelancer's own
+    FreelancerProfile.default_currency via the shared
+    _unify_amounts_to_currency utility.
+    """
+    def _summary(self):
+        return self._get(reverse('invoices:invoice_summary')).json()
 
-class AgingReportTests(InvoicesAPITestCase):
-    def _report(self):
-        return self._get(reverse('invoices:invoice_aging_report')).json()
+    def test_outstanding_unifies_mixed_currencies_into_default_currency(self):
+        # Default currency for a freshly-created FreelancerProfile is USD.
+        self._invoice(status='sent', sent_at=timezone.now(), currency='USD', total=Decimal('100'), rate_to_usd_at_issue=Decimal('1'))
+        self._invoice(status='sent', sent_at=timezone.now(), currency='PKR', total=Decimal('28000'), rate_to_usd_at_issue=Decimal('0.0036'))
+        summary = self._summary()
+        self.assertEqual(summary['currency'], 'USD')
+        # 100 + (28000 * 0.0036) = 100 + 100.80 = 200.80 — never the raw "28100".
+        self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('200.80'))
+        self.assertEqual(summary['outstanding']['unconverted_count'], 0)
 
-    def _overdue_invoice(self, days_overdue, total=Decimal('100')):
-        due_date = timezone.now().date() - timedelta(days=days_overdue)
-        return self._invoice(status='sent', sent_at=timezone.now(), due_date=due_date, total=total)
+    def test_unconvertible_invoice_surfaced_not_silently_included(self):
+        self._invoice(status='sent', sent_at=timezone.now(), currency='EUR', total=Decimal('50'), rate_to_usd_at_issue=None)
+        summary = self._summary()
+        self.assertEqual(summary['outstanding']['unconverted_count'], 1)
+        self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('0'))
 
-    def test_not_yet_due_is_current(self):
-        self._overdue_invoice(-5)
-        self.assertEqual(self._report()['current']['count'], 1)
-
-    def test_exactly_zero_days_is_current(self):
-        self._overdue_invoice(0)
-        self.assertEqual(self._report()['current']['count'], 1)
-
-    def test_one_day_overdue_is_1_30_bucket(self):
-        self._overdue_invoice(1)
-        self.assertEqual(self._report()['1_30']['count'], 1)
-
-    def test_exactly_30_days_is_1_30_bucket(self):
-        self._overdue_invoice(30)
-        self.assertEqual(self._report()['1_30']['count'], 1)
-
-    def test_exactly_31_days_is_31_60_bucket(self):
-        self._overdue_invoice(31)
-        self.assertEqual(self._report()['31_60']['count'], 1)
-
-    def test_exactly_60_days_is_31_60_bucket(self):
-        self._overdue_invoice(60)
-        self.assertEqual(self._report()['31_60']['count'], 1)
-
-    def test_exactly_61_days_is_61_90_bucket(self):
-        self._overdue_invoice(61)
-        self.assertEqual(self._report()['61_90']['count'], 1)
-
-    def test_exactly_90_days_is_61_90_bucket(self):
-        self._overdue_invoice(90)
-        self.assertEqual(self._report()['61_90']['count'], 1)
-
-    def test_exactly_91_days_is_over_90_bucket(self):
-        self._overdue_invoice(91)
-        self.assertEqual(self._report()['over_90']['count'], 1)
-
-    def test_draft_excluded_entirely_from_aging_report(self):
-        self._invoice(status='draft', due_date=date(2020, 1, 1))
-        report = self._report()
-        total_count = sum(bucket['count'] for bucket in report.values())
-        self.assertEqual(total_count, 0)
-
-    def test_bucket_totals_use_outstanding_amount_not_full_total(self):
-        invoice = self._overdue_invoice(1, total=Decimal('100'))
-        invoice.amount_paid = Decimal('30')
-        invoice.status = 'partially_paid'
-        invoice.save()
-        report = self._report()
-        self.assertEqual(Decimal(report['1_30']['total']), Decimal('70'))
+    def test_summary_respects_freelancer_default_currency_setting(self):
+        from apps.payments.models import ExchangeRateSnapshot
+        ExchangeRateSnapshot.objects.create(
+            date=date.today(), rates_to_usd={'USD': 1.0, 'PKR': 0.0036}, source='test', fetched_at=timezone.now(),
+        )
+        self.user.profile.default_currency = 'PKR'
+        self.user.profile.save(update_fields=['default_currency'])
+        self._invoice(status='sent', sent_at=timezone.now(), currency='USD', total=Decimal('100'), rate_to_usd_at_issue=Decimal('1'))
+        summary = self._summary()
+        self.assertEqual(summary['currency'], 'PKR')
+        # 100 USD / 0.0036 PKR-per-USD ≈ 27777.78
+        self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('27777.78'))
 
 
 # ══════════════════════════════════════════════════════════════════

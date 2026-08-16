@@ -6,6 +6,7 @@
 // they're generic, not client-specific in shape.
 
 export { formatMoney, STATUS_BADGE_STYLE, STATUS_BADGE_OUTLINE_STYLE, statusBadgeStyle, badgeBaseStyle, CURRENCY_OPTIONS } from './clientHelpers'
+import { formatMoney } from './clientHelpers'
 
 // Invoice.STATUS_CHOICES (apps/invoices/models.py) mapped to DESIGN.md's
 // real 5-color status token set (Section 2.5/7) — no new hex values
@@ -85,16 +86,15 @@ export const RECURRING_INTERVAL_OPTIONS = [
   { value: 365, label: 'Annually' },
 ]
 
-// Formats a plain aggregate number with no currency symbol — invoice_summary
-// and invoice_aging_report sum raw Decimal totals across every invoice's own
-// currency with no conversion (verified directly against apps/invoices/views.py:
-// neither endpoint's response includes a currency field at all). Prefixing a
-// single currency symbol on a possibly-multi-currency sum would misrepresent
-// the number, so this deliberately renders it bare rather than reusing
-// formatMoney with an assumed currency.
-export function formatAggregate(amount) {
-  const value = Number(amount || 0)
-  return value.toLocaleString('en', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+// Real, confirmed bug fix (item 12 of the verification pass): invoice_summary
+// used to sum raw Decimals across every invoice's own currency with no
+// conversion at all (e.g. $64 + Rs.100 showing as "164"). It now returns one
+// real figure already unified into the freelancer's own
+// FreelancerProfile.default_currency (core.money.Money, server-side), plus a
+// `currency` field alongside it — so this formats that unified figure WITH
+// its real currency label, not a bare number pretending not to have one.
+export function formatAggregate(amount, currency) {
+  return formatMoney(amount, currency)
 }
 
 export function daysOverdueLabel(days) {
@@ -127,6 +127,14 @@ export function daysSince(isoTimestamp) {
 // transforms, no component behavior at all.
 const BLANK_ITEM = { description: '', quantity: '1', unit_price: '' }
 
+// Today, local-timezone, YYYY-MM-DD — matches Invoice.issue_date's own
+// default (apps/invoices/models.py's _today(), not timezone.now(), per
+// that field's own comment) and what a bare `<input type="date">` expects.
+function todayIso() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export function blankInvoiceForm() {
   return {
     client: null,
@@ -134,6 +142,7 @@ export function blankInvoiceForm() {
     client_name: '', client_email: '', client_company: '', client_address: '', client_phone: '',
     currency: 'USD',
     tax_rate: '0', discount_amount: '0',
+    issue_date: todayIso(),
     due_date: '',
     notes: '', terms: '',
     // Reverted back to `true` — this is a real, deliberate lifecycle rule
@@ -167,6 +176,7 @@ export function invoiceToForm(invoice) {
     client_phone: invoice.client_phone || '',
     currency: invoice.currency || 'USD',
     tax_rate: String(invoice.tax_rate ?? '0'), discount_amount: String(invoice.discount_amount ?? '0'),
+    issue_date: invoice.issue_date || todayIso(),
     due_date: invoice.due_date || '',
     notes: invoice.notes || '', terms: invoice.terms || '',
     reminders_enabled: invoice.reminders_enabled ?? false,
@@ -188,6 +198,7 @@ export function formToPayload(form) {
     currency: form.currency,
     tax_rate: parseFloat(form.tax_rate) || 0,
     discount_amount: parseFloat(form.discount_amount) || 0,
+    issue_date: form.issue_date || null,
     due_date: form.due_date || null,
     notes: form.notes, terms: form.terms,
     reminders_enabled: form.reminders_enabled,

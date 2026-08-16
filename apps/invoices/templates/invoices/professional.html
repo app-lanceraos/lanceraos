@@ -254,8 +254,8 @@
     align-items: flex-end;
     margin-top: 18mm;
   }
-  .sign-block { width: 55mm; }
-  .sign-block img { height: 14mm; margin-bottom: 1mm; }
+  .sign-block { width: 55mm; text-align: right; }
+  .sign-block img.sig { height: 14mm; margin-bottom: 1mm; }
   .sign-block .line {
     border-top: 0.3mm solid #1a2b42;
     padding-top: 2.5mm;
@@ -351,7 +351,7 @@
 
   <div class="totals">
     <div class="row"><span>Subtotal</span><span>{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</span></div>
-    <div class="row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>
+    {% if invoice.tax_rate %}<div class="row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>{% endif %}
     {% if invoice.discount_amount %}<div class="row"><span>Discount</span><span>−{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</span></div>{% endif %}
     <div class="row due"><span>Total due</span><span>{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</span></div>
     {% if invoice.client_currency_conversion %}<div class="pkr">≈ {{ invoice.client_currency_conversion.symbol }}{{ invoice.client_currency_conversion.converted_total|floatformat:2|intcomma }} at rate {{ invoice.client_currency_conversion.rate }}</div>{% endif %}
@@ -368,6 +368,7 @@
       <p>{{ invoice.terms|linebreaksbr }}</p>
       {% endif %}
     </div>
+    {% if freelancer.bank_name or freelancer.payoneer_email or freelancer.jazzcash_number or freelancer.easypaisa_number %}
     <div class="pay-block">
       <div class="label">Payment methods</div>
       {% if freelancer.bank_name %}<div class="method"><span>Bank transfer</span><span>{{ freelancer.bank_name }} — {{ freelancer.bank_account_number }}</span></div>{% endif %}
@@ -375,6 +376,7 @@
       {% if freelancer.jazzcash_number %}<div class="method"><span>JazzCash</span><span>{{ freelancer.jazzcash_number }}</span></div>{% endif %}
       {% if freelancer.easypaisa_number %}<div class="method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
     </div>
+    {% endif %}
   </div>
 
   <div class="sign-row">
@@ -386,6 +388,7 @@
       </div>
     </div>
     <div class="sign-block">
+      {% if signature_url %}<img class="sig" src="{{ signature_url }}" alt="">{% endif %}
       <div class="line">Authorised signature</div>
     </div>
   </div>

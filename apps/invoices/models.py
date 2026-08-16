@@ -59,7 +59,7 @@ RECURRING_INTERVAL_CHOICES = [
 ]
 
 # Shared by Invoice.days_overdue and Step 5's view-layer queries (invoice_list's
-# ?overdue=true filter, invoice_summary, invoice_aging_report) that need the
+# ?overdue=true filter, invoice_summary) that need the
 # identical "is this invoice even eligible to be overdue" rule at the database
 # level rather than re-deriving it in Python per row. Single source of truth,
 # per STANDARDS.md — extracted here rather than left duplicated inline in
@@ -392,18 +392,22 @@ class Invoice(models.Model):
     @property
     def payment_page_url(self):
         """
-        The public "pay online" URL the PDF's QR code should encode —
-        same construction v1's get_payment_page_url() used
-        (v1-reference/apps/invoices/pdf_generator.py), just as a property
-        instead of a free function so the templates can reference it
-        directly. The actual QR *image* is intentionally NOT generated
-        here — that image-generation call is Step 7b's job, once the real
-        render endpoint exists; this only computes the URL the image
-        would encode. Templates should treat the QR `<img>` itself as
-        conditional on a `qr_code_data_uri` context variable Step 7b will
-        supply (there's nothing to compute that image from yet).
+        The public "pay online" URL the PDF's QR code (and the "Pay
+        online" link beside it) encode.
+
+        FIXED (item 11 of the verification pass — real, confirmed bug):
+        this used to point at f'{FRONTEND_URL}/pay/{view_token}' — a
+        route that has never existed anywhere in frontend/src/App.jsx
+        (confirmed directly), inherited unchanged from v1's own
+        get_payment_page_url() despite v2 having no payment gateway to
+        build a real dedicated pay flow around. Every real invoice's QR
+        code and "Pay online" link led to a dead page. Since there's no
+        gateway, the correct real destination is this SAME invoice's own
+        portal_view_url (below) — the real, live-rendered page that
+        already shows payment methods (item 7) and, for a saved client
+        with a portal session, the Report-a-Payment claim form.
         """
-        return f'{settings.FRONTEND_URL}/pay/{self.view_token}'
+        return self.portal_view_url
 
     @property
     def portal_view_url(self):

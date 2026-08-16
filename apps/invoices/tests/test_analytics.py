@@ -156,16 +156,17 @@ class TopClientsTests(InvoicesAPITestCase):
 
 
 class CurrencyBreakdownTests(InvoicesAPITestCase):
-    def test_per_currency_silos_plus_one_unified_usd_total(self):
+    def test_per_currency_silos_plus_one_unified_total_in_default_currency(self):
         _finalised_invoice(self.user, currency='USD', total=Decimal('100'), rate_to_usd_at_issue=Decimal('1'))
         _finalised_invoice(self.user, currency='PKR', total=Decimal('28000'), rate_to_usd_at_issue=Decimal('0.0036'))
 
         resp = self._get(reverse('invoices:invoice_analytics'))
         breakdown = resp.json()['currency_breakdown']
+        self.assertEqual(breakdown['currency'], 'USD')  # FreelancerProfile.default_currency, default 'USD'
         self.assertEqual(breakdown['by_currency']['USD']['count'], 1)
         self.assertEqual(Decimal(breakdown['by_currency']['USD']['total']), Decimal('100'))
         self.assertEqual(breakdown['by_currency']['PKR']['count'], 1)
-        self.assertEqual(Decimal(breakdown['unified_total_usd']), Decimal('200.80'))  # 100 + 100.80
+        self.assertEqual(Decimal(breakdown['unified_total']), Decimal('200.80'))  # 100 + 100.80
         self.assertEqual(breakdown['unconverted_count'], 0)
 
     def test_unconverted_invoices_surfaced_honestly_not_silently_dropped(self):
@@ -173,8 +174,27 @@ class CurrencyBreakdownTests(InvoicesAPITestCase):
         resp = self._get(reverse('invoices:invoice_analytics'))
         breakdown = resp.json()['currency_breakdown']
         self.assertEqual(breakdown['unconverted_count'], 1)
-        self.assertEqual(Decimal(breakdown['unified_total_usd']), Decimal('0'))
+        self.assertEqual(Decimal(breakdown['unified_total']), Decimal('0'))
         self.assertEqual(breakdown['by_currency']['EUR']['count'], 1)  # still counted in the per-currency silo
+
+    def test_unified_total_follows_freelancer_default_currency_setting(self):
+        """
+        Real, confirmed gap (item 13): this used to be hardcoded to USD
+        regardless of FreelancerProfile.default_currency. Changing the
+        setting must actually change what this figure reports.
+        """
+        from apps.payments.models import ExchangeRateSnapshot
+        ExchangeRateSnapshot.objects.create(
+            date=date.today(), rates_to_usd={'USD': 1.0, 'PKR': 0.0036}, source='test', fetched_at=timezone.now(),
+        )
+        self.user.profile.default_currency = 'PKR'
+        self.user.profile.save(update_fields=['default_currency'])
+        _finalised_invoice(self.user, currency='USD', total=Decimal('100'), rate_to_usd_at_issue=Decimal('1'))
+
+        resp = self._get(reverse('invoices:invoice_analytics'))
+        breakdown = resp.json()['currency_breakdown']
+        self.assertEqual(breakdown['currency'], 'PKR')
+        self.assertEqual(Decimal(breakdown['unified_total']), Decimal('27777.78'))
 
 
 class RateToUsdCapturedOnPaymentTests(InvoicesAPITestCase):

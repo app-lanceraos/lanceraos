@@ -120,6 +120,78 @@ describe('CommentThread — live delivery via WebSocket', () => {
   })
 })
 
+describe('CommentThread — seen/sent indicators (item 9 of the verification pass)', () => {
+  it('shows "Sent" on my own message the other side has not read yet', async () => {
+    mock.onGet('/invoices/inv-1/comments/').reply(200, [
+      { id: 'c1', author_type: 'freelancer', author_name: 'Ali', source: 'app', body_text: 'Hi there', body_html: '', attachment_url: '', created_at: '2026-01-01T10:00:00Z', read_by_freelancer_at: null, read_by_client_at: null },
+    ])
+    render(<CommentThread commentsUrl="/invoices/inv-1/comments/" viewToken="tok-1" viewerType="freelancer" />)
+    await waitFor(() => expect(screen.getByText('Hi there')).toBeTruthy())
+    expect(screen.getByText('Sent')).toBeTruthy()
+    expect(screen.queryByText('Seen')).toBeNull()
+  })
+
+  it('shows "Seen" on my own message once the other side has read it', async () => {
+    mock.onGet('/invoices/inv-1/comments/').reply(200, [
+      { id: 'c1', author_type: 'freelancer', author_name: 'Ali', source: 'app', body_text: 'Hi there', body_html: '', attachment_url: '', created_at: '2026-01-01T10:00:00Z', read_by_freelancer_at: null, read_by_client_at: '2026-01-01T10:05:00Z' },
+    ])
+    render(<CommentThread commentsUrl="/invoices/inv-1/comments/" viewToken="tok-1" viewerType="freelancer" />)
+    await waitFor(() => expect(screen.getByText('Hi there')).toBeTruthy())
+    expect(screen.getByText('Seen')).toBeTruthy()
+  })
+
+  it('never shows a seen/sent indicator on the OTHER side\'s message', async () => {
+    mock.onGet('/invoices/inv-1/comments/').reply(200, [
+      { id: 'c2', author_type: 'client', author_name: 'Acme Co', source: 'portal', body_text: 'When is this due?', body_html: '', attachment_url: '', created_at: '2026-01-01T11:00:00Z', read_by_freelancer_at: '2026-01-01T11:05:00Z', read_by_client_at: null },
+    ])
+    render(<CommentThread commentsUrl="/invoices/inv-1/comments/" viewToken="tok-1" viewerType="freelancer" />)
+    await waitFor(() => expect(screen.getByText('When is this due?')).toBeTruthy())
+    expect(screen.queryByText('Seen')).toBeNull()
+    expect(screen.queryByText('Sent')).toBeNull()
+  })
+})
+
+describe('CommentThread — inline attachments (item 9 of the verification pass)', () => {
+  it('renders an image attachment as a clickable thumbnail, not a raw link', async () => {
+    mock.onGet('/invoices/inv-1/comments/').reply(200, [
+      { id: 'c1', author_type: 'freelancer', author_name: 'Ali', source: 'app', body_text: 'see attached', body_html: '', attachment_url: 'https://res.cloudinary.com/demo/image/upload/receipt.png', created_at: '2026-01-01T10:00:00Z', read_by_freelancer_at: null, read_by_client_at: null },
+    ])
+    render(<CommentThread commentsUrl="/invoices/inv-1/comments/" viewToken="tok-1" viewerType="freelancer" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /view image attachment/i })).toBeTruthy())
+    expect(screen.queryByRole('link')).toBeNull() // no plain <a> navigating to the raw URL
+  })
+
+  it('renders a PDF attachment with a document icon and filename', async () => {
+    mock.onGet('/invoices/inv-1/comments/').reply(200, [
+      { id: 'c1', author_type: 'freelancer', author_name: 'Ali', source: 'app', body_text: 'see attached', body_html: '', attachment_url: 'https://res.cloudinary.com/demo/raw/upload/bank_statement.pdf', created_at: '2026-01-01T10:00:00Z', read_by_freelancer_at: null, read_by_client_at: null },
+    ])
+    render(<CommentThread commentsUrl="/invoices/inv-1/comments/" viewToken="tok-1" viewerType="freelancer" />)
+    await waitFor(() => expect(screen.getByText('bank_statement.pdf')).toBeTruthy())
+  })
+
+  it('clicking an attachment opens the preview modal, and closing it removes the modal', async () => {
+    mock.onGet('/invoices/inv-1/comments/').reply(200, [
+      { id: 'c1', author_type: 'freelancer', author_name: 'Ali', source: 'app', body_text: 'see attached', body_html: '', attachment_url: 'https://res.cloudinary.com/demo/image/upload/receipt.png', created_at: '2026-01-01T10:00:00Z', read_by_freelancer_at: null, read_by_client_at: null },
+    ])
+    render(<CommentThread commentsUrl="/invoices/inv-1/comments/" viewToken="tok-1" viewerType="freelancer" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /view image attachment/i })).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /view image attachment/i }))
+    expect(screen.getByRole('button', { name: /^close$/i })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^close$/i }))
+    expect(screen.queryByRole('button', { name: /^close$/i })).toBeNull()
+  })
+
+  it('the file input accepts images and PDFs, not images only', async () => {
+    mock.onGet('/invoices/inv-1/comments/').reply(200, [])
+    const { container } = render(<CommentThread commentsUrl="/invoices/inv-1/comments/" viewToken="tok-1" viewerType="freelancer" />)
+    await waitFor(() => expect(screen.getByText(/no messages yet/i)).toBeTruthy())
+    const fileInput = container.querySelector('input[type="file"]')
+    expect(fileInput.accept).toContain('application/pdf')
+  })
+})
+
 describe('CommentThread — polling fallback when WS is unavailable', () => {
   it('polls the comments endpoint when the socket never connects', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })

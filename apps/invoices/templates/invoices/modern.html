@@ -222,7 +222,7 @@
       <div class="notes-inline"></div>
       <div class="totals">
         <div class="row"><span>Subtotal</span><span>{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</span></div>
-        <div class="row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>
+        {% if invoice.tax_rate %}<div class="row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>{% endif %}
         {% if invoice.discount_amount %}<div class="row"><span>Discount</span><span>−{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</span></div>{% endif %}
         <div style="text-align:right;">
           <div class="total-pill">{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</div>
@@ -242,6 +242,7 @@
         <p>{{ invoice.terms|linebreaksbr }}</p>
         {% endif %}
       </div>
+      {% if freelancer.bank_name or freelancer.payoneer_email or freelancer.jazzcash_number or freelancer.easypaisa_number %}
       <div class="pay-block2">
         <div class="label">Payment methods</div>
         {% if freelancer.bank_name %}<div class="method"><span>Bank transfer</span><span>{{ freelancer.bank_name }} — {{ freelancer.bank_account_number }}</span></div>{% endif %}
@@ -249,6 +250,7 @@
         {% if freelancer.jazzcash_number %}<div class="method"><span>JazzCash</span><span>{{ freelancer.jazzcash_number }}</span></div>{% endif %}
         {% if freelancer.easypaisa_number %}<div class="method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
       </div>
+      {% endif %}
     </div>
 
     <div class="sign-block">

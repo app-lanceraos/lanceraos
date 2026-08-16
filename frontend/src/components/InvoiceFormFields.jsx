@@ -104,11 +104,20 @@ export default function InvoiceFormFields({
           <FormField label="Phone" value={form.client_phone} onChange={(e) => set('client_phone', e.target.value)} />
         </div>
 
-        {/* Due date is part of stage 1 — the stage the creation threshold
-            gets crossed on; currency/tax/discount live in stage 2 below,
-            with the line items they total. */}
-        <div style={{ marginTop: 10, maxWidth: 220 }}>
-          <FormField label="Due Date" type="date" value={form.due_date} onChange={(e) => set('due_date', e.target.value)} />
+        {/* Issue date + due date are both part of stage 1 — the stage the
+            creation threshold gets crossed on; currency/tax/discount live
+            in stage 2 below, with the line items they total. due_date is
+            REQUIRED (enforced server-side too, at finalise time — see
+            apps/invoices/views.py's _missing_due_date_error) and must be
+            strictly after issue_date — validated inline here so a bad date
+            never round-trips to the server just to find out. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginTop: 10 }}>
+          <FormField label="Issue Date" type="date" value={form.issue_date} onChange={(e) => set('issue_date', e.target.value)} />
+          <FormField
+            label="Due Date" type="date" required value={form.due_date}
+            onChange={(e) => set('due_date', e.target.value)}
+            error={errors.due_date || (form.due_date && form.issue_date && form.due_date <= form.issue_date ? 'Due date must be after the issue date.' : undefined)}
+          />
         </div>
       </div>
       )}
@@ -195,12 +204,15 @@ export default function InvoiceFormFields({
         <textarea className="fos-input" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} value={form.terms} onChange={(e) => set('terms', e.target.value)} placeholder="e.g. Payment due within 30 days." />
       </div>
 
-      {/* ── Options ── */}
+      {/* ── Options ──
+          Reminders removed from here entirely (see DECISIONS.md — a real
+          reversal, not a bug fix): it belongs ONLY in InvoiceDetailPanel's
+          Details tab, once a real invoice exists to toggle it on. Standalone
+          Finalise always forces reminders_enabled to False regardless of
+          whatever this form held anyway (see _finalise_invoice), and
+          Finalise & Send has its own dedicated confirm-step checkbox
+          (FinaliseAndSendModal below) — this toggle was genuinely inert. */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <OptionToggle
-          label="Reminders enabled" hint="Gates the escalating reminder schedule once this invoice is sent."
-          checked={form.reminders_enabled} onChange={(v) => set('reminders_enabled', v)}
-        />
         <OptionToggle
           label="Late fee" hint="Percentage per month, applied once the due date passes."
           checked={form.late_fee_enabled} onChange={(v) => set('late_fee_enabled', v)}

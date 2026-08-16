@@ -3742,3 +3742,197 @@ Alternatives considered: a raw `WebSocket` opened directly inside `useNotificati
 managed by a shared hook... Never open WebSocket connections directly") exists specifically to avoid
 exactly this, and the reconnect fix belongs at the shared layer since every current and future
 WebSocket consumer wants it, not just this one.
+
+---
+
+Date: 16 August 2026 (Invoices/Clients verification pass)
+Decision: A large combined pass against `INVOICES_CLIENTS_VERIFICATION_GUIDE.md` — two real
+REVERSALS of earlier rules, several confirmed-and-fixed real bugs (not guessed), one real performance
+fix, and a round of UX work. Recorded together since they landed in one pass; each sub-decision below
+stands on its own.
+
+**REVERSAL 1 — Outstanding/Past-Due drop the `sent_via_platform` gate entirely.** Confirmed directly
+with the founder, not a bug fix to the existing rule's own terms — the Step 5 rule was working exactly
+as designed, and the design itself is what changed. Old rule: Outstanding/Past-Due only counted
+invoices with `sent_via_platform=True` (set only by the real `/send/` action). New rule: both count
+every invoice with `status` in `ACTIVE_STATUSES` (sent/viewed/partially_paid) regardless of how it was
+delivered — a manual "Mark as Sent" now counts too. `sent_via_platform`'s only two remaining real uses
+anywhere in the app, confirmed by a full-module grep: the `status='created'` "hasn't been sent through
+LanceraOS" banner, and the timeline's "sent by you" vs "sent by LanceraOS" distinction
+(`invoice_timeline`'s `via` field). Every other place that used to check it (`invoice_summary`'s
+`outstanding_qs`) had the gate removed; `invoice_aging_report` never had the gate at all (see removal,
+below), so there was nothing to change there.
+Reason: the old gate meant Outstanding/Past-Due read a near-permanent $0 for the overwhelming majority
+of real invoices, since manual Mark-as-Sent — not `/send/` — is how most invoices actually leave an
+early-stage freelancer's hands (email, WhatsApp, in person). A dashboard KPI that's usually wrong isn't
+a KPI.
+Also fixed as a direct consequence: a real, separately-reported bug where a partially-paid, overdue
+invoice went missing from Past-Due — it was never excluded by status (`partially_paid` was already in
+`ACTIVE_STATUSES`), only by the now-removed `sent_via_platform` gate; the counted amount was always the
+correct *remaining* `outstanding_amount`, never the full original total, confirmed with a dedicated
+test (`test_past_due_includes_partially_paid_overdue_invoice_at_remaining_balance`).
+Alternatives considered: gating on `status__in` alone without touching `sent_via_platform` at all —
+rejected, that's just re-describing the bug rather than fixing the rule founder confirmed was wrong.
+
+**REVERSAL 2 — the wizard's stage-3 "Reminders enabled" toggle removed entirely.** `NewInvoiceWizard.jsx`
+(via `InvoiceFormFields.jsx`'s stage-3 Options block) no longer renders a reminders toggle at all.
+Reason: it was genuinely inert either way, confirmed by tracing every real code path — standalone
+Finalise (`_finalise_invoice`, `force_reminders_off=True` default) always forces the stored
+`reminders_enabled` to `False` regardless of whatever this form held; the combined Finalise & Send
+action has its own dedicated confirm-step checkbox (`FinaliseAndSendModal`, unaffected by this removal)
+that explicitly overrides the value via a direct PUT before sending. So the wizard's own toggle never
+actually controlled anything a user could observe. `InvoiceDetailPanel`'s Details-tab "Automatic
+reminders" toggle (`handleToggleReminders`) is unaffected and remains the one real place to control
+this, once an invoice actually exists to toggle it on.
+A related, real bug found and fixed in the same area: `InvoiceDetailPanel`'s Recurring-series block AND
+Reminders toggle both used to render unconditionally below the tab switch — visible on the Timeline/
+Comments/Claims tabs too, not just Details. Wrapped both in `activeTab === 'details' &&` alongside this
+change.
+Alternatives considered: keeping the toggle but disabling it with an explanatory tooltip. Rejected —
+per this project's own established convention (`SaveButton`'s "render nothing until there's a real
+choice to make" precedent, DECISIONS.md), a control with no real effect should not exist in the UI at
+all, not exist-but-disabled.
+
+**Real bugs found (via reproduction, not guessed) and fixed:**
+- **Item 3 — blank page visiting the timeline of a paid/partially-paid invoice.** Root cause:
+  `invoiceHelpers.js` only ever RE-EXPORTED `formatMoney` from `clientHelpers.js`
+  (`export { formatMoney } from './clientHelpers'`), which creates no local binding in the re-exporting
+  module — `timelineLabel`'s own bare call to `formatMoney(...)` (for `'payment'`/`'claim'` event types
+  only) threw a real `ReferenceError` at render time. Exactly why it shipped unnoticed: no existing test
+  exercised either event type, matching "only appears once payments exist" precisely. Fixed with a real
+  local `import { formatMoney } from './clientHelpers'` alongside the existing re-export. Also added a
+  general-purpose `ErrorBoundary` component (`components/ErrorBoundary.jsx`, a real class component —
+  no hooks equivalent exists) wrapping `InvoiceDetailPanel`'s Timeline tab specifically, so a *future*
+  rendering bug there degrades to a visible message instead of a blank page requiring a manual reload.
+- **Item 11 — the PDF/portal "Pay online" link and QR code led nowhere.** `Invoice.payment_page_url`
+  pointed at `f'{FRONTEND_URL}/pay/{view_token}'` — a route that has never existed anywhere in
+  `frontend/src/App.jsx` (confirmed directly), inherited unchanged from v1 despite v2 having no payment
+  gateway to build a real dedicated pay flow around. Fixed: `payment_page_url` now IS
+  `portal_view_url` — the real, already-working, live-rendered portal page that shows payment methods
+  (see item 7 below) and, for a saved client with a portal session, the Report-a-Payment claim form via
+  the standard portal entry point. Left the shared PDF/portal template's own "one HTML/CSS renderer"
+  contract untouched rather than injecting a portal-only claim-form widget into it.
+- **Item 14 — Preview-as-Client silently failed to render inside its own iframe.** Root cause: Django's
+  clickjacking protection (`X_FRAME_OPTIONS='DENY'` in production, `config/settings.py`'s SECURITY
+  HEADERS block; Django's own framework default of `'DENY'` in DEBUG, never overridden for this view
+  either way) blocked every browser from displaying `invoice_preview_as_client`'s response inside
+  `InvoiceDetailPanel`'s iframe, in BOTH environments — not a broken button/modal wiring as first
+  suspected (confirmed directly, that wiring was always correct). Fixed with `@xframe_options_exempt` on
+  that one view only; `@permission_classes([IsAuthenticated])` still fully gates who can reach it, so no
+  other endpoint's clickjacking protection is affected.
+- **Item 9 (sub-bug) — a freelancer previewing their own client's real portal link falsely marked their
+  own messages "seen by the client."** `portal_invoice_comments`' POST path already checked
+  `is_freelancer_previewing_portal`, but GET's own read-marking (`read_by_client_at`) never did — fixed
+  by guarding that update the same way.
+- **Item 7 — several conditional-rendering gaps across the 3 invoice PDF/portal templates.** Tax row
+  showed unconditionally even at `tax_rate=0` ("Tax (0%) — $0.00") in all three templates, unlike
+  discount (already conditional) — now `{% if invoice.tax_rate %}` in all three. "Payment methods"
+  showed as a bare section header with nothing under it when no method was configured — now the whole
+  block is conditional on at least one method existing. `professional.html` never rendered
+  `signature_url` at all (the other two templates did) — CLAUDE.md's own module notes claimed all three
+  did; fixed to match.
+- **Item 8 — traced, no separate bug found.** Reported as "Outstanding wrongly includes discount,
+  doesn't correctly include tax." Traced `Invoice.recalculate_totals()`/`outstanding_amount`, both
+  `InvoiceSerializer.create`/`.update()` paths, `client_currency_conversion`, the statement PDF's
+  `_invoice_amounts_in_client_currency`, `invoice_summary`, and `invoice_analytics` line by line, and
+  verified `recalculate_totals()`'s exact arithmetic directly in a Django shell (`subtotal=100,
+  tax_rate=10% -> tax_amount=10, discount=5 -> total=105`, correct at every step). No independent
+  discount/tax computation bug exists anywhere in this codebase today — the reported symptom is fully
+  explained by Reversal 1 (Outstanding reading $0 for most real invoices) and item 12 below (raw
+  cross-currency summation producing nonsensical combined numbers), both of which could easily look
+  like "the tax/discount math is wrong" from the outside. Documented rather than inventing a fix for a
+  bug that traces to nothing.
+
+**Item 12/13 — real multi-currency bug: `invoice_summary` and `invoice_analytics`'s currency breakdown
+summed raw Decimals across every invoice's own currency with no conversion at all** (e.g. $64 + Rs.100
+showing as "164"), and the analytics unified total was hardcoded to USD regardless of
+`FreelancerProfile.default_currency`. Fixed with one shared utility, `_unify_amounts_to_currency`
+(`apps/invoices/views.py`), built on `core.money.Money` + a new `Money.to_currency(target_currency,
+snapshot)` method (generalizes the existing `to_usd()` to an arbitrary target) — both endpoints call it,
+neither reimplements it. Every affected figure now carries a real `currency` field and an honest
+`unconverted_count` for anything that couldn't be converted (no frozen `rate_to_usd_at_issue`) rather
+than silently including it unconverted. Frontend: `SummaryStrip`/`CurrencyBreakdown` now label figures
+with the real currency instead of a bare unlabeled number.
+
+**Item 15 — Finalise/Finalise & Send were slow, even on localhost — real, profiled fix.** Measured
+before making any change: a real WeasyPrint render (warm) costs ~0.2s locally; a real render + upload
+to the actual configured dev Cloudinary account, measured live during this pass, cost 1.719s — all of
+it synchronous, inside the HTTP request, before `_finalise_invoice` could even return a response. Fixed
+by moving the render+store into a real Celery task (`apps.invoices.tasks.render_and_store_invoice_pdf`),
+fired via `.delay()` instead of called inline — the status transition commits and the request returns
+immediately, with the PDF landing moments later. Correctness doesn't depend on the background task's
+timing: `email_service.fetch_invoice_pdf_bytes` already had a self-heal chain (render live, upload,
+retry) for a *failed* fetch of a real `pdf_url`; extended here to also treat a *blank* `pdf_url`
+(routine now, since Finalise & Send doesn't wait for the background task) exactly the same way. A real,
+found correctness bug surfaced by this change: `invoice_mark_sent` and `_send_invoice_now` both did a
+bare `invoice.save()` after `_finalise_invoice()` fired the background task — on a stale in-memory
+object, that full save would silently overwrite whatever `pdf_url`/`pdf_public_id`/`pdf_generated_at`
+the background task had just written to the DB. Fixed both to use `update_fields=[...]` scoped to only
+the columns they actually mean to change. `CELERY_TASK_ALWAYS_EAGER` is now set for `manage.py test`
+only (gated on `'test' in sys.argv`, never a persistent env flag) so `.delay()` calls actually execute
+during the test suite — deliberately NOT paired with `CELERY_TASK_EAGER_PROPAGATES`, which would also
+change `.apply()`'s own behavior and broke a real, pre-existing test in `apps/payments/tests.py` that
+relies on a task's re-raised exception landing in the returned `EagerResult` rather than propagating
+out of `.apply()` itself.
+Alternatives considered: reducing WeasyPrint's own render cost directly (font caching, etc.) — rejected
+as the primary fix; the real, measured cost is dominated by the Cloudinary network round trip, which no
+amount of render-side optimization touches, and removing the whole render+upload from the request path
+addresses both at once.
+
+**Item 4 — removed Accounts Receivable Aging.** `invoice_aging_report` (view, URL, and its own test
+class) removed entirely from the backend, confirmed unused anywhere else in the codebase before
+deleting (a full grep for `aging_report`/`aging-report` outside its own definition and the removed
+frontend call site came back empty). `AgingReport`'s UI, the collapsible section in `Invoices.jsx`, and
+its now-dead `agingOpen`/`aging`/`agingLoading` state + `toggleAging`/`loadAging` handlers removed too.
+
+**Item 5 — real tiered pagination**, replacing the earlier flat "60 loaded, +60 per Load More" shape:
+10 most recent by default; "Show More" appends 10 more client-side (up to 20 total, matching the
+existing "loaded, filtered client-side" architecture the reload-feel fix established for status/Overdue
+filtering); beyond 20 total available, real server-paged navigation takes over (Prev/Next, `Page X of Y
+(total)`, `PAGE_SIZE=20`) — each page a fresh, REPLACING fetch, never an append. "Show fewer" collapses
+back to a fresh 10 from anywhere. Status/Overdue filter clicks remain a pure client-side operation with
+zero network calls at every depth (verified directly with a dedicated test asserting the request count
+doesn't change on a pill click) — this rework only touches how much gets loaded and when, never
+reintroducing the server-round-trip-per-filter-click regression the reload-feel fix already eliminated.
+
+**Item 9 — remaining UX work.** Comments tab: input box + attach/send row already stayed fixed below an
+internally-scrolling message list (verified directly — no separate bug beyond the Recurring/Reminders-
+block leak already covered under Reversal 2). `InvoiceDetailPanel`'s action-button footer reorganized
+into 3 visually distinct groups (primary lifecycle actions; secondary/utility actions; destructive/
+terminal actions behind a dashed divider) with no change to any button's own visibility conditions.
+Seen/sent indicators: a real double-check-style indicator (`Check`/`CheckCheck`, lucide-react) on my own
+messages only, reading `read_by_client_at`/`read_by_freelancer_at` from the existing serializer — the
+freelancer-preview guard fix above ensures this can't be falsely triggered by a preview visit. Comment
+attachments now accept PDFs, not images only (`apps/invoices/comments.py`'s
+`ALLOWED_ATTACHMENT_EXTENSIONS` — a new, separate allowlist from `ALLOWED_LOGO_EXTENSIONS`, which stays
+image-only for its own real callers), with real server-side content validation for both categories: an
+image is Pillow-verified (unchanged), a `.pdf`-extensioned file is opened via PyMuPDF (`fitz`, already a
+real project dependency) and rejected if it isn't a real, openable PDF. Rendered inline in the thread —
+an image gets a real thumbnail, a PDF gets a document icon + filename — both click-to-view via a shared
+modal (`AttachmentModal`) instead of navigating to the raw Cloudinary URL.
+
+**Item 10 — the rendered portal HTML page sat flush against the browser's own edges, no centering or
+margin.** Fixed by appending a small CSS override (`PORTAL_WRAPPER_STYLE`,
+`pdf_generator.py`'s `render_invoice_portal_html`) before the shared template's own `</head>` —
+styles ONLY `html`/`body` (every template already has both), never the shared template's own content
+structure, matching this app's "one HTML/CSS renderer" principle: the PDF path (`render_invoice_pdf`)
+never calls this function, so WeasyPrint's output is unaffected.
+
+**Item 6 — issue date added to the wizard, due date made required and validated against it.**
+`Invoice.issue_date` (already a real model field, defaulting to today) added to `InvoiceSerializer`'s
+write fields for the first time — previously omitted entirely. `due_date` stays nullable at the
+model/serializer level (autosave on an incomplete draft must remain permissive, matching
+`client_name`/`client_email`'s own established precedent) but is now REQUIRED at the one real
+"leaving draft" gate (`invoice_finalise`/`_finalise_and_send`/`_mark_sent`'s own draft branch — all
+three, via a shared `_missing_due_date_error` helper) — and a new `InvoiceSerializer.validate()`
+rejects `due_date <= issue_date` whenever either is actually present in the request, without
+re-validating a legacy invoice's already-stale pair on an unrelated-field edit. Mirrored client-side in
+`NewInvoiceWizard.jsx`'s `hasValidDueDate` (gates Finalise/Finalise & Send) and inline in
+`InvoiceFormFields.jsx`'s stage 1.
+
+Alternatives considered (whole pass): delegating this pass to parallel sub-agents per item. Rejected —
+several items share root causes (1/2/8/12 are all really the same "Outstanding/Past-Due" surface;
+3/14 both trace to a missing piece of platform machinery, not app logic; 9's seen-indicator fix depends
+on the same guard as item 13's Step 13 gap) — working through them together, in one continuous pass with
+full cross-item context, caught those connections directly rather than risking three independent,
+inconsistent fixes for what were really two underlying problems.

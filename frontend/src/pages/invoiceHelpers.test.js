@@ -61,4 +61,26 @@ describe('timelineLabel — who sent it', () => {
   it('labels the created entry plainly', () => {
     expect(timelineLabel({ type: 'created' })).toBe('Invoice created')
   })
+
+  // Real, confirmed bug (item 3 of the verification pass): visiting the
+  // timeline of a paid/partially-paid invoice showed a blank page,
+  // requiring a manual reload. Root cause, found by reproducing rather
+  // than guessing: invoiceHelpers.js only RE-EXPORTED formatMoney from
+  // clientHelpers.js ("export { formatMoney } from './clientHelpers'"),
+  // which does NOT create a local binding — timelineLabel's own call to
+  // the bare `formatMoney(...)` identifier below threw a real
+  // ReferenceError at render time, but only for event types that
+  // actually call it ('payment'/'claim'), which is exactly why this
+  // shipped unnoticed: no existing test here exercised either case.
+  // Fixed with a real local `import { formatMoney } from './clientHelpers'`
+  // alongside the existing re-export.
+  it('labels a payment entry with a real formatted amount, not a crash', () => {
+    expect(timelineLabel({ type: 'payment', amount: '150.00', currency: 'USD', source: 'bank' }))
+      .toBe('Payment recorded — USD 150 via bank')
+  })
+
+  it('labels a claim entry with a real formatted amount, not a crash', () => {
+    expect(timelineLabel({ type: 'claim', status: 'pending', amount: '75.50', currency: 'EUR' }))
+      .toBe('Payment claim pending — EUR 76')
+  })
 })

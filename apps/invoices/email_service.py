@@ -517,16 +517,29 @@ def fetch_invoice_pdf_bytes(invoice):
     Returns None only if every path — including the final live render —
     fails, so callers can still treat a total failure as fatal for a real
     send (reminders never attach a PDF at all either way, matching v1).
-    """
-    if not invoice.pdf_url:
-        return None
 
-    try:
-        return _try_fetch(invoice.pdf_url)
-    except requests.RequestException as exc:
-        logger.warning(
-            '[INVOICES] Stored PDF fetch failed for invoice_id=%s url=%s (%s) — attempting self-heal re-upload.',
-            invoice.pk, invoice.pdf_url, exc,
+    A blank pdf_url (item 15 of the verification pass: _finalise_invoice
+    now fires the render+store as a background Celery task rather than
+    blocking the request, so pdf_url is routinely still blank the moment
+    /send/ or /finalise-and-send/ runs immediately after) is treated
+    exactly like a failed fetch of a real URL — it falls straight into
+    the SAME self-heal chain below (render once, upload, retry fetch,
+    fall back to the freshly-rendered bytes) rather than failing fast.
+    Correctness never depends on the background task's timing, only
+    which of these two paths ends up doing the render.
+    """
+    if invoice.pdf_url:
+        try:
+            return _try_fetch(invoice.pdf_url)
+        except requests.RequestException as exc:
+            logger.warning(
+                '[INVOICES] Stored PDF fetch failed for invoice_id=%s url=%s (%s) — attempting self-heal re-upload.',
+                invoice.pk, invoice.pdf_url, exc,
+            )
+    else:
+        logger.info(
+            '[INVOICES] Invoice %s has no pdf_url yet (background render still pending) — rendering live instead.',
+            invoice.pk,
         )
 
     try:

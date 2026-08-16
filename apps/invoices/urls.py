@@ -8,7 +8,6 @@ app_name = 'invoices'
 urlpatterns = [
     path('', views.invoice_list, name='invoice_list'),
     path('summary/', views.invoice_summary, name='invoice_summary'),
-    path('aging-report/', views.invoice_aging_report, name='invoice_aging_report'),
     path('exchange-rate/', views.exchange_rate_lookup, name='exchange_rate_lookup'),
     path('analytics/', views.invoice_analytics, name='invoice_analytics'),
     path('email/incoming/', views_email.email_incoming_webhook, name='email_incoming_webhook'),

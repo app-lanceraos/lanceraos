@@ -35,6 +35,7 @@ from django.core.cache import cache
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.views.decorators.clickjacking import xframe_options_exempt
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -208,6 +209,7 @@ def portal_invoice_view_html(request, view_token):
     return response
 
 
+@xframe_options_exempt
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def invoice_preview_as_client(request, pk):
@@ -220,6 +222,20 @@ def invoice_preview_as_client(request, pk):
     its own persistent "You're previewing as [client]" banner (pure React
     chrome, never part of the shared template itself, so the two render
     paths' actual markup never diverges).
+
+    FIXED (item 14 of the verification pass — real, confirmed bug, root-
+    caused by reproducing it directly rather than guessing): this
+    response was silently blocked from ever rendering inside that iframe
+    by Django's own clickjacking protection — X_FRAME_OPTIONS='DENY' in
+    production (config/settings.py, SECURITY HEADERS block) and Django's
+    own framework default of 'DENY' in DEBUG (never overridden here), so
+    every browser refused to display the framed content in BOTH
+    environments, not just prod. @xframe_options_exempt is a narrow,
+    single-view exception — @permission_classes([IsAuthenticated]) above
+    still fully gates who can reach it at all, so this doesn't weaken
+    clickjacking protection for anything else in the app. Not a broken
+    InvoiceDetailPanel refactor after all — confirmed directly, the
+    button/modal wiring itself was always correct.
 
     Deliberately does NOT call apps.clients.portal.issue_or_renew_session
     (confirmed directly: not imported anywhere in this module) — this is
@@ -259,7 +275,15 @@ def portal_invoice_comments(request, pk):
 
     GET marks every currently-unread, FREELANCER-authored comment as
     read (read_by_client_at), mirroring invoice_comments' own read-
-    marking exactly, just the other direction.
+    marking exactly, just the other direction — EXCEPT while
+    is_freelancer_previewing_portal(request) is True (item 9 of the
+    verification pass — a real, confirmed gap: this guard was already
+    wired into the POST path below, but never into GET's own read-
+    marking, so a freelancer who visits their own client's real portal
+    link without logging out first would falsely mark their own
+    messages as "seen by the client" just by looking. The comments
+    themselves still return normally either way — only the read
+    timestamp is skipped.
 
     POST creates a real, permanent InvoiceComment (author_type='client',
     client_name/client_email snapshotted from the resolved Client —
@@ -284,9 +308,10 @@ def portal_invoice_comments(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk, client=client)
 
     if request.method == 'GET':
-        InvoiceComment.objects.filter(
-            invoice=invoice, author_type='freelancer', read_by_client_at__isnull=True,
-        ).update(read_by_client_at=timezone.now())
+        if not is_freelancer_previewing_portal(request):
+            InvoiceComment.objects.filter(
+                invoice=invoice, author_type='freelancer', read_by_client_at__isnull=True,
+            ).update(read_by_client_at=timezone.now())
         comments = invoice.comments.all()
         return Response(InvoiceCommentSerializer(comments, many=True).data)
 

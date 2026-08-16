@@ -59,6 +59,14 @@ function hasValidItem(form) {
   return form.items.some((it) => it.description.trim() !== '')
 }
 
+// due_date is required and must be strictly after issue_date (item 6 of
+// the verification pass) — mirrors InvoiceSerializer.validate on the
+// backend (apps/invoices/serializers.py) so Finalise is disabled before a
+// round trip would even confirm the same thing.
+function hasValidDueDate(form) {
+  return !!form.due_date && (!form.issue_date || form.due_date > form.issue_date)
+}
+
 export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFinalised }) {
   const [form, setForm] = useState(editInvoiceId ? null : blankInvoiceForm())
   const [stage, setStage] = useState(1)
@@ -97,7 +105,8 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
 
   const clientValid = form ? hasValidClient(form) : false
   const itemValid = form ? hasValidItem(form) : false
-  const canFinalise = !!invoiceId && stage === 3 && clientValid && itemValid
+  const dueDateValid = form ? hasValidDueDate(form) : false
+  const canFinalise = !!invoiceId && stage === 3 && clientValid && itemValid && dueDateValid
   const canPreview = !!invoiceId && stage >= 2 && itemValid
 
   function routeErrorsToStage(errors) {
@@ -373,7 +382,7 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
                   disabled={!canFinalise || busy}
                   className="fos-btn fos-btn-primary"
                   style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: !canFinalise ? 0.5 : 1 }}
-                  title={!canFinalise ? 'Add a client and at least one line item first.' : undefined}
+                  title={!canFinalise ? 'Add a client, a valid due date, and at least one line item first.' : undefined}
                 >
                   {busyKey === 'finalise' ? <span className="fos-spinner" /> : <CheckCircle2 size={14} />} Finalise
                 </button>
@@ -384,7 +393,7 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
                   disabled={!canFinalise || busy}
                   className="fos-btn fos-btn-accent"
                   style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: !canFinalise ? 0.5 : 1 }}
-                  title={!canFinalise ? 'Add a client and at least one line item first.' : undefined}
+                  title={!canFinalise ? 'Add a client, a valid due date, and at least one line item first.' : undefined}
                 >
                   {busyKey === 'finalise_and_send' ? <span className="fos-spinner" /> : <Mail size={14} />} Finalise & Send
                 </button>
@@ -393,7 +402,7 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
           </div>
           {stage === 3 && !canFinalise && (
             <p style={{ margin: '8px 0 0', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
-              {!clientValid ? 'Add a client on stage 1' : !itemValid ? 'Add at least one line item on stage 2' : ''} before finalising.
+              {!clientValid ? 'Add a client on stage 1' : !dueDateValid ? 'Add a valid due date on stage 1' : !itemValid ? 'Add at least one line item on stage 2' : ''} before finalising.
             </p>
           )}
         </div>

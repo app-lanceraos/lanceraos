@@ -60,6 +60,23 @@ class Money:
             rate_to_usd=target_rate,
         )
 
+    def to_currency(self, target_currency: str, snapshot) -> Decimal:
+        """
+        Like to_usd(), but lands in an arbitrary target currency instead of
+        always USD — the freelancer's own FreelancerProfile.default_currency,
+        for KPI/analytics figures that must respect that setting rather than
+        assuming USD. The source leg still uses THIS Money's own rate_to_usd
+        (historically frozen at issue time, matching every other anchor-
+        currency conversion in this app); only the USD->target leg falls
+        back to `snapshot` (necessarily today's rate — there is no per-
+        invoice frozen rate for a currency the invoice was never issued in).
+        """
+        usd_amount = self.to_usd()
+        if target_currency == 'USD':
+            return usd_amount
+        target_rate = self._rate_for(target_currency, snapshot)
+        return usd_amount / target_rate
+
     @staticmethod
     def _rate_for(currency: str, snapshot) -> Decimal:
         if currency == 'USD':

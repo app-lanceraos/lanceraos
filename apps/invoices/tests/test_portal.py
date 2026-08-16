@@ -155,6 +155,22 @@ class PortalViewHtmlTests(PortalContentAPITestCase):
         import re
         self.assertEqual(re.findall(r"url\([^)]*file://[^)]*\)", html), [])
 
+    def test_page_is_centered_with_a_pdf_viewer_style_wrapper(self):
+        """
+        Item 10 of the verification pass — real, found bug: the rendered
+        page sat flush against the browser's own edges with no centering
+        or margin at all. Fixed via a CSS override appended before the
+        shared template's own </head> (render_invoice_portal_html) —
+        confirmed here it's actually present in the real response, not
+        just unit-tested against the generator function in isolation.
+        """
+        invoice = self._invoice_for(self.portal_client)
+        resp = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
+        html = resp.content.decode()
+        self.assertIn('max-width: 210mm', html)
+        self.assertIn('margin: 32px auto', html)
+        self.assertEqual(html.count('</head>'), 1)  # the override was inserted, not duplicated the closing tag
+
     def test_saved_clients_invoice_mints_a_real_session(self):
         invoice = self._invoice_for(self.portal_client)
         self.assertEqual(ClientPortalSession.objects.filter(client=self.portal_client).count(), 0)
@@ -265,6 +281,49 @@ class ViewTrackingGuardTests(TestCase):
         self.assertEqual(invoice.status, 'viewed')
         self.assertEqual(InvoiceViewEvent.objects.filter(invoice=invoice).count(), 1)
 
+    def test_freelancer_previewing_does_not_mark_comments_seen_by_client(self):
+        """
+        Item 9 of the verification pass — real, confirmed gap:
+        is_freelancer_previewing_portal was already wired into
+        portal_invoice_comments' POST path, but never into GET's own
+        read-marking. A freelancer who visits their own client's real
+        portal link (both cookies present) must not falsely mark their
+        own message as "seen by the client" just by looking at it.
+        """
+        from apps.invoices.models import InvoiceComment
+        invoice = self._sent_invoice()
+        comment = InvoiceComment.objects.create(
+            invoice=invoice, author_type='freelancer', body_text='Hi there', source='app',
+        )
+        self.assertIsNone(comment.read_by_client_at)
+
+        self._login_as_freelancer()
+        ClientPortalSession.create_for_client(self.portal_client, 'preview-comments-tok', device_name='', ip_address=None, user_agent='')
+        self.client.cookies[PORTAL_SESSION_COOKIE_NAME] = 'preview-comments-tok'
+
+        resp = self.client.get(reverse('invoices:portal_invoice_comments', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.json()), 1)  # comments themselves still return normally
+
+        comment.refresh_from_db()
+        self.assertIsNone(comment.read_by_client_at)  # NOT marked seen — this was a preview, not a real client read
+
+    def test_a_real_client_read_does_mark_comments_seen(self):
+        """Control case — the exact same GET, but with only a real portal session (no freelancer cookie) — must still mark read_by_client_at normally."""
+        from apps.invoices.models import InvoiceComment
+        invoice = self._sent_invoice()
+        comment = InvoiceComment.objects.create(
+            invoice=invoice, author_type='freelancer', body_text='Hi there', source='app',
+        )
+        ClientPortalSession.create_for_client(self.portal_client, 'real-client-tok', device_name='', ip_address=None, user_agent='')
+        self.client.cookies[PORTAL_SESSION_COOKIE_NAME] = 'real-client-tok'
+
+        resp = self.client.get(reverse('invoices:portal_invoice_comments', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+
+        comment.refresh_from_db()
+        self.assertIsNotNone(comment.read_by_client_at)
+
     def test_view_on_a_non_sent_status_still_logs_the_event_but_does_not_change_status(self):
         invoice = make_invoice(self.user, status='paid', sent_at='2026-01-01T00:00:00Z', client=self.portal_client, amount_paid=Decimal('100.00'))
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
@@ -339,6 +398,25 @@ class PreviewAsClientTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp['Content-Type'].startswith('text/html'))
         self.assertIn(invoice.client_name, resp.content.decode())
+
+    def test_response_is_exempt_from_x_frame_options_so_the_iframe_actually_renders(self):
+        """
+        Item 14 of the verification pass — the real, confirmed root cause
+        of "Preview-as-Client not working": Django's own clickjacking
+        protection (X_FRAME_OPTIONS='DENY' in production,
+        config/settings.py, plus Django's own framework default of
+        'DENY' in DEBUG — never overridden either way for this specific
+        view before this fix) silently blocked every browser from
+        rendering this response inside InvoiceDetailPanel's iframe, in
+        BOTH environments. @xframe_options_exempt on this one view is
+        the fix; every other endpoint in the app keeps the default
+        protection untouched.
+        """
+        invoice = make_invoice(self.user, client=self.portal_client)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self.client.get(reverse('invoices:invoice_preview_as_client', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn('X-Frame-Options', resp)
 
     def test_never_creates_a_client_portal_session(self):
         invoice = make_invoice(self.user, client=self.portal_client)

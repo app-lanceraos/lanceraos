@@ -18,6 +18,15 @@ from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTE
 
 logger = logging.getLogger(__name__)
 
+# Item 9 of the verification pass — comment attachments now also accept
+# PDFs, not images only (a client reporting a payment often has a bank
+# receipt/statement as a PDF, not a photo). `.pdf` is deliberately its
+# own allowlist, never merged into ALLOWED_LOGO_EXTENSIONS — a logo
+# upload has no PDF use case at all, and this keeps that constant's own
+# meaning (image formats a logo could realistically be) unchanged for
+# its real callers.
+ALLOWED_ATTACHMENT_EXTENSIONS = ALLOWED_LOGO_EXTENSIONS | {'.pdf'}
+
 
 def upload_comment_attachment(file):
     """
@@ -25,31 +34,53 @@ def upload_comment_attachment(file):
     failure — callers must check `isinstance(result, Response)` before
     treating it as a URL. Same content-validation discipline as
     apps/users/views/profile.py's upload_logo (extension allowlist, size
-    cap, a real Pillow-verified image, not just a trusted extension) —
-    not a separate approach invented for this one upload path.
+    cap, real content-verified — not just a trusted extension) — not a
+    separate approach invented for this one upload path.
     InvoiceComment.attachment_url is a single URLField (confirmed
     directly against the model — no attachment-count field, no M2M),
     so one attachment per comment is the real shape, not an assumption.
+
+    Real, per-type SERVER-SIDE content validation, not extension-trust
+    alone: an image is opened+verified via Pillow (same as upload_logo);
+    a `.pdf`-extensioned file is opened via PyMuPDF (already a real
+    project dependency — apps/invoices/pdf_generator.py's own PDF
+    pipeline doesn't use it, but apps/invoices/tests/test_pdf_pipeline.py
+    already does, for PDF-content assertions) — a file that merely has a
+    `.pdf` name but isn't a real, openable PDF is rejected with the same
+    clear error either category would get.
     """
     extension = os.path.splitext(file.name)[1].lower()
-    if extension not in ALLOWED_LOGO_EXTENSIONS:
+    if extension not in ALLOWED_ATTACHMENT_EXTENSIONS:
         return Response(
-            {'error': f'Unsupported file type. Allowed: {", ".join(sorted(ALLOWED_LOGO_EXTENSIONS))}'},
+            {'error': f'Unsupported file type. Allowed: {", ".join(sorted(ALLOWED_ATTACHMENT_EXTENSIONS))}'},
             status=status.HTTP_400_BAD_REQUEST,
         )
     if file.size > MAX_LOGO_SIZE_BYTES:
         return Response({'error': 'File too large. Maximum size is 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        PILImage.open(file).verify()
-    except (UnidentifiedImageError, OSError):
-        return Response({'error': "That doesn't look like a valid image file."}, status=status.HTTP_400_BAD_REQUEST)
-    file.seek(0)
+    if extension == '.pdf':
+        import fitz  # PyMuPDF — lazy import, matches this app's other lazy-import conventions
+        try:
+            doc = fitz.open(stream=file.read(), filetype='pdf')
+            if doc.page_count < 1:
+                raise ValueError('empty PDF')
+            doc.close()
+        except Exception:
+            return Response({'error': "That doesn't look like a valid PDF file."}, status=status.HTTP_400_BAD_REQUEST)
+        file.seek(0)
+        resource_type = 'raw'
+    else:
+        try:
+            PILImage.open(file).verify()
+        except (UnidentifiedImageError, OSError):
+            return Response({'error': "That doesn't look like a valid image file."}, status=status.HTTP_400_BAD_REQUEST)
+        file.seek(0)
+        resource_type = 'image'
 
     import cloudinary.uploader  # lazy import — same convention as every other Cloudinary call site in this app
 
     try:
-        result = cloudinary.uploader.upload(file, folder='lanceraos/comment_attachments', resource_type='image')
+        result = cloudinary.uploader.upload(file, folder='lanceraos/comment_attachments', resource_type=resource_type)
     except Exception:
         logger.exception('[INVOICES] Comment attachment upload failed.')
         return Response({'error': 'Upload failed. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)

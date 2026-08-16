@@ -79,6 +79,31 @@ PORTAL_FONT_CONTEXT = {
     'font_space_grotesk': static('invoices/fonts/SpaceGrotesk[wght].ttf'),
 }
 
+# Item 10 of the verification pass — appended to the rendered portal HTML's
+# own <head> by render_invoice_portal_html, below. Overrides ONLY html/body
+# (every template already has both; neither needs internal changes for
+# this): `html` gets the muted "desk" background a real PDF viewer sits
+# on; `body` — already each template's own themed "paper" background,
+# untouched here — gets centered with a real margin and a subtle
+# shadow/radius instead of sitting flush against the browser's own edges.
+# Deliberately a later, separate <style> block rather than editing each
+# template's own body{} rule (three files, three different background
+# colors) — CSS cascade order alone makes this override win.
+PORTAL_WRAPPER_STYLE = '''
+<style>
+  html { background: #e4e1d8; min-height: 100%; }
+  body {
+    max-width: 210mm;
+    margin: 32px auto !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    border-radius: 3px;
+  }
+  @media (max-width: 720px) {
+    body { margin: 0 auto !important; box-shadow: none; border-radius: 0; }
+  }
+</style>
+'''
+
 # Interim default template, per this step's explicit instruction: checked
 # directly — FreelancerProfile has no default-template-ish field of its
 # own (verified against apps/users/models.py) — and Invoice.design
@@ -185,9 +210,22 @@ def render_invoice_portal_html(invoice):
     Preview-as-Client (same module) — one shared renderer for both, per
     the one-HTML/CSS-renderer principle: neither is a second,
     hand-built reimplementation of the invoice layout.
+
+    A small CSS override is appended before the shared template's own
+    </head> (item 10 of the verification pass — real, found bug: the
+    rendered page sat flush against the browser's own edges with no
+    centering or margin, unlike a real PDF viewer's "paper on a
+    background" feel). Deliberately styles ONLY `html`/`body` — elements
+    every one of the 3 templates already has, none of which any
+    template's own internal markup needs to change for — never the
+    shared template's actual content structure, and irrelevant to
+    render_invoice_pdf's own WeasyPrint path (@page-based pagination
+    there ignores html/body box styling like this entirely, so this
+    can't affect the PDF/frozen-artifact output at all).
     """
     template_name = _select_template_name(invoice)
-    return render_to_string(template_name, build_portal_context(invoice))
+    html = render_to_string(template_name, build_portal_context(invoice))
+    return html.replace('</head>', PORTAL_WRAPPER_STYLE + '</head>', 1)
 
 
 def upload_pdf_bytes(invoice, pdf_bytes):

@@ -206,8 +206,16 @@ class PdfTemplateRenderTests(TestCase):
         self.assertEqual(invoice2.currency_symbol, 'AUD ')
 
     def test_payment_page_url_property(self):
+        """
+        FIXED (item 11 of the verification pass): payment_page_url used
+        to point at a dead /pay/<token> frontend route that never existed
+        — it now IS portal_view_url, the real, live-rendered portal page
+        (payment methods + Report-a-Payment claim form), since v2 has no
+        payment gateway to build a dedicated pay flow around.
+        """
         invoice = make_invoice_with_items(self.user, n_items=1)
-        self.assertIn(f'/pay/{invoice.view_token}', invoice.payment_page_url)
+        self.assertEqual(invoice.payment_page_url, invoice.portal_view_url)
+        self.assertIn(f'/api/invoices/portal/view/{invoice.view_token}/', invoice.payment_page_url)
 
     def test_logo_and_signature_and_qr_slots_are_conditional_not_hardcoded(self):
         """No template should reference the old local test asset filenames anymore."""
@@ -238,3 +246,57 @@ class PdfTemplateRenderTests(TestCase):
         invoice = make_invoice_with_items(self.user, n_items=1)
         html = render_to_string('invoices/minimal.html', {'invoice': invoice, 'freelancer': self.user.profile})
         self.assertNotIn('class="sig"', html)
+
+    def test_signature_renders_on_every_template_including_professional_when_set(self):
+        """
+        Real, found gap (item 7 of the verification pass): professional.html
+        was the one template of the three that never rendered
+        signature_url at all — CLAUDE.md's own module notes claimed
+        "signature_url ... rendering when set" for all three, but only
+        minimal.html/modern.html actually did. Fixed to match the other
+        two exactly (a conditional <img class="sig">, never a bare
+        "Authorised signature" line pretending a signature was provided).
+        """
+        invoice = make_invoice_with_items(self.user, n_items=1)
+        context = {'invoice': invoice, 'freelancer': self.user.profile, 'signature_url': 'https://res.cloudinary.com/demo/image/upload/sig.png'}
+        for template in TEMPLATES:
+            html = render_to_string(template, context)
+            self.assertIn('class="sig"', html, template)
+            self.assertIn('sig.png', html, template)
+
+    def test_tax_row_omitted_when_tax_rate_is_zero(self):
+        """
+        Real, found gap (item 7): every template unconditionally showed a
+        "Tax (0%) — $0.00" row even when no tax applied at all, unlike
+        discount (already conditional). Confirmed against real data with
+        tax_rate genuinely unset (0), not just displaying as zero.
+        """
+        invoice = make_invoice_with_items(self.user, n_items=1, tax_rate=Decimal('0'))
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertNotIn('Tax (', html, template)
+
+    def test_tax_row_shown_when_tax_rate_is_set(self):
+        invoice = make_invoice_with_items(self.user, n_items=1, tax_rate=Decimal('7.5'))
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertIn('Tax (', html, template)
+
+    def test_payment_methods_section_omitted_when_none_configured(self):
+        """
+        Real, found gap (item 7): "Payment methods" showed as a bare
+        section header with nothing under it whenever the freelancer had
+        configured none — the label itself must be conditional on at
+        least one method existing, not just each row independently.
+        """
+        user = User.objects.create_user(email='no-payment-methods@example.com', password='Sup3r$ecret1')
+        invoice = make_invoice_with_items(user, n_items=1)
+        outputs = {t: render_to_string(t, {'invoice': invoice, 'freelancer': user.profile}) for t in TEMPLATES}
+        for template, html in outputs.items():
+            self.assertNotIn('Payment methods', html, template)
+
+    def test_payment_methods_section_shown_when_at_least_one_configured(self):
+        invoice = make_invoice_with_items(self.user, n_items=1)  # make_freelancer sets bank_name + payoneer_email
+        outputs = self.render_all(invoice)
+        for template, html in outputs.items():
+            self.assertIn('Payment methods', html, template)

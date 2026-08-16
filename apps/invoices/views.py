@@ -54,7 +54,8 @@ from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceItem, InvoicePartialPayment,
     InvoicePreset, InvoicePresetItem, PaymentClaim,
 )
-from .pdf_generator import render_invoice_pdf, store_invoice_pdf
+from .pdf_generator import render_invoice_pdf
+from .tasks import render_and_store_invoice_pdf
 from .serializers import (
     InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer, InvoicePresetSerializer,
     InvoiceSerializer, RecurringSeriesSettingsSerializer,
@@ -73,9 +74,9 @@ MAX_REFERENCE_IMAGE_SIZE_BYTES = 8 * 1024 * 1024  # 8MB
 logger = logging.getLogger(__name__)
 
 # Invoices delivered to a client and not yet fully resolved — the shared
-# eligibility set for "Outstanding"/"Past-Due" dashboard KPIs and the AR
-# aging report. Deliberately excludes draft/created (never delivered) as
-# well as every terminal status.
+# eligibility set for "Outstanding"/"Past-Due" dashboard KPIs.
+# Deliberately excludes draft/created (never delivered) as well as every
+# terminal status.
 ACTIVE_STATUSES = ('sent', 'viewed', 'partially_paid')
 
 # invoice_undo_payment's "old" threshold — the spec didn't pin a number;
@@ -124,6 +125,57 @@ def _lookup_rate_to_usd(currency):
         return None
     rate = snapshot.rates_to_usd.get(currency)
     return Decimal(str(rate)) if rate is not None else None
+
+
+def _get_latest_snapshot():
+    """Shared 'today's snapshot, falling back to the most recent one' lookup — same selection logic as _lookup_rate_to_usd/Invoice.capture_issue_rate, factored out so invoice_summary and invoice_analytics don't each duplicate it."""
+    return (
+        ExchangeRateSnapshot.objects.filter(date=timezone.now().date()).first()
+        or ExchangeRateSnapshot.objects.order_by('-date').first()
+    )
+
+
+def _unify_amounts_to_currency(rows, target_currency, snapshot):
+    """
+    Real anchor-currency unification across mixed-currency invoices —
+    the single shared implementation invoice_summary (KPI cards) AND
+    invoice_analytics's _build_currency_breakdown both call, instead of
+    each reimplementing the same "sum raw Decimals across whatever
+    currencies happen to be present" bug independently (the real,
+    confirmed KPI-card bug this helper exists to fix — see DECISIONS.md).
+
+    `rows` is an iterable of (amount, currency, rate_to_usd_at_issue)
+    tuples — callers decide what they're summing (outstanding, total,
+    amount_paid, ...), this only handles the conversion + honest-gap
+    bookkeeping. A row whose currency already equals target_currency
+    converts trivially with no rate needed at all — even with no
+    snapshot/rate captured, matching Money.to_usd()'s own "USD converts
+    to itself" carve-out generalized to an arbitrary target. A row with a
+    genuinely different currency and no frozen rate_to_usd_at_issue (or a
+    target_currency missing from `snapshot`) is skipped and counted in
+    `unconverted_count` — never guessed, never silently included
+    unconverted (see DECISIONS.md).
+    """
+    unified_total = Decimal('0')
+    unconverted_count = 0
+    for amount, currency, rate_to_usd_at_issue in rows:
+        if currency == target_currency:
+            unified_total += amount
+            continue
+        # snapshot is only actually needed for the USD->target leg
+        # (Money.to_currency short-circuits that lookup entirely when
+        # target_currency == 'USD') — requiring it unconditionally would
+        # wrongly mark every row unconverted on a fresh install with no
+        # ExchangeRateSnapshot row yet, even for the common "everything
+        # defaults to USD" case.
+        if rate_to_usd_at_issue is None or (snapshot is None and target_currency != 'USD'):
+            unconverted_count += 1
+            continue
+        try:
+            unified_total += Money(amount, currency, rate_to_usd_at_issue).to_currency(target_currency, snapshot)
+        except ValueError:
+            unconverted_count += 1
+    return unified_total.quantize(Decimal('0.01')), unconverted_count
 
 
 def _parse_date_param(raw, default=None):
@@ -323,6 +375,19 @@ def invoice_pdf(request, pk):
 # LIFECYCLE ACTIONS
 # ══════════════════════════════════════════════════════════════════
 
+def _missing_due_date_error():
+    """
+    Shared error payload for the due_date-required-to-finalise check
+    (item 6 of the verification pass) — due_date is still nullable at the
+    model/serializer level (autosave on an incomplete draft must stay
+    permissive, matching client_name/client_email's own established
+    precedent), so this is enforced here instead, at the one real
+    "leaving draft" gate, alongside the existing at-least-one-line-item
+    check every finalise-shaped endpoint already duplicates.
+    """
+    return Response({'error': 'Add a due date before finalising.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
 def _finalise_invoice(invoice, force_reminders_off=True):
     """
     The real "leave draft" event — draft -> created, invoice_number
@@ -356,12 +421,24 @@ def _finalise_invoice(invoice, force_reminders_off=True):
 
     Caller is responsible for the surrounding rate limit / not-found /
     status checks — this assumes the caller already confirmed
-    invoice.status == 'draft'. PDF failure is deliberately non-fatal to
-    the status transition (same reasoning invoice_mark_sent's docstring
-    already gave for this): a WeasyPrint/Cloudinary hiccup shouldn't block
-    a real lifecycle transition. invoice_pdf's own GET falls back to a
-    live render if pdf_url is still blank despite status being
-    created-or-beyond, logged there as a genuine anomaly.
+    invoice.status == 'draft'.
+
+    PERFORMANCE (item 15 of the verification pass — real, profiled fix,
+    not a guess): the render+store used to happen SYNCHRONOUSLY here,
+    inside the HTTP request — a real, measured ~1-1.5s WeasyPrint render
+    locally (and profiled at ~6s against the real dev Cloudinary account
+    per email_service.fetch_invoice_pdf_bytes' own docstring) plus the
+    Cloudinary upload itself, both blocking the response before this
+    function could even return. Now fires apps.invoices.tasks.
+    render_and_store_invoice_pdf as a background Celery task instead —
+    the status transition (draft->created, invoice_number, exchange
+    rate, finalised_at) commits and this function returns immediately,
+    with the PDF landing moments later. This is safe, not just fast:
+    fetch_invoice_pdf_bytes/invoice_pdf's own self-heal chain already
+    treats a blank pdf_url as "render live instead" rather than an
+    error, so a PDF request that arrives before the background task
+    finishes still gets a correct PDF, just via a live render instead of
+    the frozen artifact — see both call sites' own docstrings.
     """
     invoice.recalculate_totals()
     if not invoice.invoice_number:
@@ -373,14 +450,7 @@ def _finalise_invoice(invoice, force_reminders_off=True):
         invoice.reminders_enabled = False
     invoice.save()
 
-    try:
-        pdf_result = store_invoice_pdf(invoice)
-        invoice.pdf_url = pdf_result['secure_url']
-        invoice.pdf_public_id = pdf_result['public_id']
-        invoice.pdf_generated_at = timezone.now()
-        invoice.save(update_fields=['pdf_url', 'pdf_public_id', 'pdf_generated_at'])
-    except Exception:
-        logger.exception('[INVOICES] Finalise PDF render+store failed for invoice %s — status transition kept, pdf_url left blank.', invoice.invoice_number)
+    render_and_store_invoice_pdf.delay(str(invoice.pk))
 
 
 @api_view(['POST'])
@@ -411,6 +481,8 @@ def invoice_finalise(request, pk):
         return Response({'error': 'Only draft invoices can be finalised.'}, status=status.HTTP_400_BAD_REQUEST)
     if not invoice.items.exists():
         return Response({'error': 'Add at least one line item before finalising.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not invoice.due_date:
+        return _missing_due_date_error()
 
     _finalise_invoice(invoice)
 
@@ -462,12 +534,20 @@ def invoice_mark_sent(request, pk):
     if invoice.status == 'draft':
         if not invoice.items.exists():
             return Response({'error': 'Add at least one line item before marking this invoice as sent.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not invoice.due_date:
+            return _missing_due_date_error()
         _finalise_invoice(invoice)
 
     invoice.reminders_enabled = bool(request.data.get('send_reminders', True))
     invoice.status = 'sent'
     invoice.sent_at = timezone.now()
-    invoice.save()
+    # update_fields, not a bare save() — item 15's background PDF task may
+    # write pdf_url/pdf_public_id/pdf_generated_at to the DB row between
+    # _finalise_invoice() firing it and this save; a full save() here
+    # would overwrite those columns back to whatever stale (usually
+    # blank) value this in-memory `invoice` object still holds, silently
+    # losing the background write.
+    invoice.save(update_fields=['reminders_enabled', 'status', 'sent_at'])
 
     emit('InvoiceSent', invoice_id=str(invoice.pk), user_id=str(request.user.pk), via='manual')
     logger.info('[INVOICES] Marked invoice %s as sent (manual).', invoice.invoice_number)
@@ -502,11 +582,16 @@ def _send_invoice_now(invoice, request):
     Finalise & Send action) is respected as-is. There is a dedicated
     toggle for this already; /send/ doesn't need its own special-case
     logic for a value the user can already set directly.
-    """
-    if not invoice.pdf_url:
-        logger.error('[INVOICES] Invoice %s is status=created with no pdf_url — cannot send.', invoice.invoice_number)
-        return Response({'error': 'This invoice has no generated PDF yet. Please try finalising it again.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    Deliberately does NOT bail out early on a blank invoice.pdf_url
+    (item 15 of the verification pass — _finalise_invoice now fires its
+    render+store as a background task, so pdf_url is routinely still
+    blank the moment Finalise & Send calls straight into this function):
+    fetch_invoice_pdf_bytes' own self-heal chain treats a blank pdf_url
+    exactly like a failed fetch and renders live instead, so this only
+    fails for a genuine total failure — every path, including that live
+    render, exhausted.
+    """
     pdf_bytes = fetch_invoice_pdf_bytes(invoice)
     if pdf_bytes is None:
         return Response(
@@ -531,7 +616,11 @@ def _send_invoice_now(invoice, request):
     invoice.status = 'sent'
     invoice.sent_via_platform = True
     invoice.sent_at = timezone.now()
-    invoice.save()
+    # update_fields, same reasoning as invoice_mark_sent's own save above —
+    # the background PDF task (fired by an earlier _finalise_invoice call,
+    # for the combined Finalise & Send path) may write pdf_url/
+    # pdf_public_id/pdf_generated_at concurrently with this request.
+    invoice.save(update_fields=['status', 'sent_via_platform', 'sent_at'])
 
     emit('InvoiceSent', invoice_id=str(invoice.pk), user_id=str(request.user.pk), via='platform')
     logger.info(
@@ -619,6 +708,8 @@ def invoice_finalise_and_send(request, pk):
         return Response({'error': 'Only draft invoices can be finalised and sent.'}, status=status.HTTP_400_BAD_REQUEST)
     if not invoice.items.exists():
         return Response({'error': 'Add at least one line item before finalising.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not invoice.due_date:
+        return _missing_due_date_error()
 
     _finalise_invoice(invoice, force_reminders_off=False)
     emit('InvoiceFinalised', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
@@ -1296,111 +1387,83 @@ def invoice_summary(request):
     """
     Dashboard KPIs: Outstanding / Total Paid / Past-Due Amount.
 
-    Rewritten against the real rules from the original decisions
-    document's Section 6, supplied explicitly after the first version of
-    this endpoint had to guess (that version was built unconditional,
-    not sent_via_platform-gated, since INVOICES_CLIENTS_TECHNICAL_SPEC.md's
-    own Section 6 turned out to be "Notification entries," not dashboard
-    rules — a documentation cross-reference bug on record in DECISIONS.md,
-    not a code bug). The rules, verbatim in spirit, each covered by its
-    own dedicated test:
+    REVERSAL (confirmed directly with the founder — see DECISIONS.md):
+    Outstanding and Past-Due no longer gate on sent_via_platform at all.
+    The earlier Section-6 rule gated both on sent_via_platform=True,
+    which meant every KPI read a flat $0 for the overwhelming majority of
+    real invoices — anything mark-as-sent'd manually, which is most of
+    them, since /send/ (the only thing that ever sets sent_via_platform)
+    is one of two parallel "this went out" actions, not the only one.
+    sent_via_platform's only two legitimate remaining uses anywhere in
+    this app, after this reversal: the status='created' "hasn't been
+    sent through LanceraOS" banner, and the timeline's "sent by you" vs
+    "sent by LanceraOS" distinction (views.py's own invoice_timeline,
+    'via': 'platform' if sent_via_platform else 'manual') — both
+    confirmed by a full-module grep, not assumed.
 
-      - Outstanding: sum(total - amount_paid) over invoices where
-        sent_via_platform=True AND status in ACTIVE_STATUSES
-        (sent/viewed/partially_paid). Structurally excludes draft/created.
-        In practice this is currently always zero — no code path sets
-        sent_via_platform=True yet, since only the real /send/ action
-        does (Step 10, not built) — genuinely zero, not faked, the same
-        honest-placeholder pattern used elsewhere in this project.
-      - Total Paid: sum(amount_paid) across ALL invoices except
-        draft/created, regardless of sent_via_platform, MINUS
-        sum(refunded_amount) across the same set. Cancelled and bad_debt
-        invoices' amount_paid still counts — money already received
-        isn't erased by a later status change.
-      - Past-Due Amount: the exact same filter as Outstanding
-        (sent_via_platform=True AND status in ACTIVE_STATUSES), further
+      - Outstanding: sum(total - amount_paid) over invoices with status
+        in ACTIVE_STATUSES (sent/viewed/partially_paid), regardless of
+        sent_via_platform. Structurally excludes draft/created (never
+        delivered by any means) and every terminal status (resolved).
+      - Total Paid: unchanged — sum(amount_paid) across ALL invoices
+        except draft/created, MINUS sum(refunded_amount) across the same
+        set. Cancelled and bad_debt invoices' amount_paid still counts —
+        money already received isn't erased by a later status change.
+      - Past-Due Amount: the exact same new scope as Outstanding, further
         filtered to due_date in the past — equivalent to
         Invoice.days_overdue > 0 for this specific status set, since none
-        of ACTIVE_STATUSES overlap with NON_OVERDUE_STATUSES.
+        of ACTIVE_STATUSES overlap with NON_OVERDUE_STATUSES. This also
+        fixes the real, separately-reported bug of a partially-paid,
+        overdue invoice going missing from Past-Due — it was never
+        excluded by partially_paid status (already in ACTIVE_STATUSES),
+        only by the now-removed sent_via_platform gate, and the amount
+        counted was always the REMAINING outstanding_amount (total -
+        amount_paid), never the invoice's full original total.
       - Draft/Created: excluded from every figure above, unconditionally
         — enforced once, up front, via the shared `qs` queryset every
         figure below is derived from, rather than repeated per-figure.
 
-    See invoice_aging_report's own docstring for why that endpoint
-    deliberately does NOT share the sent_via_platform restriction with
-    Outstanding above, despite both filtering on ACTIVE_STATUSES — two
-    intentionally different rules, not drift between them.
+    Real multi-currency bug fix (also confirmed, previously reported as
+    raw Decimal totals summed across mixed currencies — e.g. $64 + Rs.100
+    showing as "164"): every figure is now unified into the freelancer's
+    own FreelancerProfile.default_currency via _unify_amounts_to_currency
+    (core.money.Money + each invoice's own historically-frozen
+    rate_to_usd_at_issue), the exact same shared utility
+    invoice_analytics's currency breakdown uses — not a second,
+    independent implementation. `currency` is returned alongside every
+    figure so the frontend can label it correctly; `unconverted_count`
+    surfaces (never silently drops) any invoice this couldn't convert.
     """
-    qs = Invoice.objects.filter(user=request.user).exclude(status__in=('draft', 'created'))
+    target_currency = request.user.profile.default_currency
+    snapshot = _get_latest_snapshot()
     today = timezone.now().date()
 
-    outstanding_qs = qs.filter(sent_via_platform=True, status__in=ACTIVE_STATUSES)
-    outstanding_total = sum((inv.outstanding_amount for inv in outstanding_qs), Decimal('0'))
+    qs = Invoice.objects.filter(user=request.user).exclude(status__in=('draft', 'created'))
 
-    total_paid = qs.aggregate(s=Sum('amount_paid'))['s'] or Decimal('0')
-    total_refunded = qs.aggregate(s=Sum('refunded_amount'))['s'] or Decimal('0')
-    net_total_paid = total_paid - total_refunded
+    outstanding_qs = qs.filter(status__in=ACTIVE_STATUSES)
+    outstanding_total, outstanding_unconverted = _unify_amounts_to_currency(
+        ((inv.outstanding_amount, inv.currency, inv.rate_to_usd_at_issue) for inv in outstanding_qs),
+        target_currency, snapshot,
+    )
+
+    paid_qs = qs.filter(amount_paid__gt=0)
+    net_paid_total, paid_unconverted = _unify_amounts_to_currency(
+        ((inv.amount_paid - inv.refunded_amount, inv.currency, inv.rate_to_usd_at_issue) for inv in paid_qs),
+        target_currency, snapshot,
+    )
 
     past_due_qs = outstanding_qs.filter(due_date__lt=today)
-    past_due_total = sum((inv.outstanding_amount for inv in past_due_qs), Decimal('0'))
+    past_due_total, past_due_unconverted = _unify_amounts_to_currency(
+        ((inv.outstanding_amount, inv.currency, inv.rate_to_usd_at_issue) for inv in past_due_qs),
+        target_currency, snapshot,
+    )
 
     return Response({
-        'outstanding': {'count': outstanding_qs.count(), 'total': str(outstanding_total)},
-        'total_paid': {'count': qs.filter(amount_paid__gt=0).count(), 'total': str(net_total_paid)},
-        'past_due': {'count': past_due_qs.count(), 'total': str(past_due_total)},
+        'currency': target_currency,
+        'outstanding': {'count': outstanding_qs.count(), 'total': str(outstanding_total), 'unconverted_count': outstanding_unconverted},
+        'total_paid': {'count': paid_qs.count(), 'total': str(net_paid_total), 'unconverted_count': paid_unconverted},
+        'past_due': {'count': past_due_qs.count(), 'total': str(past_due_total), 'unconverted_count': past_due_unconverted},
     })
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def invoice_aging_report(request):
-    """
-    AR aging — Current / 1-30 / 31-60 / 61-90 / 90+ days past due.
-
-    Implements the "broader version" the spec explicitly said it was
-    leaning toward (decisions doc Section 13 #3 — not independently
-    re-decided here): everything the freelancer believes is unpaid,
-    regardless of sent_via_platform, not restricted to platform-sent
-    invoices only.
-
-    Deliberately does NOT filter on sent_via_platform, even though
-    invoice_summary's Outstanding figure (also built on ACTIVE_STATUSES)
-    now does, per the real Section 6 rules supplied in the Step 5
-    review. Checked directly, not assumed: these are two intentionally
-    different rules for two different purposes — the aging report shows
-    the freelancer everything they believe is unpaid (the confirmed
-    "broader version" leaning); the dashboard's Outstanding KPI counts
-    only real, platform-verified money. The shared ACTIVE_STATUSES
-    constant is the actual single source of truth between the two;
-    the sent_via_platform filter is where they're meant to diverge, not
-    a duplication that drifted out of sync.
-    """
-    qs = Invoice.objects.filter(user=request.user, status__in=ACTIVE_STATUSES)
-
-    buckets = {
-        'current': {'count': 0, 'total': Decimal('0')},
-        '1_30': {'count': 0, 'total': Decimal('0')},
-        '31_60': {'count': 0, 'total': Decimal('0')},
-        '61_90': {'count': 0, 'total': Decimal('0')},
-        'over_90': {'count': 0, 'total': Decimal('0')},
-    }
-
-    for invoice in qs:
-        days = invoice.days_overdue
-        if days <= 0:
-            key = 'current'
-        elif days <= 30:
-            key = '1_30'
-        elif days <= 60:
-            key = '31_60'
-        elif days <= 90:
-            key = '61_90'
-        else:
-            key = 'over_90'
-        buckets[key]['count'] += 1
-        buckets[key]['total'] += invoice.outstanding_amount
-
-    return Response({key: {'count': val['count'], 'total': str(val['total'])} for key, val in buckets.items()})
 
 
 @api_view(['GET'])
@@ -1555,14 +1618,19 @@ def _build_top_clients(user, limit=5):
 def _build_currency_breakdown(user):
     """
     Per-currency silos (count + native total) AND one real unified total
-    in USD via core.money.Money — the anchor-currency conversion the
-    task explicitly asks for, not a per-currency-only view pretending to
-    be "unified." unconverted_count is a real, honest signal: invoices
-    excluded from unified_total_usd because they have no frozen
-    rate_to_usd_at_issue (never finalised via the real flow, or issued
-    before any ExchangeRateSnapshot existed) — surfaced rather than
-    silently dropped.
+    in the freelancer's OWN FreelancerProfile.default_currency (Step 18
+    originally hardcoded this to USD — a real, confirmed gap: changing
+    the setting in Settings had no effect on this figure — fixed here via
+    the same _unify_amounts_to_currency utility invoice_summary's KPI
+    cards use, not a second, independent conversion). unconverted_count
+    is a real, honest signal: invoices excluded from unified_total
+    because they have no frozen rate_to_usd_at_issue (never finalised via
+    the real flow, or issued before any ExchangeRateSnapshot existed) —
+    surfaced rather than silently dropped.
     """
+    target_currency = user.profile.default_currency
+    snapshot = _get_latest_snapshot()
+
     invoices = (
         Invoice.objects.filter(user=user)
         .exclude(status='draft').exclude(status__in=CLIENT_SCORING_EXCLUDED_STATUSES)
@@ -1572,17 +1640,15 @@ def _build_currency_breakdown(user):
         for row in invoices.values('currency').annotate(count=Count('id'), total=Sum('total'))
     }
 
-    unified_total_usd = Decimal('0')
-    unconverted_count = 0
-    for inv in invoices.only('total', 'currency', 'rate_to_usd_at_issue'):
-        if inv.rate_to_usd_at_issue is None:
-            unconverted_count += 1
-            continue
-        unified_total_usd += Money(inv.total, inv.currency, inv.rate_to_usd_at_issue).to_usd()
+    unified_total, unconverted_count = _unify_amounts_to_currency(
+        ((inv.total, inv.currency, inv.rate_to_usd_at_issue) for inv in invoices.only('total', 'currency', 'rate_to_usd_at_issue')),
+        target_currency, snapshot,
+    )
 
     return {
         'by_currency': by_currency,
-        'unified_total_usd': str(unified_total_usd.quantize(Decimal('0.01'))),
+        'currency': target_currency,
+        'unified_total': str(unified_total),
         'unconverted_count': unconverted_count,
     }
 

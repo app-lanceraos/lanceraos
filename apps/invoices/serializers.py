@@ -102,7 +102,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         model = Invoice
         fields = [
             'id', 'client', 'client_name', 'client_email', 'client_company', 'client_address',
-            'client_phone', 'currency', 'tax_rate', 'discount_amount', 'due_date', 'notes', 'terms',
+            'client_phone', 'currency', 'tax_rate', 'discount_amount', 'issue_date', 'due_date', 'notes', 'terms',
             'reminders_enabled', 'late_fee_enabled', 'late_fee_rate', 'is_recurring',
             'recurring_interval_days', 'recurring_auto_send', 'is_one_time_client', 'items',
         ]
@@ -116,6 +116,36 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
     def validate_currency(self, value):
         return validate_currency_code(value)
+
+    def validate(self, attrs):
+        """
+        due_date, once set, must be strictly after issue_date — real
+        cross-field validation (item 6 of the verification pass), not
+        left to the frontend alone. due_date itself stays optional at
+        this layer (autosave on an incomplete draft must stay permissive,
+        matching client_name/client_email's own established precedent
+        above) — it's REQUIRED at the one real "leaving draft" gate
+        instead (invoice_finalise/_finalise_and_send/_mark_sent's own
+        draft branch, apps/invoices/views.py).
+
+        Only actually checked when THIS request is touching one of the
+        two fields — falls back to the instance's own current value for
+        whichever side a partial (autosave) update doesn't touch, so a
+        due_date-only PATCH is still checked against the invoice's real
+        saved issue_date. Deliberately does NOT re-validate a pair that
+        was already saved before this rule existed and isn't part of
+        this request at all — a legacy invoice with a stale/blank
+        due_date must stay editable for every OTHER field (client_name,
+        notes, ...) without being blocked by a comparison neither field
+        of which the caller is even touching right now.
+        """
+        if 'issue_date' not in attrs and 'due_date' not in attrs:
+            return attrs
+        issue_date = attrs.get('issue_date', getattr(self.instance, 'issue_date', None))
+        due_date = attrs.get('due_date', getattr(self.instance, 'due_date', None))
+        if due_date and issue_date and due_date <= issue_date:
+            raise serializers.ValidationError({'due_date': 'Due date must be after the issue date.'})
+        return attrs
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])

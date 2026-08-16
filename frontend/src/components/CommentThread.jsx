@@ -15,12 +15,23 @@
 // drops), a 15s poll keeps messages arriving — comments must never be
 // silently undelivered just because WS is unavailable.
 import { useEffect, useRef, useState } from 'react'
-import { Paperclip, Send } from 'lucide-react'
+import { Check, CheckCheck, File, Paperclip, Send, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import useWebSocket from '@/hooks/useWebSocket'
 
-const ALLOWED_ATTACHMENT_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff']
+// Images render an inline thumbnail; PDFs render a document icon — both
+// open the same click-to-view modal instead of navigating to the raw
+// Cloudinary URL (item 9 of the verification pass). Matches
+// apps/invoices/comments.py's own ALLOWED_ATTACHMENT_EXTENSIONS exactly
+// (images + .pdf, same real server-side content validation on that end).
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff']
+const ALLOWED_ATTACHMENT_EXTENSIONS = [...IMAGE_EXTENSIONS, '.pdf']
+
+function isImageUrl(url) {
+  const lower = url.toLowerCase().split('?')[0]
+  return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext))
+}
 
 function dedupeAppend(prev, comment) {
   if (prev.some((c) => c.id === comment.id)) return prev
@@ -40,6 +51,7 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
   const [attachment, setAttachment] = useState(null)
   const [attachmentError, setAttachmentError] = useState('')
   const [sending, setSending] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState(null)
   const pollRef = useRef(null)
   const listEndRef = useRef(null)
 
@@ -132,6 +144,12 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
         {comments.length === 0 && <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>No messages yet.</p>}
         {comments.map((c) => {
           const isMe = c.author_type === viewerType
+          // Seen indicator (item 9 of the verification pass) — only shown
+          // on MY OWN messages, same convention as any real chat app: you
+          // don't see read-receipts on the other person's messages, only
+          // whether THEY saw yours. Whichever side didn't author this
+          // comment is the one whose read timestamp matters.
+          const seenAt = isMe ? (viewerType === 'freelancer' ? c.read_by_client_at : c.read_by_freelancer_at) : null
           return (
             <div key={c.id} style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '80%' }}>
               <p style={{ margin: '0 0 2px', fontSize: '0.7rem', color: 'var(--text-tertiary)', textAlign: isMe ? 'right' : 'left' }}>
@@ -144,19 +162,24 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
                 color: isMe ? '#fff' : 'var(--text-primary)', fontSize: '0.85rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               }}>
                 {c.body_text}
-                {c.attachment_url && (
-                  <div style={{ marginTop: 6 }}>
-                    <a href={c.attachment_url} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline', fontSize: '0.78rem' }}>
-                      View attachment
-                    </a>
-                  </div>
-                )}
+                {c.attachment_url && <AttachmentPreview url={c.attachment_url} isMe={isMe} onOpen={() => setPreviewUrl(c.attachment_url)} />}
               </div>
+              {isMe && (
+                <p style={{ margin: '2px 2px 0', fontSize: '0.68rem', color: 'var(--text-tertiary)', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3 }}>
+                  {seenAt ? (
+                    <><CheckCheck size={12} style={{ color: 'var(--accent)' }} /> Seen</>
+                  ) : (
+                    <><Check size={12} /> Sent</>
+                  )}
+                </p>
+              )}
             </div>
           )
         })}
         <div ref={listEndRef} />
       </div>
+
+      {previewUrl && <AttachmentModal url={previewUrl} onClose={() => setPreviewUrl(null)} />}
 
       {error && <p className="fos-error" style={{ margin: '6px 0 0' }}>{error}</p>}
       {attachmentError && <p className="fos-error" style={{ margin: '6px 0 0' }}>{attachmentError}</p>}
@@ -166,9 +189,9 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
           value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a message…"
           rows={2} className="fos-input" style={{ flex: 1, resize: 'none' }}
         />
-        <label className="fos-btn fos-btn-ghost" style={{ cursor: 'pointer', padding: 8 }} title="Attach an image">
+        <label className="fos-btn fos-btn-ghost" style={{ cursor: 'pointer', padding: 8 }} title="Attach an image or PDF">
           <Paperclip size={14} />
-          <input type="file" accept="image/*" hidden onChange={handleAttachmentChange} />
+          <input type="file" accept="image/*,application/pdf" hidden onChange={handleAttachmentChange} />
         </label>
         <button type="submit" disabled={sending || (!text.trim() && !attachment)} className="fos-btn fos-btn-primary" style={{ padding: 8 }} aria-label="Send message">
           {sending ? <span className="fos-spinner" /> : <Send size={14} />}
@@ -179,6 +202,68 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
           Attached: {attachment.name} <button type="button" onClick={() => setAttachment(null)} className="fos-btn fos-btn-ghost" style={{ padding: '0 4px', fontSize: '0.72rem' }}>Remove</button>
         </p>
       )}
+    </div>
+  )
+}
+
+// ── AttachmentPreview — inline in the thread ────────────────────────
+// An image gets a real thumbnail; a PDF gets a document icon + filename.
+// Both are click-to-view (onOpen), never a plain navigating link to the
+// raw Cloudinary URL.
+function AttachmentPreview({ url, isMe, onOpen }) {
+  const filename = decodeURIComponent(url.split('/').pop() || 'attachment')
+  if (isImageUrl(url)) {
+    return (
+      <div style={{ marginTop: 6 }}>
+        <button
+          type="button" onClick={onOpen}
+          style={{ display: 'block', padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+          aria-label="View image attachment"
+        >
+          <img src={url} alt="" style={{ maxWidth: 160, maxHeight: 160, borderRadius: 'var(--radius-sm)', display: 'block' }} />
+        </button>
+      </div>
+    )
+  }
+  return (
+    <div style={{ marginTop: 6 }}>
+      <button
+        type="button" onClick={onOpen}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 'var(--radius-sm)',
+          border: `1px solid ${isMe ? 'rgba(255,255,255,0.35)' : 'var(--border-subtle)'}`,
+          background: isMe ? 'rgba(255,255,255,0.12)' : 'var(--bg-surface)',
+          color: 'inherit', cursor: 'pointer', fontSize: '0.76rem', maxWidth: '100%',
+        }}
+      >
+        <File size={14} style={{ flexShrink: 0 }} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{filename}</span>
+      </button>
+    </div>
+  )
+}
+
+// ── AttachmentModal — click-to-view ─────────────────────────────────
+function AttachmentModal({ url, onClose }) {
+  const isImage = isImageUrl(url)
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+        <button
+          onClick={onClose} aria-label="Close"
+          style={{ position: 'absolute', top: -34, right: 0, background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 6 }}
+        >
+          <X size={20} />
+        </button>
+        {isImage ? (
+          <img src={url} alt="" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 'var(--radius-md)', objectFit: 'contain' }} />
+        ) : (
+          <iframe src={url} title="Attachment preview" style={{ width: '80vw', height: '80vh', border: 'none', borderRadius: 'var(--radius-md)', background: '#fff' }} />
+        )}
+      </div>
     </div>
   )
 }
