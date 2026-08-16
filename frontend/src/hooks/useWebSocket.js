@@ -13,9 +13,19 @@
 // other same-origin request — httpOnly only blocks JS-side
 // document.cookie reads, never the browser's own automatic attachment.
 // Nothing extra needs doing here for auth to work.
+//
+// Reconnects automatically with exponential backoff (1s, 2s, 4s, ...
+// capped at 30s) on every close/error, resetting the backoff the moment
+// a connection actually opens. Before this, a dropped socket (network
+// blip, laptop sleep, backend restart) never came back on its own — a
+// caller's own poll-while-disconnected fallback (CommentThread.jsx,
+// useNotificationSocket.js) was the only thing that ever ran again, for
+// the rest of the page's life. Callers that don't need this can still
+// ignore it entirely; `connected` is the only thing they read.
 import { useEffect, useRef, useState } from 'react'
 
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
+const MAX_RECONNECT_DELAY_MS = 30000
 
 // path: e.g. '/ws/invoices/thread/<view_token>/' — pass null/undefined to
 // stay disconnected (e.g. while the view_token hasn't loaded yet).
@@ -30,21 +40,44 @@ export default function useWebSocket(path, { onMessage } = {}) {
       return undefined
     }
 
-    const ws = new WebSocket(`${WS_BASE_URL}${path}`)
+    let ws = null
+    let reconnectTimer = null
+    let attempt = 0
+    let stopped = false
 
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => setConnected(false)
-    ws.onerror = () => setConnected(false)
-    ws.onmessage = (event) => {
-      try {
-        onMessageRef.current?.(JSON.parse(event.data))
-      } catch {
-        // Malformed frame — ignore rather than crash the connection.
+    const connect = () => {
+      ws = new WebSocket(`${WS_BASE_URL}${path}`)
+
+      ws.onopen = () => {
+        attempt = 0
+        setConnected(true)
+      }
+      ws.onclose = () => {
+        setConnected(false)
+        if (stopped) return
+        const delay = Math.min(1000 * 2 ** attempt, MAX_RECONNECT_DELAY_MS)
+        attempt += 1
+        reconnectTimer = setTimeout(connect, delay)
+      }
+      // A WebSocket always fires onclose right after onerror — the
+      // reconnect is scheduled there, not here, so it's never scheduled
+      // twice for the same failure.
+      ws.onerror = () => setConnected(false)
+      ws.onmessage = (event) => {
+        try {
+          onMessageRef.current?.(JSON.parse(event.data))
+        } catch {
+          // Malformed frame — ignore rather than crash the connection.
+        }
       }
     }
 
+    connect()
+
     return () => {
-      ws.close()
+      stopped = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      ws?.close()
     }
   }, [path])
 

@@ -559,6 +559,8 @@ html.app-shell-active {
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes panel-slide-in { from { transform: translateX(12px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes modal-in { from { transform: scale(0.95) translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+/* AppShell's notification bell — a brief pulse on a real live push (useNotificationSocket.js). */
+@keyframes bell-ping { 0% { transform: scale(1); } 35% { transform: scale(1.22); } 65% { transform: scale(0.94); } 100% { transform: scale(1); } }
 
 /* ══════════════════════════════════════════════════════════════
    ALERT / STATUS BANNERS

@@ -13,8 +13,12 @@
 // The notification bell + panel UI is backed by core/notifications.py
 // (GET/POST /api/notifications/...). A fetch failure still falls back
 // to the same "No notifications yet" empty state v1 shows when the
-// list is genuinely empty. No WebSocket connection is attempted —
-// the bell is poll-on-open, not push.
+// list is genuinely empty. The unread count is fetched immediately on
+// mount (not deferred to bell-open) and kept live via
+// useNotificationSocket.js (core/consumers.py's NotificationConsumer,
+// ws/notifications/) — a real push the moment core.observability.
+// log_event() writes a NOTIFICATION_EVENTS-listed AuditLog row, from any
+// app, with a poll-on-disconnect fallback so the badge never goes stale.
 //
 // v1's notification-type icons and empty-state icon were bare emoji
 // characters (🔔 👁 ✅ etc.) — replaced with lucide-react icons here,
@@ -35,6 +39,7 @@ import {
 import useAuthStore from '@/store/authStore'
 import useTheme from '@/hooks/useTheme'
 import { initTooltipBindings } from '@/hooks/useAppTooltip'
+import useNotificationSocket from '@/hooks/useNotificationSocket'
 import api from '@/lib/api'
 import { LogoSVG, WordmarkSVG } from './Brand'
 
@@ -299,8 +304,10 @@ export default function AppShell({ children }) {
   const [notifLoading, setNotifLoading] = useState(false)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
+  const [bellPulse, setBellPulse] = useState(false)
   const notifRef = useRef(null)
   const notifPanelRef = useRef(null)
+  const bellPulseTimerRef = useRef(null)
 
   useEffect(() => { collapsedRef.current = collapsed }, [collapsed])
   useEffect(() => { mobileOpenRef.current = mobileOpen }, [mobileOpen])
@@ -460,13 +467,47 @@ export default function AppShell({ children }) {
       setNotifications(data.notifications || [])
       setUnreadCount(data.unread_count || 0)
     } catch {
-      // No notifications backend yet — same empty state as a genuinely empty inbox.
+      // Fetch failed (offline, backend hiccup) — same empty state as a genuinely empty inbox.
       setNotifications([])
       setUnreadCount(0)
     } finally {
       setNotifLoading(false)
     }
   }
+
+  // Fetches immediately on mount so the badge is accurate the instant
+  // the page loads — previously this only ever ran lazily, on bell
+  // click, leaving even a hard refresh showing a plain bell until the
+  // user opened it once.
+  useEffect(() => {
+    fetchNotifications()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const triggerBellPulse = () => {
+    setBellPulse(true)
+    if (bellPulseTimerRef.current) clearTimeout(bellPulseTimerRef.current)
+    bellPulseTimerRef.current = setTimeout(() => setBellPulse(false), 500)
+  }
+
+  useEffect(() => () => { if (bellPulseTimerRef.current) clearTimeout(bellPulseTimerRef.current) }, [])
+
+  useNotificationSocket({
+    enabled: true,
+    onPoll: fetchNotifications,
+    onNotification: (notification, unreadCountFromServer) => {
+      setNotifications((prev) => (prev.some((n) => n.id === notification.id) ? prev : [notification, ...prev]))
+      setUnreadCount(unreadCountFromServer)
+      triggerBellPulse()
+    },
+    onRefresh: (unreadCountFromServer) => {
+      // Another tab (or this one, via a different action) changed
+      // read/dismissed state — the badge always updates; the full list
+      // only needs refetching if the panel showing it is actually open.
+      setUnreadCount(unreadCountFromServer)
+      if (showNotifPanel) fetchNotifications()
+    },
+  })
 
   const markAllRead = async () => {
     try {
@@ -630,7 +671,10 @@ export default function AppShell({ children }) {
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--nav-hover-bg)'; e.currentTarget.style.color = 'var(--nav-active)' }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--header-icon)' }}
               >
-                <Bell size={20} strokeWidth={1.6} />
+                <Bell
+                  size={20} strokeWidth={1.6}
+                  style={{ animation: bellPulse ? 'bell-ping 0.5s ease' : 'none', transformOrigin: 'center' }}
+                />
                 {unreadCount > 0 && (
                   <span style={{
                     position: 'absolute', top: 7, right: 8,

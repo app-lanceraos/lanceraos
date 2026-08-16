@@ -1,4 +1,6 @@
 # core/notifications.py
+import logging
+
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -6,6 +8,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import AuditLog, NotificationRead
+
+logger = logging.getLogger(__name__)
 
 # Which AuditLog events surface in the bell — a fixed allowlist here,
 # not a schema change to AuditLog.event (which stays free-form on
@@ -176,27 +180,100 @@ def _describe(log):
     return ''
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def list_notifications(request):
-    logs = list(
-        AuditLog.objects.filter(user=request.user, event__in=NOTIFICATION_EVENTS)
-        .order_by('-created_at')[:50]
-    )
-    states = {
-        nr.audit_log_id: nr
-        for nr in NotificationRead.objects.filter(user=request.user, audit_log__in=logs)
-    }
-    visible_logs = [log for log in logs if not (states.get(log.id) and states[log.id].dismissed_at)]
-    data = [{
+def _serialize_notification(log, is_read):
+    return {
         'id': str(log.id),
         'type': log.event,
         'title': EVENT_TITLES.get(log.event, log.event),
         'message': _describe(log),
         'created_at': log.created_at.isoformat(),
-        'is_read': log.id in states,
+        'is_read': is_read,
         'action_url': _action_url(log),
-    } for log in visible_logs]
+    }
+
+
+def _visible_logs_and_states(user):
+    """
+    Shared by list_notifications, compute_unread_count, and
+    broadcast_notification — one query shape, one definition of
+    "visible" (not dismissed) and "read" (a NotificationRead row
+    exists, regardless of its own dismissed_at).
+    """
+    logs = list(
+        AuditLog.objects.filter(user=user, event__in=NOTIFICATION_EVENTS)
+        .order_by('-created_at')[:50]
+    )
+    states = {
+        nr.audit_log_id: nr
+        for nr in NotificationRead.objects.filter(user=user, audit_log__in=logs)
+    }
+    visible_logs = [log for log in logs if not (states.get(log.id) and states[log.id].dismissed_at)]
+    return visible_logs, states
+
+
+def compute_unread_count(user):
+    visible_logs, states = _visible_logs_and_states(user)
+    return sum(1 for log in visible_logs if log.id not in states)
+
+
+def broadcast_notification(log):
+    """
+    Real-time push to the bell — called by core.observability.log_event()
+    right after the AuditLog row is committed, for every event in
+    NOTIFICATION_EVENTS, from any app, with zero per-app wiring (see
+    DECISIONS.md). Mirrors apps.invoices.comments.broadcast_comment's own
+    guard: never raises, since a broadcast failure must not roll back or
+    fail the request that already durably wrote the audit row.
+    """
+    if log.user_id is None or log.event not in NOTIFICATION_EVENTS:
+        return
+
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+
+    try:
+        async_to_sync(channel_layer.group_send)(f'notifications_{log.user_id}', {
+            'type': 'notification.message',
+            'notification': _serialize_notification(log, is_read=False),
+            'unread_count': compute_unread_count(log.user),
+        })
+    except Exception:
+        logger.exception('[CORE] Failed to broadcast notification for AuditLog id=%s', log.pk)
+
+
+def _push_state_refresh(user):
+    """
+    Multi-tab consistency for mark-read/dismiss actions — the same
+    per-user group notification pushes to, carrying just the recomputed
+    unread_count so every other open tab can update its badge (and
+    refetch the list if it's currently showing one) without a manual
+    refresh.
+    """
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+
+    try:
+        async_to_sync(channel_layer.group_send)(f'notifications_{user.id}', {
+            'type': 'notification.refresh',
+            'unread_count': compute_unread_count(user),
+        })
+    except Exception:
+        logger.exception('[CORE] Failed to broadcast notification-state refresh for user_id=%s', user.pk)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_notifications(request):
+    visible_logs, states = _visible_logs_and_states(request.user)
+    data = [_serialize_notification(log, log.id in states) for log in visible_logs]
     unread_count = sum(1 for n in data if not n['is_read'])
     return Response({'notifications': data, 'unread_count': unread_count})
 
@@ -209,6 +286,7 @@ def mark_notification_read(request, notification_id):
     except AuditLog.DoesNotExist:
         return Response({'error': 'Notification not found.'}, status=status.HTTP_404_NOT_FOUND)
     NotificationRead.objects.get_or_create(user=request.user, audit_log=log)
+    _push_state_refresh(request.user)
     return Response({'message': 'Marked as read.'})
 
 
@@ -222,6 +300,7 @@ def mark_all_notifications_read(request):
     )
     to_create = [NotificationRead(user=request.user, audit_log=log) for log in logs if log.id not in existing]
     NotificationRead.objects.bulk_create(to_create)
+    _push_state_refresh(request.user)
     return Response({'message': 'All notifications marked as read.'})
 
 
@@ -242,6 +321,7 @@ def dismiss_notifications(request):
         nr, _ = NotificationRead.objects.get_or_create(user=request.user, audit_log=log)
         nr.dismissed_at = now
         nr.save(update_fields=['dismissed_at'])
+    _push_state_refresh(request.user)
     return Response({'message': f'{logs.count()} notification(s) dismissed.'})
 
 
@@ -259,4 +339,5 @@ def mark_notifications_read(request):
     logs = AuditLog.objects.filter(pk__in=ids, user=request.user)
     for log in logs:
         NotificationRead.objects.get_or_create(user=request.user, audit_log=log)
+    _push_state_refresh(request.user)
     return Response({'message': f'{logs.count()} notification(s) marked as read.'})

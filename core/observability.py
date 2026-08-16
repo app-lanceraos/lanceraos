@@ -164,7 +164,7 @@ def log_event(event, user=None, actor=None, request=None, ip_address=None, user_
         request_id = getattr(request, 'request_id', None)
 
     try:
-        return AuditLog.objects.create(
+        audit_log = AuditLog.objects.create(
             user=user,
             actor=actor,
             event=event,
@@ -176,3 +176,15 @@ def log_event(event, user=None, actor=None, request=None, ip_address=None, user_
     except Exception:
         logger.exception('Failed to write AuditLog entry for event=%s user=%s actor=%s', event, user, actor)
         return None
+
+    # Lazy import — avoids coupling this module's import-time behavior to
+    # core.notifications (DRF views + channel-layer plumbing) for the vast
+    # majority of log_event() calls that write events never destined for
+    # the bell. This is the ONE generalization point: every app's calls to
+    # log_event() get a real-time push for free the moment their event
+    # name is added to core.notifications.NOTIFICATION_EVENTS, with no
+    # further wiring anywhere else — see DECISIONS.md.
+    from .notifications import broadcast_notification
+    broadcast_notification(audit_log)
+
+    return audit_log

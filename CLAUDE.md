@@ -252,8 +252,12 @@ This is how you investigate "why didn't this happened?"
    CURRENT STATE: AppShell.jsx is now the full, v1-faithful
    implementation — collapsible sidebar with the liquid-glass nav pill,
    every nav group/item from v1 (including modules not yet built —
-   see DECISIONS.md), notification bell/panel UI (no backend behind it
-   yet), profile popup (Profile/Settings/Help/Sign out), theme toggle.
+   see DECISIONS.md), a real notification bell/panel backed by
+   core/notifications.py (GET/POST /api/notifications/...) with a real
+   WebSocket push (core/consumers.py's NotificationConsumer) — the badge
+   is fetched immediately on mount, updated live, and stays in sync
+   across multiple open tabs (see DECISIONS.md's 16 August 2026 entry),
+   profile popup (Profile/Settings/Help/Sign out), theme toggle.
    Shell colors (header/sidebar/nav/popup) follow the light/dark theme
    toggle — see DESIGN.md Section 2.8 for the single source of truth.
 6. JWT tokens are stored in httpOnly cookies, never localStorage.

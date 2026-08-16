@@ -13,11 +13,14 @@ emit with nowhere to go without this file either.
 Registered via apps/invoices/apps.py's InvoicesConfig.ready() — importing
 this module is what runs its @on(...) decorators; nothing else imports it.
 
-WebSocket push for the bell itself (core/notifications.py's
-list_notifications) still isn't built — that endpoint reads AuditLog via
-polling. Step 13 DOES add a real WebSocket push, but for a narrower
-purpose (apps.invoices.comments.broadcast_comment, invoice-thread comment
-delivery only) — not a generalization of this bell.
+The bell itself now has a real WebSocket push too (core/consumers.py's
+NotificationConsumer, core/notifications.py's broadcast_notification) —
+built after this file, as a generalization at the core.observability.
+log_event() level, not a per-app one. Every event this file logs via
+log_event() (and thus every event in NOTIFICATION_EVENTS) gets pushed to
+the bell in real time with zero changes needed here. Step 13's own
+WebSocket push (apps.invoices.comments.broadcast_comment) remains a
+separate, narrower thing — invoice-thread comment delivery, not the bell.
 """
 import logging
 

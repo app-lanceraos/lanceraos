@@ -3681,3 +3681,64 @@ the API's own origin (`COOKIE_SAMESITE=Lax` explicitly permits this), the same r
 `ClientPortal.jsx`'s own `portal_view_url` `<a href>` already established for a protected,
 credentialed document. `Content-Disposition: attachment` on the response means the browser downloads
 it directly with zero client-side blob/save-as code needed.
+
+Date: 16 August 2026
+Decision: Built the notification bell's real-time WebSocket push (`core/consumers.py`'s
+NotificationConsumer, `core/notifications.py`'s `broadcast_notification`/`_push_state_refresh`) and
+fixed the "still shows a plain bell after a hard refresh" gap (the unread count was only ever fetched
+lazily, on bell click).
+Reason: two real, separately-reported bugs — no live push at all (a new notification only appeared
+after manually reopening the bell), and a stale badge on page load (the count wasn't fetched until
+the bell was opened once).
+
+**The generalization point is `core.observability.log_event()` itself, not any one app.** Every
+module that wants a bell notification already calls `log_event()` to write the AuditLog row in the
+first place (that's the entire mechanism `core/notifications.py`'s `NOTIFICATION_EVENTS` allowlist
+has relied on since it was built) — so `log_event()` is the one place a real-time push can be added
+once and cover every current AND future module with zero per-app wiring, the same reasoning
+`core/events.py`'s own docstring gives for why `emit()`/`on()` exists at all. Concretely:
+`log_event()` now calls `core.notifications.broadcast_notification(audit_log)` right after the
+`AuditLog.objects.create()` succeeds, via a lazy import (avoids coupling the vast majority of
+`log_event()` calls — most of which are never bell-worthy — to DRF/channel-layer imports at module
+load time). `broadcast_notification` itself no-ops immediately for any event not in
+`NOTIFICATION_EVENTS` or with no `user`, so this costs nothing for the common case. Verified this
+actually generalizes, not just in theory: `core/tests/test_consumers.py` fires `log_event()` with
+`new_device_login` (apps.users' own vocabulary) and `comment_posted` (apps.invoices') through the
+exact same unmodified call and confirms both reach a connected socket — plus a real, non-mocked smoke
+test against a live Daphne server + real Redis-backed channel layer + a real login cookie, run once
+by hand during this change and torn down afterward (not committed as a test — it needs a running
+server process, unlike the Channels `WebsocketCommunicator` suite).
+
+**`NotificationConsumer` lives in `core/`, not any app** — deliberately mirroring `core/events.py`'s
+own placement reasoning: the bell surfaces events from every module, so it can't be owned by one.
+Single-identity (freelancer only, via the existing global `CookieJWTAuthMiddleware`), unlike
+`apps.invoices.consumers.ClientThreadConsumer`'s dual freelancer/portal auth — a client-portal
+visitor has no bell of their own, so there was no dual-identity case to handle here.
+
+**Two distinct WS message kinds, not one.** `'notification'` (a brand-new item, pushed the moment
+`log_event()` writes a bell-worthy row) and `'refresh'` (this user's read/dismissed state changed —
+fired from `mark_notification_read`/`mark_all_notifications_read`/`dismiss_notifications`/
+`mark_notifications_read` via a shared `_push_state_refresh` helper) are kept separate rather than
+collapsing both into one shape, because the frontend needs to react differently: a new notification
+gets prepended to the list plus a visible bell-pulse animation; a refresh is silent housekeeping
+(another browser tab acted) that only updates the badge, and only refetches the full list if the
+panel showing it happens to be open right now. This is also what makes multi-tab consistency work
+for free — both connections for the same user are in the same `notifications_{user.id}` channel-layer
+group, so a mark-read in one tab reaches the other with no extra plumbing (confirmed with a real
+two-`WebsocketCommunicator`-on-one-user test, `MultiTabConsistencyTests`).
+
+**`useWebSocket.js` gained real reconnect-with-exponential-backoff (1s → 2s → 4s → … capped at 30s),
+retroactively fixing a latent gap in Step 13's own comment thread, not just serving this new hook.**
+Before this, a dropped socket (network blip, laptop sleep, backend restart) never reconnected on its
+own — the `useEffect` only re-ran when its `path` argument changed, so `CommentThread.jsx`'s existing
+15s poll-while-disconnected fallback was, in practice, the PERMANENT steady state after any drop, not
+a temporary bridge back to push. `useNotificationSocket.js` needed real reconnection to make its own
+poll-fallback genuinely temporary (the explicit ask: "fall back to polling... until the socket
+recovers"), and the shared hook was the only correct place to add it — `CommentThread.jsx` gets the
+fix for free with no changes of its own, verified by the full existing frontend suite still passing
+(115/115, no behavior regressions).
+Alternatives considered: a raw `WebSocket` opened directly inside `useNotificationSocket.js`, bypassing
+`useWebSocket.js` entirely. Rejected — CLAUDE.md's own frontend rule 7 ("WebSocket connection is
+managed by a shared hook... Never open WebSocket connections directly") exists specifically to avoid
+exactly this, and the reconnect fix belongs at the shared layer since every current and future
+WebSocket consumer wants it, not just this one.
