@@ -3541,6 +3541,36 @@ oversight later: a real, scoped fix for `client_currency_conversion` itself (ful
 higher-precision displayed rate) is straightforward whenever someone picks it up, but touching the
 two existing template-string-matching tests deliberately wasn't bundled into this already-large step.
 
+**FOLLOW-UP (16 August 2026) — fixed, superseding the "deliberately not fixed here" call above.**
+The severity assessment changed: this isn't a cosmetic display quirk in an edge case, it's a real,
+silent, client-facing correctness bug hitting exactly this project's own core target currency pair —
+a Pakistani freelancer's PKR invoice shown to a USD/EUR/GBP client, the primary audience CLAUDE.md's
+own mission statement describes. Deferring it further wasn't the right call once that was named
+explicitly; "genuinely out of Step 18/19's stated scope" was true of the STEP that found it, not a
+reason the bug itself should stay live. `client_currency_conversion` (`apps/invoices/models.py`) now
+uses `core.money.Money.convert()` directly for `converted_total` — the exact same full-precision
+mechanism `_invoice_amounts_in_client_currency` (Step 19) already used correctly, confirmed via a new
+test that the two independently agree on the same real number for a PKR-magnitude case. The displayed
+`rate` field is handled separately (`Money.convert()`'s own return value carries the TARGET
+currency's `rate_to_usd`, not the source-to-target cross rate a human wants to read) — computed at
+full precision, then quantized to 2 decimal places for the common case, falling back to
+`rate_to_usd_at_issue`'s own 6-decimal-place field precision only when 2dp would otherwise display a
+misleading "0.00" for a genuinely non-zero rate. This is a "try 2dp, fall back only if it would lie"
+rule, not an arbitrary magnitude threshold — chosen specifically so every existing normal-magnitude
+case (EUR/GBP/PKR-as-source, all ≥0.01) is byte-for-byte unchanged: both pre-existing tests in
+`test_pdf_templates.py` (`at rate 300.00`, `at rate 277.78`) pass with ZERO changes, confirmed by
+running them, not just reasoned about. A new test in that same file
+(`test_pkr_invoice_to_usd_client_shows_a_real_nonzero_converted_total_in_the_rendered_pdf`,
+`test_pdf_pipeline.py`) renders a REAL PDF via WeasyPrint and extracts its actual text via PyMuPDF
+(`page.get_text()`, not just the isolated property) — confirms `$100.80` and `0.003600` both appear,
+and the bug's own exact symptom (`$0.00 at rate`) doesn't. `test_statement.py`'s own cross-check test
+gained a sibling
+(`test_converts_via_the_same_anchor_currency_mechanism_for_the_pkr_magnitude_case_too`) exercising
+precisely the case its docstring had previously named as deliberately avoided — that avoidance note
+is now stale by design (the case it warned about no longer breaks), which is the point: the test that
+used to be impossible to write honestly (it would have had to assert `0.00`) now asserts the real
+number.
+
 **Stale-draft threshold: 7 days**, matching `UNDO_CONFIRMATION_AGE_DAYS`'s own established
 "meaningfully old" precedent (`apps/invoices/views.py`) rather than picking a fresh number — the two
 are conceptually the same judgment ("has enough time passed that this needs a nudge/confirmation"),

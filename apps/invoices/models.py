@@ -26,6 +26,7 @@ from django.utils import timezone
 
 from apps.clients.models import Client
 from apps.payments.models import ExchangeRateSnapshot
+from core.money import Money
 
 
 def _today():
@@ -452,6 +453,24 @@ class Invoice(models.Model):
           - The client's currency isn't a key in that snapshot's
             rates_to_usd (e.g. an obscure currency the upstream fetch
             didn't include that day).
+
+        FIXED (see DECISIONS.md — a real, client-facing bug found during
+        Step 18/19's own work): this used to quantize the conversion
+        RATE to 2 decimal places BEFORE multiplying it against `total`.
+        For any rate below 0.01 — concretely, a PKR-currency invoice
+        converting to a USD/EUR/GBP client (PKR-to-USD is ≈0.0036) — the
+        rate rounded to 0.00, silently zeroing the entire displayed
+        converted total. Now uses core.money.Money.convert() directly
+        for converted_total (full precision throughout, quantized only
+        once, at the very end) — the exact same mechanism
+        apps/invoices/pdf_generator.py's _invoice_amounts_in_client_currency
+        (Step 19) already used correctly. The displayed `rate` is a
+        separate, display-only figure (Money.convert()'s own return
+        value carries the target currency's rate_to_usd, not this
+        source-to-target cross rate) — quantized to 2 decimal places for
+        the common case, falling back to rate_to_usd_at_issue's own
+        6-decimal-place field precision only when 2dp would otherwise
+        show a misleading "0.00" for a genuinely non-zero rate.
         """
         if not self.client:
             return None
@@ -463,13 +482,19 @@ class Invoice(models.Model):
         client_rate_to_usd = self.exchange_rate_snapshot.rates_to_usd.get(client_currency)
         if not client_rate_to_usd:
             return None
-        rate = (self.rate_to_usd_at_issue / Decimal(str(client_rate_to_usd))).quantize(Decimal('0.01'))
-        converted_total = (self.total * rate).quantize(Decimal('0.01'))
+
+        money = Money(self.total, self.currency, self.rate_to_usd_at_issue)
+        converted_total = money.convert(client_currency, self.exchange_rate_snapshot).amount.quantize(Decimal('0.01'))
+
+        full_rate = self.rate_to_usd_at_issue / Decimal(str(client_rate_to_usd))
+        rate_2dp = full_rate.quantize(Decimal('0.01'))
+        rate_display = rate_2dp if rate_2dp != Decimal('0.00') else full_rate.quantize(Decimal('0.000001'))
+
         return {
             'currency': client_currency,
             'symbol': CURRENCY_SYMBOLS.get(client_currency, client_currency + ' '),
             'converted_total': converted_total,
-            'rate': rate,
+            'rate': rate_display,
         }
 
     # ── Class methods ──────────────────────────────────────────────

@@ -129,12 +129,7 @@ class CurrencyConversionTests(TestCase):
         """
         EUR invoice, client wants PKR — same scenario
         test_pdf_templates.py's own test_currency_line_shown_for_different_currency_client
-        already exercises for the property this generalizes, so the
-        cross-check lands in a regime where that property's own 2-decimal-
-        place rate rounding doesn't distort the result (see DECISIONS.md
-        for a real, found-but-out-of-scope precision gap in that property
-        for source/target pairs with a rate below 0.01, e.g. PKR-to-USD —
-        not exercised here on purpose).
+        already exercises for the property this generalizes.
         """
         snapshot = make_snapshot(EUR=Decimal('1.08'), PKR=Decimal('0.0036'))
         client = _client(self.user, default_currency='PKR')
@@ -149,6 +144,35 @@ class CurrencyConversionTests(TestCase):
         self.assertEqual(row['amounts']['amount_paid'], Decimal('30000.00'))
         # Cross-checked directly against the property this generalizes.
         self.assertEqual(invoice.client_currency_conversion['converted_total'], Decimal('30000.00'))
+
+    def test_converts_via_the_same_anchor_currency_mechanism_for_the_pkr_magnitude_case_too(self):
+        """
+        PKR invoice, client wants USD — the exact case
+        test_converts_via_the_same_anchor_currency_mechanism_as_client_currency_conversion
+        above used to deliberately avoid, since PKR-to-USD is ≈0.0036 and
+        Invoice.client_currency_conversion used to round that rate to 2
+        decimal places BEFORE multiplying against `total`, silently
+        zeroing the result. Now fixed (see DECISIONS.md) — this asserts
+        both this module's own conversion helper AND the property it
+        cross-checks against agree on a real, non-zero total.
+        """
+        snapshot = make_snapshot(PKR=Decimal('0.0036'))
+        client = _client(self.user, default_currency='USD')
+        invoice = _invoice(
+            self.user, client, currency='PKR', total=Decimal('28000.00'), amount_paid=Decimal('28000.00'),
+            rate_to_usd_at_issue=Decimal('0.0036'), exchange_rate_snapshot=snapshot,
+        )
+        ctx = build_statement_context(client, date(2026, 1, 1), date(2026, 12, 31))
+        row = ctx['rows'][0]
+        # 0.0036 / 1.0 = 0.0036; 28000 * 0.0036 = 100.80
+        self.assertEqual(row['amounts']['total'], Decimal('100.80'))
+        self.assertEqual(row['amounts']['amount_paid'], Decimal('100.80'))
+        # Cross-checked directly against the property this generalizes —
+        # this is the assertion that used to be impossible to write
+        # honestly (it would have asserted 0.00, the bug's own symptom).
+        conversion = invoice.client_currency_conversion
+        self.assertEqual(conversion['converted_total'], Decimal('100.80'))
+        self.assertNotEqual(conversion['converted_total'], Decimal('0.00'))
 
     def test_no_frozen_rate_is_excluded_from_totals_but_still_listed(self):
         client = _client(self.user, default_currency='USD')

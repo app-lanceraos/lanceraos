@@ -15,6 +15,7 @@ configured, but a test suite shouldn't depend on network access to a
 third-party service to pass.
 """
 import base64
+from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -133,6 +134,46 @@ class RenderPipelineTests(TestCase):
         invoice.save()
         html_string = render_to_string('invoices/professional.html', build_pdf_context(invoice))
         self.assertIn('at rate', html_string)
+
+    def test_pkr_invoice_to_usd_client_shows_a_real_nonzero_converted_total_in_the_rendered_pdf(self):
+        """
+        Real, found, client-facing bug (see DECISIONS.md) —
+        Invoice.client_currency_conversion used to quantize the
+        conversion RATE to 2 decimal places BEFORE multiplying it
+        against `total`. PKR-to-USD is ≈0.0036, which rounds to 0.00 at
+        2dp, silently zeroing the entire displayed converted total on a
+        real invoice PDF for exactly this project's own target
+        currency pair (a Pakistani freelancer's PKR invoice, a
+        USD/EUR/GBP client). Verified here against the REAL rendered PDF
+        via PyMuPDF text extraction — not just the isolated property in
+        Python, and not just "no exception raised."
+        """
+        snapshot = make_snapshot(PKR=Decimal('0.0036'))
+        client = Client.objects.create(user=self.user, name='Zainab Traders', email='z@example.com', default_currency='USD')
+        invoice = Invoice.objects.create(
+            user=self.user, invoice_number=None, status='created', client=client,
+            client_name=client.name, client_email=client.email,
+            currency='PKR', due_date=date(2026, 8, 19), tax_rate=Decimal('0'),
+            rate_to_usd_at_issue=Decimal('0.0036'), exchange_rate_snapshot=snapshot,
+        )
+        InvoiceItem.objects.create(invoice=invoice, description='Design work', quantity=Decimal('1'), unit_price=Decimal('28000.00'), sort_order=1)
+        invoice.recalculate_totals()
+        invoice.save()
+
+        conversion = invoice.client_currency_conversion
+        self.assertIsNotNone(conversion)
+        self.assertEqual(conversion['converted_total'], Decimal('100.80'))  # 28000 * 0.0036 — real bug used to make this 0.00
+        self.assertNotEqual(conversion['rate'], Decimal('0.00'))
+        self.assertEqual(conversion['rate'], Decimal('0.003600'))
+
+        pdf_bytes = render_invoice_pdf(invoice)
+        doc = fitz.open(stream=pdf_bytes, filetype='pdf')
+        page_text = ''.join(page.get_text() for page in doc)
+        doc.close()
+
+        self.assertIn('100.80', page_text)  # the real, non-zero converted total
+        self.assertIn('0.003600', page_text)  # the real-precision rate, not the old "0.00"
+        self.assertNotIn('$0.00 at rate', page_text)  # the old bug's exact symptom
 
     def test_store_invoice_pdf_uploads_to_cloudinary_and_returns_url_and_public_id(self):
         invoice = make_invoice_with_items(self.user, n_items=1)
