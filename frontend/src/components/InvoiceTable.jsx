@@ -2,22 +2,33 @@
 //
 // Desktop invoice list — a real table (List/Table restructure pass),
 // replacing the old card grid at desktop widths. Columns: checkbox |
-// Invoice # | Client | Amount | Issue Date | Due Date | Status | Action.
+// Invoice # | Client | Amount | Issue Date | Due Date | Status.
 // Mobile keeps the pre-existing card layout (Invoices.jsx renders
 // InvoiceCard directly at ≤768px) — this component is desktop-only.
+//
+// InvoiceDetailPanel redesign round (item 6): the dedicated Action column
+// (an "Open" icon button per row) is removed entirely — the whole row is
+// now the open-affordance, matching InvoiceCard's existing mobile
+// behavior exactly (cursor:pointer + a real hover state via the
+// .invoice-row CSS class below, since a per-row :hover state isn't
+// expressible through this codebase's inline-style convention alone).
+// The checkbox column's own click is stopped from bubbling to the row —
+// otherwise selecting a row for bulk delete would also open its detail
+// panel, the same conflict InvoiceCard's own selectable toggle button
+// already guards against.
+//
+// Bulk delete's own trigger moved out of this table's header cell (a
+// real, reported misplacement fixed there once already, but which loses
+// its home entirely once the Action column it lived in is gone) — it now
+// lives in Invoices.jsx's own floating bulk-action bar, unified this
+// round to render at every width instead of being a mobile-only
+// affordance (see that file's own comment).
 //
 // The checkbox column only exists at all when at least one row in the
 // current view is deletion-eligible (draft/created) — a status-filtered
 // view showing only ineligible invoices (e.g. filtered to Sent) hides
 // the whole selection affordance (header cell included), rather than
-// rendering an empty, useless column. Once ≥1 row is selected, the bulk
-// delete control appears in the ACTION column's own header (bug-fix
-// round — a real, reported misplacement: it used to overwrite the
-// checkbox-column header instead, which read as "the select-all control
-// just vanished" rather than "here's a bulk action"). The checkbox
-// column itself always stays a checkbox.
-import { PanelRightOpen, Trash2 } from 'lucide-react'
-
+// rendering an empty, useless column.
 import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
@@ -26,14 +37,18 @@ import {
 const th = { textAlign: 'left', padding: '10px 12px', fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }
 const td = { padding: '12px', fontSize: '0.84rem', color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' }
 
-export default function InvoiceTable({ invoices, deleteEligibleStatuses, selectedIds, onToggleSelect, onSelectAllEligible, onClearSelection, onRequestBulkDelete, onOpen }) {
+export default function InvoiceTable({ invoices, deleteEligibleStatuses, selectedIds, onToggleSelect, onSelectAllEligible, onClearSelection, onOpen }) {
   const eligibleIds = invoices.filter((inv) => deleteEligibleStatuses.includes(inv.status)).map((inv) => inv.id)
   const hasEligible = eligibleIds.length > 0
   const allEligibleSelected = hasEligible && eligibleIds.every((id) => selectedIds.has(id));
 
   return (
     <div style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+      <style>{`
+        .invoice-row { cursor: pointer; transition: background var(--transition-fast); }
+        .invoice-row:not([data-selected="true"]):hover { background: var(--bg-surface-2); }
+      `}</style>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
         <thead>
           <tr style={{ background: 'var(--bg-surface-2)' }}>
             {hasEligible && (
@@ -53,17 +68,6 @@ export default function InvoiceTable({ invoices, deleteEligibleStatuses, selecte
             <th style={th}>Issue Date</th>
             <th style={th}>Due Date</th>
             <th style={th}>Status</th>
-            <th style={{ ...th, width: 48, textAlign: 'center' }} aria-hidden={selectedIds.size === 0}>
-              {selectedIds.size > 0 && (
-                <button
-                  onClick={onRequestBulkDelete}
-                  aria-label="Delete selected invoices"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-red-text)', display: 'inline-flex', padding: 0 }}
-                >
-                  <Trash2 size={15} />
-                </button>
-              )}
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -73,9 +77,13 @@ export default function InvoiceTable({ invoices, deleteEligibleStatuses, selecte
             const isEligible = deleteEligibleStatuses.includes(inv.status)
             const isSelected = selectedIds.has(inv.id)
             return (
-              <tr key={inv.id} style={{ background: isSelected ? 'var(--accent-glow)' : 'transparent' }}>
+              <tr
+                key={inv.id} className="invoice-row" data-selected={isSelected}
+                onClick={() => onOpen(inv)}
+                style={{ background: isSelected ? 'var(--accent-glow)' : 'transparent' }}
+              >
                 {hasEligible && (
-                  <td style={td}>
+                  <td style={td} onClick={(e) => e.stopPropagation()}>
                     {isEligible && (
                       <input
                         type="checkbox"
@@ -105,16 +113,6 @@ export default function InvoiceTable({ invoices, deleteEligibleStatuses, selecte
                     <InvoiceStatusBadge meta={meta} />
                     {isOverdue && <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[OVERDUE_BADGE.statusKey] }}>{OVERDUE_BADGE.label}</span>}
                   </div>
-                </td>
-                <td style={{ ...td, textAlign: 'center' }}>
-                  <button
-                    onClick={() => onOpen(inv)}
-                    aria-label={`Open ${inv.invoice_number || 'invoice'}`}
-                    className="fos-btn fos-btn-ghost"
-                    style={{ padding: 6 }}
-                  >
-                    <PanelRightOpen size={15} />
-                  </button>
                 </td>
               </tr>
             )

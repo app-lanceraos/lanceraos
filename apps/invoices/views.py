@@ -25,7 +25,7 @@ from dateutil.relativedelta import relativedelta
 from PIL import Image as PILImage
 from PIL import UnidentifiedImageError
 from django.core.cache import cache
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
@@ -54,13 +54,13 @@ from .email_service import (
 )
 from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceItem, InvoicePartialPayment,
-    InvoicePreset, InvoicePresetItem, PaymentClaim,
+    InvoicePreset, InvoicePresetItem, InvoiceReminder, PaymentClaim,
 )
 from .pdf_generator import render_invoice_pdf
-from .tasks import render_and_store_invoice_pdf
+from .tasks import REMINDER_SCHEDULE, _send_reminder, render_and_store_invoice_pdf
 from .serializers import (
-    InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer, InvoicePresetSerializer,
-    InvoiceSerializer, RecurringSeriesSettingsSerializer,
+    DueDateOnlySerializer, InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer,
+    InvoicePresetSerializer, InvoiceSerializer, RecurringSeriesSettingsSerializer,
 )
 from .serializers_claims import PaymentClaimSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
@@ -350,8 +350,18 @@ def invoice_detail(request, pk):
     have exactly its recurring_interval_days/recurring_auto_send fields
     changed here — "edit the whole series going forward" — via
     RecurringSeriesSettingsSerializer, never the general InvoiceSerializer.
-    A non-root invoice, or a request touching any other field, still hits
-    the ordinary is_editable rejection below.
+
+    Bug-hardening round's own narrow exception, same shape: a non-draft,
+    non-terminal invoice (created/sent/viewed/partially_paid — i.e. still
+    has a real due date that matters) may still have exactly its
+    due_date changed here — InvoiceDetailPanel's "Change Due Date"
+    More-menu action — via DueDateOnlySerializer. A terminal invoice
+    (paid/cancelled/refunded/bad_debt) is excluded — nothing left to
+    reschedule once resolved.
+
+    A non-root invoice touching anything outside these two narrow
+    allowances, or a terminal-status invoice, still hits the ordinary
+    is_editable rejection below.
     """
     invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
 
@@ -381,6 +391,18 @@ def invoice_detail(request, pk):
             serializer.save()
             logger.info('[INVOICES] Updated recurring series settings on root invoice %s.', invoice.pk)
             return Response(InvoiceListSerializer(invoice).data)
+
+        due_date_only_eligible = invoice.status in ('created',) + ACTIVE_STATUSES
+        if due_date_only_eligible and submitted_fields and submitted_fields.issubset({'due_date'}):
+            if _check_moderate_rate_limit('update', request.user):
+                return _too_many_requests('Too many updates. Please try again later.')
+            serializer = DueDateOnlySerializer(invoice, data=request.data, partial=True)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            serializer.save()
+            logger.info('[INVOICES] Due date changed to %s for invoice %s.', invoice.due_date, invoice.invoice_number)
+            return Response(InvoiceListSerializer(invoice).data)
+
         return Response(
             {'error': 'This invoice can no longer be edited — only draft invoices can be changed.'},
             status=status.HTTP_403_FORBIDDEN,
@@ -1076,6 +1098,124 @@ def invoice_toggle_reminders(request, pk):
     invoice.reminders_enabled = not invoice.reminders_enabled
     invoice.save(update_fields=['reminders_enabled', 'updated_at'])
     logger.info('[INVOICES] Reminders %s for invoice %s.', 'enabled' if invoice.reminders_enabled else 'disabled', invoice.invoice_number)
+    return Response(InvoiceListSerializer(invoice).data)
+
+
+# _REMINDER_TEMPLATE_BY_NUMBER: reminder_number -> template key, derived
+# from tasks.REMINDER_SCHEDULE's own (min_days, reminder_number,
+# template_key) tuples rather than a second, hand-copied mapping.
+_REMINDER_TEMPLATE_BY_NUMBER = {number: template for _, number, template in REMINDER_SCHEDULE}
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_send_reminder(request, pk):
+    """
+    On-demand manual reminder sending (bug-hardening round — InvoiceDetail
+    Panel's "Send Reminder N" footer action for an overdue, still-active
+    invoice). Reuses apps.invoices.tasks._send_reminder — the exact same
+    function the scheduled day-3/7/14/30 task (send_invoice_reminders)
+    calls — so both paths write the identical InvoiceReminder record
+    type; there is no manual-vs-automatic distinction anywhere in the
+    data model, and the scheduled task's own "already sent" check
+    correctly sees a manually-sent number and never double-sends it.
+
+    Targets the NEXT ungenerated reminder number — 1 if none sent yet, 2
+    if 1 has been sent, etc. — derived from the real max InvoiceReminder.
+    reminder_number already recorded for this invoice (not from
+    Invoice.reminder_count; both stay in sync since reminders are always
+    sent in strictly ascending order on both paths, but the real row
+    count is the authoritative source). Rejects once all 4 have been
+    sent — nothing left to send.
+
+    Deliberately does NOT require reminders_enabled or sent_via_platform
+    — those gate the AUTOMATIC schedule only (see their own field
+    help_text), not a freelancer's own deliberate manual action, the
+    same relationship invoice_mark_sent/invoice_send already have to
+    each other. Scoped to ACTIVE_STATUSES (sent/viewed/partially_paid)
+    and genuinely overdue (days_overdue > 0) — mirrors exactly when the
+    frontend footer button itself is shown, so it's never reachable
+    somewhere it would just 400.
+    """
+    if _check_moderate_rate_limit('send_reminder', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    if invoice.status not in ACTIVE_STATUSES:
+        return Response(
+            {'error': 'Reminders can only be sent for sent, viewed, or partially paid invoices.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if invoice.days_overdue <= 0:
+        return Response({'error': 'This invoice is not overdue yet.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    last_sent = InvoiceReminder.objects.filter(invoice=invoice).aggregate(Max('reminder_number'))['reminder_number__max'] or 0
+    next_number = last_sent + 1
+    if next_number > 4:
+        return Response({'error': 'All 4 reminders have already been sent for this invoice.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    _send_reminder(invoice, next_number, _REMINDER_TEMPLATE_BY_NUMBER[next_number])
+    invoice.refresh_from_db()
+
+    logger.info('[INVOICES] Reminder %s sent manually for %s.', next_number, invoice.invoice_number)
+    return Response(InvoiceListSerializer(invoice).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def invoice_resend(request, pk):
+    """
+    Re-sends the invoice's CURRENT stored PDF via email again (bug-
+    hardening round — InvoiceDetailPanel's "Resend Invoice" More-menu
+    action) — a real, distinct action from the one-time /send/ (invoice_
+    send, only reachable from status='created', which transitions the
+    invoice forward). This never touches invoice.status/sent_via_platform/
+    sent_at at all — callable repeatedly, unlike the one-time send —
+    reusing the exact same pdf-fetch + email-build + send chain
+    _send_invoice_now uses (fetch_invoice_pdf_bytes, build_invoice_send_
+    email, send_invoice_related_email) rather than a second, parallel
+    implementation of "email this invoice."
+
+    Scoped to sent/viewed/partially_paid (ACTIVE_STATUSES) — nothing
+    useful to resend once resolved (paid/cancelled/refunded/bad_debt).
+    The spec didn't pin this exact boundary; this is this step's own
+    scoping call, recorded in DECISIONS.md.
+    """
+    if not request.data.get('confirm'):
+        return Response({'error': 'confirm: true is required to resend this invoice.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if _check_moderate_rate_limit('resend', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
+    if invoice.status not in ACTIVE_STATUSES:
+        return Response(
+            {'error': 'Only sent, viewed, or partially paid invoices can be resent.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    pdf_bytes = fetch_invoice_pdf_bytes(invoice)
+    if pdf_bytes is None:
+        return Response(
+            {'error': "Could not retrieve or regenerate this invoice's PDF. It has not been resent — please try again."},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    subject, html_body, plain_body = build_invoice_send_email(invoice)
+    result = send_invoice_related_email(
+        invoice, subject, html_body, plain_body,
+        pdf_bytes=pdf_bytes, request_id=getattr(request, 'request_id', None),
+    )
+    if not result['sent']:
+        detail = result['error'] or 'the email provider rejected the request'
+        return Response({'error': f'Could not resend this invoice: {detail}.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+    emit('InvoiceResent', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
+    logger.info(
+        '[INVOICES] Resent invoice %s to %s via %s%s.',
+        invoice.invoice_number, invoice.client_email, result['sent_via'],
+        ' (fallback from custom SMTP)' if result['fallback_used'] else '',
+    )
     return Response(InvoiceListSerializer(invoice).data)
 
 

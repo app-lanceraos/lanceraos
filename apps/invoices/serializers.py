@@ -214,6 +214,34 @@ class RecurringSeriesSettingsSerializer(serializers.ModelSerializer):
         fields = ['recurring_interval_days', 'recurring_auto_send']
 
 
+class DueDateOnlySerializer(serializers.ModelSerializer):
+    """
+    Bug-hardening round — the narrow allowance invoice_detail's PUT
+    handler uses for a non-draft, non-terminal invoice's "Change Due
+    Date" More-menu action: exactly this one field, nothing else,
+    mirroring RecurringSeriesSettingsSerializer's own established
+    pattern immediately above (a real, small, dedicated serializer for
+    one specific narrow case, not a body-content-sniffing exception
+    bolted onto the general-purpose InvoiceSerializer). due_date must
+    still be on or after the invoice's own real, already-frozen
+    issue_date — same `>=` boundary InvoiceSerializer.validate() itself
+    enforces (see that method's own docstring for the same-day
+    reasoning), re-derived here since this serializer's Meta.fields
+    deliberately excludes issue_date entirely (it's immutable past
+    draft — this action changes ONLY due_date).
+    """
+    class Meta:
+        model = Invoice
+        fields = ['due_date']
+
+    def validate_due_date(self, value):
+        if value is None:
+            raise serializers.ValidationError('A due date is required.')
+        if self.instance and self.instance.issue_date and value < self.instance.issue_date:
+            raise serializers.ValidationError('Due date cannot be before the issue date.')
+        return value
+
+
 class InvoiceListSerializer(serializers.ModelSerializer):
     """
     Read representation for list/detail GET responses — includes the

@@ -2,6 +2,7 @@
 import json
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.core.cache import cache
 from django.test import Client as DjangoTestClient
@@ -11,7 +12,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.clients.models import Client as ClientModel
-from apps.invoices.models import Invoice, InvoiceItem, InvoicePartialPayment, InvoicePreset
+from apps.invoices.models import Invoice, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoiceReminder
 from apps.invoices.tests.test_models import make_invoice
 from apps.users.models import User
 
@@ -485,6 +486,58 @@ class IssueDateDefaultingTests(InvoicesAPITestCase):
         })
         self.assertEqual(resp.status_code, 400)
         self.assertIn('due_date', resp.json())
+
+
+# ══════════════════════════════════════════════════════════════════
+# CHANGE DUE DATE — narrow non-draft PUT allowance, bug-hardening round
+# (InvoiceDetailPanel's "Change Due Date" More-menu action). Same shape
+# as Step 16's recurring-series narrow allowance — see invoice_detail's
+# own docstring.
+# ══════════════════════════════════════════════════════════════════
+
+class ChangeDueDateTests(InvoicesAPITestCase):
+    def test_allowed_for_created_status(self):
+        invoice = self._invoice(status='created', issue_date=date(2027, 1, 1), due_date=date(2027, 1, 15))
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-02-01'})
+        self.assertEqual(resp.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.due_date, date(2027, 2, 1))
+
+    def test_allowed_for_each_active_status(self):
+        for extra_status in ('sent', 'viewed', 'partially_paid'):
+            invoice = self._invoice(status=extra_status, issue_date=date(2027, 1, 1), due_date=date(2027, 1, 15), sent_at=timezone.now())
+            resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-03-01'})
+            self.assertEqual(resp.status_code, 200, f'status={extra_status}')
+            invoice.refresh_from_db()
+            self.assertEqual(invoice.due_date, date(2027, 3, 1))
+
+    def test_rejected_for_terminal_statuses(self):
+        for extra_status, extra in (
+            ('paid', {'amount_paid': Decimal('100'), 'total': Decimal('100')}),
+            ('cancelled', {}), ('refunded', {}), ('bad_debt', {}),
+        ):
+            invoice = self._invoice(status=extra_status, issue_date=date(2027, 1, 1), due_date=date(2027, 1, 15), **extra)
+            resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-03-01'})
+            self.assertEqual(resp.status_code, 403, f'status={extra_status}')
+
+    def test_rejected_when_before_issue_date(self):
+        invoice = self._invoice(status='created', issue_date=date(2027, 2, 1), due_date=date(2027, 2, 15))
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-01-01'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_same_day_as_issue_date_is_allowed(self):
+        invoice = self._invoice(status='created', issue_date=date(2027, 2, 1), due_date=date(2027, 2, 15))
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-02-01'})
+        self.assertEqual(resp.status_code, 200)
+
+    def test_touching_any_other_field_alongside_due_date_still_hits_the_ordinary_rejection(self):
+        invoice = self._invoice(status='created', issue_date=date(2027, 1, 1), due_date=date(2027, 1, 15))
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {
+            'due_date': '2027-02-01', 'notes': 'sneaking in an edit',
+        })
+        self.assertEqual(resp.status_code, 403)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.due_date, date(2027, 1, 15))  # unchanged
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1033,6 +1086,150 @@ class ToggleAndRecurringTests(InvoicesAPITestCase):
         invoice = self._invoice(is_recurring=False)
         resp = self._post(reverse('invoices:invoice_pause_recurring', kwargs={'pk': invoice.pk}))
         self.assertEqual(resp.status_code, 400)
+
+
+# ══════════════════════════════════════════════════════════════════
+# SEND REMINDER (manual, on-demand) — bug-hardening round
+# ══════════════════════════════════════════════════════════════════
+
+class SendReminderTests(InvoicesAPITestCase):
+    def _overdue_invoice(self, **overrides):
+        defaults = dict(
+            status='sent', sent_via_platform=True, sent_at=timezone.now(),
+            due_date=date.today() - timedelta(days=35), total=Decimal('100'),
+        )
+        defaults.update(overrides)
+        return self._invoice(**defaults)
+
+    def _mock_send(self):
+        return {'sent': True, 'sent_via': 'resend', 'fallback_used': False, 'error': None}
+
+    @patch('apps.invoices.tasks.send_invoice_related_email')
+    def test_first_manual_reminder_targets_number_1(self, mock_send):
+        mock_send.return_value = self._mock_send()
+        invoice = self._overdue_invoice()
+        resp = self._post(reverse('invoices:invoice_send_reminder', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(InvoiceReminder.objects.filter(invoice=invoice).count(), 1)
+        reminder = InvoiceReminder.objects.get(invoice=invoice)
+        self.assertEqual(reminder.reminder_number, 1)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.reminder_count, 1)
+
+    @patch('apps.invoices.tasks.send_invoice_related_email')
+    def test_next_manual_reminder_targets_the_number_after_the_highest_already_sent(self, mock_send):
+        mock_send.return_value = self._mock_send()
+        invoice = self._overdue_invoice()
+        InvoiceReminder.objects.create(invoice=invoice, reminder_number=1, template_used='reminder_1', delivered=True, days_overdue_at_send=5)
+        InvoiceReminder.objects.create(invoice=invoice, reminder_number=2, template_used='reminder_2', delivered=True, days_overdue_at_send=10)
+        resp = self._post(reverse('invoices:invoice_send_reminder', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(InvoiceReminder.objects.filter(invoice=invoice, reminder_number=3).exists())
+
+    @patch('apps.invoices.tasks.send_invoice_related_email')
+    def test_manually_sent_reminder_is_seen_by_the_scheduled_task_and_never_duplicated(self, mock_send):
+        """Real cross-path check: both write the same InvoiceReminder type, so the scheduled task's own already-sent check correctly sees a manual send."""
+        mock_send.return_value = self._mock_send()
+        invoice = self._overdue_invoice(due_date=date.today() - timedelta(days=3))
+        resp = self._post(reverse('invoices:invoice_send_reminder', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(InvoiceReminder.objects.filter(invoice=invoice, reminder_number=1).count(), 1)
+
+        from apps.invoices.tasks import send_invoice_reminders
+        send_invoice_reminders()  # scheduled task run — must not duplicate #1
+        self.assertEqual(InvoiceReminder.objects.filter(invoice=invoice, reminder_number=1).count(), 1)
+
+    def test_exhausted_after_reminder_4_is_rejected(self):
+        invoice = self._overdue_invoice()
+        for n in range(1, 5):
+            InvoiceReminder.objects.create(invoice=invoice, reminder_number=n, template_used=f'reminder_{n}', delivered=True, days_overdue_at_send=n * 5)
+        resp = self._post(reverse('invoices:invoice_send_reminder', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rejected_when_not_yet_overdue(self):
+        invoice = self._invoice(status='sent', sent_at=timezone.now(), due_date=date.today() + timedelta(days=10))
+        resp = self._post(reverse('invoices:invoice_send_reminder', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rejected_for_terminal_status(self):
+        invoice = self._invoice(status='paid', due_date=date.today() - timedelta(days=10), amount_paid=Decimal('100'), total=Decimal('100'))
+        resp = self._post(reverse('invoices:invoice_send_reminder', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rejected_for_draft_and_created(self):
+        for extra_status in ('draft', 'created'):
+            invoice = self._invoice(status=extra_status, due_date=date.today() - timedelta(days=10))
+            resp = self._post(reverse('invoices:invoice_send_reminder', kwargs={'pk': invoice.pk}))
+            self.assertEqual(resp.status_code, 400)
+
+    @patch('apps.invoices.tasks.send_invoice_related_email')
+    def test_does_not_require_reminders_enabled_or_sent_via_platform(self, mock_send):
+        """A deliberate manual override — those two flags gate the AUTOMATIC schedule only."""
+        mock_send.return_value = self._mock_send()
+        invoice = self._overdue_invoice(reminders_enabled=False, sent_via_platform=False)
+        resp = self._post(reverse('invoices:invoice_send_reminder', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+
+
+# ══════════════════════════════════════════════════════════════════
+# RESEND INVOICE — bug-hardening round
+# ══════════════════════════════════════════════════════════════════
+
+class ResendInvoiceTests(InvoicesAPITestCase):
+    def _mock_send(self):
+        return {'sent': True, 'sent_via': 'resend', 'fallback_used': False, 'error': None}
+
+    @patch('apps.invoices.views.send_invoice_related_email')
+    @patch('apps.invoices.views.fetch_invoice_pdf_bytes')
+    def test_resend_succeeds_without_changing_status_or_sent_at(self, mock_fetch, mock_send):
+        mock_fetch.return_value = b'%PDF-fake'
+        mock_send.return_value = self._mock_send()
+        invoice = self._invoice(status='sent', sent_via_platform=True, sent_at=timezone.now())
+        original_sent_at = invoice.sent_at
+        resp = self._post(reverse('invoices:invoice_resend', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'sent')
+        self.assertEqual(invoice.sent_at, original_sent_at)
+        mock_send.assert_called_once()
+
+    def test_requires_confirm(self):
+        invoice = self._invoice(status='sent', sent_at=timezone.now())
+        resp = self._post(reverse('invoices:invoice_resend', kwargs={'pk': invoice.pk}), {})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rejected_for_draft_and_created(self):
+        for extra_status in ('draft', 'created'):
+            invoice = self._invoice(status=extra_status)
+            resp = self._post(reverse('invoices:invoice_resend', kwargs={'pk': invoice.pk}), {'confirm': True})
+            self.assertEqual(resp.status_code, 400)
+
+    def test_rejected_once_resolved(self):
+        for extra_status, extra in (
+            ('paid', {'amount_paid': Decimal('100'), 'total': Decimal('100')}),
+            ('cancelled', {}), ('refunded', {}), ('bad_debt', {}),
+        ):
+            invoice = self._invoice(status=extra_status, **extra)
+            resp = self._post(reverse('invoices:invoice_resend', kwargs={'pk': invoice.pk}), {'confirm': True})
+            self.assertEqual(resp.status_code, 400)
+
+    @patch('apps.invoices.views.fetch_invoice_pdf_bytes', return_value=None)
+    def test_pdf_fetch_failure_returns_502(self, mock_fetch):
+        invoice = self._invoice(status='sent', sent_at=timezone.now())
+        resp = self._post(reverse('invoices:invoice_resend', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp.status_code, 502)
+
+    @patch('apps.invoices.views.send_invoice_related_email')
+    @patch('apps.invoices.views.fetch_invoice_pdf_bytes')
+    def test_can_be_called_repeatedly_unlike_the_one_time_send(self, mock_fetch, mock_send):
+        mock_fetch.return_value = b'%PDF-fake'
+        mock_send.return_value = self._mock_send()
+        invoice = self._invoice(status='viewed', sent_at=timezone.now())
+        resp1 = self._post(reverse('invoices:invoice_resend', kwargs={'pk': invoice.pk}), {'confirm': True})
+        resp2 = self._post(reverse('invoices:invoice_resend', kwargs={'pk': invoice.pk}), {'confirm': True})
+        self.assertEqual(resp1.status_code, 200)
+        self.assertEqual(resp2.status_code, 200)
+        self.assertEqual(mock_send.call_count, 2)
 
 
 # ══════════════════════════════════════════════════════════════════

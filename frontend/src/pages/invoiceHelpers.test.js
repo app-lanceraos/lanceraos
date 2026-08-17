@@ -1,55 +1,63 @@
 // src/pages/invoiceHelpers.test.js
-import { describe, expect, it } from 'vitest'
-import { getSendBannerCopy, timelineLabel } from './invoiceHelpers'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { dueDateCountdown, getSendBannerCopy, timelineLabel } from './invoiceHelpers'
 
-// Simplified rule (supersedes the old 3-state, sent_via_platform-driven
-// version — see DECISIONS.md): draft -> nothing, created -> unchanged
-// copy, everything else -> reminders_enabled alone decides.
-describe('getSendBannerCopy — draft/created/reminders-only rule', () => {
-  it('never shows for draft, regardless of reminders_enabled', () => {
+// Simplified further this round (InvoiceDetailPanel redesign — see
+// DECISIONS.md): this function now ONLY covers status='created'. The
+// reminders-off case moved to its own dedicated banner-with-a-button
+// component (RemindersOffBanner, InvoiceDetailPanel.jsx) — a plain text
+// return value can't host a real "Turn on reminders" action button.
+describe('getSendBannerCopy — created-only rule', () => {
+  it('never shows for draft', () => {
     expect(getSendBannerCopy({ status: 'draft', reminders_enabled: true })).toBeNull()
     expect(getSendBannerCopy({ status: 'draft', reminders_enabled: false })).toBeNull()
   })
 
-  it('shows the unchanged "never sent" copy for status=created, regardless of reminders_enabled', () => {
-    const copy = getSendBannerCopy({ status: 'created', reminders_enabled: true })
-    expect(copy).toMatch(/hasn't been sent through LanceraOS/)
+  it('shows the "never sent" copy for status=created, regardless of reminders_enabled', () => {
+    expect(getSendBannerCopy({ status: 'created', reminders_enabled: true })).toMatch(/hasn't been sent through LanceraOS/)
     expect(getSendBannerCopy({ status: 'created', reminders_enabled: false })).toMatch(/hasn't been sent through LanceraOS/)
   })
 
-  // Every ACTIVE (non-terminal) status checks reminders_enabled alone —
-  // no more sent_via_platform branch, and no more distinguishing a
-  // manual mark-sent from a real platform send here at all.
-  it('shows the reminders-off line for an active status when reminders_enabled is false', () => {
-    for (const status of ['sent', 'viewed', 'partially_paid']) {
-      const copy = getSendBannerCopy({ status, reminders_enabled: false })
-      expect(copy).toMatch(/Reminders are off/)
-    }
-  })
-
-  it('shows no banner at all for an active status when reminders_enabled is true', () => {
-    for (const status of ['sent', 'viewed', 'partially_paid']) {
-      expect(getSendBannerCopy({ status, reminders_enabled: true })).toBeNull()
-    }
-  })
-
-  // Bug fix, this round: a TERMINAL status (nothing left to remind
-  // anyone about — matches REMINDERS_HIDDEN_STATUSES, the same set the
-  // Details-tab toggle itself hides on) must never show the reminders-off
-  // line, even with reminders_enabled=false — the control it points at
-  // isn't even on screen for these statuses.
-  it('never shows a banner for a terminal status, regardless of reminders_enabled', () => {
-    for (const status of ['paid', 'cancelled', 'refunded', 'bad_debt']) {
+  it('shows nothing for any active or terminal status, regardless of reminders_enabled', () => {
+    for (const status of ['sent', 'viewed', 'partially_paid', 'paid', 'cancelled', 'refunded', 'bad_debt']) {
       expect(getSendBannerCopy({ status, reminders_enabled: false })).toBeNull()
       expect(getSendBannerCopy({ status, reminders_enabled: true })).toBeNull()
     }
   })
+})
 
-  it('ignores sent_via_platform entirely — same result regardless of its value', () => {
-    expect(getSendBannerCopy({ status: 'sent', reminders_enabled: false, sent_via_platform: true })).toMatch(/Reminders are off/)
-    expect(getSendBannerCopy({ status: 'sent', reminders_enabled: false, sent_via_platform: false })).toMatch(/Reminders are off/)
-    expect(getSendBannerCopy({ status: 'sent', reminders_enabled: true, sent_via_platform: true })).toBeNull()
-    expect(getSendBannerCopy({ status: 'sent', reminders_enabled: true, sent_via_platform: false })).toBeNull()
+describe('dueDateCountdown — InvoiceDetailPanel header subtitle', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-17T12:00:00'))
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('returns null when there is no due date at all', () => {
+    expect(dueDateCountdown({ due_date: null, days_overdue: 0 })).toBeNull()
+  })
+
+  it('shows "X days remaining" for a future due date', () => {
+    const result = dueDateCountdown({ due_date: '2026-08-22', days_overdue: 0 })
+    expect(result.text).toBe('5 days remaining')
+    expect(result.overdue).toBe(false)
+  })
+
+  it('shows "1 day remaining" (singular) for tomorrow', () => {
+    const result = dueDateCountdown({ due_date: '2026-08-18', days_overdue: 0 })
+    expect(result.text).toBe('1 day remaining')
+  })
+
+  it('shows "Due today" for the current date', () => {
+    const result = dueDateCountdown({ due_date: '2026-08-17', days_overdue: 0 })
+    expect(result.text).toBe('Due today')
+    expect(result.overdue).toBe(false)
+  })
+
+  it('shows "X days overdue" (via days_overdue, in red) once genuinely overdue', () => {
+    const result = dueDateCountdown({ due_date: '2026-08-10', days_overdue: 7 })
+    expect(result.text).toBe('7 days overdue')
+    expect(result.overdue).toBe(true)
   })
 })
 

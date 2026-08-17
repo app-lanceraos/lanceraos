@@ -4312,5 +4312,149 @@ round's changes, not chased further here, consistent with the prior round's own 
 passing. 169 frontend tests (up from 162 — `InvoiceTable.test.jsx` and `InvoiceDetailPanel.test.jsx`
 are both new; `invoiceHelpers.test.js` corrected). Production `vite build` clean.
 
+---
+
+Date: 17 August 2026 (InvoiceDetailPanel redesign — full rebuild of the panel's header/tabs/reminders/
+footer/Comments layout, plus the invoice list's row-click-to-open change)
+Decision/Reason, one item per real design call this round made:
+
+**Preview-as-Client removed; the freelancer-own-session guard is untouched.** The old
+`PreviewAsClientModal` (an in-app iframe reusing `invoice_preview_as_client`, a structurally separate,
+never-mints-a-session endpoint) is deleted entirely. "View Invoice" — a plain `window.open` to the real
+`portal_invoice_view_html` page (`${api.defaults.baseURL}/invoices/portal/view/${invoice.view_token}/`,
+matching `Invoice.portal_view_url`'s own construction) — now serves that purpose directly: it's the
+actual page a client would see, not a same-origin-iframed approximation of it. This does NOT touch
+`apps.clients.portal.is_freelancer_previewing_portal` or its wiring into
+`_record_invoice_view_if_appropriate` (`apps/invoices/views_portal.py`) — that guard lives entirely
+inside `portal_invoice_view_html`'s own request handling, keyed off cookies present on the request, not
+which UI button a freelancer clicked to get there. Confirmed directly, not assumed: a freelancer with
+both their own JWT cookie and a portal-session cookie for the same client still gets the Sent→Viewed
+transition, `InvoiceViewEvent` logging, and comment seen-marking all suppressed when opening this exact
+URL — a new regression test,
+`test_view_invoice_button_target_still_suppresses_side_effects_after_preview_as_client_removal`
+(`apps/invoices/tests/test_portal.py`), pins this down by hitting `portal_invoice_view_html` directly
+(the real destination "View Invoice" opens) rather than testing the removed modal's absence, which
+would prove nothing about the guard itself.
+
+**Send Reminder N — reuses the exact scheduled-task code path, not a second implementation.** The
+day-3/7/14/30 reminder logic inside `send_invoice_reminders` (`apps/invoices/tasks.py`) was extracted
+into a standalone `_send_reminder(invoice, reminder_number, template_key)` helper (the email build +
+send, the `InvoiceReminder` row creation, `reminder_count` increment, the `ReminderSent` event, and the
+reminder-4 escalation check) — the scheduled task now just calls it in a loop. The new
+`POST /invoices/<pk>/send-reminder/` (`invoice_send_reminder`) computes the next number as
+`InvoiceReminder.objects.filter(invoice=invoice).aggregate(Max('reminder_number'))` + 1, so a manual
+send and a later scheduled send can never collide on the same number regardless of which fired first.
+Deliberately does NOT require `reminders_enabled` or `sent_via_platform` — a freelancer choosing to
+manually nudge a client shouldn't be blocked by either of those, matching the spec's explicit
+instruction. Frontend numbering (`InvoiceDetailPanel.jsx`) mirrors this via `invoice.reminder_count + 1`
+— safe because both paths always append in strictly ascending order, so the count alone is enough to
+predict the next number without a second round-trip. Once `nextReminderNumber > 4`, the "Send Reminder
+N" secondary footer action DISAPPEARS entirely (falls back to "View Invoice") rather than rendering
+disabled — chosen to match this panel's own established convention throughout (every other
+status-gated action here is absent-when-unreachable, never shown-grayed-out), and because a disabled
+button inviting "why can't I click this" is worse UX than one that simply isn't there once the real
+answer is "you've sent every reminder there is."
+
+**Resend Invoice — new, deliberately scoped to `sent`/`viewed`/`partially_paid` only.** Not named in
+CLAUDE.md's existing endpoint list before this round; added as `POST /invoices/<pk>/resend/`
+(`invoice_resend`), gated on `status in ACTIVE_STATUSES`, requiring `confirm:true`, and — unlike the
+one-time `/send/` — callable repeatedly with no effect on `status`/`sent_at`/`sent_via_platform`. Reuses
+`fetch_invoice_pdf_bytes` + `build_invoice_send_email` + `send_invoice_related_email`, the exact same
+chain `/send/` and the reminder task use, so there is exactly one place that knows how to build and
+route a client-facing invoice email. Scoped to `ACTIVE_STATUSES` (not `created`, since nothing has
+actually been sent yet there — "Send" is the correct action for that state; not terminal statuses,
+since re-sending a paid/cancelled/refunded/bad_debt invoice via email isn't a real workflow this app
+supports elsewhere) — this scoping wasn't specified in the original task and is this app's own judgment
+call, flagged here per that task's own instruction to state such calls explicitly.
+
+**Change Due Date — a new, narrow PUT allowance, mirroring the existing recurring-series pattern.** A
+new `DueDateOnlySerializer` (`apps/invoices/serializers.py`, `Meta.fields = ['due_date']`,
+`validate_due_date` rejecting `None` and anything before `issue_date`) is accepted by the EXISTING
+`PUT /invoices/<pk>/` when `request.data`'s keys are a subset of `{'due_date'}` AND the invoice's status
+is `created` or one of `ACTIVE_STATUSES` — the same "one specific field, past the normal draft-only
+`is_editable` gate" shape `RecurringSeriesSettingsSerializer` already established for
+`recurring_interval_days`/`recurring_auto_send`, not a new pattern invented for this. Terminal statuses
+are excluded — nothing left to reschedule once resolved.
+
+**More menu's real contents — Edit and Archive deliberately omitted; Refund/Undo Payment/Delete added
+even though not explicitly listed.** The task's own "existing items" list for the More menu named Edit,
+Duplicate, Save as Preset, Change Due Date, Copy Invoice Link, Download Invoice, Archive, Cancel, Mark
+Bad Debt, Formal Notice — but checking each one against what this app actually supports found two that
+aren't real: "Edit" has no destination for a non-draft invoice (a `created`+ invoice is only ever
+edited via the narrow due-date/recurring-series allowances above, never a general edit form — that's
+`is_editable`'s whole point), and "Archive" has no backend concept for Invoices at all (it exists for
+Clients, `apps/clients/`, and was very likely conflated with that). Rather than fabricate non-functional
+UI for either, both are left out entirely — matching this app's own "never shown-disabled, never
+fabricated" convention. Conversely, the task's simplified two-button footer left no home for three real,
+necessary, pre-existing capabilities this redesign couldn't just drop: Refund, Undo Payment, and Delete.
+All three moved into the More menu (Refund for `paid`/`partially_paid`; Undo Payment for
+`amount_paid > 0` on a non-`cancelled`/`bad_debt` invoice; Delete for `status='created'` only, since a
+draft invoice never reaches this footer at all — it has its own dedicated Finalise/Mark-as-Sent/Delete
+row). Not explicitly requested, but omitting them would have been a real regression, not a
+simplification — flagged here as the deliberate inclusion it is.
+
+**Comments tab — CommentThread.jsx's own internal layout is reused untouched; only its container
+changed.** `CommentThread.jsx` already implemented the fixed-input/scrollable-thread-list flex structure
+internally (`height:100%` root, `flex:1, overflowY:'auto'` thread list, a natural non-scrolling `<form>`
+below it) — it just never had a real flexible height to fill, previously wrapped in a fixed
+`height:420` box. The new Comments tab gives it `flex:1, minHeight:0` inside a flex-column wrapper whose
+own first child (`CommentsTabRecap` — a new, small, DELIBERATELY DIFFERENT-FROM-the-Details-tab's-own
+client-info block: just name/email + total/invoice-number, condensed) stays `flexShrink:0` above it. The
+panel's own outer container changed from a single `overflowY:'auto'` scroll region to a real
+flex-column with three regions — fixed top (header/banners/tabs), flexible middle (per-tab content,
+Comments tab internally sub-divided as above), fixed bottom (footer) — because a single whole-panel
+scroll can't simultaneously keep a footer pinned AND give one specific tab (Comments) its own
+independent internal scroll region; the old `position:sticky` footer hack is gone, replaced by the
+footer being a real non-scrolling flex child instead.
+
+**Invoice list — the whole row opens the panel; the desktop table's Action column is gone entirely.**
+`InvoiceTable.jsx`'s per-row "Open" icon button and its own header-cell bulk-delete control (the exact
+placement bug-hardening round fixed one pass ago) are both removed along with the column that hosted
+them — every `<tr>` now carries `onClick={() => onOpen(inv)}` directly, matching `InvoiceCard`'s
+existing mobile pattern exactly. The row checkbox's `<input>` gets `onClick={(e) => e.stopPropagation()}`
+so selecting a row for bulk delete can never also open its detail panel — the same guard `InvoiceCard`'s
+own toggle button already had. A real per-row `:hover` background needs actual CSS (inline styles can't
+express `:hover` without per-row JS state), added via a small `<style>` block scoped to a new
+`.invoice-row` class. Bulk delete's own trigger, having lost its column-header home, moved to
+`Invoices.jsx`'s existing floating action bar (previously mobile-only, CSS-gated to ≤768px via
+`.bulk-bar-mobile`) — unified this round to render at every width instead of inventing a second,
+desktop-specific bulk-action surface.
+
+**Two real, screenshot-verification-caught mobile bugs, fixed alongside the above (not separately
+requested, but real regressions the redesign introduced):**
+(a) The 4-tab row (Details/Timeline/Claims/Comments) genuinely doesn't fit a 375px panel at natural
+width — confirmed by a real screenshot showing "Comments" clipped to "Co…" with no way to reach it.
+Fixed with `overflowX:'auto'` on the tab row + `flexShrink:0, whiteSpace:'nowrap'` on each `TabButton`,
+so it scrolls horizontally instead of clipping — chosen over shrinking text/icons further, which was
+already near an unreadable floor at this width.
+(b) `DropdownMenu.jsx`'s CSS-only `align`-based positioning (`{[align]: 0}`, anchoring the menu's
+right OR left edge to the trigger) overflows the viewport when the trigger itself sits near the
+opposite edge — concretely, the footer's own "More" button, once wrapped onto its own line at narrow
+widths (the primary/secondary button group no longer fits beside it), lands near `x≈24`; with
+`align='right'` (the default, correct for this same button's desktop position near the panel's right
+edge), the menu's right edge anchors there and its left ~200px+ renders off-screen, clipping every
+item's text — also caught by a real screenshot before being fixed, not assumed. Fixed generally, not
+just for this one call site (this is a shared, multi-consumer component): a new `useLayoutEffect`
+measures the rendered menu's `getBoundingClientRect()` against `window.innerWidth` the instant it opens
+and, only if it would actually overflow, sets an explicit pixel `left` override (replacing the
+CSS `align` positioning for that render) — the same clamping approach `useAppTooltip.js` already uses
+for the identical class of problem. `useLayoutEffect`, not `useEffect`, specifically so the correction
+lands before the browser paints — no visible flash of the wrong position first.
+
+Verification: 723 backend tests (whole suite, `apps.invoices`+`apps.clients`+everything else,
+`--keepdb`), all passing — one `--parallel` run hit an unrelated `Fatal Python error: Segmentation
+fault` inside `unittest.mock`'s own garbage collection on this machine, not reproducing at all
+single-threaded, not chased further (a known-flaky local `--parallel` interaction, not a real test
+failure). 196 frontend tests (`InvoiceDetailPanel.test.jsx` substantially expanded past its prior
+narrow tooltip-only suite — the primary/secondary footer matrix per status×overdue, Send Reminder
+numbering/exhaustion, Resend Invoice's status scoping, the unified Add Payment two-path popup, the
+reminders banner-vs-toggle exclusivity rule, and the Preview-as-Client-removal-doesn't-touch-the-guard
+regression check on the frontend side, alongside the original Close-button tooltip test kept unchanged;
+`InvoiceTable.test.jsx` rewritten for row-click-vs-checkbox-click in place of the now-obsolete
+Action-column-placement suite). Production `vite build` clean. Real, live-server Playwright screenshots
+at 375/768/1280/1920 × light/dark covering the invoice list, the reminders-off banner + Send Reminder
+footer state, and the Comments tab's fixed-header/scrollable-thread/fixed-input layout specifically at
+375px — the two mobile bugs above were both found this way, not by inspection.
+
 Docs: this entry. No CLAUDE.md status-table change — this round is bug fixes to already-"built"
 functionality, not new scope.

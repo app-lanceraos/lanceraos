@@ -330,7 +330,7 @@ export default function Invoices() {
     active: statusFilter === opt.key && !overdueOnly,
     onClick: () => selectStatusFilter(opt.key),
   }))
-  const overdueChip = { type: 'pill', key: 'overdue', label: 'Overdue Only', active: overdueOnly, onClick: () => toggleOverdueFilter() }
+  const overdueChip = { type: 'pill', key: 'overdue', label: 'Overdue', active: overdueOnly, onClick: () => toggleOverdueFilter() }
   const currencyChip = { type: 'currency', key: 'currency', value: currencyFilter, options: availableCurrencies, onChange: selectCurrencyFilter }
   const allChips = [...statusChips, overdueChip, currencyChip]
   const { containerRef, measureRefs, moreRef, visibleCount } = useFilterOverflow(allChips.length)
@@ -419,7 +419,7 @@ export default function Invoices() {
           className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }}
         >
           {STATUS_FILTER_OPTIONS.map((opt) => <option key={opt.key || 'all'} value={opt.key}>{opt.label}</option>)}
-          <option value="__overdue__">Overdue Only</option>
+          <option value="__overdue__">Overdue</option>
         </select>
         {availableCurrencies.length > 0 && (
           <select value={currencyFilter} onChange={(e) => selectCurrencyFilter(e.target.value)} className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }} aria-label="Filter by currency">
@@ -457,7 +457,6 @@ export default function Invoices() {
               onToggleSelect={toggleSelectForDelete}
               onSelectAllEligible={selectAllEligible}
               onClearSelection={clearSelection}
-              onRequestBulkDelete={() => setShowBulkDeleteConfirm(true)}
               onOpen={openDetail}
             />
           </div>
@@ -491,12 +490,18 @@ export default function Invoices() {
         <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={handleNewInvoice} />
       )}
 
-      {/* ── Bulk-select action bar (mobile cards) — the table's own bulk
-          control lives in its header cell instead (item 6), so this stays
-          only for the mobile card list's selection affordance. ── */}
+      {/* ── Bulk-select floating action bar — unified across desktop and
+          mobile this round (InvoiceDetailPanel redesign, item 6): the
+          desktop table lost its own header-cell bulk-delete control when
+          its Action column (the control's home since the previous
+          bug-hardening pass) was removed entirely in favor of whole-row
+          click-to-open. Rather than inventing a second, desktop-only
+          bulk-action home, this reuses the exact bar already built for
+          mobile cards' own selection affordance — it now renders at
+          every width instead of being CSS-gated to ≤768px. ── */}
       {selectedIds.size > 0 && (
         <div className="bulk-bar-mobile" style={{
-          display: 'none', position: 'fixed', bottom: 24, right: 24, zIndex: 95,
+          display: 'flex', position: 'fixed', bottom: 24, right: 24, zIndex: 95,
           background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)',
           boxShadow: '0 8px 32px rgba(0,0,0,0.2)', padding: '10px 14px', alignItems: 'center', gap: 10,
         }}>
@@ -568,7 +573,6 @@ export default function Invoices() {
           .list-mobile { display: grid !important; }
           .pagination-desktop { display: none !important; }
           .pagination-mobile { display: block !important; }
-          .bulk-bar-mobile { display: flex !important; }
         }
       `}</style>
     </>

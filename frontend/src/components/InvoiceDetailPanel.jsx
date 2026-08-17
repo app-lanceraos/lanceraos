@@ -8,6 +8,47 @@
 // ClientDetailPanel does: Invoices.jsx mounts it conditionally, it is never
 // routed directly.
 //
+// Redesigned this round (bug-hardening round 2 — see DECISIONS.md for the
+// full reasoning on every item below):
+//   - Preview-as-Client (the iframe/modal) is REMOVED entirely — "View
+//     Invoice" now opens the real, live portal_invoice_view_html page
+//     directly (same URL apps/invoices/models.py's Invoice.portal_view_url
+//     property builds). The freelancer-own-session guard
+//     (apps.clients.portal.is_freelancer_previewing_portal) that protects
+//     THAT endpoint is backend-only and untouched by this removal — see
+//     apps/invoices/tests/test_portal.py's own regression test for direct
+//     proof it still suppresses the Sent->Viewed transition, InvoiceViewEvent
+//     logging, and comment seen-marking when a freelancer opens this exact
+//     button while also signed into their own LanceraOS account.
+//   - Header: Close top-right, invoice #+status badge top-left, a real
+//     "X days remaining"/"X days overdue" countdown subtitle
+//     (invoiceHelpers.dueDateCountdown), and a "View Invoice" quick-access
+//     button next to Close.
+//   - Details tab reordered: Client Info -> Invoice/Due Date -> Line Items
+//     (+ Subtotal/Total) -> Payment Terms/Currency -> Payment Status
+//     (progress bar, only when partially paid) -> Reminders section.
+//   - Reminders: exactly one of {a top warning banner with a real "Turn on
+//     reminders" button, a plain on/off toggle in the Details tab} shows at
+//     a time — never both, matching REMINDERS_HIDDEN_STATUSES on terminal
+//     invoices exactly as before.
+//   - Footer collapsed to a fixed primary/secondary pair per status (see
+//     the table in this round's own build notes) plus a "More" dropdown
+//     hosting every other existing action (Duplicate/Save as Preset/
+//     Change Due Date/Copy Invoice Link/Download/Refund/Undo Payment/
+//     Cancel/Bad Debt/Formal Notice/Delete) PLUS the new "Resend Invoice".
+//     "Send Reminder N" targets the next ungenerated reminder number,
+//     computed from invoice.reminder_count (kept in sync with the real
+//     InvoiceReminder row count on both the manual and scheduled paths —
+//     see apps/invoices/tasks.py's _send_reminder); once exhausted (N>4)
+//     the secondary action falls back to "View Invoice" instead of
+//     disappearing into a disabled state, matching this panel's own
+//     established "absent, not disabled" convention.
+//   - Tabs reordered: Details, Timeline, Claims, Comments (Comments last).
+//     Comments tab has its own fixed-header/scrollable-thread/fixed-input
+//     internal layout (CommentThread.jsx already implements the
+//     scrollable-thread/fixed-input half internally; this panel now gives
+//     it a real flexible height to work with instead of a fixed 420px box).
+//
 // Overdue is never a status value (see apps/invoices/models.py's
 // days_overdue docstring) — every status badge here is rendered alongside a
 // separate, orthogonal Overdue badge computed from invoice.days_overdue,
@@ -16,7 +57,8 @@ import { useEffect, useState } from 'react'
 import {
   X, Send, Mail, CheckCircle2, Wallet, Undo2, Ban, ShieldAlert, Copy, BookmarkPlus,
   Check, AlertTriangle, Pause, Play, Bell, BellOff, Trash2, Clock, Eye, Receipt, FileText, MessageCircle,
-  Landmark, XCircle, UserCheck, AlertOctagon, Gavel, Settings2,
+  Landmark, XCircle, UserCheck, AlertOctagon, Gavel, Settings2, ExternalLink, Download, RefreshCw,
+  CalendarClock, Link2,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -25,6 +67,7 @@ import useTimedMessage from '@/hooks/useTimedMessage'
 import useInvoiceAutosave from '@/hooks/useInvoiceAutosave'
 import { initTooltipBindings } from '@/hooks/useAppTooltip'
 import CommentThread from './CommentThread'
+import DropdownMenu from './DropdownMenu'
 import ErrorBoundary from './ErrorBoundary'
 import FormField from './FormField'
 import FormSelect from './FormSelect'
@@ -34,24 +77,22 @@ import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
   PAYMENT_SOURCE_OPTIONS, RECURRING_INTERVAL_OPTIONS, REMINDERS_HIDDEN_STATUSES, UNDO_CONFIRMATION_AGE_DAYS,
-  daysSince, getSendBannerCopy, invoiceToForm, timelineDotColor, timelineLabel,
+  daysSince, dueDateCountdown, getSendBannerCopy, invoiceToForm, timelineDotColor, timelineLabel,
 } from '@/pages/invoiceHelpers'
 
 const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']
 const NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']
-// REMINDERS_HIDDEN_STATUSES now lives in invoiceHelpers.js — imported
-// above, not redefined here — so getSendBannerCopy and this panel's own
-// Details-tab toggle can never drift apart again (bug-fix round; see
-// that file's own comment for the real bug this fixes).
+// REMINDERS_HIDDEN_STATUSES lives in invoiceHelpers.js — imported above,
+// not redefined here — so RemindersOffBanner/the Details-tab toggle and
+// getSendBannerCopy can never drift apart again (bug-fix round; see that
+// file's own comment for the real bug this originally fixed).
 
 // initialTab: opens directly on a specific tab instead of the 'details'
-// default — item 2 of this round's verification pass. Real consumer:
-// Invoices.jsx's notification click-through (a comment/claim
-// notification should land on that invoice's Comments/Claims tab, not
-// just the invoice's default view). Falls back to 'details' for any
-// value that isn't one of TabButton's own real keys, same defensive
-// discipline this component already applies elsewhere.
-const VALID_TABS = ['details', 'timeline', 'comments', 'claims']
+// default. Real consumer: Invoices.jsx's notification click-through (a
+// comment/claim notification should land on that invoice's Comments/
+// Claims tab, not just the invoice's default view). Falls back to
+// 'details' for any value that isn't one of TabButton's own real keys.
+const VALID_TABS = ['details', 'timeline', 'claims', 'comments']
 
 export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPresetSaved, initialMessage, onInitialMessageShown, initialTab }) {
   const formalNoticeEnabled = useAuthStore((s) => s.user?.formal_notice_enabled ?? true)
@@ -64,13 +105,8 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   const [claims, setClaims] = useState([])
   const [activeTab, setActiveTab] = useState(VALID_TABS.includes(initialTab) ? initialTab : 'details')
 
-  // ── Autosave (Step 6 rework; extracted to useInvoiceAutosave this
-  // pass so NewInvoiceWizard.jsx can share the exact same race-safe
-  // chain once a brand-new invoice crosses its creation threshold) ──
-  // Continuous, Gmail-compose-style autosave for the entire time an
-  // invoice is status='draft' — matches is_editable exactly (see
-  // apps/invoices/models.py; PUT is rejected with 403 the moment status
-  // leaves 'draft', including 'created'). There is no more separate
+  // ── Autosave (Gmail-compose-style, entire time an invoice is
+  // status='draft' — matches is_editable exactly). There is no separate
   // "editing" toggle: a draft invoice's form fields ARE the invoice, live.
   const [form, setForm] = useState(null)
   const {
@@ -80,22 +116,12 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   const [busyKey, setBusyKey] = useState(null)
   const { message: toast, show: showToast, clear: clearToast } = useTimedMessage()
 
-  const [modal, setModal] = useState(null) // 'mark_sent' | 'mark_paid' | 'add_payment' | 'refund' | 'undo' | 'save_preset' | 'cancel' | 'bad_debt' | 'delete'
+  const [modal, setModal] = useState(null)
 
   useEffect(() => { loadInvoice() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Surfaces a success message that was earned inside NewInvoiceWizard.jsx
-  // (Finalise/Mark-as-Sent), a different component instance than this one —
-  // this is the one place that message has anywhere left to show, since
-  // the wizard unmounts the instant it hands off. Shown once, then cleared
-  // in the parent so navigating away and reopening this same invoice later
-  // doesn't repeat a stale message.
   useEffect(() => {
     if (initialMessage) {
-      // A plain string is always a success toast (every existing caller);
-      // an object lets a caller like the Finalise & Send handoff show a
-      // warning instead — e.g. "finalised, but sending failed" must never
-      // render in the same green success style as a real full success.
       const { type, text } = typeof initialMessage === 'string' ? { type: 'success', text: initialMessage } : initialMessage
       showToast(type, text)
       onInitialMessageShown?.()
@@ -105,21 +131,15 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   useEffect(() => { loadTimeline() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadClaims() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tooltips (bug-fix round — a real, confirmed gap: this panel's own
-  // [data-tooltip] icon buttons, e.g. the bare Close (X) button, were
-  // never wired at all; AppShell.jsx is the only place in this codebase
-  // that ever called initTooltipBindings(), so nothing outside its own
-  // sidebar/header ever got one). initTooltipBindings() is idempotent
-  // (dataset.tooltipBound guards against double-binding) and cheap, so
-  // re-running it after every render — including tab switches and modal
-  // open/close, both of which mount fresh [data-tooltip] elements this
-  // effect wouldn't otherwise know to re-scan for — is safe.
+  // Tooltips — AppShell.jsx is the only OTHER place in this codebase that
+  // ever calls initTooltipBindings(); this panel's own [data-tooltip]
+  // icon buttons (the bare Close (X) button, every modal's own close
+  // button) were never wired at all before. Idempotent
+  // (dataset.tooltipBound guards re-binding) and cheap, so re-running it
+  // after every render — including tab switches and modal open/close,
+  // both of which mount fresh [data-tooltip] elements — is safe.
   useEffect(() => { initTooltipBindings() })
 
-  // The sole close path (X button + overlay click) — flushes first so
-  // closing right after typing still saves, exactly like closing a Gmail
-  // compose window. An empty, never-touched draft is never deleted here
-  // or anywhere else — it persists as a real Draft row, findable later.
   async function handleClose() {
     const flushed = await flushPendingSave()
     const latest = flushed || invoice
@@ -170,12 +190,6 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     onChanged?.(updated)
   }
 
-  async function refresh() {
-    await loadInvoice()
-    await loadTimeline()
-    await loadClaims()
-  }
-
   async function runAction(key, fn, successMsg) {
     setBusyKey(key)
     try {
@@ -183,11 +197,6 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       if (successMsg) showToast('success', successMsg)
     } catch (e) {
       const body = e.response?.data
-      // Most rejections here have already been caught client-side first
-      // (e.g. AddPaymentModal's own outstanding-balance check) — this is
-      // the fallback for whatever reaches the backend anyway, so a DRF
-      // field-level error (serializer.errors' own shape, e.g. `amount`)
-      // still surfaces its real message instead of a generic one.
       const fieldError = body && typeof body === 'object'
         ? Object.values(body).find((v) => Array.isArray(v) && v.length)?.[0]
         : null
@@ -215,11 +224,6 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     setInvoice(data); setForm(null); notifyChanged(data); setModal(null)
   }, 'Marked as sent.')
 
-  // The REAL send — distinct from handleMarkSent's manual self-report
-  // flip. Only reachable from status='created' (see the footer's own
-  // gate below); the backend re-checks this regardless. No flushPendingSave
-  // call needed here — a status='created' invoice is already immutable
-  // (is_editable is draft-only), so there's nothing pending to flush.
   const handleSend = () => runAction('send', async () => {
     const { data } = await api.post(`/invoices/${invoiceId}/send/`, { confirm: true })
     setInvoice(data); notifyChanged(data); setModal(null)
@@ -288,9 +292,6 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     setInvoice(data); notifyChanged(data)
   })
 
-  // Only reachable for a recurring ROOT (is_recurring, no parent_invoice) —
-  // invoice_detail's PUT handler allows exactly these 2 fields through
-  // regardless of the root's own status, per Step 16's own narrow allowance.
   const handleUpdateSeries = (intervalDays, autoSend) => runAction('update_series', async () => {
     const { data } = await api.put(`/invoices/${invoiceId}/`, {
       recurring_interval_days: intervalDays, recurring_auto_send: autoSend,
@@ -310,9 +311,6 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   }, 'Formal notice sent.')
 
   const handleSaveAsPreset = (name, includeClient) => runAction('save_preset', async () => {
-    // Read from the just-flushed row, not the `invoice` closure var directly —
-    // setInvoice() inside saveNow() won't be reflected here until the next
-    // render, so a stale flush result would silently drop the last edits.
     const flushed = await flushPendingSave()
     const current = flushed || invoice
     const { data } = await api.post('/invoices/presets/', {
@@ -326,13 +324,26 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       late_fee_enabled: current.late_fee_enabled, late_fee_rate: current.late_fee_rate,
       items: (current.items || []).map((it) => ({ description: it.description, quantity: it.quantity, unit_price: it.unit_price })),
     })
-    // Real bug, fixed here: Invoices.jsx fetches its presets list once on
-    // mount and had no way of knowing a new one was just created — "From
-    // Preset" needed a full page reload to see it. This tells the parent
-    // directly rather than Invoices.jsx re-fetching the whole list.
     onPresetSaved?.(data)
     setModal(null)
   }, 'Saved as a preset.')
+
+  // ── New this round ──────────────────────────────────────────────
+  const handleSendReminder = () => runAction('send_reminder', async () => {
+    const { data } = await api.post(`/invoices/${invoiceId}/send-reminder/`)
+    setInvoice(data); notifyChanged(data); setModal(null)
+    await loadTimeline()
+  }, 'Reminder sent.')
+
+  const handleResend = () => runAction('resend', async () => {
+    const { data } = await api.post(`/invoices/${invoiceId}/resend/`, { confirm: true })
+    setInvoice(data); notifyChanged(data); setModal(null)
+  }, 'Invoice resent.')
+
+  const handleChangeDueDate = (newDueDate) => runAction('change_due_date', async () => {
+    const { data } = await api.put(`/invoices/${invoiceId}/`, { due_date: newDueDate })
+    setInvoice(data); notifyChanged(data); setModal(null)
+  }, 'Due date updated.')
 
   function requestUndoPayment() {
     const lastPayment = [...timeline].reverse().find((e) => e.type === 'payment')
@@ -365,40 +376,111 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
 
   const meta = INVOICE_STATUS_META[invoice.status] || INVOICE_STATUS_META.draft
   const isOverdue = invoice.days_overdue > 0
+  const isDraft = invoice.status === 'draft'
+  const isTerminal = REMINDERS_HIDDEN_STATUSES.includes(invoice.status)
   const sendBannerCopy = getSendBannerCopy(invoice)
+  const countdown = dueDateCountdown(invoice)
   const busy = busyKey !== null
+
+  const portalViewUrl = invoice.view_token ? `${api.defaults.baseURL}/invoices/portal/view/${invoice.view_token}/` : null
+  const pdfDownloadUrl = `${api.defaults.baseURL}/invoices/${invoice.id}/pdf/`
+  const openViewInvoice = () => portalViewUrl && window.open(portalViewUrl, '_blank', 'noopener,noreferrer')
+  const openDownload = () => window.open(pdfDownloadUrl, '_blank', 'noopener,noreferrer')
+  async function copyInvoiceLink() {
+    if (!portalViewUrl) return
+    try {
+      await navigator.clipboard.writeText(portalViewUrl)
+      showToast('success', 'Invoice link copied.')
+    } catch {
+      showToast('error', 'Could not copy the link.')
+    }
+  }
+
+  const nextReminderNumber = (invoice.reminder_count || 0) + 1
+  const remindersExhausted = nextReminderNumber > 4
+
+  // ── More-menu items — every other existing lifecycle/utility action,
+  // each only appearing when actually reachable for the current status
+  // (never shown-disabled, matching this panel's own established
+  // convention throughout). ──
+  const moreMenuItems = []
+  if (!isDraft) {
+    const dueDateEditable = ['created', ...ACTIVE_STATUSES].includes(invoice.status)
+    moreMenuItems.push({ key: 'duplicate', label: 'Duplicate', Icon: Copy, onClick: handleDuplicate })
+    moreMenuItems.push({ key: 'save_preset', label: 'Save as Preset', Icon: BookmarkPlus, onClick: () => setModal({ kind: 'save_preset' }) })
+    if (dueDateEditable) {
+      moreMenuItems.push({ key: 'change_due_date', label: 'Change Due Date', Icon: CalendarClock, onClick: () => setModal({ kind: 'change_due_date' }) })
+    }
+    moreMenuItems.push({ key: 'copy_link', label: 'Copy Invoice Link', Icon: Link2, onClick: copyInvoiceLink })
+    if (dueDateEditable) {
+      moreMenuItems.push({ key: 'download', label: 'Download Invoice', Icon: Download, onClick: openDownload })
+    }
+    if (['paid', 'partially_paid'].includes(invoice.status)) {
+      moreMenuItems.push({ key: 'refund', label: 'Refund', Icon: Undo2, danger: true, onClick: () => setModal({ kind: 'refund' }) })
+    }
+    if (Number(invoice.amount_paid) > 0 && !['cancelled', 'bad_debt'].includes(invoice.status)) {
+      moreMenuItems.push({ key: 'undo_payment', label: 'Undo Payment', Icon: Undo2, onClick: requestUndoPayment })
+    }
+    if (ACTIVE_STATUSES.includes(invoice.status)) {
+      moreMenuItems.push({ key: 'resend', label: 'Resend Invoice', Icon: RefreshCw, onClick: () => setModal({ kind: 'resend' }) })
+      moreMenuItems.push({ key: 'cancel', label: 'Cancel', Icon: Ban, danger: true, onClick: () => setModal({ kind: 'cancel' }) })
+      moreMenuItems.push({ key: 'bad_debt', label: 'Mark Bad Debt', Icon: ShieldAlert, danger: true, onClick: () => setModal({ kind: 'bad_debt' }) })
+    }
+    if ((invoice.escalation_required || invoice.status === 'bad_debt') && formalNoticeEnabled) {
+      moreMenuItems.push({ key: 'formal_notice', label: 'Formal Notice', Icon: Gavel, danger: true, onClick: () => setModal({ kind: 'formal_notice' }) })
+    }
+    if (invoice.status === 'created') {
+      moreMenuItems.push({ key: 'delete', label: 'Delete', Icon: Trash2, danger: true, onClick: () => setModal({ kind: 'delete' }) })
+    }
+  }
 
   return (
     <>
       <div onClick={handleClose} style={overlayStyle} />
       <div style={panelStyle}>
-        <div style={{ padding: '20px 24px 100px' }}>
-          <button onClick={handleClose} aria-label="Close" data-tooltip="Close" className="fos-btn fos-btn-ghost" style={{ padding: 8, marginBottom: 12 }}>
-            <X size={16} />
-          </button>
-
-          {/* ── Header ── */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-              <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {invoice.invoice_number || '(unnumbered draft)'}
-              </h2>
-              {isOverdue && <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[OVERDUE_BADGE.statusKey] }}>{OVERDUE_BADGE.label}</span>}
-              <InvoiceStatusBadge meta={meta} />
+        {/* ── Fixed top section: close/view, header, banners, tabs ── */}
+        <div style={{ flexShrink: 0, padding: '20px 24px 0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: isDraft ? 16 : 4 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  {invoice.invoice_number || '(unnumbered draft)'}
+                </h2>
+                <InvoiceStatusBadge meta={meta} />
+                {isOverdue && <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[OVERDUE_BADGE.statusKey] }}>{OVERDUE_BADGE.label}</span>}
+              </div>
+              {!isDraft && (
+                <p style={{
+                  margin: 0, fontSize: '0.82rem',
+                  color: countdown?.overdue ? 'var(--status-red-text)' : 'var(--text-tertiary)',
+                  fontWeight: countdown?.overdue ? 600 : 400,
+                }}>
+                  Due {invoice.due_date || '—'}{countdown && ` · ${countdown.text}`}
+                </p>
+              )}
+              {invoice.client_acknowledged && (
+                <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--status-green-text)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <UserCheck size={12} /> Acknowledged on {new Date(invoice.client_acknowledged_at).toLocaleDateString()}
+                </p>
+              )}
             </div>
-            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-              {invoice.client_name || 'No client yet'} · Due {invoice.due_date || '—'}
-            </p>
-            {invoice.client_acknowledged && (
-              <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--status-green-text)', display: 'flex', alignItems: 'center', gap: 5 }}>
-                <UserCheck size={12} /> Acknowledged on {new Date(invoice.client_acknowledged_at).toLocaleDateString()}
-              </p>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              {!isDraft && portalViewUrl && (
+                <button onClick={openViewInvoice} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.76rem' }}>
+                  <ExternalLink size={13} /> View Invoice
+                </button>
+              )}
+              <button onClick={handleClose} aria-label="Close" data-tooltip="Close" className="fos-btn fos-btn-ghost" style={{ padding: 8 }}>
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           {sendBannerCopy && (
             <FosAlert type="warning" style={{ marginBottom: 16 }}>{sendBannerCopy}</FosAlert>
           )}
+
+          <RemindersOffBanner invoice={invoice} busy={busy} onTurnOn={handleToggleReminders} />
 
           {invoice.escalation_required && !invoice.escalation_dismissed && (
             <FosAlert type="error" style={{ marginBottom: 16 }}>
@@ -418,61 +500,54 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
 
           {toast && <FosAlert type={toast.type} onDismiss={clearToast} style={{ marginBottom: 16 }}>{toast.text}</FosAlert>}
 
-          {invoice.status === 'draft' ? (
+          {!isDraft && (
+            // overflowX:'auto' + flexShrink:0 per tab (TabButton) — 4 tabs
+            // (Details/Timeline/Claims/Comments) genuinely don't fit a
+            // 375px panel at their natural width; a real, confirmed mobile
+            // bug this round's own screenshot verification caught (the
+            // Comments label clipped to "Co…" with no way to reach it).
+            // Scrolling beats shrinking text/icons further, which was
+            // already near an unreadable floor.
+            <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border-subtle)', overflowX: 'auto' }}>
+              <TabButton icon={Receipt} label="Details" active={activeTab === 'details'} onClick={() => setActiveTab('details')} />
+              <TabButton icon={Clock} label="Timeline" active={activeTab === 'timeline'} onClick={() => setActiveTab('timeline')} />
+              <TabButton
+                icon={Landmark} label={`Claims${claims.filter((c) => c.status === 'pending').length > 0 ? ` (${claims.filter((c) => c.status === 'pending').length})` : ''}`}
+                active={activeTab === 'claims'} onClick={() => setActiveTab('claims')}
+              />
+              <TabButton icon={MessageCircle} label="Comments" active={activeTab === 'comments'} onClick={() => setActiveTab('comments')} />
+            </div>
+          )}
+        </div>
+
+        {/* ── Flexible middle section — the ONLY scrolling region for every
+            tab except Comments, which manages its own internal scroll
+            (fixed recap header + scrollable thread + fixed input, all via
+            CommentThread.jsx's own layout, just given real height here). ── */}
+        <div style={{
+          flex: '1 1 0%', minHeight: 0,
+          overflow: activeTab === 'comments' && !isDraft ? 'hidden' : 'auto',
+          padding: activeTab === 'comments' && !isDraft ? '16px 0 0' : '16px 24px',
+        }}>
+          {isDraft ? (
             <>
               <SaveStatusIndicator state={saveState} />
               {form && <InvoiceFormFields form={form} setForm={setForm} errors={saveErrors} />}
             </>
           ) : (
             <>
-              {/* ── Amount ── */}
-              <div style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: '16px 18px', marginBottom: 16 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-                  <div>
-                    <p style={{ margin: '0 0 4px', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Invoice Total</p>
-                    <p style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-                      {formatMoney(invoice.total, invoice.currency)}
-                    </p>
-                  </div>
-                  {Number(invoice.amount_paid) > 0 && (
-                    <div style={{ textAlign: 'right' }}>
-                      <p style={{ margin: '0 0 3px', fontSize: '0.75rem', color: 'var(--status-green-text)' }}>Paid: {formatMoney(invoice.amount_paid, invoice.currency)}</p>
-                      <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--status-red-text)' }}>Outstanding: {formatMoney(invoice.outstanding_amount, invoice.currency)}</p>
-                    </div>
-                  )}
-                </div>
-                {invoice.status === 'refunded' && (
-                  <p style={{ margin: '10px 0 0', paddingTop: 10, borderTop: '1px solid var(--border-subtle)', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                    Refunded: {formatMoney(invoice.refunded_amount, invoice.currency)}
-                  </p>
-                )}
-              </div>
-
-              {/* ── Tabs ── */}
-              <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: '1px solid var(--border-subtle)' }}>
-                <TabButton icon={Receipt} label="Details" active={activeTab === 'details'} onClick={() => setActiveTab('details')} />
-                <TabButton icon={Clock} label="Timeline" active={activeTab === 'timeline'} onClick={() => setActiveTab('timeline')} />
-                <TabButton icon={MessageCircle} label="Comments" active={activeTab === 'comments'} onClick={() => setActiveTab('comments')} />
-                <TabButton
-                  icon={Landmark} label={`Claims${claims.filter((c) => c.status === 'pending').length > 0 ? ` (${claims.filter((c) => c.status === 'pending').length})` : ''}`}
-                  active={activeTab === 'claims'} onClick={() => setActiveTab('claims')}
+              {activeTab === 'details' && (
+                <DetailsTab
+                  invoice={invoice} busy={busy}
+                  onToggleReminders={handleToggleReminders}
+                  onPauseResume={handlePauseResume}
+                  onEditSeries={() => setModal({ kind: 'edit_series' })}
                 />
-              </div>
-
-              {activeTab === 'details' && <DetailsTab invoice={invoice} />}
+              )}
               {activeTab === 'timeline' && (
                 <ErrorBoundary key={invoiceId}>
                   <TimelineTab loaded={timelineLoaded} entries={timeline} />
                 </ErrorBoundary>
-              )}
-              {activeTab === 'comments' && (
-                <div style={{ height: 420 }}>
-                  <CommentThread
-                    commentsUrl={`/invoices/${invoiceId}/comments/`}
-                    viewToken={invoice.view_token}
-                    viewerType="freelancer"
-                  />
-                </div>
               )}
               {activeTab === 'claims' && (
                 <ClaimsTab
@@ -481,144 +556,91 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                   onReject={(claim) => setModal({ kind: 'reject_claim', claim })}
                 />
               )}
-
-              {/* ── Recurring + Reminders toggle — Details tab ONLY (real,
-                  found bug this pass: both used to render unconditionally
-                  below the tab switch, so they showed up on Timeline/
-                  Comments/Claims too, not just Details). ── */}
-              {activeTab === 'details' && (
-                <>
-                  {invoice.is_recurring && (
-                    <div style={{ marginTop: 16, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <div>
-                        <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-                          {invoice.recurring_paused ? 'Recurring — paused' : `Recurring — next ${invoice.next_recurring_date || 'unscheduled'}`}
-                        </p>
-                      </div>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        {/* Only a ROOT invoice (no parent) owns the series settings —
-                            a generated occurrence is independent from that point on. */}
-                        {!invoice.parent_invoice && (
-                          <button onClick={() => setModal({ kind: 'edit_series' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-                            <Settings2 size={13} /> Edit Series
-                          </button>
-                        )}
-                        <button onClick={handlePauseResume} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-                          {invoice.recurring_paused ? <Play size={13} /> : <Pause size={13} />}
-                          {invoice.recurring_paused ? 'Resume' : 'Pause'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Hidden entirely (not shown-disabled) once the invoice
-                      is in a terminal state — nothing left to remind
-                      anyone about on a paid/bad-debt/refunded/cancelled
-                      invoice, matching this panel's own established
-                      convention elsewhere (an ineligible action is simply
-                      absent, not disabled-with-explanation). */}
-                  {!REMINDERS_HIDDEN_STATUSES.includes(invoice.status) && (
-                    <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)' }}>Automatic reminders</p>
-                      <button onClick={handleToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-                        {invoice.reminders_enabled ? <Bell size={13} /> : <BellOff size={13} />}
-                        {invoice.reminders_enabled ? 'On' : 'Off'}
-                      </button>
-                    </div>
-                  )}
-                </>
+              {activeTab === 'comments' && (
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+                  <CommentsTabRecap invoice={invoice} />
+                  <div style={{ flex: '1 1 0%', minHeight: 0, padding: '0 24px 16px' }}>
+                    <CommentThread
+                      commentsUrl={`/invoices/${invoiceId}/comments/`}
+                      viewToken={invoice.view_token}
+                      viewerType="freelancer"
+                    />
+                  </div>
+                </div>
               )}
             </>
           )}
         </div>
 
-        {/* ── Actions footer — reorganized into 3 groups this pass (item 9
-            of the verification pass): primary lifecycle actions (move the
-            invoice forward) first and most prominent; secondary/utility
-            actions (never change the invoice's own state) in the middle;
-            destructive/terminal actions last, visually separated by a
-            divider and consistently red-toned so they read as a distinct,
-            deliberate zone rather than blending into the rest. ── */}
-        <div style={{ position: 'sticky', bottom: 0, padding: '12px 24px', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {/* Primary lifecycle actions */}
+        {/* ── Fixed footer — a real primary/secondary pair per status, plus
+            "More" for everything else. ── */}
+        <div style={{ flexShrink: 0, padding: '12px 24px', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {isDraft ? (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {invoice.status === 'draft' && (
-                <button onClick={handleFinalise} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
-                  {busyKey === 'finalise' ? <span className="fos-spinner" /> : <CheckCircle2 size={13} />} Finalise
-                </button>
-              )}
-              {['draft', 'created'].includes(invoice.status) && (
-                <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="fos-btn fos-btn-accent" style={{ fontSize: '0.78rem' }}>
-                  <Send size={13} /> Mark as Sent
-                </button>
-              )}
-              {/* The real send — a distinct, parallel action from Mark as
-                  Sent above, not a replacement for it (per DECISIONS.md:
-                  "I already sent this myself" vs. LanceraOS actually
-                  delivering it). Only reachable at status='created' —
-                  the backend's own real gate, mirrored here so the
-                  button is never even shown somewhere it'd just 400. */}
-              {invoice.status === 'created' && (
-                <button onClick={() => setModal({ kind: 'send' })} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
-                  <Mail size={13} /> Send
-                </button>
-              )}
-              {!NO_PAYMENT_STATUSES.includes(invoice.status) && (
-                <>
-                  <button onClick={() => setModal({ kind: 'add_payment' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Wallet size={13} /> Add Payment</button>
-                  <button onClick={() => setModal({ kind: 'mark_paid' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-green-text)' }}><CheckCircle2 size={13} /> Mark Paid</button>
-                </>
-              )}
-              {Number(invoice.amount_paid) > 0 && !['cancelled', 'bad_debt'].includes(invoice.status) && (
-                <button onClick={requestUndoPayment} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Undo2 size={13} /> Undo Payment</button>
-              )}
+              <button onClick={handleFinalise} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
+                {busyKey === 'finalise' ? <span className="fos-spinner" /> : <CheckCircle2 size={13} />} Finalise
+              </button>
+              <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="fos-btn fos-btn-accent" style={{ fontSize: '0.78rem' }}>
+                <Send size={13} /> Mark as Sent
+              </button>
+              <button onClick={() => setModal({ kind: 'delete' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}>
+                <Trash2 size={13} /> Delete
+              </button>
             </div>
-
-            {/* Secondary / utility actions — never change the invoice's own lifecycle state */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {/* "For any invoice with a client" — no status restriction,
-                  unlike Send/Mark-as-Sent above. A one-time-client invoice
-                  (invoice.client is null) has no portal identity to
-                  preview as, so this is absent rather than shown-disabled. */}
-              {invoice.client && (
-                <button onClick={() => setModal({ kind: 'preview_as_client' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Eye size={13} /> Preview as Client</button>
-              )}
-              <button onClick={handleDuplicate} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><Copy size={13} /> Duplicate</button>
-              <button onClick={() => setModal({ kind: 'save_preset' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}><BookmarkPlus size={13} /> Save as Preset</button>
-            </div>
-
-            {/* Destructive / terminal actions — visually separated */}
-            {(['paid', 'partially_paid'].includes(invoice.status)
-              || ACTIVE_STATUSES.includes(invoice.status)
-              || ((invoice.escalation_required || invoice.status === 'bad_debt') && formalNoticeEnabled)
-              || ['draft', 'created'].includes(invoice.status)) && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, paddingTop: 8, borderTop: '1px dashed var(--border-subtle)' }}>
-                {['paid', 'partially_paid'].includes(invoice.status) && (
-                  <button onClick={() => setModal({ kind: 'refund' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><Undo2 size={13} /> Refund</button>
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {invoice.status === 'created' && (
+                  <>
+                    <button onClick={() => setModal({ kind: 'send' })} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
+                      <Mail size={13} /> Send
+                    </button>
+                    <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}>
+                      <Send size={13} /> Mark as Sent
+                    </button>
+                  </>
                 )}
                 {ACTIVE_STATUSES.includes(invoice.status) && (
                   <>
-                    <button onClick={() => setModal({ kind: 'cancel' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><Ban size={13} /> Cancel</button>
-                    <button onClick={() => setModal({ kind: 'bad_debt' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><ShieldAlert size={13} /> Bad Debt</button>
+                    <button onClick={() => setModal({ kind: 'add_payment' })} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
+                      <Wallet size={13} /> Add Payment
+                    </button>
+                    {isOverdue && !remindersExhausted ? (
+                      <button onClick={() => setModal({ kind: 'send_reminder' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}>
+                        <Bell size={13} /> Send Reminder {nextReminderNumber}
+                      </button>
+                    ) : (
+                      portalViewUrl && (
+                        <button onClick={openViewInvoice} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}>
+                          <ExternalLink size={13} /> View Invoice
+                        </button>
+                      )
+                    )}
                   </>
                 )}
-                {/* Also reachable here (not just the escalation banner above)
-                    once escalation_dismissed — dismissing the PROMPT doesn't
-                    mean the invoice stopped being severely overdue, per
-                    invoice_send_formal_notice's own gating rule. Hidden
-                    entirely, not shown-disabled, when the freelancer has
-                    turned the feature off in Settings — the real, enforced
-                    gate is still server-side either way. */}
-                {(invoice.escalation_required || invoice.status === 'bad_debt') && formalNoticeEnabled && (
-                  <button onClick={() => setModal({ kind: 'formal_notice' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}>
-                    <Gavel size={13} /> Formal Notice
-                  </button>
-                )}
-                {['draft', 'created'].includes(invoice.status) && (
-                  <button onClick={() => setModal({ kind: 'delete' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}><Trash2 size={13} /> Delete</button>
+                {isTerminal && (
+                  <>
+                    <button onClick={openDownload} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
+                      <Download size={13} /> Download Invoice
+                    </button>
+                    {portalViewUrl && (
+                      <button onClick={openViewInvoice} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}>
+                        <ExternalLink size={13} /> View Invoice
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
-            )}
+              {moreMenuItems.length > 0 && (
+                <DropdownMenu
+                  trigger="More" showChevron placement="top"
+                  triggerClassName="fos-btn fos-btn-ghost"
+                  triggerStyle={{ fontSize: '0.78rem' }}
+                  items={moreMenuItems}
+                />
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -629,11 +651,8 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       {modal?.kind === 'send' && (
         <SendModal invoice={invoice} busy={busyKey === 'send'} onConfirm={handleSend} onClose={() => setModal(null)} />
       )}
-      {modal?.kind === 'mark_paid' && (
-        <MarkPaidModal invoice={invoice} busy={busyKey === 'mark_paid'} onConfirm={handleMarkPaid} onClose={() => setModal(null)} />
-      )}
       {modal?.kind === 'add_payment' && (
-        <AddPaymentModal invoice={invoice} busy={busyKey === 'add_payment'} onConfirm={handleAddPayment} onClose={() => setModal(null)} />
+        <AddPaymentModal invoice={invoice} busy={busy} busyKey={busyKey} onMarkPaid={handleMarkPaid} onAddPayment={handleAddPayment} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'refund' && (
         <RefundModal invoice={invoice} busy={busyKey === 'refund'} onConfirm={handleRefund} onClose={() => setModal(null)} />
@@ -662,13 +681,10 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
           confirmLabel="Delete" danger busy={busyKey === 'delete'} onConfirm={handleDelete} onClose={() => setModal(null)}
         />
       )}
-      {modal?.kind === 'preview_as_client' && (
-        <PreviewAsClientModal invoice={invoice} onClose={() => setModal(null)} />
-      )}
       {modal?.kind === 'confirm_claim' && (
         <ConfirmModal
           title="Confirm this claim?"
-          body={`Records ${formatMoney(modal.claim.amount_claimed, modal.claim.currency)} as a real payment on this invoice via ${modal.claim.payment_source}, using the same payment-recording path as Add Payment / Mark Paid.`}
+          body={`Records ${formatMoney(modal.claim.amount_claimed, modal.claim.currency)} as a real payment on this invoice via ${modal.claim.payment_source}, using the same payment-recording path as Add Payment.`}
           confirmLabel="Confirm Claim" busy={busyKey === 'confirm_claim'}
           onConfirm={() => handleConfirmClaim(modal.claim.id)} onClose={() => setModal(null)}
         />
@@ -682,6 +698,15 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       {modal?.kind === 'formal_notice' && (
         <FormalNoticeModal invoice={invoice} busy={busyKey === 'send_formal_notice'} onConfirm={handleSendFormalNotice} onClose={() => setModal(null)} />
       )}
+      {modal?.kind === 'send_reminder' && (
+        <SendReminderModal invoice={invoice} nextReminderNumber={nextReminderNumber} busy={busyKey === 'send_reminder'} onConfirm={handleSendReminder} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === 'resend' && (
+        <ResendModal invoice={invoice} busy={busyKey === 'resend'} onConfirm={handleResend} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === 'change_due_date' && (
+        <ChangeDueDateModal invoice={invoice} busy={busyKey === 'change_due_date'} onConfirm={handleChangeDueDate} onClose={() => setModal(null)} />
+      )}
     </>
   )
 }
@@ -690,20 +715,30 @@ const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55
 const panelStyle = {
   position: 'fixed', top: 'var(--header-h)', right: 0, bottom: 0, width: '100%', maxWidth: 600,
   background: 'var(--bg-surface)', boxShadow: '-8px 0 32px rgba(0,0,0,0.2)', zIndex: 101,
-  overflowY: 'auto', animation: 'panel-slide-in 0.2s cubic-bezier(0.22,1,0.36,1)',
-  display: 'flex', flexDirection: 'column',
+  animation: 'panel-slide-in 0.2s cubic-bezier(0.22,1,0.36,1)',
+  display: 'flex', flexDirection: 'column', overflow: 'hidden',
+}
+
+// ── RemindersOffBanner ───────────────────────────────────────────
+// Exactly one of {this banner, the Details-tab toggle below} ever
+// renders — never both, never neither except a terminal/draft/created
+// invoice (nothing left to remind about, or reminders not yet relevant).
+function RemindersOffBanner({ invoice, busy, onTurnOn }) {
+  if (!ACTIVE_STATUSES.includes(invoice.status)) return null
+  if (invoice.reminders_enabled) return null
+  return (
+    <FosAlert type="warning" style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><BellOff size={14} /> Reminders are turned off for this invoice.</span>
+        <button onClick={onTurnOn} disabled={busy} className="fos-btn fos-btn-accent" style={{ fontSize: '0.74rem', flexShrink: 0 }}>
+          <Bell size={13} /> Turn on reminders
+        </button>
+      </div>
+    </FosAlert>
+  )
 }
 
 // ── SaveStatusIndicator ───────────────────────────────────────────
-// Small, passive, text-only status line — deliberately not a FosAlert
-// (too heavy/visually loud for something that changes every few
-// seconds while typing) and not a toast (would compete with the
-// header/toolbar exactly as the spec warns against). No existing
-// "Saving…/All changes saved" pattern exists elsewhere in this codebase
-// (checked Settings/Profile directly — NotificationsSection.jsx has a
-// per-toggle debounced-save spinner, but nothing resembling a persistent
-// Gmail-style status line), so this is a new, minimal, one-off text
-// treatment using only DESIGN.md's existing tokens/spinner/icons.
 function SaveStatusIndicator({ state }) {
   if (state === 'idle') return null
   const config = {
@@ -720,9 +755,35 @@ function SaveStatusIndicator({ state }) {
 }
 
 // ── DetailsTab ────────────────────────────────────────────────────
-function DetailsTab({ invoice }) {
+// Reordered this round: Client Info -> Invoice/Due Date -> Line Items
+// (+ Subtotal/Total) -> Payment Terms/Currency -> Payment Status
+// (progress bar) -> Recurring (if applicable) -> Reminders section.
+function DetailsTab({ invoice, busy, onToggleReminders, onPauseResume, onEditSeries }) {
+  const showPaymentProgress = Number(invoice.amount_paid) > 0 && invoice.status !== 'paid'
+  const showRemindersToggle = ACTIVE_STATUSES.includes(invoice.status) && invoice.reminders_enabled
+
   return (
     <div>
+      {(invoice.client_name || invoice.client_email || invoice.client_company) && (
+        <div style={{ marginBottom: 16 }}>
+          <p style={sectionLabelStyle}>Client</p>
+          <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>{invoice.client_name || 'No client yet'}</p>
+          {invoice.client_company && <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{invoice.client_company}</p>}
+          {invoice.client_email && <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>{invoice.client_email}</p>}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 24, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div>
+          <p style={sectionLabelStyle}>Invoice Date</p>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{invoice.issue_date || '—'}</p>
+        </div>
+        <div>
+          <p style={sectionLabelStyle}>Due Date</p>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{invoice.due_date || '—'}</p>
+        </div>
+      </div>
+
       {invoice.items?.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <p style={sectionLabelStyle}>Line Items</p>
@@ -740,26 +801,97 @@ function DetailsTab({ invoice }) {
           </div>
         </div>
       )}
+
       {invoice.notes && (
         <div style={{ marginBottom: 16 }}>
           <p style={sectionLabelStyle}>Notes</p>
           <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{invoice.notes}</p>
         </div>
       )}
-      {invoice.terms && (
-        <div style={{ marginBottom: 16 }}>
-          <p style={sectionLabelStyle}>Payment Terms</p>
-          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{invoice.terms}</p>
+
+      <p style={{ margin: '0 0 16px', fontSize: '0.76rem', color: 'var(--text-tertiary)' }}>
+        {invoice.terms ? `Payment Terms: ${invoice.terms} · ` : ''}Currency: {invoice.currency}
+      </p>
+
+      {invoice.late_fee_enabled && Number(invoice.late_fee_amount) > 0 && (
+        <FosAlert type="warning" style={{ marginBottom: 16 }}>+ {formatMoney(invoice.late_fee_amount, invoice.currency)} late fee accrued ({invoice.late_fee_rate}%/month)</FosAlert>
+      )}
+
+      {showPaymentProgress && <PaymentProgressBar invoice={invoice} />}
+
+      {invoice.is_recurring && (
+        <div style={{ marginBottom: 16, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+            {invoice.recurring_paused ? 'Recurring — paused' : `Recurring — next ${invoice.next_recurring_date || 'unscheduled'}`}
+          </p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {!invoice.parent_invoice && (
+              <button onClick={onEditSeries} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+                <Settings2 size={13} /> Edit Series
+              </button>
+            )}
+            <button onClick={onPauseResume} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+              {invoice.recurring_paused ? <Play size={13} /> : <Pause size={13} />}
+              {invoice.recurring_paused ? 'Resume' : 'Pause'}
+            </button>
+          </div>
         </div>
       )}
-      {invoice.late_fee_enabled && Number(invoice.late_fee_amount) > 0 && (
-        <FosAlert type="warning">+ {formatMoney(invoice.late_fee_amount, invoice.currency)} late fee accrued ({invoice.late_fee_rate}%/month)</FosAlert>
+
+      {showRemindersToggle && (
+        <div style={{ padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)' }}>Reminders</p>
+          <button onClick={onToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+            <Bell size={13} /> On
+          </button>
+        </div>
       )}
     </div>
   )
 }
 
+// ── PaymentProgressBar ────────────────────────────────────────────
+function PaymentProgressBar({ invoice }) {
+  const total = Number(invoice.total) || 0
+  const paid = Number(invoice.amount_paid) || 0
+  const pct = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <p style={sectionLabelStyle}>Payment Status</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', marginBottom: 6 }}>
+        <span style={{ color: 'var(--status-green-text)' }}>Paid {formatMoney(paid, invoice.currency)}</span>
+        <span style={{ color: 'var(--status-red-text)' }}>Outstanding {formatMoney(invoice.outstanding_amount, invoice.currency)}</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 99, background: 'var(--bg-surface-3)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: 'var(--status-green)', transition: 'width 0.3s ease' }} />
+      </div>
+      <p style={{ margin: '4px 0 0', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>{pct}% paid</p>
+    </div>
+  )
+}
+
 const sectionLabelStyle = { fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }
+
+// ── CommentsTabRecap — the fixed condensed client-info + invoice-recap
+// block above the (separately scrollable) message thread. ──
+function CommentsTabRecap({ invoice }) {
+  return (
+    <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '0 24px 12px', marginBottom: 12, borderBottom: '1px solid var(--border-subtle)' }}>
+      <div style={{ minWidth: 0 }}>
+        <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {invoice.client_name || 'No client yet'}
+        </p>
+        {invoice.client_email && <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>{invoice.client_email}</p>}
+      </div>
+      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+        <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+          {formatMoney(invoice.total, invoice.currency)}
+        </p>
+        <p style={{ margin: '2px 0 0', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>{invoice.invoice_number}</p>
+      </div>
+    </div>
+  )
+}
 
 // ── TimelineTab ───────────────────────────────────────────────────
 function TimelineTab({ loaded, entries }) {
@@ -872,7 +1004,7 @@ function TabButton({ icon: Icon, label, active, onClick }) {
       onClick={onClick}
       style={{
         display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px',
-        background: 'none', border: 'none', cursor: 'pointer',
+        background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
         fontSize: '0.85rem', fontWeight: active ? 600 : 500,
         color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
         borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
@@ -896,35 +1028,6 @@ function ModalShell({ title, onClose, children, maxWidth = 420 }) {
         </div>
         {children}
       </div>
-    </div>
-  )
-}
-
-// Full-screen, not ModalShell's card style — needs real room to show the
-// actual invoice document. The "You're previewing as..." banner lives
-// here, entirely OUTSIDE the iframe's own document (pure React chrome),
-// so it can never be mistaken for real portal chrome — the iframe's
-// content is the exact same bare invoice-document HTML the PDF/portal
-// renderer produces, which has no banner or navigation of its own.
-// This hits invoice_preview_as_client (apps/invoices/views_portal.py),
-// a freelancer-authenticated endpoint that never mints a real
-// ClientPortalSession and never logs a view — confirmed directly against
-// that endpoint's own docstring, not assumed from the URL alone.
-function PreviewAsClientModal({ invoice, onClose }) {
-  const previewUrl = `${api.defaults.baseURL}/invoices/${invoice.id}/preview-as-client/`
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '14px 24px', background: 'var(--status-amber)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: 12 }}>
-        <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Eye size={15} /> You're previewing as {invoice.client_name || 'this client'} — this is not the real portal
-        </p>
-        <button onClick={onClose} className="fos-btn fos-btn-ghost" style={{ color: '#fff', padding: 6, flexShrink: 0 }} aria-label="Close preview" data-tooltip="Close preview"><X size={16} /></button>
-      </div>
-      <iframe
-        src={previewUrl}
-        title={`Preview as ${invoice.client_name || 'client'}`}
-        style={{ flex: 1, border: 'none', background: '#fff' }}
-      />
     </div>
   )
 }
@@ -987,12 +1090,46 @@ function MarkSentModal({ busy, onConfirm, onClose }) {
   )
 }
 
-function MarkPaidModal({ invoice, busy, onConfirm, onClose }) {
+// ── AddPaymentModal — unified this round: one popup, two real paths.
+// "Mark Fully Paid" reuses the exact mark-paid endpoint (pre-fills the
+// full outstanding balance); "Add a Partial Amount" reuses the exact
+// add-payment endpoint (user-entered amount). Same two backend calls
+// this panel already had — a frontend consolidation into one entry
+// point, not new backend logic. ──
+function AddPaymentModal({ invoice, busy, busyKey, onMarkPaid, onAddPayment, onClose }) {
+  const [mode, setMode] = useState(null) // null (choose) | 'full' | 'partial'
+
+  if (mode === null) {
+    return (
+      <ModalShell title="Add Payment" onClose={onClose}>
+        <p style={{ margin: '0 0 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+          Outstanding balance: <strong>{formatMoney(invoice.outstanding_amount, invoice.currency)}</strong>
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <button onClick={() => setMode('full')} className="fos-btn fos-btn-accent" style={{ justifyContent: 'flex-start', padding: '12px 16px' }}>
+            <CheckCircle2 size={15} /> Mark Fully Paid — {formatMoney(invoice.outstanding_amount, invoice.currency)}
+          </button>
+          <button onClick={() => setMode('partial')} className="fos-btn fos-btn-ghost" style={{ justifyContent: 'flex-start', padding: '12px 16px' }}>
+            <Wallet size={15} /> Add a Partial Amount
+          </button>
+        </div>
+      </ModalShell>
+    )
+  }
+
+  if (mode === 'full') {
+    return <MarkPaidForm invoice={invoice} busy={busyKey === 'mark_paid'} onBack={() => setMode(null)} onConfirm={onMarkPaid} onClose={onClose} />
+  }
+
+  return <PartialPaymentForm invoice={invoice} busy={busyKey === 'add_payment'} onBack={() => setMode(null)} onConfirm={onAddPayment} onClose={onClose} />
+}
+
+function MarkPaidForm({ invoice, busy, onBack, onConfirm, onClose }) {
   const [source, setSource] = useState('other')
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
   const [notes, setNotes] = useState('')
   return (
-    <ModalShell title="Mark as Paid" onClose={onClose}>
+    <ModalShell title="Mark Fully Paid" onClose={onClose}>
       <p style={{ margin: '0 0 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
         Records the full outstanding balance of <strong>{formatMoney(invoice.outstanding_amount, invoice.currency)}</strong> as a payment.
       </p>
@@ -1001,8 +1138,8 @@ function MarkPaidModal({ invoice, busy, onConfirm, onClose }) {
         <FormField label="Payment Date" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
         <FormField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
       </div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-        <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+        <button className="fos-btn fos-btn-ghost" onClick={onBack}>Back</button>
         <button className="fos-btn fos-btn-accent" onClick={() => onConfirm({ source, payment_date: paymentDate, notes })} disabled={busy}>
           {busy ? <span className="fos-spinner" /> : <CheckCircle2 size={14} />} Confirm
         </button>
@@ -1011,7 +1148,7 @@ function MarkPaidModal({ invoice, busy, onConfirm, onClose }) {
   )
 }
 
-function AddPaymentModal({ invoice, busy, onConfirm, onClose }) {
+function PartialPaymentForm({ invoice, busy, onBack, onConfirm, onClose }) {
   const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState(invoice.currency)
   const [source, setSource] = useState('other')
@@ -1021,11 +1158,6 @@ function AddPaymentModal({ invoice, busy, onConfirm, onClose }) {
 
   function submit() {
     if (!amount || parseFloat(amount) <= 0) { setError('Enter a valid amount.'); return }
-    // Immediate client-side feedback — the real, authoritative check is
-    // the same comparison server-side (InvoicePartialPaymentSerializer.
-    // validate_amount), which is what actually matters if this value is
-    // ever stale (e.g. another payment recorded concurrently) by the time
-    // this reaches the backend.
     if (parseFloat(amount) > Number(invoice.outstanding_amount)) {
       setError(`Amount cannot exceed the outstanding balance of ${formatMoney(invoice.outstanding_amount, invoice.currency)}.`)
       return
@@ -1035,7 +1167,7 @@ function AddPaymentModal({ invoice, busy, onConfirm, onClose }) {
   }
 
   return (
-    <ModalShell title="Record Payment" onClose={onClose}>
+    <ModalShell title="Add a Partial Amount" onClose={onClose}>
       {error && <FosAlert type="error" style={{ marginBottom: 12 }}>{error}</FosAlert>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
@@ -1046,8 +1178,8 @@ function AddPaymentModal({ invoice, busy, onConfirm, onClose }) {
         <FormField label="Date" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
         <FormField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
       </div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-        <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+        <button className="fos-btn fos-btn-ghost" onClick={onBack}>Back</button>
         <button className="fos-btn fos-btn-accent" onClick={submit} disabled={busy}>
           {busy ? <span className="fos-spinner" /> : <Wallet size={14} />} Record Payment
         </button>
@@ -1060,11 +1192,6 @@ function RefundModal({ invoice, busy, onConfirm, onClose }) {
   const [amount, setAmount] = useState(invoice.amount_paid)
   const [error, setError] = useState('')
 
-  // invoice_refund is a one-shot, terminal transition (apps/invoices/views.py) —
-  // a second refund call on an already-refunded invoice is rejected by the
-  // backend, so the trigger button for this modal is never rendered once
-  // status is 'refunded' (see the action footer's ['paid','partially_paid']
-  // gate above). This guard is a second, defensive line, not the real gate.
   if (invoice.status === 'refunded') {
     return (
       <ModalShell title="Refund" onClose={onClose}>
@@ -1157,9 +1284,6 @@ function RejectClaimModal({ claim, busy, onConfirm, onClose }) {
   )
 }
 
-// "Edit the whole series going forward" — only recurring_interval_days/
-// recurring_auto_send are sent, matching invoice_detail's own narrow PUT
-// allowance for a recurring root past its own draft status exactly.
 function EditSeriesModal({ invoice, busy, onConfirm, onClose }) {
   const [intervalDays, setIntervalDays] = useState(invoice.recurring_interval_days || 30)
   const [autoSend, setAutoSend] = useState(invoice.recurring_auto_send)
@@ -1244,6 +1368,73 @@ function SavePresetModal({ hasClient, busy, onConfirm, onClose }) {
         <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
         <button className="fos-btn fos-btn-accent" onClick={submit} disabled={busy}>
           {busy ? <span className="fos-spinner" /> : <BookmarkPlus size={14} />} Save Preset
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+// ── SendReminderModal — new this round ──────────────────────────────
+function SendReminderModal({ invoice, nextReminderNumber, busy, onConfirm, onClose }) {
+  return (
+    <ModalShell title={`Send Reminder ${nextReminderNumber}`} onClose={onClose}>
+      <p style={{ margin: '0 0 14px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        This emails <strong>{invoice.client_name || 'the client'}</strong> at <strong>{invoice.client_email}</strong> a
+        real reminder about this overdue invoice. It writes the same record the automatic day-3/7/14/30
+        schedule uses, so the scheduled task won't send this same level again later.
+      </p>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+        <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="fos-btn fos-btn-accent" onClick={onConfirm} disabled={busy}>
+          {busy ? <span className="fos-spinner" /> : <Bell size={14} />} Send Reminder
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+// ── ResendModal — new this round ─────────────────────────────────────
+function ResendModal({ invoice, busy, onConfirm, onClose }) {
+  return (
+    <ModalShell title="Resend Invoice" onClose={onClose}>
+      <p style={{ margin: '0 0 14px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        This re-sends this invoice's current PDF to <strong>{invoice.client_name || 'the client'}</strong> at{' '}
+        <strong>{invoice.client_email}</strong> again — unlike the original Send, this can be repeated as
+        many times as you like and never changes the invoice's status.
+      </p>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+        <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="fos-btn fos-btn-accent" onClick={onConfirm} disabled={busy}>
+          {busy ? <span className="fos-spinner" /> : <RefreshCw size={14} />} Resend
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+// ── ChangeDueDateModal — new this round ──────────────────────────────
+function ChangeDueDateModal({ invoice, busy, onConfirm, onClose }) {
+  const [dueDate, setDueDate] = useState(invoice.due_date || '')
+  const [error, setError] = useState('')
+
+  function submit() {
+    if (!dueDate) { setError('A due date is required.'); return }
+    if (invoice.issue_date && dueDate < invoice.issue_date) {
+      setError('Due date cannot be before the issue date.')
+      return
+    }
+    setError('')
+    onConfirm(dueDate)
+  }
+
+  return (
+    <ModalShell title="Change Due Date" onClose={onClose}>
+      {error && <FosAlert type="error" style={{ marginBottom: 12 }}>{error}</FosAlert>}
+      <FormField label="Due Date" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} required />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="fos-btn fos-btn-accent" onClick={submit} disabled={busy}>
+          {busy ? <span className="fos-spinner" /> : <CalendarClock size={14} />} Save
         </button>
       </div>
     </ModalShell>

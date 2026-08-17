@@ -230,36 +230,35 @@ export function formToPayload(form) {
 // screen).
 export const REMINDERS_HIDDEN_STATUSES = ['paid', 'bad_debt', 'refunded', 'cancelled']
 
-// Simplified banner rule (supersedes the earlier 3-state,
-// sent_via_platform-driven version — see DECISIONS.md):
-//   draft                      -> no banner.
-//   created                    -> unchanged copy: hasn't been sent
-//                                  through LanceraOS yet, so reminders/
-//                                  tracking are inert.
-//   a terminal status          -> no banner — nothing left to remind
-//                                  about, matches REMINDERS_HIDDEN_STATUSES
-//                                  exactly (bug fix, this round).
-//   everything else            -> checks reminders_enabled ONLY. Off ->
-//                                  one line pointing at the toggle. On ->
-//                                  no banner.
-// No sent_via_platform check anywhere — a manual mark-sent and a real
-// platform send are treated identically past 'created' now, since the
-// only thing actually actionable from this banner is the reminders
-// toggle itself.
+// Simplified further this round (InvoiceDetailPanel redesign — see
+// DECISIONS.md): this now ONLY covers the 'created' case — "hasn't been
+// sent through LanceraOS yet, so reminders/tracking are inert." The
+// reminders-off case (previously handled here too) moved to its own
+// dedicated banner-with-a-real-"Turn on reminders"-button component
+// (InvoiceDetailPanel.jsx's RemindersOffBanner) per item 3's exactly-
+// one-of-two-states rule — a plain text line can't host a real action
+// button, and the new design needs one.
 export function getSendBannerCopy(invoice) {
-  if (invoice.status === 'draft') return null
+  if (invoice.status !== 'created') return null
+  return "This invoice hasn't been sent through LanceraOS — reminders, view tracking, and payment tracking won't activate until you send it.";
+}
 
-  if (invoice.status === 'created') {
-    return "This invoice hasn't been sent through LanceraOS — reminders, view tracking, and payment tracking won't activate until you send it.";
+// Header subtitle countdown (InvoiceDetailPanel redesign) — "X days
+// remaining" while not yet due, "X days overdue" (via daysOverdueLabel,
+// already used elsewhere) once real. Returns null when there's no due
+// date at all (a still-blank draft). `overdue` lets the caller apply
+// red/error styling without re-deriving it from days_overdue itself.
+export function dueDateCountdown(invoice) {
+  if (!invoice.due_date) return null
+  if (invoice.days_overdue > 0) {
+    return { text: daysOverdueLabel(invoice.days_overdue), overdue: true }
   }
-
-  if (REMINDERS_HIDDEN_STATUSES.includes(invoice.status)) return null
-
-  if (!invoice.reminders_enabled) {
-    return 'Reminders are off — turn them on below if you\'d like reminder emails to go out.'
-  }
-
-  return null
+  const due = new Date(`${invoice.due_date}T00:00:00`)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const diffDays = Math.round((due - today) / 86400000)
+  if (diffDays <= 0) return { text: 'Due today', overdue: false }
+  return { text: `${diffDays} day${diffDays !== 1 ? 's' : ''} remaining`, overdue: false }
 }
 
 // ── Timeline helpers ──────────────────────────────────────────────

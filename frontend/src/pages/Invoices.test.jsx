@@ -122,7 +122,7 @@ describe('Invoices — uniform, real server pagination', () => {
     ))
 
     fireEvent.click(within(document.querySelector('.list-desktop')).getByLabelText('Select all eligible invoices on this page'))
-    fireEvent.click(screen.getByLabelText('Delete selected invoices'))
+    fireEvent.click(screen.getByRole('button', { name: /delete selected/i }))
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }))
 
     await waitFor(() => expect(mock.history.delete.length).toBe(5))
@@ -202,8 +202,16 @@ describe('Invoices — desktop table: selection affordance hidden when zero elig
   })
 })
 
-describe('Invoices — bulk delete (table)', () => {
-  it('selecting rows shows the delete-icon swap in the header, and deletes on confirm', async () => {
+// InvoiceDetailPanel redesign round (item 6): the desktop table's own
+// Action column — and with it, its header-cell bulk-delete control — is
+// removed entirely (whole-row click-to-open replaces the per-row "Open"
+// button). Bulk delete's real home is now the floating action bar
+// (previously mobile-only, unified this round to render at every width —
+// see Invoices.jsx's own comment on the bar), so this suite now drives
+// that bar directly instead of a table-header control that no longer
+// exists.
+describe('Invoices — bulk delete (floating action bar, unified desktop+mobile)', () => {
+  it('selecting rows surfaces the floating bar, and deletes on confirm', async () => {
     mock.onGet('/invoices/').reply(200, {
       results: [
         invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' }),
@@ -216,15 +224,34 @@ describe('Invoices — bulk delete (table)', () => {
     renderInvoices()
     await waitFor(() => expect(screen.getAllByText('DRAFT-1').length).toBeGreaterThan(0))
 
-    fireEvent.click(screen.getByLabelText('Select all eligible invoices on this page'))
-    expect(screen.getByLabelText('Delete selected invoices')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /delete selected/i })).toBeNull()
 
-    fireEvent.click(screen.getByLabelText('Delete selected invoices'))
+    fireEvent.click(screen.getByLabelText('Select all eligible invoices on this page'))
+    expect(screen.getByText('2 selected')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /delete selected/i })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /delete selected/i }))
     expect(mock.history.delete.length).toBe(0) // real confirm step first
     expect(screen.getByText(/delete 2 invoices\?/i)).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }))
     await waitFor(() => expect(mock.history.delete.length).toBe(2))
+  })
+
+  it('clicking a row still opens its detail panel, not affected by the checkbox column', async () => {
+    // A non-draft status so openDetail() routes to InvoiceDetailPanel
+    // (a real GET /invoices/{id}/) rather than the NewInvoiceWizard's
+    // own edit-draft path.
+    mock.onGet('/invoices/').reply(200, {
+      results: [invoiceFixture({ id: 's1', invoice_number: 'SENT-1', status: 'sent' })],
+      total: 1,
+    })
+    mock.onGet('/invoices/s1/').reply(200, invoiceFixture({ id: 's1', invoice_number: 'SENT-1', status: 'sent' }))
+    renderInvoices()
+    await waitFor(() => expect(screen.getAllByText('SENT-1').length).toBeGreaterThan(0))
+
+    fireEvent.click(within(document.querySelector('.list-desktop')).getByText('SENT-1'))
+    await waitFor(() => expect(mock.history.get.some((r) => r.url === '/invoices/s1/')).toBe(true))
   })
 })
 
@@ -256,7 +283,7 @@ describe('Invoices — status/Overdue mutual exclusivity (unchanged)', () => {
     renderInvoices()
     await waitFor(() => expect(screen.getAllByText('SENT-1').length).toBeGreaterThan(0))
 
-    const overdueBtn = screen.getByRole('button', { name: /overdue only/i })
+    const overdueBtn = screen.getByRole('button', { name: /^overdue$/i })
     fireEvent.click(overdueBtn)
     expect(overdueBtn.style.fontWeight).toBe('700')
 
@@ -266,14 +293,14 @@ describe('Invoices — status/Overdue mutual exclusivity (unchanged)', () => {
 })
 
 describe('Invoices — mobile filter dropdown (.filter-row-mobile, shown ≤768px via CSS)', () => {
-  it('offers every status option plus Overdue Only, folded into one select, plus a real currency select', async () => {
+  it('offers every status option plus Overdue, folded into one select, plus a real currency select', async () => {
     mock.onGet('/invoices/').reply(200, { results: [invoiceFixture()], total: 1 })
     renderInvoices()
     await waitFor(() => expect(screen.getAllByText('INV-2026-0001').length).toBeGreaterThan(0))
 
     const mobileSelect = document.querySelector('.filter-row-mobile select')
     const optionLabels = Array.from(mobileSelect.options).map((o) => o.textContent)
-    expect(optionLabels).toContain('Overdue Only')
+    expect(optionLabels).toContain('Overdue')
     expect(document.querySelectorAll('.filter-row-mobile select').length).toBe(2) // status/overdue + currency
   })
 })

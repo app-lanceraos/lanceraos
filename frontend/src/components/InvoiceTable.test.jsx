@@ -1,16 +1,15 @@
 // src/components/InvoiceTable.test.jsx
 //
-// Bug-fix round: the bulk-select delete control used to overwrite the
-// checkbox COLUMN's own header once ≥1 row was selected — a real,
-// reported misplacement (the select-all checkbox visually vanished
-// instead of a bulk action appearing). It now lives in the ACTION
-// column's own header instead; the checkbox column always stays a
-// checkbox. This suite pins that exact placement down directly at the
-// component level (no dedicated InvoiceDetailPanel.jsx test file exists
-// in this codebase by established convention, but InvoiceTable.jsx is a
-// small, self-contained, easily unit-testable component that didn't
-// have one yet either).
-import { render, screen, within } from '@testing-library/react'
+// InvoiceDetailPanel redesign round (item 6): the dedicated Action column
+// (a per-row "Open" icon button, and — since the previous bug-hardening
+// pass — the bulk-delete control's own header-cell home) is removed
+// entirely. The whole row is now the open-affordance instead, matching
+// InvoiceCard's existing mobile pattern; bulk delete moved to
+// Invoices.jsx's own floating action bar (covered there, not here). This
+// suite was rewritten to pin down the new row-click-to-open behavior and
+// the checkbox's stopPropagation guard against double-firing it, in place
+// of the now-superseded Action-column placement tests.
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import InvoiceTable from './InvoiceTable'
@@ -35,7 +34,6 @@ function renderTable(props = {}) {
         onToggleSelect={() => {}}
         onSelectAllEligible={() => {}}
         onClearSelection={() => {}}
-        onRequestBulkDelete={() => {}}
         onOpen={() => {}}
         {...props}
       />
@@ -43,38 +41,57 @@ function renderTable(props = {}) {
   )
 }
 
-describe('InvoiceTable — bulk-select delete-icon placement', () => {
+describe('InvoiceTable — no Action column, whole-row click-to-open', () => {
   it('the checkbox column header stays a checkbox even with a selection active', () => {
     renderTable({ selectedIds: new Set(['inv-1']) })
     const headerRow = document.querySelector('thead tr')
     const firstCell = headerRow.children[0]
     expect(within(firstCell).getByLabelText('Select all eligible invoices on this page')).toBeTruthy()
-    expect(within(firstCell).queryByLabelText('Delete selected invoices')).toBeNull()
   })
 
-  it('the delete control appears in the LAST (Action) column header once ≥1 row is selected', () => {
-    renderTable({ selectedIds: new Set(['inv-1']) })
-    const headerRow = document.querySelector('thead tr')
-    const lastCell = headerRow.children[headerRow.children.length - 1]
-    expect(within(lastCell).getByLabelText('Delete selected invoices')).toBeTruthy()
-  })
-
-  it('the Action column header is empty (no delete control) with nothing selected', () => {
+  it('has exactly 7 columns — no trailing Action column', () => {
     renderTable({ selectedIds: new Set() })
     const headerRow = document.querySelector('thead tr')
-    const lastCell = headerRow.children[headerRow.children.length - 1]
-    expect(within(lastCell).queryByLabelText('Delete selected invoices')).toBeNull()
-  })
-
-  it('clicking the relocated delete control calls onRequestBulkDelete', () => {
-    const onRequestBulkDelete = vi.fn()
-    renderTable({ selectedIds: new Set(['inv-1']), onRequestBulkDelete })
-    screen.getByLabelText('Delete selected invoices').click()
-    expect(onRequestBulkDelete).toHaveBeenCalled()
+    expect(headerRow.children.length).toBe(7) // checkbox, Invoice, Client, Amount, Issue Date, Due Date, Status
   })
 
   it('the whole checkbox column is absent when no row is deletion-eligible', () => {
     renderTable({ invoices: [invoiceFixture({ status: 'sent' })], selectedIds: new Set() })
     expect(screen.queryByLabelText('Select all eligible invoices on this page')).toBeNull()
+    const headerRow = document.querySelector('thead tr')
+    expect(headerRow.children.length).toBe(6)
+  })
+
+  it('clicking anywhere on a row calls onOpen with that invoice', () => {
+    const onOpen = vi.fn()
+    renderTable({ onOpen })
+    fireEvent.click(screen.getByText('INV-2026-0001'))
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'inv-1' }))
+  })
+
+  it('clicking the row checkbox does not also fire onOpen (stopPropagation)', () => {
+    const onOpen = vi.fn()
+    const onToggleSelect = vi.fn()
+    renderTable({ onOpen, onToggleSelect })
+    fireEvent.click(screen.getByLabelText('Select invoice'))
+    expect(onToggleSelect).toHaveBeenCalledWith('inv-1')
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it('a row for an ineligible (non-deletable) status has no checkbox at all, and clicking it still opens', () => {
+    const onOpen = vi.fn()
+    renderTable({
+      invoices: [invoiceFixture({ status: 'sent' })],
+      onOpen,
+    })
+    expect(screen.queryByLabelText('Select invoice')).toBeNull()
+    fireEvent.click(screen.getByText('INV-2026-0001'))
+    expect(onOpen).toHaveBeenCalled()
+  })
+
+  it('a selected row is marked via data-selected so the hover CSS rule can exclude it', () => {
+    renderTable({ selectedIds: new Set(['inv-1']) })
+    const row = screen.getByText('INV-2026-0001').closest('tr')
+    expect(row.getAttribute('data-selected')).toBe('true')
   })
 })

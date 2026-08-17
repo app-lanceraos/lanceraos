@@ -62,6 +62,48 @@ REMINDER_SCHEDULE = [
 ]
 
 
+def _send_reminder(invoice, reminder_number, template_key):
+    """
+    Sends one real reminder level and records it — the ONE real
+    implementation of "send this reminder and write the InvoiceReminder
+    row for it", shared by the scheduled day-3/7/14/30 task below AND
+    apps.invoices.views.invoice_send_reminder (the manual, on-demand
+    "Send Reminder N" panel action, bug-hardening round). Both paths
+    write the exact same InvoiceReminder record type — there is no
+    manual-vs-automatic distinction in the data model — so whichever
+    path sends reminder N first, the OTHER path's own "already sent"
+    check (InvoiceReminder.objects.filter(invoice=invoice,
+    reminder_number=N).exists()) correctly sees it and never double-sends.
+
+    Callers are responsible for their own eligibility checks (days
+    overdue, already-sent, status) — this function only does the actual
+    send + bookkeeping, identically regardless of who's calling it.
+    """
+    days_overdue = invoice.days_overdue
+    subject, html_body, plain_body = build_reminder_email(invoice, reminder_number)
+    result = send_invoice_related_email(invoice, subject, html_body, plain_body)
+
+    InvoiceReminder.objects.create(
+        invoice=invoice, reminder_number=reminder_number, template_used=template_key,
+        delivered=result['sent'], days_overdue_at_send=days_overdue,
+    )
+    invoice.reminder_count += 1
+    invoice.last_reminder_sent_at = timezone.now()
+    invoice.save(update_fields=['reminder_count', 'last_reminder_sent_at'])
+
+    emit(
+        'ReminderSent', invoice_id=str(invoice.pk), user_id=str(invoice.user_id),
+        reminder_number=reminder_number, delivered=result['sent'],
+    )
+
+    if reminder_number == 4:
+        invoice.escalation_required = True
+        invoice.save(update_fields=['escalation_required'])
+        emit('EscalationRequired', invoice_id=str(invoice.pk), user_id=str(invoice.user_id))
+
+    return result
+
+
 @shared_task(name='apps.invoices.tasks.send_invoice_reminders')
 def send_invoice_reminders():
     """
@@ -98,26 +140,7 @@ def send_invoice_reminders():
                 if already_sent:
                     continue
 
-                subject, html_body, plain_body = build_reminder_email(invoice, reminder_number)
-                result = send_invoice_related_email(invoice, subject, html_body, plain_body)
-
-                InvoiceReminder.objects.create(
-                    invoice=invoice, reminder_number=reminder_number, template_used=template_key,
-                    delivered=result['sent'], days_overdue_at_send=days_overdue,
-                )
-                invoice.reminder_count += 1
-                invoice.last_reminder_sent_at = timezone.now()
-                invoice.save(update_fields=['reminder_count', 'last_reminder_sent_at'])
-
-                emit(
-                    'ReminderSent', invoice_id=str(invoice.pk), user_id=str(invoice.user_id),
-                    reminder_number=reminder_number, delivered=result['sent'],
-                )
-
-                if reminder_number == 4:
-                    invoice.escalation_required = True
-                    invoice.save(update_fields=['escalation_required'])
-                    emit('EscalationRequired', invoice_id=str(invoice.pk), user_id=str(invoice.user_id))
+                result = _send_reminder(invoice, reminder_number, template_key)
 
                 sent_count += 1
                 logger.info(

@@ -256,6 +256,43 @@ class ViewTrackingGuardTests(TestCase):
         event = InvoiceViewEvent.objects.get(invoice=invoice)
         self.assertEqual(event.source, 'platform_view')
 
+    def test_view_invoice_button_target_still_suppresses_side_effects_after_preview_as_client_removal(self):
+        """
+        Mandatory regression test (bug-hardening round — InvoiceDetailPanel
+        redesign): "Preview as Client" (the old iframe/modal, backed by
+        the SEPARATE invoice_preview_as_client endpoint, which never
+        called _record_invoice_view_if_appropriate at all) is removed
+        from the frontend entirely — "View Invoice" now opens the real
+        portal_invoice_view_html page directly instead. This guard
+        (is_freelancer_previewing_portal) protects THIS endpoint, not the
+        removed feature, so removing the feature must not silently
+        regress it. Explicit, current-dated proof that opening the real
+        "View Invoice" destination as the freelancer (both their own
+        apps.users session AND a portal session live in the same browser
+        — the exact scenario a freelancer clicking their own client's
+        real link produces) still does not flip Sent->Viewed, still does
+        not log a real InvoiceViewEvent, and (via the sibling assertion
+        below) still does not mark comments seen-by-client.
+        """
+        invoice = self._sent_invoice()
+        self._login_as_freelancer()
+        ClientPortalSession.create_for_client(self.portal_client, 'view-invoice-btn-tok', device_name='', ip_address=None, user_agent='')
+        self.client.cookies[PORTAL_SESSION_COOKIE_NAME] = 'view-invoice-btn-tok'
+
+        # The exact URL InvoiceDetailPanel's "View Invoice" button opens —
+        # invoice.portal_view_url, built from this same view_token.
+        resp = self.client.get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(resp.status_code, 200)
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'sent')  # NOT advanced to 'viewed'
+        self.assertEqual(InvoiceViewEvent.objects.filter(invoice=invoice).count(), 0)  # no real view logged
+
+        comment = InvoiceComment.objects.create(invoice=invoice, author_type='freelancer', body_text='Hi', source='app')
+        self.client.get(reverse('invoices:portal_invoice_comments', kwargs={'pk': invoice.pk}))
+        comment.refresh_from_db()
+        self.assertIsNone(comment.read_by_client_at)  # not falsely marked seen-by-client either
+
     def test_freelancer_previewing_with_both_cookies_present_suppresses_both_side_effects(self):
         invoice = self._sent_invoice()
         self._login_as_freelancer()  # a real, valid apps.users session cookie
