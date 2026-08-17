@@ -1033,9 +1033,17 @@ class DashboardSummaryRulesTests(InvoicesAPITestCase):
     FreelancerProfile.default_currency (default 'USD' for these tests,
     so single-currency USD fixtures below convert trivially) — see
     MultiCurrencyKPITests for the real cross-currency coverage.
+
+    period=all_time is passed explicitly on every call here — this class
+    is about WHICH invoices/payments count by status, not the separate
+    KPI-period-window feature (see KPIPeriodScopingTests), and Collected
+    under any other period sums real InvoicePartialPayment rows by
+    payment_date, which these fixtures deliberately don't create (they
+    set amount_paid directly, matching Collected's own all_time
+    definition, which is unchanged from before that feature existed).
     """
     def _summary(self):
-        return self._get(reverse('invoices:invoice_summary')).json()
+        return self._get(reverse('invoices:invoice_summary') + '?period=all_time').json()
 
     # ── Outstanding: status in ACTIVE_STATUSES, regardless of sent_via_platform ──
 
@@ -1223,6 +1231,140 @@ class MultiCurrencyKPITests(InvoicesAPITestCase):
         self.assertEqual(summary['currency'], 'PKR')
         # 100 USD / 0.0036 PKR-per-USD ≈ 27777.78
         self.assertEqual(Decimal(summary['outstanding']['total']), Decimal('27777.78'))
+
+
+# ══════════════════════════════════════════════════════════════════
+# KPI PERIOD SCOPING + LIST CURRENCY FILTER (List/Table restructure)
+# ══════════════════════════════════════════════════════════════════
+
+class KPIPeriodScopingTests(InvoicesAPITestCase):
+    """
+    Real, before/after coverage of the issue-date-vs-payment-date
+    distinction: Outstanding/Overdue scope to invoice.issue_date within
+    the selected window; Collected scopes to InvoicePartialPayment.
+    payment_date instead. Also covers the currency override param and
+    that neither control touches the invoice list itself.
+    """
+    def _summary(self, **params):
+        qs = '&'.join(f'{k}={v}' for k, v in params.items())
+        url = reverse('invoices:invoice_summary')
+        return self._get(f'{url}?{qs}' if qs else url).json()
+
+    def _record_payment(self, invoice, amount, payment_date, currency='USD', rate_to_usd=Decimal('1')):
+        InvoicePartialPayment.objects.create(
+            invoice=invoice, amount=amount, currency=currency, rate_to_usd=rate_to_usd,
+            source='bank', payment_date=payment_date,
+        )
+
+    def test_outstanding_excludes_invoice_issued_outside_this_month_window(self):
+        old_issue_date = date.today().replace(day=1) - timedelta(days=45)
+        self._invoice(status='sent', sent_at=timezone.now(), issue_date=old_issue_date, total=Decimal('100'))
+        summary = self._summary(period='this_month')
+        self.assertEqual(summary['outstanding']['count'], 0)
+
+    def test_outstanding_includes_invoice_issued_this_month(self):
+        self._invoice(status='sent', sent_at=timezone.now(), issue_date=date.today(), total=Decimal('100'))
+        summary = self._summary(period='this_month')
+        self.assertEqual(summary['outstanding']['count'], 1)
+
+    def test_all_time_ignores_the_issue_date_window_entirely(self):
+        long_ago = date(2020, 1, 1)
+        self._invoice(status='sent', sent_at=timezone.now(), issue_date=long_ago, total=Decimal('100'))
+        summary = self._summary(period='all_time')
+        self.assertEqual(summary['outstanding']['count'], 1)
+
+    def test_collected_scopes_to_payment_date_not_issue_date(self):
+        """
+        The core distinction: an invoice ISSUED long ago but PAID this
+        month must still count toward this month's Collected — and an
+        invoice issued this month but paid last month must NOT.
+        """
+        old_invoice = self._invoice(status='paid', issue_date=date(2020, 1, 1), total=Decimal('100'), amount_paid=Decimal('100'))
+        self._record_payment(old_invoice, Decimal('100'), date.today())
+        summary = self._summary(period='this_month')
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('100'))
+        self.assertEqual(summary['total_paid']['count'], 1)
+
+    def test_collected_excludes_payment_recorded_last_month(self):
+        last_month_date = date.today().replace(day=1) - timedelta(days=1)
+        invoice = self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'))
+        self._record_payment(invoice, Decimal('100'), last_month_date)
+        summary = self._summary(period='this_month')
+        self.assertEqual(Decimal(summary['total_paid']['total']), Decimal('0'))
+        self.assertEqual(summary['total_paid']['count'], 0)
+
+    def test_collected_month_over_month_delta(self):
+        this_month_start = date.today().replace(day=1)
+        last_month_end = this_month_start - timedelta(days=1)
+        inv1 = self._invoice(status='paid', total=Decimal('100'), amount_paid=Decimal('100'))
+        self._record_payment(inv1, Decimal('100'), date.today())
+        inv2 = self._invoice(status='paid', total=Decimal('40'), amount_paid=Decimal('40'))
+        self._record_payment(inv2, Decimal('40'), last_month_end)
+        summary = self._summary(period='this_month')
+        delta = summary['total_paid']['delta']
+        self.assertEqual(Decimal(delta['current']), Decimal('100'))
+        self.assertEqual(Decimal(delta['previous']), Decimal('40'))
+        self.assertAlmostEqual(delta['pct_change'], 150.0)
+
+    def test_delta_pct_change_is_null_when_no_prior_month_payments(self):
+        invoice = self._invoice(status='paid', total=Decimal('50'), amount_paid=Decimal('50'))
+        self._record_payment(invoice, Decimal('50'), date.today())
+        summary = self._summary(period='this_month')
+        self.assertIsNone(summary['total_paid']['delta']['pct_change'])
+
+    def test_currency_override_does_not_change_default_currency_setting(self):
+        from apps.payments.models import ExchangeRateSnapshot
+        ExchangeRateSnapshot.objects.create(
+            date=date.today(), rates_to_usd={'USD': 1.0, 'EUR': 0.9}, source='test', fetched_at=timezone.now(),
+        )
+        self._invoice(status='sent', sent_at=timezone.now(), currency='USD', total=Decimal('100'), rate_to_usd_at_issue=Decimal('1'))
+        summary = self._summary(period='all_time', currency='EUR')
+        self.assertEqual(summary['currency'], 'EUR')
+        self.user.profile.refresh_from_db()
+        self.assertEqual(self.user.profile.default_currency, 'USD')  # never written back
+
+    def test_invalid_currency_override_rejected(self):
+        resp = self._get(reverse('invoices:invoice_summary') + '?currency=ZZZ')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_invalid_period_rejected(self):
+        resp = self._get(reverse('invoices:invoice_summary') + '?period=nonsense')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_period_and_currency_never_affect_the_invoice_list(self):
+        """KPI controls are scoped to the 3 cards only — the list endpoint has no period concept at all."""
+        self._invoice(status='sent', sent_at=timezone.now(), issue_date=date(2020, 1, 1), total=Decimal('100'))
+        resp = self._get(reverse('invoices:invoice_list'))
+        self.assertEqual(resp.json()['total'], 1)
+
+
+class InvoiceListCurrencyFilterTests(InvoicesAPITestCase):
+    def test_filters_list_by_currency(self):
+        self._invoice(currency='USD', client_name='USD Co')
+        self._invoice(currency='EUR', client_name='EUR Co')
+        resp = self._get(reverse('invoices:invoice_list') + '?currency=EUR')
+        data = resp.json()
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['results'][0]['currency'], 'EUR')
+
+    def test_currency_filter_composes_with_status_filter(self):
+        self._invoice(currency='USD', status='sent', sent_at=timezone.now())
+        self._invoice(currency='EUR', status='sent', sent_at=timezone.now())
+        self._invoice(currency='EUR', status='draft')
+        resp = self._get(reverse('invoices:invoice_list') + '?currency=EUR&status=sent')
+        self.assertEqual(resp.json()['total'], 1)
+
+    def test_invoice_currencies_endpoint_returns_distinct_currencies_present(self):
+        self._invoice(currency='USD')
+        self._invoice(currency='USD')
+        self._invoice(currency='EUR')
+        resp = self._get(reverse('invoices:invoice_currencies'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(sorted(resp.json()['currencies']), ['EUR', 'USD'])
+
+    def test_invoice_currencies_endpoint_empty_for_no_invoices(self):
+        resp = self._get(reverse('invoices:invoice_currencies'))
+        self.assertEqual(resp.json()['currencies'], [])
 
 
 # ══════════════════════════════════════════════════════════════════

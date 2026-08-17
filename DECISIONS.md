@@ -4057,3 +4057,123 @@ selection (the visible set just changed, so a stale selection could otherwise si
 something no longer on screen).
 
 Docs: this entry. CLAUDE.md's own Module 2 narrative gets a matching dated addendum.
+
+---
+
+Date: 17 August 2026 (Invoices/Clients List/Table restructure)
+Decision: A real, large layout restructure of both list pages plus a new AppShell mechanism, not a
+component-by-component patch. Recorded together, one entry per sub-decision — see CLAUDE.md's matching
+Module 2 addendum for the built/not-built summary.
+
+**Pagination simplification — the old tiered "10 -> Show More -> 20 -> server-paged" system (and
+"All"'s special client-side-window behavior from the 16 August second verification pass) is GONE on
+both pages.** Every filter/search/sort/currency combination is now a uniform, real server-paginated
+query at a fixed `PAGE_SIZE=20` (`Pagination.jsx`), with real numbered page navigation on desktop and
+a compact "Page X of Y" strip on mobile. Reason: the tiered system and the "All" carve-out both existed
+to avoid a real network call per interaction, back when that call felt like a page reload — but that
+root cause (the loading skeleton unmounting the whole grid on refetch) was already fixed on its own
+terms in the 11 August round, and the 16 August second round already reversed the "All" carve-out for
+the same reason. Keeping two different pagination shapes (tiered vs. uniform) for "All" vs. everything
+else was no longer buying anything, and was a real source of duplicated page-state logic. `load()` on
+both pages now takes a target page number and steps back one page automatically if a mutation (e.g.
+bulk delete) empties out the page being viewed, rather than showing a blank page with real rows still
+on the page before it.
+Alternatives considered: keeping the tiered "All" behavior for its lower first-paint cost. Rejected —
+a 20-row page is already the first fetch in the new system (not meaningfully more expensive than the
+old 10-row first fetch), and the uniform shape removes an entire code path.
+
+**KPI strip — Outstanding/Collected/Overdue, with a real period + currency selector scoped ONLY to
+these 3 cards.** New `?period=this_month|last_6_months|this_year|all_time` (default `this_month`) and
+`?currency=` params on `invoice_summary` (`apps/invoices/views.py`). Outstanding and Overdue
+(`past_due`, unchanged JSON key) scope to `invoice.issue_date` within the window — "the balance as it
+stands today, among invoices issued in that window." Collected (`total_paid`, unchanged JSON key)
+scopes to `InvoicePartialPayment.payment_date` instead — "money that actually arrived in that window,"
+via a new `_collected_amount` helper, regardless of which period the underlying invoice was issued in.
+This is a deliberate, real distinction, not an oversimplification: an invoice issued in June but paid
+in August must count toward August's Collected, and the reverse must not. `all_time` keeps the exact
+pre-existing amount_paid-minus-refunded_amount calculation (backward compatible with every existing
+KPI test) rather than switching to the partial-payment-based sum, because refunds have no per-
+transaction date in this data model (`Invoice.refunded_amount` is cumulative, not a dated ledger row) —
+a windowed Collected figure therefore does NOT net out a refund that landed in the same window, a real,
+flagged gap documented in `_collected_amount`'s own docstring. The currency override never writes back
+to `FreelancerProfile.default_currency` — it's view-only, validated the same way
+`Client.default_currency` already is (`apps.clients.serializers.validate_currency_code`, reused, not
+reimplemented). Neither control touches the invoice list below, which has its own independent currency
+FILTER (`?currency=` on `invoice_list`/`client_list`, a real `WHERE` clause) and no period concept at
+all — verified directly with a dedicated test.
+**Collected's month-over-month delta is deliberately the ONLY KPI card with one, and only rendered at
+period=this_month.** Outstanding/Overdue never get a delta — a delta on a balance-type figure would
+need a historical snapshot of that balance that doesn't exist (today's Outstanding total isn't
+comparable to "last month's Outstanding total" without re-deriving it as of a past date, which this app
+has no mechanism for), and a fabricated one risks showing a confidently wrong number. The delta itself
+is always computed server-side (real this-calendar-month vs. last-calendar-month `_collected_amount`
+calls, independent of the requested `period`) since that's a display decision, not a data one — the
+frontend just doesn't render it outside `this_month`.
+**Label renames, display-only:** "Total Paid" -> "Collected", "Past-Due" -> "Overdue". Neither backend
+JSON key changed (`total_paid`/`past_due` stay as-is) — this is a `InvoiceKPIStrip.jsx` text change
+only, confirmed via a dedicated test that the old labels no longer render anywhere.
+
+**The invoice list's currency filter, and the new client list currency filter, are real WHERE-clause
+filters** (`invoice_list`/`client_list`, `?currency=`), composing correctly with every other active
+filter — verified with a currency+status combo test on both. `GET /api/invoices/currencies/` and
+`GET /api/clients/currencies/` (new, real distinct-value queries) populate each dropdown's real option
+list — deliberately NOT the same fixed 4-currency list `CURRENCY_OPTIONS` the KPI strip's own currency
+selector uses, since these two controls answer different questions ("what currencies do I actually have
+invoices/clients in" vs. "what currency do I want to temporarily view 3 summary cards in").
+
+**Real, measured-width filter-row overflow (`useFilterOverflow.js`), not a fixed breakpoint guess.** A
+caller renders a hidden, off-screen row containing every filter chip (so each chip's true intrinsic
+width is always known) alongside the real visible row, which only renders as many chips as fit before
+a reserved-width "More filters" button; a `ResizeObserver` on the visible container re-measures on
+every width change. A real, found edge case fixed during this pass: a container that measures 0 width
+(not yet laid out — true in every jsdom test, and momentarily true in a real browser before first
+layout) now shows every chip rather than overflowing everything into the menu — "no real measurement
+yet" is a different case from "genuinely doesn't fit," and only the latter should hide content.
+Confirmed live in a real browser (not just jsdom) via a Playwright-driven screenshot pass — narrowing
+the viewport to 900px genuinely produced a real "More filters (4)" dropdown containing the overflowed
+status pills plus a real embedded currency `<select>`.
+
+**AppShell header-action injection (`usePageHeaderActions.js` + `PageHeaderActionsContext`) — checked
+first, confirmed no such mechanism existed, built the real one.** A mounted page registers a `desktop`
+React node (rendered in AppShell's header between the title and the bell) and a flat `mobileItems` list
+(folded into a single 3-dot `DropdownMenu` on mobile, absent entirely when empty — e.g. Clients.jsx,
+which has nothing to fold since "Add Client" is its only header action and lives on the FAB at phone
+width). Invoices.jsx's header actions (Analytics / a "More" dropdown for Manage Designs + From Preset /
+New Invoice) and Clients.jsx's (Add Client) both moved out of each page's own inline JSX into this
+mechanism. A real bug found and fixed while wiring this up: a fresh JSX node passed to
+`usePageHeaderActions` on every render re-fires its effect every time (since AppShell's own state
+update re-renders the whole page tree, including the unmemoized page that just called it) — a genuine
+infinite render loop, not a hypothetical one. Fixed by `useMemo`/`useCallback`-wrapping both pages' own
+header-action nodes with stable dependencies (`navigate` from `useNavigate()` is itself stable;
+`handleNewInvoice`/`openCreateForm` wrapped in `useCallback` with empty deps, safe since they only call
+stable `setState` setters).
+**A second real bug found and fixed in the same pass:** `DropdownMenu`'s default trigger className
+(`fos-btn fos-btn-ghost`) carries `padding: 10px 20px`, which — under this app's global `box-sizing:
+border-box` reset — consumes MORE horizontal space than a deliberately small, fixed icon-only trigger
+box (e.g. 38x38 for the mobile 3-dot menu) has available, collapsing the icon's content box to
+zero/negative width and rendering an empty circle. Confirmed visually via a real screenshot before
+fixing, not assumed. Fixed with a new `bareTrigger` prop that skips the class + its padding entirely
+for icon-only triggers (matching the bell/hamburger buttons' own pre-existing bare-button convention),
+applied to AppShell's 3-dot menu and both pages' mobile sort-icon dropdowns.
+
+**Bulk actions scope — confirmed with Ali: delete-only, on Invoices only.** No bulk mark-as-paid or
+similar was requested or built; Clients.jsx gets no bulk selection at all (never had one, item 13
+doesn't ask for one either) — its "reuse the identical pattern" instruction was scoped to header/
+search+sort/filter-overflow/pagination/mobile-card-list, not bulk actions.
+
+Verification: real backend tests (`KPIPeriodScopingTests`, `InvoiceListCurrencyFilterTests` in
+`apps/invoices/tests/test_views.py`; `CurrencyFilterTests` in `apps/clients/tests/test_views.py`) cover
+the issue-date-vs-payment-date distinction with a real before/after fixture, the delta calculation, the
+currency override not writing back, and both list currency filters' real WHERE-clause behavior. Real
+frontend tests (`Pagination.test.jsx`, `InvoiceKPIStrip.test.jsx`, `useFilterOverflow.test.jsx`, plus
+rewritten `Invoices.test.jsx`/`Clients.test.jsx`) cover uniform pagination on every filter combination
+including a currency+status combo, the selection-affordance-hidden-when-zero-eligible case, and the
+overflow arithmetic itself via a synthetic-width harness (jsdom never performs real layout, so this
+mocks `offsetWidth`/`clientWidth` directly rather than only smoke-testing that the hook doesn't crash).
+Real screenshots at 375/768/1280/1920, light and dark, for both pages, captured via a headless
+Chromium already cached on this machine (`~/Library/Caches/ms-playwright`) against the actual running
+dev servers with a real seeded demo account (`screenshot-demo@example.com`) — not simulated or
+described from code alone. Full backend suite: 857 passing (`python manage.py test`, whole suite, up
+from 838 — this pass's own new tests). Full frontend suite: 162 passing (`npm test`, `frontend/`).
+
+Docs: this entry. CLAUDE.md's own Module 2 narrative and build-status table get a matching addendum.

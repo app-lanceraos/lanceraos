@@ -1,0 +1,98 @@
+// src/components/DropdownMenu.jsx
+//
+// Generic small trigger-button + absolutely-positioned item list —
+// AppShell's mobile 3-dot header menu and any page's desktop "More"
+// header dropdown (e.g. Invoices.jsx's Manage Designs/From Preset)
+// both compose from this one primitive rather than each hand-rolling
+// their own open/close/outside-click logic. `items`:
+// [{ key, label, Icon, onClick, disabled? }].
+import { useEffect, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
+
+export default function DropdownMenu({ trigger, triggerLabel, items, align = 'right', triggerStyle, triggerClassName, bareTrigger = false, showChevron = false }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false) }
+    const escHandler = (e) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    window.addEventListener('keydown', escHandler)
+    return () => {
+      document.removeEventListener('mousedown', handler)
+      window.removeEventListener('keydown', escHandler)
+    }
+  }, [open])
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-label={triggerLabel}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={bareTrigger ? undefined : (triggerClassName || 'fos-btn fos-btn-ghost')}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          background: 'transparent', cursor: 'pointer',
+          // A bare, icon-only trigger (e.g. AppShell's mobile 3-dot menu,
+          // matching the bell/hamburger buttons' own convention right
+          // next to it) skips .fos-btn's own 10px/20px padding entirely —
+          // that padding, under this app's global border-box reset, eats
+          // MORE than a deliberately small fixed width/height box (e.g.
+          // 38x38) leaves available, silently squeezing the icon's
+          // content box to zero and making it invisible. A real,
+          // confirmed bug this pass, not a hypothetical one.
+          ...(bareTrigger ? { border: 'none', padding: 0 } : {}),
+          ...triggerStyle,
+        }}
+      >
+        {trigger}
+        {showChevron && <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />}
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute', top: '100%', marginTop: 6,
+            [align]: 0,
+            minWidth: 200, maxWidth: 280,
+            background: 'var(--menu-bg, var(--bg-surface))',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-lg)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+            padding: 6, zIndex: 500,
+            display: 'flex', flexDirection: 'column', gap: 2,
+          }}
+        >
+          {items.map((item) => (
+            <button
+              key={item.key}
+              role="menuitem"
+              disabled={item.disabled}
+              onClick={() => { setOpen(false); item.onClick?.() }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 12px', borderRadius: 9,
+                color: item.danger ? 'var(--status-red-text)' : 'var(--text-primary)',
+                fontSize: 13, whiteSpace: 'nowrap', textAlign: 'left',
+                cursor: item.disabled ? 'not-allowed' : 'pointer',
+                opacity: item.disabled ? 0.5 : 1,
+                border: 'none', background: 'transparent', width: '100%',
+                fontFamily: 'var(--font)',
+                transition: 'background var(--fast)',
+              }}
+              onMouseEnter={(e) => { if (!item.disabled) e.currentTarget.style.background = 'var(--nav-hover-bg, var(--bg-surface-2))' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+            >
+              {item.Icon && <item.Icon size={15} style={{ flexShrink: 0 }} />}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

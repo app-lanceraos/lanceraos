@@ -877,6 +877,38 @@ own rejection reason if applicable) via a new GET on `portal_invoice_claims`, an
 an invoice is fully paid (it doubles as "check your claim status", not just "report a new payment"). See
 DECISIONS.md's second 16 August 2026 entry for the full reasoning behind every item above.
 
+17 August 2026 (List/Table restructure) — a real, large layout restructure of both `Invoices.jsx` and
+`Clients.jsx` plus a new AppShell mechanism, not a component-by-component patch. Pagination: the tiered
+"10 -> Show More -> 20 -> server-paged" system (and "All"'s client-side-window carve-out from the
+previous entry) is GONE on both pages — every filter/search/sort/currency combination is now a
+uniform, real server-paginated query at `PAGE_SIZE=20` (`Pagination.jsx`, real numbered nav desktop,
+compact "Page X of Y" mobile), since the root cause the tiered system existed to work around was
+already fixed on its own terms two entries ago. `invoice_summary` (KPI strip) gained a real
+`?period=this_month|last_6_months|this_year|all_time` (default `this_month`) and `?currency=` param,
+scoped ONLY to the 3 KPI cards, never the list below: Outstanding/Overdue scope to `issue_date` within
+the window, Collected scopes to `InvoicePartialPayment.payment_date` instead (money that actually
+arrived, regardless of the invoice's own issue period) via a new `_collected_amount` helper;
+`all_time` keeps the exact pre-existing amount_paid-minus-refunded_amount math for backward
+compatibility (refunds have no per-transaction date to scope into a window — a real, flagged gap, see
+DECISIONS.md). Collected alone gets a real month-over-month delta, shown only at period=this_month.
+"Total Paid"/"Past-Due" are now labeled "Collected"/"Overdue" (display-only; JSON keys unchanged). Both
+list endpoints (`invoice_list`/`client_list`) gained a real `?currency=` WHERE-clause filter, backed by
+new `GET /api/invoices/currencies/` + `GET /api/clients/currencies/` distinct-value endpoints for each
+dropdown's real option list — deliberately separate from the KPI strip's own fixed-list currency
+selector. Frontend: a real measured-width filter-row overflow (`useFilterOverflow.js`) into a "More
+filters" dropdown rather than a fixed breakpoint; a real AppShell header-action-injection mechanism
+(`usePageHeaderActions.js` + `PageHeaderActionsContext`, confirmed no such mechanism existed before
+building it) that both pages' header actions (Analytics/More/New Invoice; Add Client) now use instead
+of each page rendering its own inline header row, folding into AppShell's mobile 3-dot menu where
+applicable. Two real bugs found and fixed during this pass (both in DECISIONS.md): a fresh-JSX-node-
+every-render infinite loop in the new header-injection hook, and an invisible icon in `DropdownMenu`'s
+default icon-only trigger caused by `.fos-btn`'s own padding colliding with a small fixed-size box
+under this app's border-box reset. Verified with real backend + frontend tests (issue-date-vs-payment-
+date fixtures, the delta calculation, both currency filters, the overflow arithmetic via a synthetic-
+width harness) and real Playwright screenshots at 375/768/1280/1920, light and dark, against the actual
+running dev servers with a seeded demo account. See DECISIONS.md's 17 August 2026 entry for full
+reasoning on every item above.
+
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
 
@@ -1062,7 +1094,10 @@ entry for the full reasoning and how to close this gap if it matters
 later.
 
 Key API endpoints — apps/clients/ (built, real):
-- GET/POST /api/clients/ (filter/search/sort per the Client CRM section above)
+- GET/POST /api/clients/ (filter/search/sort per the Client CRM section above; ?currency= added
+  17 August 2026, a real WHERE-clause filter on Client.default_currency)
+- GET /api/clients/currencies/ (17 August 2026 — distinct default_currency values in use, real query,
+  populates the list's own currency filter dropdown)
 - GET/PUT /api/clients/{id}/
 - POST /api/clients/{id}/archive/ + /restore/ + /flag/
 - GET/POST /api/clients/{id}/notes/ + PUT/DELETE /api/clients/{id}/notes/{note_id}/
@@ -1087,7 +1122,12 @@ Key API endpoints — apps/invoices/ (built, real):
 - POST /api/invoices/{id}/cancel/ + /refund/ + /bad-debt/ + /duplicate/
 - POST /api/invoices/{id}/toggle-reminders/ + /pause-recurring/ + /resume-recurring/
 - GET /api/invoices/{id}/timeline/
-- GET /api/invoices/summary/ + /exchange-rate/ (/aging-report/ removed 16 August 2026 — see DECISIONS.md)
+- GET /api/invoices/summary/ (?period=/?currency= added 17 August 2026 — KPI-strip-only period window
+  + currency override, see this module's own 17 August entry above) + /exchange-rate/ (/aging-report/
+  removed 16 August 2026 — see DECISIONS.md)
+- GET /api/invoices/currencies/ (17 August 2026 — distinct invoice currencies in use, real query,
+  populates the list's own currency filter dropdown; ?currency= also added to GET /api/invoices/
+  itself, a real WHERE-clause filter)
 - GET/POST /api/invoices/presets/ + GET/PUT/DELETE /api/invoices/presets/{id}/
 - POST /api/invoices/presets/{id}/set-default/ + /create-invoice/
 - GET/POST /api/invoices/designs/ + GET/PUT/DELETE /api/invoices/designs/{id}/ (Step 8 — the
@@ -1528,7 +1568,7 @@ Cloudinary account-level ACL restriction Step 10b works around; Client Acknowled
 portal action, Step 15), Recurring Invoice generation (Celery task + root-settings-read model +
 calendar-accurate scheduling + 3-strikes failure handling, Step 16), and Escalation notification +
 Formal Notice (a real, distinct, manual-only email with its own enforced disable setting, Step 17))
-built | Invoices list/detail/lifecycle/timeline (AR aging report removed 16 August 2026 — see DECISIONS.md) + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form + acknowledge action, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims/Acknowledge ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides) + an escalation banner/dismiss/Formal-Notice action + an "Edit Series" modal for a recurring root + a Formal Notice enable toggle in Settings > Business + a new `/invoices/analytics` page (Recharts, installed for real this pass) + a "Generate Statement" action + date-range modal in ClientDetailPanel.jsx, Step 12/13/14/15/16/17/18/19 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is a real, independently-paginated server query again as of the 16 August second verification-pass reversal (only "All" stays the 11 Aug client-side window — see DECISIONS.md), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 838 passing (`python manage.py test`, whole suite, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 147 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`, `ErrorBoundary.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx/ClientDetailPanel.jsx component test file for their own newer actions, matching this component's existing convention for its other actions) | Two 16 August 2026 verification passes complete (see DECISIONS.md) — Admin panel screens and the full-module verification pass (Section 8, steps 20-21) remain |
+built | Invoices list/detail/lifecycle/timeline (AR aging report removed 16 August 2026 — see DECISIONS.md) + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form + acknowledge action, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims/Acknowledge ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides) + an escalation banner/dismiss/Formal-Notice action + an "Edit Series" modal for a recurring root + a Formal Notice enable toggle in Settings > Business + a new `/invoices/analytics` page (Recharts, installed for real this pass) + a "Generate Statement" action + date-range modal in ClientDetailPanel.jsx, Step 12/13/14/15/16/17/18/19 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is a real, independently-paginated server query again as of the 16 August second verification-pass reversal (only "All" stayed the 11 Aug client-side window until the 17 August List/Table restructure removed the tiered/client-side pagination system entirely — see DECISIONS.md), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version). 17 August 2026: both list pages rebuilt on top of the above — uniform real pagination (`Pagination.jsx`), a real filter-row overflow (`useFilterOverflow.js`), a real WHERE-clause currency filter on both lists, a real KPI period+currency strip (`InvoiceKPIStrip.jsx`) with a Collected-only month-over-month delta, and header actions relocated into AppShell's own header via a new `usePageHeaderActions.js` mechanism (see DECISIONS.md's 17 August entry) | Backend: 857 passing (`python manage.py test`, whole suite, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`, and this pass's own new KPI-period/currency-filter coverage). Frontend: 162 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `Pagination.test.jsx`, `InvoiceKPIStrip.test.jsx`, `useFilterOverflow.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`, `ErrorBoundary.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx/ClientDetailPanel.jsx component test file for their own newer actions, matching this component's existing convention for its other actions) | Two 16 August 2026 verification passes plus the 17 August 2026 List/Table restructure complete (see DECISIONS.md) — Admin panel screens and the full-module verification pass (Section 8, steps 20-21) remain |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

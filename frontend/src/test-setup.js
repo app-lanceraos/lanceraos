@@ -23,3 +23,18 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
 if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {}
 }
+
+// jsdom does not implement ResizeObserver at all — useFilterOverflow.js
+// (Invoices.jsx/Clients.jsx's filter-row overflow detection, List/Table
+// restructure pass) observes a container to re-measure on layout change.
+// A no-op stub is enough here: jsdom also never lays out real pixel
+// widths (every offsetWidth/clientWidth is 0), so the observer callback
+// firing or not doesn't change what useFilterOverflow.test.js actually
+// exercises — that file mocks offsetWidth/clientWidth directly instead.
+if (typeof window !== 'undefined' && !window.ResizeObserver) {
+  window.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+}

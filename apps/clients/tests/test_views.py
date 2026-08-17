@@ -212,6 +212,39 @@ class ClientFilterSearchSortTests(ClientsAPITestCase):
         self.assertEqual(names, sorted(names))
 
 
+class CurrencyFilterTests(ClientsAPITestCase):
+    """List/Table restructure pass — real WHERE-clause currency filter + the distinct-currencies endpoint."""
+    def setUp(self):
+        super().setUp()
+        from django.utils import timezone
+        from apps.payments.models import ExchangeRateSnapshot
+        import datetime
+        ExchangeRateSnapshot.objects.create(
+            date=datetime.date.today(), rates_to_usd={'USD': 1.0, 'EUR': 0.9}, source='test', fetched_at=timezone.now(),
+        )
+        self.usd_client = self._create_client(name='Alpha', email='alpha@example.com', default_currency='USD')
+        self.eur_client = self._create_client(name='Beta', email='beta@example.com', default_currency='EUR')
+
+    def test_filters_by_currency(self):
+        resp = self._get(reverse('clients:client_list') + '?filter=all&currency=EUR')
+        names = {c['name'] for c in resp.json()['results']}
+        self.assertEqual(names, {'Beta'})
+
+    def test_currency_filter_composes_with_search(self):
+        resp = self._get(reverse('clients:client_list') + '?filter=all&currency=USD&search=Beta')
+        self.assertEqual(resp.json()['total'], 0)
+
+    def test_currencies_endpoint_returns_distinct_values(self):
+        resp = self._get(reverse('clients:client_currencies'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(sorted(resp.json()['currencies']), ['EUR', 'USD'])
+
+    def test_currencies_endpoint_empty_for_no_clients(self):
+        ClientModel.objects.all().delete()
+        resp = self._get(reverse('clients:client_currencies'))
+        self.assertEqual(resp.json()['currencies'], [])
+
+
 class ArchiveRestoreFlagTests(ClientsAPITestCase):
     def test_archive_then_double_archive_fails(self):
         created = self._create_client()

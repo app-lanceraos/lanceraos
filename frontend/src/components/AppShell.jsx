@@ -26,12 +26,12 @@
 //
 // The AI assistant widget from v1 is NOT included — no AssistantWidget
 // source was provided and it wasn't requested for this pass.
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import ReactDOM from 'react-dom'
 import {
   Bell, CheckCircle2, CheckCheck, CheckSquare, Clock, CreditCard, DollarSign,
-  FileText, HelpCircle, LayoutGrid, LogOut, Mail, RefreshCw,
+  FileText, HelpCircle, LayoutGrid, LogOut, Mail, MoreHorizontal, RefreshCw,
   Receipt, Settings as SettingsIcon, Square, Trash2, TrendingUp, User as UserIcon,
   Users, Wallet, AlertTriangle, Eye,
 } from 'lucide-react'
@@ -41,7 +41,17 @@ import useTheme from '@/hooks/useTheme'
 import { initTooltipBindings } from '@/hooks/useAppTooltip'
 import useNotificationSocket from '@/hooks/useNotificationSocket'
 import api from '@/lib/api'
+import DropdownMenu from './DropdownMenu'
 import { LogoSVG, WordmarkSVG } from './Brand'
+
+// Page-specific header actions (List/Table restructure pass) — a page
+// mounted as AppShell's `children` registers its own action buttons
+// (desktop: a real React node rendered between the title and the bell;
+// mobile: a flat {key,label,Icon,onClick} list folded into a single
+// 3-dot menu) via the usePageHeaderActions hook instead of AppShell
+// hardcoding per-route chrome. Checked first (per the build brief) —
+// no such mechanism existed before this; this is the real one.
+export const PageHeaderActionsContext = createContext(() => {})
 
 const PAGE_TITLES = {
   '/dashboard': 'Dashboard',
@@ -298,6 +308,8 @@ export default function AppShell({ children }) {
   // fail silently and just leave the list empty (the same empty state
   // that would show for a genuinely-empty inbox), rather than
   // attempting a WebSocket connection with nothing to connect to.
+  const [pageHeaderActions, setPageHeaderActions] = useState({ desktop: null, mobileItems: [] })
+
   const [showNotifPanel, setShowNotifPanel] = useState(false)
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -655,6 +667,30 @@ export default function AppShell({ children }) {
             {pageTitle}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {/* Page-specific desktop actions (e.g. Invoices' Analytics/More/
+                New Invoice) — registered by the mounted page via
+                usePageHeaderActions, rendered here between the title and
+                the bell. Absent on mobile — the same actions fold into the
+                3-dot menu below instead. */}
+            {!isMobile && pageHeaderActions.desktop}
+
+            {/* Mobile 3-dot menu — folds every page-registered action into
+                one dropdown, since there's no room for individual buttons
+                at phone width. Absent entirely when a page hasn't
+                registered any (e.g. pages with only a single "+" FAB
+                action, which stays on the FAB, never duplicated here). */}
+            {isMobile && pageHeaderActions.mobileItems.length > 0 && (
+              <DropdownMenu
+                trigger={<MoreHorizontal size={20} strokeWidth={1.6} />}
+                triggerLabel="More actions"
+                items={pageHeaderActions.mobileItems}
+                bareTrigger
+                triggerStyle={{
+                  width: 38, height: 38, borderRadius: '50%', color: 'var(--header-icon)',
+                }}
+              />
+            )}
+
             {/* Notification bell */}
             <div ref={notifRef}>
               <button
@@ -887,7 +923,9 @@ export default function AppShell({ children }) {
         transition: 'left var(--t), background var(--t)',
       }}>
         <div style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', padding: isMobile ? '20px 16px' : '32px' }}>
-          {children}
+          <PageHeaderActionsContext.Provider value={setPageHeaderActions}>
+            {children}
+          </PageHeaderActionsContext.Provider>
         </div>
       </div>
 

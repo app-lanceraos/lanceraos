@@ -79,6 +79,13 @@ def client_list(request):
         qs = qs.none()
     # filter=all (or anything unrecognized) applies no is_active filter.
 
+    # Real WHERE-clause filter (List/Table restructure pass, mirrors
+    # apps.invoices.views.invoice_list's identical currency filter) —
+    # against Client.default_currency, never a display-only conversion.
+    currency_param = request.query_params.get('currency')
+    if currency_param:
+        qs = qs.filter(default_currency=currency_param.upper())
+
     search = request.query_params.get('search', '').strip()
     if search:
         qs = qs.filter(Q(name__icontains=search) | Q(email__icontains=search) | Q(company__icontains=search))
@@ -115,6 +122,21 @@ def client_list(request):
         'limit': limit,
         'offset': offset,
     })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def client_currencies(request):
+    """
+    Distinct default_currency values actually present across the user's
+    clients — real query, populates the client list's currency filter
+    dropdown. Mirrors apps.invoices.views.invoice_currencies exactly,
+    against Client.default_currency instead of Invoice.currency.
+    """
+    currencies = list(
+        Client.objects.filter(user=request.user).order_by('default_currency').values_list('default_currency', flat=True).distinct()
+    )
+    return Response({'currencies': currencies})
 
 
 def client_create(request):

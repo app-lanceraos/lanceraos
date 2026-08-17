@@ -1,35 +1,48 @@
 // src/pages/Clients.jsx
 //
-// Client CRM list — apps/clients/ backend only (Step 2), no apps/invoices/
-// code. Ports v1's Clients.jsx interaction patterns (search/filter/sort,
-// add-client form, archive/restore/flag) against the real v2 endpoints
-// and response shape, not v1's API calls. Switched from v1's vertical
-// row-list to a fluid card grid per this build's hard layout rule
-// (repeat(auto-fit, minmax(240px, 1fr))). Bulk select/bulk-archive/
-// bulk-flag from v1 were NOT ported — not asked for in this pass, and
-// real added scope (a second toast system, per-row checkboxes) beyond
-// the single-client actions this prompt scoped.
-import { useCallback, useEffect, useRef, useState } from 'react'
+// Client CRM list — apps/clients/ backend only, no apps/invoices/ code.
+// List/Table restructure pass (see Invoices.jsx's own header comment for
+// the full reasoning shared across both pages — this file applies the
+// identical pattern minus anything invoice-specific):
+//   - Header action ("+ Add Client") moved out of this page's own inline
+//     header into AppShell's shared header via usePageHeaderActions.
+//     Mobile keeps the existing FAB as the real entry point; no 3-dot
+//     menu appears here at all (mobileItems is empty — there's nothing
+//     else to fold into one), matching AppShell's own "absent when
+//     empty" convention.
+//   - Sort moved onto the search row.
+//   - The currency filter (a real WHERE-clause filter on
+//     Client.default_currency) joins the existing filter-pill row, with
+//     the same real measured-width overflow (useFilterOverflow.js) into
+//     a "More filters" dropdown Invoices.jsx uses.
+//   - Pagination: the old flat single-fetch list is now uniform, real
+//     server-paginated (20/page, numbered nav) — see Pagination.jsx.
+// No KPI cards, no period/currency-conversion controls — Clients has no
+// financial summary concept, unlike Invoices' own KPI strip. No bulk
+// selection either — never existed here and isn't being added now
+// (deferred, confirmed with Ali — see DECISIONS.md).
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Search, X, Plus, Users, Flag, Archive, RotateCcw, ChevronRight,
+  Search, X, Plus, Users, Flag, Archive, RotateCcw, ChevronRight, ArrowUpDown,
 } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
+import usePageHeaderActions from '@/hooks/usePageHeaderActions'
+import useFilterOverflow from '@/hooks/useFilterOverflow'
+import DropdownMenu from '@/components/DropdownMenu'
+import FilterPill from '@/components/FilterPill'
+import FilterOverflowMenu from '@/components/FilterOverflowMenu'
 import FormField from '@/components/FormField'
 import FormSelect from '@/components/FormSelect'
 import FosAlert from '@/components/FosAlert'
 import ClientDetailPanel from '@/components/ClientDetailPanel'
+import Pagination from '@/components/Pagination'
 import {
   reliabilityBand, STATUS_BADGE_STYLE, badgeBaseStyle, tagPillStyle, formatMoney,
   CURRENCY_OPTIONS, PAYMENT_TERMS_OPTIONS,
 } from './clientHelpers'
 
-// 'all' deliberately removed as a filter pill — search already covers
-// "show me everyone" (clearing search/filter is the equivalent), so a
-// dedicated pill for it was redundant. The 'all' filter VALUE itself is
-// left alone in the backend/EmptyState copy below in case it's ever
-// reachable another way; only the pill entry point is gone.
 const FILTER_PILLS = [
   { key: 'active', label: 'Active' },
   { key: 'flagged', label: 'Flagged' },
@@ -55,11 +68,14 @@ export default function Clients() {
 
   const [clients, setClients] = useState([])
   const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('active')
+  const [currencyFilter, setCurrencyFilter] = useState('')
+  const [availableCurrencies, setAvailableCurrencies] = useState([])
   const [sort, setSort] = useState('name')
 
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -72,49 +88,82 @@ export default function Clients() {
   const [rowBusyId, setRowBusyId] = useState(null)
 
   const searchTimer = useRef(null)
-  // Same stale-response protection as Invoices.jsx's load() — a
-  // monotonically increasing request-id checked before committing to
-  // state, so an out-of-order response from an earlier filter/search/sort
-  // change can never overwrite state with stale data. handleSearchChange
-  // below already passes `value` straight into `load()` as an explicit
-  // argument rather than reading `search` state inside `load` itself, so
-  // (unlike Invoices.jsx before this pass) there was no separate stale-
-  // closure bug here to fix — confirmed directly, not assumed identical.
   const latestRequestId = useRef(0)
 
-  const load = useCallback(async (q, f, s) => {
+  function openCreateForm() {
+    setCreateForm(EMPTY_CREATE_FORM)
+    setCreateErrors({})
+    setShowCreateForm(true)
+  }
+
+  // Memoized for the same reason as Invoices.jsx's own header actions —
+  // AppShell re-renders on every setPageHeaderActions call, which
+  // re-renders this unmemoized page too; a fresh JSX node every render
+  // would re-fire usePageHeaderActions' effect every time, a real
+  // infinite loop.
+  const desktopHeaderActions = useMemo(() => (
+    <button className="fos-btn fos-btn-accent" onClick={openCreateForm}>
+      <Plus size={15} /> Add Client
+    </button>
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [])
+  usePageHeaderActions({ desktop: desktopHeaderActions, mobileItems: [] })
+
+  function buildParams(targetPage, overrides = {}) {
+    const params = { offset: (targetPage - 1) * 20, limit: 20 }
+    const searchVal = 'search' in overrides ? overrides.search : search
+    const filterVal = 'filter' in overrides ? overrides.filter : filter
+    const currencyVal = 'currency' in overrides ? overrides.currency : currencyFilter
+    if (searchVal) params.search = searchVal
+    if (filterVal) params.filter = filterVal
+    if (sort) params.sort = sort
+    if (currencyVal) params.currency = currencyVal
+    return params
+  }
+
+  const load = useCallback(async (targetPage, overrides = {}) => {
     const requestId = ++latestRequestId.current
     setLoading(true)
     setError(null)
     try {
-      const params = {}
-      if (q) params.search = q
-      if (f) params.filter = f
-      if (s) params.sort = s
-      const { data } = await api.get('/clients/', { params })
-      if (requestId !== latestRequestId.current) return // superseded by a newer request — discard
-      setClients(data.results || [])
-      setTotal(data.total ?? (data.results || []).length)
+      const { data } = await api.get('/clients/', { params: buildParams(targetPage, overrides) })
+      if (requestId !== latestRequestId.current) return
+      const results = data.results || []
+      const totalCount = data.total ?? results.length
+      if (results.length === 0 && targetPage > 1 && totalCount > 0) {
+        return load(targetPage - 1, overrides)
+      }
+      setPage(targetPage)
+      setClients(results)
+      setTotal(totalCount)
     } catch {
       if (requestId !== latestRequestId.current) return
       setError('Failed to load clients. Please try again.')
     } finally {
       if (requestId === latestRequestId.current) setLoading(false)
     }
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, filter, currencyFilter, sort])
 
-  useEffect(() => { load(search, filter, sort) }, [filter, sort]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(1) }, [filter, sort]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    api.get('/clients/currencies/').then(({ data }) => setAvailableCurrencies(data.currencies || [])).catch(() => setAvailableCurrencies([]))
+  }, [])
 
   function handleSearchChange(value) {
     setSearch(value)
     clearTimeout(searchTimer.current)
-    searchTimer.current = setTimeout(() => load(value, filter, sort), 300)
+    searchTimer.current = setTimeout(() => load(1, { search: value }), 300)
   }
 
-  function openCreateForm() {
-    setCreateForm(EMPTY_CREATE_FORM)
-    setCreateErrors({})
-    setShowCreateForm(true)
+  function selectCurrencyFilter(value) {
+    setCurrencyFilter(value)
+    load(1, { currency: value })
+  }
+
+  function goToPage(n) {
+    load(n)
   }
 
   async function handleCreateClient() {
@@ -123,7 +172,7 @@ export default function Clients() {
     try {
       await api.post('/clients/', createForm)
       setShowCreateForm(false)
-      load(search, filter, sort)
+      load(1)
     } catch (e) {
       const body = e.response?.data
       if (body && typeof body === 'object') {
@@ -140,7 +189,7 @@ export default function Clients() {
     setRowBusyId(client.id)
     try {
       await api.post(`/clients/${client.id}/archive/`)
-      load(search, filter, sort)
+      load(page)
     } catch { /* no-op */ } finally {
       setRowBusyId(null)
     }
@@ -150,7 +199,7 @@ export default function Clients() {
     setRowBusyId(client.id)
     try {
       await api.post(`/clients/${client.id}/restore/`)
-      load(search, filter, sort)
+      load(page)
     } catch { /* no-op */ } finally {
       setRowBusyId(null)
     }
@@ -161,103 +210,108 @@ export default function Clients() {
     setSelectedInitialAction(initialAction)
   }
 
+  // ── Filter row chips + real measured-width overflow ──
+  const pillChips = FILTER_PILLS.map((pill) => ({
+    type: 'pill', key: pill.key, label: pill.label, active: filter === pill.key,
+    onClick: () => { setFilter(pill.key); load(1, { filter: pill.key }) },
+  }))
+  const currencyChip = { type: 'currency', key: 'currency', value: currencyFilter, options: availableCurrencies, onChange: selectCurrencyFilter }
+  const allChips = [...pillChips, currencyChip]
+  const { containerRef, measureRefs, moreRef, visibleCount } = useFilterOverflow(allChips.length)
+  const visibleChips = allChips.slice(0, visibleCount)
+  const overflowChips = allChips.slice(visibleCount)
+
   return (
     <>
-      {/* ── Page header ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)' }}>Clients</h1>
-          {!loading && (
-            <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-              {total} client{total !== 1 ? 's' : ''} in this view
-            </p>
-          )}
-        </div>
-        <button className="fos-btn fos-btn-accent header-add-btn" onClick={openCreateForm}>
-          <Plus size={15} /> Add Client
-        </button>
-      </div>
-
-      {/* ── Search ── */}
-      <div style={{ position: 'relative', marginBottom: 14 }}>
-        <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
-        <input
-          type="text"
-          className="fos-input"
-          style={{ paddingLeft: 36, paddingRight: search ? 36 : 14 }}
-          placeholder="Search by name, email, or company…"
-          value={search}
-          onChange={(e) => handleSearchChange(e.target.value)}
-        />
-        {search && (
-          <button
-            onClick={() => handleSearchChange('')}
-            aria-label="Clear search"
-            style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', padding: 0 }}
-          >
-            <X size={15} />
-          </button>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)' }}>Clients</h1>
+        {!loading && (
+          <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+            {total} client{total !== 1 ? 's' : ''} in this view
+          </p>
         )}
       </div>
 
-      {/* ── Filter pills + Sort, trailing at the right as the row's one
-          secondary control (matches Invoices.jsx's identical layout) ──
-          Desktop/tablet only — hidden ≤768px in favor of the dropdown
-          version below (see that block's comment for why). */}
-      <div className="filter-row-desktop" style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', overscrollBehaviorX: 'contain', paddingBottom: 4, flex: 1, minWidth: 0 }}>
-          {FILTER_PILLS.map((pill) => {
-          const isActive = filter === pill.key
-          return (
-            <button
-              key={pill.key}
-              onClick={() => setFilter(pill.key)}
-              className="fos-btn"
-              style={{
-                flexShrink: 0, padding: '6px 14px', fontSize: '0.78rem',
-                borderRadius: 'var(--radius-full)',
-                background: isActive ? 'var(--accent-glow)' : 'var(--bg-surface)',
-                color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
-                border: `1.5px solid ${isActive ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                fontWeight: isActive ? 700 : 500,
-              }}
-            >
-              {pill.label}
+      {/* ── Search + Sort row ── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <div style={{ position: 'relative', flex: 1 }}>
+          <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
+          <input
+            type="text" className="fos-input" style={{ paddingLeft: 36, paddingRight: search ? 36 : 14 }}
+            placeholder="Search by name, email, or company…"
+            value={search} onChange={(e) => handleSearchChange(e.target.value)}
+          />
+          {search && (
+            <button onClick={() => handleSearchChange('')} aria-label="Clear search" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', padding: 0 }}>
+              <X size={15} />
             </button>
-          )
-        })}
+          )}
         </div>
-        <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select" style={{ width: 'auto', minWidth: 180, flexShrink: 0 }}>
+        <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select sort-select-desktop" style={{ width: 'auto', minWidth: 180, flexShrink: 0 }}>
           {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+        <div className="sort-icon-mobile" style={{ display: 'none' }}>
+          <DropdownMenu
+            trigger={<ArrowUpDown size={17} />}
+            triggerLabel="Sort"
+            bareTrigger
+            triggerStyle={{ width: 40, height: 40, borderRadius: 'var(--radius-md)', color: 'var(--text-secondary)', border: '1.5px solid var(--border-subtle)' }}
+            items={SORT_OPTIONS.map((o) => ({ key: o.value, label: o.label, onClick: () => setSort(o.value) }))}
+          />
+        </div>
       </div>
 
-      {/* Mobile (≤768px): same pills as a Filter <select>, same reasoning
-          as Invoices.jsx's mobile dropdown — a horizontally-scrollable
-          pill row is an awkward fit at phone width. Sits next to the same
-          Sort dropdown. Hidden by default so it never flashes before CSS
-          loads; shown via the media query below. */}
+      {/* ── Filter row — desktop: pills + currency, real measured overflow into "More filters". ── */}
+      <div className="filter-row-desktop" style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center' }}>
+        <div ref={containerRef} style={{ display: 'flex', gap: 8, overflow: 'hidden', flexWrap: 'nowrap', flex: 1, minWidth: 0 }}>
+          {visibleChips.map((chip) => (
+            chip.type === 'currency' ? (
+              <select key={chip.key} value={chip.value} onChange={(e) => chip.onChange(e.target.value)} className="fos-input fos-select" style={{ width: 'auto', minWidth: 130, flexShrink: 0, fontSize: '0.78rem' }} aria-label="Filter by currency">
+                <option value="">All Currencies</option>
+                {chip.options.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            ) : (
+              <FilterPill key={chip.key} active={chip.active} onClick={chip.onClick}>{chip.label}</FilterPill>
+            )
+          ))}
+        </div>
+        {overflowChips.length > 0 && <FilterOverflowMenu chips={overflowChips} />}
+
+        <div aria-hidden="true" style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none', top: -9999, left: 0, display: 'flex', gap: 8, whiteSpace: 'nowrap' }}>
+          {allChips.map((chip, i) => (
+            chip.type === 'currency' ? (
+              <select key={chip.key} ref={(el) => { measureRefs.current[i] = el }} className="fos-input fos-select" style={{ width: 'auto', minWidth: 130, fontSize: '0.78rem' }} tabIndex={-1}>
+                <option>All Currencies</option>
+              </select>
+            ) : (
+              <FilterPill key={chip.key} ref={(el) => { measureRefs.current[i] = el }} active={chip.active} tabIndex={-1}>{chip.label}</FilterPill>
+            )
+          ))}
+          <button ref={moreRef} className="fos-btn" style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: 'var(--radius-full)' }} tabIndex={-1}>More filters (9)</button>
+        </div>
+      </div>
+
+      {/* Mobile (≤768px): pills as one dropdown + currency as a second — same collapsed pattern as Invoices.jsx. */}
       <div className="filter-row-mobile" style={{ display: 'none', gap: 8, marginBottom: 20 }}>
-        <select value={filter} onChange={(e) => setFilter(e.target.value)} className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }}>
+        <select value={filter} onChange={(e) => { setFilter(e.target.value); load(1, { filter: e.target.value }) }} className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }}>
           {FILTER_PILLS.map((pill) => <option key={pill.key} value={pill.key}>{pill.label}</option>)}
         </select>
-        <select value={sort} onChange={(e) => setSort(e.target.value)} className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }}>
-          {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+        {availableCurrencies.length > 0 && (
+          <select value={currencyFilter} onChange={(e) => selectCurrencyFilter(e.target.value)} className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }} aria-label="Filter by currency">
+            <option value="">All Currencies</option>
+            {availableCurrencies.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
       </div>
 
-      {/* ── Content — same fix as Invoices.jsx: only a genuine first load
-          (nothing rendered yet) shows the full skeleton; every subsequent
-          refetch keeps the current grid mounted and just dims it, instead
-          of unmounting and rebuilding the whole thing on every filter/
-          search/sort change. ── */}
+      {/* ── Content ── */}
       {loading && clients.length === 0 && !error && <ClientGridSkeleton />}
 
       {error && clients.length === 0 && (
         <div style={{ padding: 32, textAlign: 'center' }}>
           <FosAlert type="error" style={{ display: 'inline-flex', marginBottom: 12 }}>{error}</FosAlert>
           <br />
-          <button className="fos-btn fos-btn-ghost" onClick={() => load(search, filter, sort)}>Retry</button>
+          <button className="fos-btn fos-btn-ghost" onClick={() => load(page)}>Retry</button>
         </div>
       )}
 
@@ -269,7 +323,7 @@ export default function Clients() {
         <>
           {error && (
             <FosAlert type="error" style={{ marginBottom: 12 }}>
-              {error} <button className="fos-btn fos-btn-ghost" style={{ marginLeft: 8 }} onClick={() => load(search, filter, sort)}>Retry</button>
+              {error} <button className="fos-btn fos-btn-ghost" style={{ marginLeft: 8 }} onClick={() => load(page)}>Retry</button>
             </FosAlert>
           )}
           <div
@@ -290,6 +344,13 @@ export default function Clients() {
               />
             ))}
           </div>
+
+          <div className="pagination-desktop">
+            <Pagination page={page} total={total} itemLabel="clients" onPageChange={goToPage} loading={loading} />
+          </div>
+          <div className="pagination-mobile" style={{ display: 'none' }}>
+            <Pagination page={page} total={total} itemLabel="clients" onPageChange={goToPage} loading={loading} compact />
+          </div>
         </>
       )}
 
@@ -303,7 +364,6 @@ export default function Clients() {
         <Plus size={24} />
       </button>
 
-      {/* ── Create client modal ── */}
       {showCreateForm && (
         <CreateClientModal
           form={createForm}
@@ -318,22 +378,24 @@ export default function Clients() {
         />
       )}
 
-      {/* ── Detail panel ── */}
       {selectedClientId && (
         <ClientDetailPanel
           clientId={selectedClientId}
           initialAction={selectedInitialAction}
           onClose={() => setSelectedClientId(null)}
-          onChanged={() => load(search, filter, sort)}
+          onChanged={() => load(page)}
         />
       )}
 
       <style>{`
         @media (max-width: 768px) {
           .page-fab { display: flex !important; }
-          .header-add-btn { display: none !important; }
           .filter-row-desktop { display: none !important; }
           .filter-row-mobile { display: flex !important; }
+          .sort-select-desktop { display: none !important; }
+          .sort-icon-mobile { display: flex !important; }
+          .pagination-desktop { display: none !important; }
+          .pagination-mobile { display: block !important; }
         }
       `}</style>
     </>
@@ -402,7 +464,6 @@ function ClientCard({ client, busy, onOpen, onFlag, onArchive, onRestore }) {
         <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[band.statusKey] }}>{band.label}</span>
       </div>
 
-      {/* Quick actions — stop propagation so they don't also open the panel */}
       <div style={{ display: 'flex', gap: 6, marginTop: 4 }} onClick={(e) => e.stopPropagation()}>
         {!hasFlag && (
           <button className="fos-btn fos-btn-ghost" style={{ padding: '4px 10px', fontSize: '0.72rem' }} onClick={onFlag} disabled={busy}>

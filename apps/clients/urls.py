@@ -8,6 +8,7 @@ app_name = 'clients'
 urlpatterns = [
     path('', views.client_list, name='client_list'),
     path('tags/', views.client_tags, name='client_tags'),
+    path('currencies/', views.client_currencies, name='client_currencies'),
     # Literal-prefixed portal routes must come before <uuid:pk>/ and
     # portal/<str:token>/ must come last among them — <str:token>
     # otherwise greedily matches 'request-link'/'logout'/'logout-everywhere'
