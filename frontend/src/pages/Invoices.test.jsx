@@ -88,60 +88,91 @@ describe('Invoices — loading state no longer unmounts an already-rendered list
   })
 })
 
-describe('Invoices — status/Overdue filtering is client-side: zero network calls', () => {
-  it('clicking every status pill and the Overdue toggle fires NO /invoices/ GET requests', async () => {
-    mock.onGet('/invoices/').reply(200, {
-      results: [
-        invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' }),
-        invoiceFixture({ id: 's1', invoice_number: 'SENT-1', status: 'sent', days_overdue: 5 }),
-      ],
-      total: 2,
-    })
+// REVERSAL (item 4 of the 16 August 2026 second verification pass — see
+// DECISIONS.md for the full reasoning): "All" stays a client-side window
+// over the loaded page, but a specific status filter or Overdue is now a
+// REAL, independently-paginated server query (?status=X or
+// ?overdue=true) — safe now that the reload-feel fix's actual root cause
+// (the loading skeleton unmounting the whole grid on every refetch) is
+// fixed on its own terms, so a real network call per filter click no
+// longer feels like a reload. This supersedes the old "client-side,
+// zero network calls" suite this replaces.
+describe('Invoices — status/Overdue filtering is a real, independently-paginated server query', () => {
+  it('clicking a status pill fires a real GET with the right ?status= param', async () => {
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'd1', invoice_number: 'ALL-1' })], total: 1 })
     renderInvoices()
-    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('ALL-1')).toBeTruthy())
 
-    const getCallsBefore = mock.history.get.filter((r) => r.url === '/invoices/').length
-    for (const name of [/^draft$/i, /^sent$/i, /^paid$/i, /overdue only/i, /^all$/i]) {
-      fireEvent.click(screen.getByRole('button', { name }))
-    }
-    await new Promise((r) => setTimeout(r, 50))
-    const getCallsAfter = mock.history.get.filter((r) => r.url === '/invoices/').length
-    expect(getCallsAfter).toBe(getCallsBefore)
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'd2', invoice_number: 'DRAFT-1', status: 'draft' })], total: 1 })
+    fireEvent.click(screen.getByRole('button', { name: /^draft$/i }))
+
+    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
+    const draftReq = mock.history.get.filter((r) => r.url === '/invoices/').pop()
+    expect(draftReq.params.status).toBe('draft')
+    expect(draftReq.params.offset).toBe(0)
+    expect(draftReq.params.limit).toBe(10)
   })
 
-  it('a status pill click immediately re-filters the already-loaded list with no loading flicker', async () => {
+  it('the results shown are exactly what the server returned for that filter — not a client-side re-filter of the previous "All" window', async () => {
     mock.onGet('/invoices/').reply(200, {
-      results: [
-        invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' }),
-        invoiceFixture({ id: 's1', invoice_number: 'SENT-1', status: 'sent' }),
-      ],
+      results: [invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' }), invoiceFixture({ id: 's1', invoice_number: 'SENT-1', status: 'sent' })],
       total: 2,
     })
     renderInvoices()
     await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
     expect(screen.getByText('SENT-1')).toBeTruthy()
 
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' })], total: 1 })
     fireEvent.click(screen.getByRole('button', { name: /^draft$/i }))
-    // No await needed at all — this is a synchronous state update, not a
-    // network round-trip, so the filtered result is immediate.
+
+    await waitFor(() => expect(screen.queryByText('SENT-1')).toBeNull())
     expect(screen.getByText('DRAFT-1')).toBeTruthy()
-    expect(screen.queryByText('SENT-1')).toBeNull()
   })
 
-  it('the Overdue toggle filters by days_overdue > 0 with no network call', async () => {
-    mock.onGet('/invoices/').reply(200, {
-      results: [
-        invoiceFixture({ id: 'o1', invoice_number: 'OVERDUE-1', days_overdue: 3 }),
-        invoiceFixture({ id: 'n1', invoice_number: 'NOTOVERDUE-1', days_overdue: 0 }),
-      ],
-      total: 2,
-    })
+  it('the Overdue toggle fires a real GET with ?overdue=true', async () => {
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'a1', invoice_number: 'ALL-1' })], total: 1 })
     renderInvoices()
-    await waitFor(() => expect(screen.getByText('OVERDUE-1')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('ALL-1')).toBeTruthy())
 
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'o1', invoice_number: 'OVERDUE-1', days_overdue: 3 })], total: 1 })
     fireEvent.click(screen.getByRole('button', { name: /overdue only/i }))
-    expect(screen.getByText('OVERDUE-1')).toBeTruthy()
-    expect(screen.queryByText('NOTOVERDUE-1')).toBeNull()
+
+    await waitFor(() => expect(screen.getByText('OVERDUE-1')).toBeTruthy())
+    const overdueReq = mock.history.get.filter((r) => r.url === '/invoices/').pop()
+    expect(overdueReq.params.overdue).toBe('true')
+    expect(overdueReq.params.status).toBeUndefined()
+  })
+
+  it('switching back to "All" fires a real GET with no status/overdue params at all', async () => {
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' })], total: 1 })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /^draft$/i }))
+    await waitFor(() => expect(mock.history.get.filter((r) => r.url === '/invoices/').pop().params.status).toBe('draft'))
+
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'a1', invoice_number: 'ALL-1' })], total: 1 })
+    fireEvent.click(screen.getByRole('button', { name: /^all$/i }))
+
+    await waitFor(() => expect(screen.getByText('ALL-1')).toBeTruthy())
+    const allReq = mock.history.get.filter((r) => r.url === '/invoices/').pop()
+    expect(allReq.params.status).toBeUndefined()
+    expect(allReq.params.overdue).toBeUndefined()
+  })
+
+  it('a status pill click keeps the previous list visible (dimmed), not blanked — the reload-feel fix applies identically here', async () => {
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'a1', invoice_number: 'ALL-1' })], total: 1 })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('ALL-1')).toBeTruthy())
+
+    mock.onGet('/invoices/').reply(() => new Promise((resolve) => setTimeout(() => resolve([200, {
+      results: [invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' })], total: 1,
+    }]), 50)))
+    fireEvent.click(screen.getByRole('button', { name: /^draft$/i }))
+
+    // Still mounted (not unmounted-and-rebuilt) while the request is in flight.
+    expect(screen.getByText('ALL-1')).toBeTruthy()
+    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
   })
 })
 
@@ -261,43 +292,35 @@ describe('Invoices — mobile filter dropdown (.filter-row-mobile, shown ≤768p
     expect(optionLabels).toContain('Overdue Only')
   })
 
-  it('selecting a status via the mobile dropdown filters client-side with no network call', async () => {
-    mock.onGet('/invoices/').reply(200, {
-      results: [
-        invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' }),
-        invoiceFixture({ id: 's1', invoice_number: 'SENT-1', status: 'sent' }),
-      ],
-      total: 2,
-    })
+  it('selecting a status via the mobile dropdown fires a real, independently-paginated server query (item 4)', async () => {
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 's1', invoice_number: 'SENT-1', status: 'sent' })], total: 1 })
     renderInvoices()
-    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('SENT-1')).toBeTruthy())
 
-    const getCallsBefore = mock.history.get.filter((r) => r.url === '/invoices/').length
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' })], total: 1 })
     const mobileSelect = document.querySelector('.filter-row-mobile select')
     fireEvent.change(mobileSelect, { target: { value: 'draft' } })
 
-    expect(screen.getByText('DRAFT-1')).toBeTruthy()
+    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
     expect(screen.queryByText('SENT-1')).toBeNull()
-    expect(mock.history.get.filter((r) => r.url === '/invoices/').length).toBe(getCallsBefore)
+    const draftReq = mock.history.get.filter((r) => r.url === '/invoices/').pop()
+    expect(draftReq.params.status).toBe('draft')
   })
 
-  it('selecting "Overdue Only" via the mobile dropdown maps to the sentinel value and filters correctly', async () => {
-    mock.onGet('/invoices/').reply(200, {
-      results: [
-        invoiceFixture({ id: 'o1', invoice_number: 'OVERDUE-1', days_overdue: 4 }),
-        invoiceFixture({ id: 'n1', invoice_number: 'CURRENT-1', days_overdue: 0 }),
-      ],
-      total: 2,
-    })
+  it('selecting "Overdue Only" via the mobile dropdown maps to the sentinel value and fires ?overdue=true', async () => {
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'n1', invoice_number: 'CURRENT-1', days_overdue: 0 })], total: 1 })
     renderInvoices()
-    await waitFor(() => expect(screen.getByText('OVERDUE-1')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('CURRENT-1')).toBeTruthy())
 
+    mock.onGet('/invoices/').reply(200, { results: [invoiceFixture({ id: 'o1', invoice_number: 'OVERDUE-1', days_overdue: 4 })], total: 1 })
     const mobileSelect = document.querySelector('.filter-row-mobile select')
     fireEvent.change(mobileSelect, { target: { value: '__overdue__' } })
 
-    expect(screen.getByText('OVERDUE-1')).toBeTruthy()
+    await waitFor(() => expect(screen.getByText('OVERDUE-1')).toBeTruthy())
     expect(screen.queryByText('CURRENT-1')).toBeNull()
     expect(mobileSelect.value).toBe('__overdue__')
+    const overdueReq = mock.history.get.filter((r) => r.url === '/invoices/').pop()
+    expect(overdueReq.params.overdue).toBe('true')
   })
 
   it('mobile and desktop controls stay in sync — a desktop pill click updates the mobile dropdown value too', async () => {
@@ -320,29 +343,25 @@ describe('Invoices — client filter dropdown removed', () => {
   })
 })
 
-describe('Invoices — honest "not all loaded" notice when filtering an incomplete fetch', () => {
-  it('shows a note when a status filter is active and more invoices exist on the server than are loaded', async () => {
+// REMOVED (item 4 of the 16 August 2026 second verification pass): the
+// old "not all loaded" disclosure banner this suite tested no longer
+// exists — a status/Overdue filter is a real, independently-paginated
+// server query now, with its own real, complete `total`, so there's no
+// under-reporting risk left to disclose. See DECISIONS.md.
+describe('Invoices — a status filter shows genuinely complete results, not a stale disclosure banner', () => {
+  it('no "most recently loaded" text renders anywhere once a filter is applied', async () => {
     mock.onGet('/invoices/').reply(200, {
       results: [invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' })],
-      total: 50, // far more than the 1 loaded
+      total: 50,
     })
     renderInvoices()
     await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
 
     fireEvent.click(screen.getByRole('button', { name: /^draft$/i }))
-    expect(screen.getByText(/searching the 1 most recently loaded invoices/i)).toBeTruthy()
-  })
-
-  it('shows no such note when everything has already been loaded', async () => {
-    mock.onGet('/invoices/').reply(200, {
-      results: [invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' })],
-      total: 1,
-    })
-    renderInvoices()
-    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
-
-    fireEvent.click(screen.getByRole('button', { name: /^draft$/i }))
+    await waitFor(() => expect(mock.history.get.filter((r) => r.url === '/invoices/').pop().params.status).toBe('draft'))
     expect(screen.queryByText(/most recently loaded/i)).toBeNull()
+    // The real total for THIS filter, from PaginationControls' own wording.
+    expect(screen.getByText(/1 of 50/i)).toBeTruthy()
   })
 })
 
@@ -430,14 +449,123 @@ describe('Invoices — tiered pagination', () => {
     expect(screen.queryByRole('button', { name: /show fewer/i })).toBeNull() // back to exactly 10 — nothing left to collapse
   })
 
-  it('a status pill click never triggers a network call, at any pagination depth', async () => {
+  // REVERSAL (item 4 of the 16 August 2026 second verification pass):
+  // a status pill click IS now expected to trigger a real network call —
+  // see Invoices.jsx's own FILTER ARCHITECTURE header comment and
+  // DECISIONS.md. This replaces the old "never triggers a network call"
+  // assertion this same test name used to make.
+  it('a status pill click resets to compact/page 1 and fires a real, correctly-paginated request', async () => {
     mock.onGet('/invoices/').reply(200, { results: makeInvoices(10), total: 10 })
     renderInvoices()
     await waitFor(() => expect(screen.getByText('INV-0')).toBeTruthy())
 
-    const countBefore = mock.history.get.length
+    mock.onGet('/invoices/').reply(200, { results: makeInvoices(3, 'DRAFT'), total: 3 })
     fireEvent.click(screen.getByRole('button', { name: /^draft$/i }))
-    await new Promise((r) => setTimeout(r, 0))
-    expect(mock.history.get.length).toBe(countBefore) // pure client-side filter, no request at all
+
+    await waitFor(() => expect(screen.getByText('DRAFT-0')).toBeTruthy())
+    const draftReq = mock.history.get.filter((r) => r.url === '/invoices/').pop()
+    expect(draftReq.params.status).toBe('draft')
+    expect(draftReq.params.offset).toBe(0)
+    expect(draftReq.params.limit).toBe(10)
+  })
+})
+
+// Item 7 of the 16 August 2026 second verification pass — bulk select in
+// the list, matching apps/invoices/views.py's own DELETE_ELIGIBLE_STATUSES
+// rule exactly (draft/created only).
+describe('Invoices — bulk delete (list view)', () => {
+  it('only draft/created invoices get a selection checkbox at all — a sent/paid invoice gets none', async () => {
+    mock.onGet('/invoices/').reply(200, {
+      results: [
+        invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' }),
+        invoiceFixture({ id: 'p1', invoice_number: 'PAID-1', status: 'paid' }),
+      ],
+      total: 2,
+    })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
+
+    // Exactly one selectable checkbox — for the draft, never the paid one.
+    expect(screen.getAllByRole('button', { name: /select invoice/i })).toHaveLength(1)
+  })
+
+  it('selecting an eligible invoice shows the bulk-action bar with a real count', async () => {
+    mock.onGet('/invoices/').reply(200, {
+      results: [invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' })],
+      total: 1,
+    })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
+
+    expect(screen.queryByText(/selected/i)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /select invoice/i }))
+    expect(screen.getByText('1 selected')).toBeTruthy()
+  })
+
+  it('"Select all" only ever selects the currently-visible eligible invoices', async () => {
+    mock.onGet('/invoices/').reply(200, {
+      results: [
+        invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' }),
+        invoiceFixture({ id: 'd2', invoice_number: 'DRAFT-2', status: 'created' }),
+        invoiceFixture({ id: 'p1', invoice_number: 'PAID-1', status: 'paid' }),
+      ],
+      total: 3,
+    })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
+
+    fireEvent.click(screen.getAllByRole('button', { name: /select invoice/i })[0])
+    fireEvent.click(screen.getByRole('button', { name: /^select all$/i }))
+
+    // 2 eligible invoices (draft + created) — never the paid one, even
+    // though it's also on screen.
+    expect(screen.getByText('2 selected')).toBeTruthy()
+  })
+
+  it('Delete selected confirms before acting, then calls DELETE for each selected invoice', async () => {
+    mock.onGet('/invoices/').reply(200, {
+      results: [
+        invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' }),
+        invoiceFixture({ id: 'd2', invoice_number: 'DRAFT-2', status: 'created' }),
+      ],
+      total: 2,
+    })
+    mock.onDelete(/\/invoices\/d1\//).reply(204)
+    mock.onDelete(/\/invoices\/d2\//).reply(204)
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
+
+    // "Select all" only appears once at least one is already selected —
+    // select the first checkbox individually first.
+    fireEvent.click(screen.getAllByRole('button', { name: /select invoice/i })[0])
+    fireEvent.click(screen.getByRole('button', { name: /^select all$/i }))
+    expect(screen.getByText('2 selected')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /delete selected/i }))
+    // A real confirmation step — not an immediate delete on the first click.
+    expect(mock.history.delete.length).toBe(0)
+    expect(screen.getByText(/delete 2 invoices\?/i)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }))
+
+    await waitFor(() => expect(mock.history.delete.length).toBe(2))
+    expect(mock.history.delete.some((r) => r.url.includes('d1'))).toBe(true)
+    expect(mock.history.delete.some((r) => r.url.includes('d2'))).toBe(true)
+  })
+
+  it('a filter/search change clears the current selection', async () => {
+    mock.onGet('/invoices/').reply(200, {
+      results: [invoiceFixture({ id: 'd1', invoice_number: 'DRAFT-1', status: 'draft' })],
+      total: 1,
+    })
+    renderInvoices()
+    await waitFor(() => expect(screen.getByText('DRAFT-1')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /select invoice/i }))
+    expect(screen.getByText('1 selected')).toBeTruthy()
+
+    mock.onGet('/invoices/').reply(200, { results: [], total: 0 })
+    fireEvent.click(screen.getByRole('button', { name: /^paid$/i }))
+
+    await waitFor(() => expect(screen.queryByText('1 selected')).toBeNull())
   })
 })

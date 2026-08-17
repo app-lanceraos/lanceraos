@@ -70,6 +70,28 @@ class NotificationTests(TestCase):
         for notification in data:
             self.assertIsNotNone(notification['action_url'])
 
+    def test_comment_posted_action_url_lands_on_the_real_invoices_route_with_a_comments_tab(self):
+        """
+        Item 2 of the 16 August 2026 second verification pass — real,
+        confirmed bug: this used to build `/invoices/{id}?tab=comments`, a
+        path that has never matched any route in frontend/src/App.jsx (no
+        `/invoices/:id` route exists at all — the detail view is a
+        React-state-driven panel, not a routed page). Fixed to use the
+        real `/invoices` route with query params Invoices.jsx now reads
+        on mount (`?invoice=<id>&tab=comments`) to open that invoice's
+        detail panel directly on its Comments tab.
+        """
+        AuditLog.objects.create(user=self.user, event='comment_posted', metadata={'invoice_id': 'abc-123', 'client_name': 'Acme', 'invoice_number': 'INV-2026-0001'})
+        resp = self.client.get(reverse('notifications_list'))
+        notification = resp.json()['notifications'][0]
+        self.assertEqual(notification['action_url'], '/invoices?invoice=abc-123&tab=comments')
+
+    def test_payment_claim_submitted_action_url_lands_on_the_real_invoices_route_with_a_claims_tab(self):
+        AuditLog.objects.create(user=self.user, event='payment_claim_submitted', metadata={'invoice_id': 'xyz-789', 'client_name': 'Acme', 'invoice_number': 'INV-2026-0002'})
+        resp = self.client.get(reverse('notifications_list'))
+        notification = resp.json()['notifications'][0]
+        self.assertEqual(notification['action_url'], '/invoices?invoice=xyz-789&tab=claims')
+
     def test_is_read_reflects_notification_read_row(self):
         log = AuditLog.objects.create(user=self.user, event='password_changed')
 

@@ -38,6 +38,17 @@ function dedupeAppend(prev, comment) {
   return [...prev, comment]
 }
 
+// A comment payload (broadcast_comment / ClientThreadConsumer.comment_message)
+// has no `event` key at all; a read-state update
+// (broadcast_read_state / ClientThreadConsumer.read_state_update) always
+// does — that's the whole discriminator, deliberately not a version bump
+// to the existing, tested comment wire format (item 3 of the 16 August
+// 2026 second verification pass).
+function applyReadState(prev, update) {
+  const idSet = new Set(update.ids)
+  return prev.map((c) => (idSet.has(c.id) ? { ...c, [update.field]: update.at } : c))
+}
+
 // commentsUrl: the real GET/POST endpoint for this side
 //   (/invoices/{id}/comments/ or /invoices/portal/{id}/comments/).
 // viewToken: the invoice's view_token — the WS route's real identifier
@@ -56,7 +67,10 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
   const listEndRef = useRef(null)
 
   const { connected } = useWebSocket(viewToken ? `/ws/invoices/thread/${viewToken}/` : null, {
-    onMessage: (comment) => setComments((prev) => (prev ? dedupeAppend(prev, comment) : prev)),
+    onMessage: (message) => setComments((prev) => {
+      if (!prev) return prev
+      return message.event === 'read_state' ? applyReadState(prev, message) : dedupeAppend(prev, message)
+    }),
   })
 
   useEffect(() => {

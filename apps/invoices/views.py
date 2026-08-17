@@ -45,7 +45,7 @@ from apps.users.models import FreelancerProfile
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
 
 from .ai_design import seed_design_data_from_image
-from .comments import broadcast_comment, upload_comment_attachment
+from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
 from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
 from .email_service import (
     build_formal_notice_email, build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email,
@@ -1246,9 +1246,16 @@ def invoice_comments(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
 
     if request.method == 'GET':
-        InvoiceComment.objects.filter(
+        # ids captured BEFORE the update, not re-derived afterward — so
+        # broadcast_read_state (item 3 of the 16 August 2026 second
+        # verification pass) reports exactly the rows this request
+        # actually just marked read, never a stale/racy re-query.
+        newly_read_ids = list(InvoiceComment.objects.filter(
             invoice=invoice, author_type='client', read_by_freelancer_at__isnull=True,
-        ).update(read_by_freelancer_at=timezone.now())
+        ).values_list('id', flat=True))
+        if newly_read_ids:
+            InvoiceComment.objects.filter(id__in=newly_read_ids).update(read_by_freelancer_at=timezone.now())
+            broadcast_read_state(invoice, 'read_by_freelancer_at', newly_read_ids)
         comments = invoice.comments.all()
         return Response(InvoiceCommentSerializer(comments, many=True).data)
 

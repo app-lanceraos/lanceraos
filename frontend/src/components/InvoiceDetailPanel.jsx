@@ -38,8 +38,23 @@ import {
 
 const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']
 const NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']
+// Item 6 (this round): every status this invoice can never leave again —
+// nothing left to remind anyone about. Deliberately a separate constant
+// from NO_PAYMENT_STATUSES above (which also includes 'draft' — a draft
+// hasn't been resolved, it just hasn't been sent yet, so its reminders
+// toggle still makes sense to show in preparation for that).
+const REMINDERS_HIDDEN_STATUSES = ['paid', 'bad_debt', 'refunded', 'cancelled']
 
-export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPresetSaved, initialMessage, onInitialMessageShown }) {
+// initialTab: opens directly on a specific tab instead of the 'details'
+// default — item 2 of this round's verification pass. Real consumer:
+// Invoices.jsx's notification click-through (a comment/claim
+// notification should land on that invoice's Comments/Claims tab, not
+// just the invoice's default view). Falls back to 'details' for any
+// value that isn't one of TabButton's own real keys, same defensive
+// discipline this component already applies elsewhere.
+const VALID_TABS = ['details', 'timeline', 'comments', 'claims']
+
+export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPresetSaved, initialMessage, onInitialMessageShown, initialTab }) {
   const formalNoticeEnabled = useAuthStore((s) => s.user?.formal_notice_enabled ?? true)
   const [invoice, setInvoice] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -48,7 +63,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   const [timeline, setTimeline] = useState([])
   const [timelineLoaded, setTimelineLoaded] = useState(false)
   const [claims, setClaims] = useState([])
-  const [activeTab, setActiveTab] = useState('details')
+  const [activeTab, setActiveTab] = useState(VALID_TABS.includes(initialTab) ? initialTab : 'details')
 
   // ── Autosave (Step 6 rework; extracted to useInvoiceAutosave this
   // pass so NewInvoiceWizard.jsx can share the exact same race-safe
@@ -486,13 +501,21 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                     </div>
                   )}
 
-                  <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)' }}>Automatic reminders</p>
-                    <button onClick={handleToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-                      {invoice.reminders_enabled ? <Bell size={13} /> : <BellOff size={13} />}
-                      {invoice.reminders_enabled ? 'On' : 'Off'}
-                    </button>
-                  </div>
+                  {/* Hidden entirely (not shown-disabled) once the invoice
+                      is in a terminal state — nothing left to remind
+                      anyone about on a paid/bad-debt/refunded/cancelled
+                      invoice, matching this panel's own established
+                      convention elsewhere (an ineligible action is simply
+                      absent, not disabled-with-explanation). */}
+                  {!REMINDERS_HIDDEN_STATUSES.includes(invoice.status) && (
+                    <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)' }}>Automatic reminders</p>
+                      <button onClick={handleToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+                        {invoice.reminders_enabled ? <Bell size={13} /> : <BellOff size={13} />}
+                        {invoice.reminders_enabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </>

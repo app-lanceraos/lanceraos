@@ -98,14 +98,23 @@ EVENT_ACTION_URLS = {
     # the invoice itself (the client-facing email already went out fine,
     # via the Resend fallback).
     'custom_smtp_failed': '/settings?tab=smtp',
-    # Per INVOICES_CLIENTS_TECHNICAL_SPEC.md Section 6's own table entry
-    # for comment_posted.
-    'comment_posted': '/invoices/{id}?tab=comments',
-    # Per Section 6's own table entry for payment_claim_submitted.
-    'payment_claim_submitted': '/invoices/{id}?tab=claims',
-    'invoice_acknowledged': '/invoices/{id}',
-    'invoice_escalation_required': '/invoices/{id}',
-    'recurring_invoice_generated': '/invoices/{id}',
+    # FIXED (item 2 of the 16 August 2026 second verification pass — real,
+    # confirmed bug, not a guess): every {id}-based entry here used to
+    # build a `/invoices/{id}` PATH — but there has never been an
+    # `/invoices/:id` ROUTE anywhere in frontend/src/App.jsx (confirmed
+    # directly). Invoices.jsx's detail view is a slide-in panel driven by
+    # React state, not a routed page, so clicking any of these
+    # notifications landed nowhere real. Now points at the real route
+    # (`/invoices`) with `invoice`/`tab` QUERY params instead — Invoices.jsx
+    # reads `?invoice=<id>` on mount, opens that invoice's detail panel,
+    # and (for comment_posted/payment_claim_submitted specifically) opens
+    # it directly on the Comments/Claims tab via `?tab=`, not just the
+    # invoice's default Details view. See DECISIONS.md.
+    'comment_posted': '/invoices?invoice={id}&tab=comments',
+    'payment_claim_submitted': '/invoices?invoice={id}&tab=claims',
+    'invoice_acknowledged': '/invoices?invoice={id}',
+    'invoice_escalation_required': '/invoices?invoice={id}',
+    'recurring_invoice_generated': '/invoices?invoice={id}',
     # Per Section 6's own table entry for recurring_generation_failed —
     # /invoices/?filter=recurring, not a specific invoice id (the
     # metadata's own invoice_id refers to the TRIGGERING/root invoice,

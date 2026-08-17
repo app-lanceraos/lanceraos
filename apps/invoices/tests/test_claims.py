@@ -71,6 +71,12 @@ class ClaimsAPITestCaseBase(TestCase):
         self.client.cookies[PORTAL_SESSION_COOKIE_NAME] = raw_token
         return raw_token
 
+    def _one_time_invoice(self):
+        return make_invoice(
+            self.user, client=None, is_one_time_client=True, status='sent', sent_at='2026-01-01T00:00:00Z',
+            client_name='One-Timer', client_email='onetime@example.com',
+        )
+
 
 class PortalClaimSubmissionTests(ClaimsAPITestCaseBase):
     def _submit(self, data=None):
@@ -122,6 +128,40 @@ class PortalClaimSubmissionTests(ClaimsAPITestCaseBase):
         resp = self._submit({'amount_claimed': '0'})
         self.assertEqual(resp.status_code, 400)
 
+    # ── Cap at outstanding_amount (item 5 of the 16 August 2026 second
+    #    verification pass) — self.invoice's real total is 100.00 with no
+    #    payments recorded, so outstanding_amount is exactly 100.00. ──
+
+    def test_amount_exactly_equal_to_outstanding_is_accepted(self):
+        self._set_portal_session()
+        resp = self._submit({'amount_claimed': '100.00'})
+        self.assertEqual(resp.status_code, 201)
+
+    def test_amount_one_cent_over_outstanding_is_rejected_with_a_real_error(self):
+        self._set_portal_session()
+        resp = self._submit({'amount_claimed': '100.01'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('outstanding balance', resp.json()['amount_claimed'][0])
+        self.assertEqual(PaymentClaim.objects.filter(invoice=self.invoice).count(), 0)  # never silently accepted
+
+    def test_amount_far_over_outstanding_is_rejected(self):
+        self._set_portal_session()
+        resp = self._submit({'amount_claimed': '999.00'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_cap_accounts_for_a_partial_payment_already_recorded(self):
+        """The cap is against the REAL current outstanding_amount, not the invoice's original total."""
+        self.invoice.amount_paid = Decimal('60.00')
+        self.invoice.status = 'partially_paid'
+        self.invoice.save(update_fields=['amount_paid', 'status'])
+        self._set_portal_session()
+
+        resp = self._submit({'amount_claimed': '40.01'})  # outstanding is 40.00
+        self.assertEqual(resp.status_code, 400)
+
+        resp = self._submit({'amount_claimed': '40.00'})
+        self.assertEqual(resp.status_code, 201)
+
     def test_rate_limited_after_5_submissions_in_an_hour(self):
         self._set_portal_session()
         for _ in range(5):
@@ -139,12 +179,6 @@ class PortalClaimSubmissionTests(ClaimsAPITestCaseBase):
         self.assertEqual(PaymentClaim.objects.count(), 0)
 
     # ── One-time client, via view_token ──
-    def _one_time_invoice(self):
-        return make_invoice(
-            self.user, client=None, is_one_time_client=True, status='sent', sent_at='2026-01-01T00:00:00Z',
-            client_name='One-Timer', client_email='onetime@example.com',
-        )
-
     def test_one_time_client_can_submit_with_a_matching_view_token(self):
         invoice = self._one_time_invoice()
         resp = self._post_json(reverse('invoices:portal_invoice_claims', kwargs={'pk': invoice.pk}), {
@@ -167,6 +201,77 @@ class PortalClaimSubmissionTests(ClaimsAPITestCaseBase):
         })
         self.assertEqual(resp2.status_code, 401)
         self.assertEqual(PaymentClaim.objects.count(), 0)
+
+
+class PortalClaimStatusVisibilityTests(ClaimsAPITestCaseBase):
+    """
+    Item 5 of the 16 August 2026 second verification pass — real,
+    confirmed gap: a client had no way to see whether their own submitted
+    claim was confirmed/rejected. GET /invoices/portal/{id}/claims/ closes
+    it, reusing PaymentClaimSerializer directly (the same freelancer-
+    facing read representation — none of its fields are sensitive to the
+    client who submitted them).
+    """
+    def test_saved_client_sees_their_own_pending_claim(self):
+        self._set_portal_session()
+        claim = PaymentClaim.objects.create(
+            invoice=self.invoice, client_name='Acme Co', client_email='acme@example.com',
+            payment_source='wise', amount_claimed=Decimal('50'), currency='USD', payment_date='2026-01-15',
+        )
+        resp = self.client.get(reverse('invoices:portal_invoice_claims', kwargs={'pk': self.invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(len(body), 1)
+        self.assertEqual(body[0]['id'], str(claim.pk))
+        self.assertEqual(body[0]['status'], 'pending')
+
+    def test_saved_client_sees_confirmed_status(self):
+        self._set_portal_session()
+        claim = PaymentClaim.objects.create(
+            invoice=self.invoice, client_name='Acme Co', client_email='acme@example.com',
+            payment_source='wise', amount_claimed=Decimal('50'), currency='USD', payment_date='2026-01-15',
+            status='confirmed',
+        )
+        resp = self.client.get(reverse('invoices:portal_invoice_claims', kwargs={'pk': self.invoice.pk}))
+        self.assertEqual(resp.json()[0]['status'], 'confirmed')
+        self.assertEqual(resp.json()[0]['id'], str(claim.pk))
+
+    def test_saved_client_sees_the_freelancers_rejection_reason(self):
+        self._set_portal_session()
+        PaymentClaim.objects.create(
+            invoice=self.invoice, client_name='Acme Co', client_email='acme@example.com',
+            payment_source='wise', amount_claimed=Decimal('50'), currency='USD', payment_date='2026-01-15',
+            status='rejected', review_note='Amount does not match our records.',
+        )
+        resp = self.client.get(reverse('invoices:portal_invoice_claims', kwargs={'pk': self.invoice.pk}))
+        self.assertEqual(resp.json()[0]['review_note'], 'Amount does not match our records.')
+
+    def test_requires_a_valid_session_or_matching_view_token(self):
+        resp = self.client.get(reverse('invoices:portal_invoice_claims', kwargs={'pk': self.invoice.pk}))
+        self.assertEqual(resp.status_code, 401)
+
+    def test_scoped_to_the_resolved_clients_own_invoices_only(self):
+        other_client = make_client(self.user, name='Beta Co', email='beta@example.com')
+        their_invoice = make_invoice(self.user, client=other_client, client_name='Beta Co', status='sent', sent_at='2026-01-01T00:00:00Z')
+        self._set_portal_session()
+        resp = self.client.get(reverse('invoices:portal_invoice_claims', kwargs={'pk': their_invoice.pk}))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_one_time_client_reads_via_its_own_view_token_in_the_query_string(self):
+        invoice = self._one_time_invoice()
+        PaymentClaim.objects.create(
+            invoice=invoice, client_name='One-Timer', client_email='onetime@example.com',
+            payment_source='bank', amount_claimed=Decimal('75'), currency='USD', payment_date='2026-01-20',
+        )
+        url = reverse('invoices:portal_invoice_claims', kwargs={'pk': invoice.pk}) + f'?view_token={invoice.view_token}'
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.json()), 1)
+
+    def test_one_time_client_with_no_or_wrong_token_is_rejected_on_read_too(self):
+        invoice = self._one_time_invoice()
+        resp = self.client.get(reverse('invoices:portal_invoice_claims', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 401)
 
 
 class FreelancerClaimsAPITestCase(ClaimsAPITestCaseBase):

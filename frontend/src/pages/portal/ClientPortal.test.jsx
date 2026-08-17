@@ -97,25 +97,29 @@ describe('ClientPortal — logout', () => {
 })
 
 describe('ClientPortal — payment claims', () => {
-  it('only shows the report-a-payment action on invoices with an outstanding balance', async () => {
+  // Item 5 of the 16 August 2026 second verification pass: the action is
+  // now always shown (it doubles as "check your claim status" once
+  // outstanding hits 0), not hidden once nothing's left to report.
+  it('shows the payment-claims action on every invoice, including a fully-paid one', async () => {
     mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
     renderPortal()
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
 
-    // inv-1 has an outstanding balance, inv-2 (paid) does not.
-    expect(screen.getAllByRole('button', { name: /report a payment/i })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /payment claims/i })).toHaveLength(2)
   })
 
   it('submits a claim with the entered fields and shows a success state', async () => {
     mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    mock.onGet('/invoices/portal/inv-1/claims/').reply(200, [])
     mock.onPost('/invoices/portal/inv-1/claims/').reply(201, {
       id: 'claim-1', status: 'pending', amount_claimed: '500.00', currency: 'USD',
     })
     renderPortal()
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
 
-    fireEvent.click(screen.getByRole('button', { name: /report a payment/i }))
-    await waitFor(() => expect(screen.getByText(/report a payment/i, { selector: 'h3' })).toBeTruthy())
+    fireEvent.click(screen.getAllByRole('button', { name: /payment claims/i })[0])
+    await waitFor(() => expect(screen.getByText(/payment claims/i, { selector: 'h3' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/report a new payment/i)).toBeTruthy())
 
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }))
 
@@ -129,14 +133,68 @@ describe('ClientPortal — payment claims', () => {
 
   it('shows a real error message when the backend rejects the claim', async () => {
     mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    mock.onGet('/invoices/portal/inv-1/claims/').reply(200, [])
     mock.onPost('/invoices/portal/inv-1/claims/').reply(429, { error: 'Too many claims submitted. Please try again later.' })
     renderPortal()
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
 
-    fireEvent.click(screen.getByRole('button', { name: /report a payment/i }))
+    fireEvent.click(screen.getAllByRole('button', { name: /payment claims/i })[0])
+    await waitFor(() => expect(screen.getByText(/report a new payment/i)).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }))
 
     await waitFor(() => expect(screen.getByText(/too many claims submitted/i)).toBeTruthy())
+  })
+
+  // ── Claim status visibility (item 5) ──
+
+  it('shows real claim history with status and amount', async () => {
+    mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    mock.onGet('/invoices/portal/inv-1/claims/').reply(200, [
+      { id: 'c1', status: 'confirmed', amount_claimed: '200.00', currency: 'USD', payment_source: 'wise', payment_date: '2026-01-10', review_note: '' },
+    ])
+    renderPortal()
+    await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+
+    fireEvent.click(screen.getAllByRole('button', { name: /payment claims/i })[0])
+    await waitFor(() => expect(screen.getByText('Confirmed')).toBeTruthy())
+    expect(screen.getByText(/via wise/i)).toBeTruthy()
+  })
+
+  it('shows the freelancer\'s rejection reason for a rejected claim', async () => {
+    mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    mock.onGet('/invoices/portal/inv-1/claims/').reply(200, [
+      { id: 'c1', status: 'rejected', amount_claimed: '200.00', currency: 'USD', payment_source: 'wise', payment_date: '2026-01-10', review_note: 'Amount does not match our records.' },
+    ])
+    renderPortal()
+    await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+
+    fireEvent.click(screen.getAllByRole('button', { name: /payment claims/i })[0])
+    await waitFor(() => expect(screen.getByText('Rejected')).toBeTruthy())
+    expect(screen.getByText(/amount does not match our records/i)).toBeTruthy()
+  })
+
+  it('a fully-paid invoice with no history shows no submission form, just a close action', async () => {
+    mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    mock.onGet('/invoices/portal/inv-2/claims/').reply(200, [])
+    renderPortal()
+    await waitFor(() => expect(screen.getByText('INV-2026-0002')).toBeTruthy())
+
+    fireEvent.click(screen.getAllByRole('button', { name: /payment claims/i })[1])
+    await waitFor(() => expect(screen.getByText(/payment claims/i, { selector: 'h3' })).toBeTruthy())
+    expect(screen.queryByText(/report a new payment/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^submit$/i })).toBeNull()
+  })
+
+  it('a fully-paid invoice with real claim history still shows it', async () => {
+    mock.onGet('/invoices/portal/me/').reply(200, SAMPLE_INVOICES)
+    mock.onGet('/invoices/portal/inv-2/claims/').reply(200, [
+      { id: 'c1', status: 'confirmed', amount_claimed: '250.00', currency: 'USD', payment_source: 'bank', payment_date: '2025-12-10', review_note: '' },
+    ])
+    renderPortal()
+    await waitFor(() => expect(screen.getByText('INV-2026-0002')).toBeTruthy())
+
+    fireEvent.click(screen.getAllByRole('button', { name: /payment claims/i })[1])
+    await waitFor(() => expect(screen.getByText('Confirmed')).toBeTruthy())
   })
 })
 

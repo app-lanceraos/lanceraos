@@ -27,35 +27,43 @@
 // toggle alone, or the "Sent" pill alone) — it's just not reachable by
 // both filters applied together anymore.
 //
-// Status/Overdue filtering is CLIENT-SIDE, not a server round-trip — a
-// real architectural fix, not a CSS patch. Traced directly against
-// v1-reference/frontend/src/pages/Invoices.jsx: v1's status pills filter
-// its already-loaded `invoices` array in memory (`const filtered = filter
-// ? invoices.filter(inv=>inv.status===filter) : invoices`) and never call
-// its own `load()` on a filter click at all — `load()` only re-runs on
-// search/sort change there. That's the literal, structural reason v1
-// never had a reload-feel on filter clicks: there was never a network
-// request or a loading-state change for that interaction to begin with.
-// v2's earlier version filtered server-side (a real GET on every pill
-// click), which is what the loading-skeleton-unmount fix (see
-// DECISIONS.md) was papering over rather than eliminating outright — a
-// dimmed-but-still-changing UI on every click is a smaller version of the
-// same problem, not its removal. This version matches v1's proven
-// architecture for exactly this interaction: `visibleInvoices` (below) is
-// a pure client-side filter over whatever's currently loaded, so a status
-// pill or Overdue click never touches the network and never changes
-// `loading` at all. Search and sort remain real server round-trips
-// (v1 does the same — its own `load()` DOES re-run on searchQ/sort
-// change), so their own stale-closure/stale-response protections above
-// still matter and are unchanged. The one honest tradeoff: if not every
-// invoice is loaded yet (`invoices.length < total`, i.e. "Load More"
-// hasn't been fully exhausted), a status/overdue filter only searches
-// what's already loaded — flagged to the user via a visible note rather
-// than silently under-reporting, see the render below.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+// FILTER ARCHITECTURE — reworked again in this pass; read this before
+// touching statusFilter/overdueOnly. History: v1's status pills filtered
+// an already-loaded array in memory and never called `load()` on a pill
+// click at all (traced directly against v1-reference/frontend/src/pages/
+// Invoices.jsx). v2's earlier version filtered server-side (a real GET on
+// every pill click) but that felt like a reload because of a SEPARATE bug
+// — `load()` unconditionally set `loading=true`, and the render logic
+// unmounted the whole grid whenever `loading` was true. The 11 August fix
+// ported v1's client-side-filter architecture wholesale to make the
+// symptom go away, but that was treating the loading-skeleton bug as if
+// it were the filter architecture's fault — it wasn't. With the REAL root
+// cause (skeleton-on-every-refetch) fixed on its own terms (see below),
+// server-side filtering no longer has any reload-feel problem to hide
+// from, so this pass reverses that part of the 11 August change:
+//   - "All" (statusFilter='' && !overdueOnly): unchanged — a client-side
+//     window over the loaded page (10 -> Show More (20) -> real
+//     server-paged beyond that, see PaginationControls below).
+//   - Any specific status filter, or Overdue: now a REAL, independently-
+//     paginated server query (`?status=X` or `?overdue=true`, same tiered
+//     pagination shape, its own real `total`) — never capped to whatever
+//     happened to already be loaded for "All". Switching filters always
+//     shows genuinely complete, correct results for that filter, not a
+//     window that might be missing older matches. `buildParams` accepts
+//     explicit status/overdue overrides (mirroring how `search` already
+//     avoids reading a stale closure right after its own setState) so
+//     `selectStatusFilter`/`toggleOverdueFilter` send the right params on
+//     the very same click, not the run after.
+// Search/sort remain real server round-trips as they always were. The
+// loading-state fix (skeleton only on a genuine first load with nothing
+// rendered yet; every other refetch — filter, search, sort — keeps the
+// current list mounted and just dims it) applies identically to a filter
+// change now, same as it already did for search/sort — see the render
+// below and DECISIONS.md for the full reversal reasoning.
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Search, X, Plus, FileText, BookmarkPlus, LayoutTemplate, BarChart3,
+  Search, X, Plus, FileText, BookmarkPlus, LayoutTemplate, BarChart3, Trash2, CheckSquare, Square,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -82,9 +90,16 @@ const COMPACT_INITIAL = 10
 const COMPACT_MAX = 20
 const PAGE_SIZE = 20
 
+// Matches apps/invoices/views.py's invoice_detail DELETE rule exactly
+// ("Only draft or created invoices can be deleted") — reused here, not
+// re-derived, so this can never silently drift from the real server-side
+// rule (item 7 of the verification pass).
+const DELETE_ELIGIBLE_STATUSES = ['draft', 'created']
+
 export default function Invoices() {
   useTitle('LanceraOS | Invoices')
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [invoices, setInvoices] = useState([])
   const [total, setTotal] = useState(0)
@@ -114,6 +129,21 @@ export default function Invoices() {
   const [showNewWizard, setShowNewWizard] = useState(false)
   const [wizardEditId, setWizardEditId] = useState(null)
   const [pendingDetailMessage, setPendingDetailMessage] = useState(null)
+  // Opens the detail panel directly on a specific tab — item 2 of this
+  // round's verification pass. Real source: a comment/claim notification
+  // click-through (?invoice=<id>&tab=comments|claims), see the mount
+  // effect below.
+  const [pendingDetailTab, setPendingDetailTab] = useState(null)
+
+  // Bulk delete (item 7) — only draft/created invoices are ever selectable
+  // at all (matches invoice_detail's own server-side DELETE rule exactly:
+  // apps/invoices/views.py rejects anything else with a 403 regardless of
+  // what the frontend allows). A Set of ids, not a boolean-per-invoice
+  // map, so "Select all" only ever needs to know which ids are currently
+  // eligible+visible.
+  const [selectedIds, setSelectedIds] = useState(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false)
 
   const searchTimer = useRef(null)
   // Stale-response protection — no existing AbortController/request-id
@@ -137,6 +167,11 @@ export default function Invoices() {
       if (requestId !== latestRequestId.current) return // superseded by a newer request — discard
       setInvoices((prev) => (append ? [...prev, ...(data.results || [])] : data.results || []))
       setTotal(data.total ?? 0)
+      // A non-append load REPLACES the visible set (filter/search/sort/
+      // page change, or a refresh) — any prior bulk-delete selection no
+      // longer refers to what's actually on screen, so clear it rather
+      // than risk "Select all"/"Delete selected" acting on stale ids.
+      if (!append) setSelectedIds(new Set())
     } catch {
       if (requestId !== latestRequestId.current) return
       if (!append) setError('Failed to load invoices. Please try again.')
@@ -147,13 +182,21 @@ export default function Invoices() {
     }
   }, [])
 
-  // Deliberately no `status`/`overdue` params — those are applied
-  // entirely client-side now (see `visibleInvoices` and the header
-  // comment above). Only search/sort/pagination ever reach the server.
-  function buildParams(offset, limit) {
+  // `overrides` lets a caller supply a status/overdue value that hasn't
+  // landed in state yet — the same technique handleSearchChange already
+  // uses for `search` (setState is async; reading statusFilter/overdueOnly
+  // right after calling their own setter in the same handler would still
+  // see the PREVIOUS value). Every other call site (sort change, Show
+  // More, page nav, Show fewer, retry) omits overrides entirely and just
+  // reads the already-committed statusFilter/overdueOnly from state.
+  function buildParams(offset, limit, overrides = {}) {
     const params = { offset, limit }
     if (search) params.search = search
     if (sort) params.sort = sort
+    const status = 'status' in overrides ? overrides.status : statusFilter
+    const overdue = 'overdue' in overrides ? overrides.overdue : overdueOnly
+    if (status) params.status = status
+    if (overdue) params.overdue = 'true'
     return params
   }
 
@@ -164,18 +207,54 @@ export default function Invoices() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sort])
 
-  // Client-side view over whatever's currently loaded — never a network
-  // call, never touches `loading`. See the header comment for the full
-  // v1-vs-v2 architectural reasoning.
-  const visibleInvoices = useMemo(() => invoices.filter((inv) => (
-    (!statusFilter || inv.status === statusFilter)
-    && (!overdueOnly || inv.days_overdue > 0)
-  )), [invoices, statusFilter, overdueOnly])
+  // Real, independently-paginated server query per filter (item 4 of this
+  // pass — see the header comment's full FILTER ARCHITECTURE note).
+  // Mutual exclusivity with Overdue preserved exactly as before.
+  function selectStatusFilter(key) {
+    setStatusFilter(key)
+    setOverdueOnly(false)
+    setViewMode('compact')
+    setPage(1)
+    load(buildParams(0, COMPACT_INITIAL, { status: key, overdue: false }))
+  }
+
+  // forceOn: the desktop pill toggles (clicking an already-active Overdue
+  // pill turns it back off, matching its existing behavior); the mobile
+  // <select> always means "choose this option", so it passes `true`
+  // explicitly rather than toggling off an already-selected value.
+  function toggleOverdueFilter(forceOn) {
+    const next = forceOn !== undefined ? forceOn : !overdueOnly
+    setOverdueOnly(next)
+    setStatusFilter('')
+    setViewMode('compact')
+    setPage(1)
+    load(buildParams(0, COMPACT_INITIAL, { status: '', overdue: next }))
+  }
 
   useEffect(() => {
     api.get('/invoices/summary/').then(({ data }) => setSummary(data)).catch(() => setSummary(null))
     api.get('/invoices/presets/').then(({ data }) => setPresets(data)).catch(() => setPresets([]))
   }, [])
+
+  // Notification click-through (item 2 of this round) — core.notifications.
+  // EVENT_ACTION_URLS' comment_posted/payment_claim_submitted/
+  // invoice_acknowledged/invoice_escalation_required/
+  // recurring_invoice_generated entries all point here
+  // (/invoices?invoice=<id>&tab=<tab>), since there is no /invoices/:id
+  // ROUTE at all in this app (confirmed directly against App.jsx) — the
+  // detail view is a panel driven by state, not a routed page. Opens the
+  // panel directly on the requested tab (falls back to Details for a
+  // missing/unrecognized tab — InvoiceDetailPanel's own VALID_TABS
+  // allowlist), then strips the query params so a refresh or Back doesn't
+  // reopen the same target.
+  useEffect(() => {
+    const invoiceParam = searchParams.get('invoice')
+    if (!invoiceParam) return
+    setSelectedInvoiceId(invoiceParam)
+    setPendingDetailTab(searchParams.get('tab'))
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   // Passes the just-typed value directly into the debounced call instead
   // of relying on closure over `search` state — the old version captured
@@ -236,6 +315,52 @@ export default function Invoices() {
   function refreshAfterChange() {
     reloadCurrentView()
     api.get('/invoices/summary/').then(({ data }) => setSummary(data)).catch(() => {})
+  }
+
+  function toggleSelectForDelete(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Only ever selects invoices that are BOTH currently visible AND
+  // deletion-eligible — never silently selects something a "Select all"
+  // click shouldn't be able to touch, even if ineligible invoices are
+  // also on screen right now.
+  function selectAllEligible() {
+    setSelectedIds(new Set(invoices.filter((inv) => DELETE_ELIGIBLE_STATUSES.includes(inv.status)).map((inv) => inv.id)))
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set())
+  }
+
+  // Client-side loop over the existing single-delete endpoint — confirmed
+  // directly, no real bulk-delete endpoint exists in apps/invoices/urls.py.
+  // Each DELETE still hits invoice_detail's own server-side draft/created
+  // check independently, so this can't succeed against anything ineligible
+  // even if selection state were somehow stale.
+  async function handleBulkDelete() {
+    setBulkDeleting(true)
+    const ids = Array.from(selectedIds)
+    let failures = 0
+    for (const id of ids) {
+      try {
+        await api.delete(`/invoices/${id}/`)
+      } catch {
+        failures += 1
+      }
+    }
+    setShowBulkDeleteConfirm(false)
+    setBulkDeleting(false)
+    setSelectedIds(new Set())
+    if (failures > 0) {
+      setCreateError(`${failures} of ${ids.length} selected invoice${ids.length !== 1 ? 's' : ''} could not be deleted.`)
+    }
+    refreshAfterChange()
   }
 
   // A draft is still being built, so it opens in the same guided wizard a
@@ -324,7 +449,7 @@ export default function Invoices() {
           {!loading && (
             <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
               {statusFilter || overdueOnly ? (
-                <>{visibleInvoices.length} matching invoice{visibleInvoices.length !== 1 ? 's' : ''} (of {total} total)</>
+                <>{invoices.length} matching invoice{invoices.length !== 1 ? 's' : ''} (of {total} total)</>
               ) : (
                 <>{total} invoice{total !== 1 ? 's' : ''} in this view</>
               )}
@@ -381,7 +506,7 @@ export default function Invoices() {
             return (
               <button
                 key={opt.key || 'all'}
-                onClick={() => { setStatusFilter(opt.key); setOverdueOnly(false) }}
+                onClick={() => selectStatusFilter(opt.key)}
                 className="fos-btn"
                 style={{
                   flexShrink: 0, padding: '6px 14px', fontSize: '0.78rem', borderRadius: 'var(--radius-full)',
@@ -396,7 +521,7 @@ export default function Invoices() {
             )
           })}
           <button
-            onClick={() => { setOverdueOnly((v) => !v); setStatusFilter('') }}
+            onClick={toggleOverdueFilter}
             className="fos-btn"
             style={{
               flexShrink: 0, padding: '6px 14px', fontSize: '0.78rem', borderRadius: 'var(--radius-full)',
@@ -427,8 +552,8 @@ export default function Invoices() {
         <select
           value={overdueOnly ? '__overdue__' : statusFilter}
           onChange={(e) => {
-            if (e.target.value === '__overdue__') { setOverdueOnly(true); setStatusFilter('') }
-            else { setStatusFilter(e.target.value); setOverdueOnly(false) }
+            if (e.target.value === '__overdue__') toggleOverdueFilter(true)
+            else selectStatusFilter(e.target.value)
           }}
           className="fos-input fos-select"
           style={{ flex: 1, minWidth: 0 }}
@@ -467,26 +592,14 @@ export default function Invoices() {
             </FosAlert>
           )}
 
-          {/* Honest, not silent: a client-side status/overdue filter only
-              searches what's already loaded — compact mode, that's
-              whatever's been fetched so far; paged mode, that's only the
-              CURRENT page's PAGE_SIZE invoices, not the whole list. Say so
-              rather than quietly under-reporting matches either way. */}
-          {(statusFilter || overdueOnly) && (
-            viewMode === 'paged'
-              ? invoices.length < total && (
-                <FosAlert type="info" style={{ marginBottom: 12 }}>
-                  Searching only this page's {invoices.length} invoices (of {total} total) — switch pages below to search further.
-                </FosAlert>
-              )
-              : invoices.length < total && (
-                <FosAlert type="info" style={{ marginBottom: 12 }}>
-                  Searching the {invoices.length} most recently loaded invoices (of {total} total) — Show More below to search further back.
-                </FosAlert>
-              )
-          )}
+          {/* The old "searching only what's loaded" disclosure banner is
+              gone (item 4 of this pass) — a status/Overdue filter is now a
+              real, independently-paginated server query with its own real
+              `total`, so there's no under-reporting risk left to disclose;
+              PaginationControls' own "(X of Y total)" wording already
+              tells the honest, complete story. */}
 
-          {visibleInvoices.length === 0 ? (
+          {invoices.length === 0 ? (
             <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={handleNewInvoice} />
           ) : (
             <div
@@ -495,8 +608,13 @@ export default function Invoices() {
                 opacity: loading ? 0.55 : 1, transition: 'opacity 0.15s ease',
               }}
             >
-              {visibleInvoices.map((inv) => (
-                <InvoiceCard key={inv.id} invoice={inv} onOpen={() => openDetail(inv)} />
+              {invoices.map((inv) => (
+                <InvoiceCard
+                  key={inv.id} invoice={inv} onOpen={() => openDetail(inv)}
+                  selectable={DELETE_ELIGIBLE_STATUSES.includes(inv.status)}
+                  selected={selectedIds.has(inv.id)}
+                  onToggleSelect={() => toggleSelectForDelete(inv.id)}
+                />
               ))}
             </div>
           )}
@@ -511,6 +629,42 @@ export default function Invoices() {
 
       {!loading && !error && invoices.length === 0 && (
         <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={handleNewInvoice} />
+      )}
+
+      {/* ── Bulk-select action bar (item 7) — appears bottom-right once at
+          least one deletion-eligible (draft/created) invoice is selected.
+          "Select all" only ever selects the currently-visible eligible
+          invoices — never something a sent/paid/etc. card wouldn't even
+          offer a checkbox for in the first place. */}
+      {selectedIds.size > 0 && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 95,
+          background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.2)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+            {selectedIds.size} selected
+          </span>
+          <button className="fos-btn fos-btn-ghost" style={{ fontSize: '0.76rem' }} onClick={selectAllEligible}>
+            Select all
+          </button>
+          <button className="fos-btn fos-btn-ghost" style={{ fontSize: '0.76rem' }} onClick={clearSelection}>
+            Clear
+          </button>
+          <button
+            className="fos-btn fos-btn-danger" style={{ fontSize: '0.76rem' }}
+            onClick={() => setShowBulkDeleteConfirm(true)}
+          >
+            <Trash2 size={13} /> Delete selected
+          </button>
+        </div>
+      )}
+
+      {showBulkDeleteConfirm && (
+        <BulkDeleteConfirmModal
+          count={selectedIds.size} busy={bulkDeleting}
+          onConfirm={handleBulkDelete} onClose={() => setShowBulkDeleteConfirm(false)}
+        />
       )}
 
       {/* ── Mobile FAB ── */}
@@ -538,11 +692,12 @@ export default function Invoices() {
       {selectedInvoiceId && (
         <InvoiceDetailPanel
           invoiceId={selectedInvoiceId}
-          onClose={() => setSelectedInvoiceId(null)}
+          onClose={() => { setSelectedInvoiceId(null); setPendingDetailTab(null) }}
           onChanged={handleInvoiceChanged}
           onPresetSaved={(preset) => setPresets((prev) => [...prev, preset])}
           initialMessage={pendingDetailMessage}
           onInitialMessageShown={() => setPendingDetailMessage(null)}
+          initialTab={pendingDetailTab}
         />
       )}
 
@@ -676,7 +831,11 @@ function PaginationControls({ viewMode, page, total, invoicesLength, loading, lo
 }
 
 // ── InvoiceCard ───────────────────────────────────────────────────
-function InvoiceCard({ invoice, onOpen }) {
+// selectable/selected/onToggleSelect (item 7): a checkbox only ever
+// renders for a deletion-eligible (draft/created) invoice — a sent/paid/
+// etc. card gets no selection control at all, never a disabled one, so
+// there's no way to even attempt selecting something ineligible.
+function InvoiceCard({ invoice, onOpen, selectable = false, selected = false, onToggleSelect }) {
   const [hovered, setHovered] = useState(false)
   const meta = INVOICE_STATUS_META[invoice.status] || INVOICE_STATUS_META.draft
   const isOverdue = invoice.days_overdue > 0
@@ -688,19 +847,31 @@ function InvoiceCard({ invoice, onOpen }) {
       onMouseLeave={() => setHovered(false)}
       style={{
         cursor: 'pointer', background: hovered ? 'var(--bg-surface-2)' : 'var(--bg-surface)',
-        border: `1px solid ${isOverdue ? 'var(--status-red)' : 'var(--border-subtle)'}`,
+        border: `1px solid ${selected ? 'var(--accent)' : isOverdue ? 'var(--status-red)' : 'var(--border-subtle)'}`,
         borderRadius: 'var(--radius-lg)', padding: '16px 18px',
         transition: 'background var(--transition-fast)', display: 'flex', flexDirection: 'column', gap: 8,
+        position: 'relative',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-        <div style={{ minWidth: 0 }}>
-          <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {invoice.invoice_number || '(unnumbered draft)'}
-          </p>
-          <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {invoice.client_name || 'No client yet'}
-          </p>
+        <div style={{ minWidth: 0, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          {selectable && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleSelect() }}
+              aria-label={selected ? 'Deselect invoice' : 'Select invoice'}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginTop: 1, flexShrink: 0, display: 'flex' }}
+            >
+              {selected ? <CheckSquare size={16} color="var(--accent)" /> : <Square size={16} color="var(--text-tertiary)" />}
+            </button>
+          )}
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {invoice.invoice_number || '(unnumbered draft)'}
+            </p>
+            <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {invoice.client_name || 'No client yet'}
+            </p>
+          </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end', flexShrink: 0 }}>
           {isOverdue && <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[OVERDUE_BADGE.statusKey] }}>{OVERDUE_BADGE.label}</span>}
@@ -717,6 +888,31 @@ function InvoiceCard({ invoice, onOpen }) {
             Due {invoice.due_date || '—'}
             {isOverdue && <span style={{ color: 'var(--status-red-text)', fontWeight: 600 }}> · {daysOverdueLabel(invoice.days_overdue)}</span>}
           </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── BulkDeleteConfirmModal ───────────────────────────────────────────
+function BulkDeleteConfirmModal({ count, busy, onConfirm, onClose }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '24px 28px', width: '100%', maxWidth: 420 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: '1.02rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+            Delete {count} invoice{count !== 1 ? 's' : ''}?
+          </h3>
+          <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
+        </div>
+        <p style={{ margin: '0 0 20px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+          This permanently removes the selected invoice{count !== 1 ? 's' : ''}. This cannot be undone.
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button className="fos-btn fos-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="fos-btn fos-btn-danger" onClick={onConfirm} disabled={busy}>
+            {busy ? <span className="fos-spinner" /> : <Trash2 size={14} />} Delete
+          </button>
         </div>
       </div>
     </div>

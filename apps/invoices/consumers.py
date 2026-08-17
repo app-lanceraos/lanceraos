@@ -121,6 +121,21 @@ class ClientThreadConsumer(AsyncWebsocketConsumer):
         import json
         await self.send(text_data=json.dumps(event['comment']))
 
+    async def read_state_update(self, event):
+        """
+        Item 3 of the 16 August 2026 second verification pass. Dispatched
+        by channel_layer.group_send({'type': 'read_state.update', ...}) —
+        apps.invoices.comments.broadcast_read_state. A distinct payload
+        shape from comment_message above (an `event` key, no `author_type`/
+        `body_text`/etc.) so the frontend can tell a read-state update
+        apart from a new comment without needing a version bump to the
+        existing, tested comment broadcast wire format.
+        """
+        import json
+        await self.send(text_data=json.dumps({
+            'event': 'read_state', 'field': event['field'], 'ids': event['ids'], 'at': event['at'],
+        }))
+
     async def _authorized(self, invoice):
         user = self.scope.get('user')
         if user is not None and getattr(user, 'is_authenticated', False) and invoice.user_id == user.pk:

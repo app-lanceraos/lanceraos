@@ -200,3 +200,79 @@ class ClientThreadConsumerBroadcastTests(TransactionTestCase):
         self.assertEqual(payload['author_type'], 'freelancer')
 
         await communicator.disconnect()
+
+    async def test_a_read_state_change_broadcasts_live_to_the_other_partys_connection(self):
+        """
+        Item 3 of the 16 August 2026 second verification pass — real,
+        confirmed gap: ClientThreadConsumer already broadcast new
+        comments, but a read-state change (the existing mark-read-on-view
+        mechanism invoice_comments'/portal_invoice_comments' own GET
+        handlers already had) never reached the OTHER party's live
+        connection — their seen/sent indicator only ever updated on a
+        manual refetch.
+
+        Real 2-connection test, not a unit call to broadcast_read_state
+        directly: the CLIENT holds an open WS connection (their own live
+        view of the thread) while the FREELANCER makes a real GET request
+        to /api/invoices/{id}/comments/ — the actual production code path
+        that marks a client-authored comment read and should broadcast
+        it. The client's connection must receive the read-state update
+        with NO refetch of its own involved at all.
+        """
+        import json as _json
+        from channels.db import database_sync_to_async
+        from django.middleware.csrf import get_token
+        from django.test import Client as DjangoTestClient
+        from django.test import RequestFactory
+
+        self.user.is_email_verified = True
+        self.user.is_active = True
+        await database_sync_to_async(self.user.save)()
+
+        def _login_freelancer_and_get_cookie():
+            rf = RequestFactory()
+            dummy = rf.get('/')
+            token = get_token(dummy)
+            django_client = DjangoTestClient(enforce_csrf_checks=True)
+            django_client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+            resp = django_client.post(
+                reverse('users:login'), data=_json.dumps({'login': self.user.email, 'password': 'Sup3r$ecret1'}),
+                content_type='application/json', HTTP_X_CSRFTOKEN=token,
+            )
+            assert resp.status_code == 200, resp.content
+            return django_client
+
+        freelancer_django_client = await database_sync_to_async(_login_freelancer_and_get_cookie)()
+
+        await database_sync_to_async(ClientPortalSession.create_for_client)(
+            self.portal_client, 'read-state-tok', device_name='', ip_address=None, user_agent='',
+        )
+        comment = await database_sync_to_async(InvoiceComment.objects.create)(
+            invoice=self.invoice, author_type='client', client_name='Acme Co', source='portal', body_text='did you see this?',
+        )
+
+        client_ws = WebsocketCommunicator(
+            make_application(), f'/ws/invoices/thread/{self.invoice.view_token}/',
+            headers=[(b'cookie', f'{PORTAL_SESSION_COOKIE_NAME}=read-state-tok'.encode())],
+        )
+        connected, _ = await client_ws.connect()
+        self.assertTrue(connected)
+
+        # The real production code path — invoice_comments' own GET,
+        # exercised as an actual HTTP request, not a direct call to
+        # broadcast_read_state.
+        resp = await database_sync_to_async(freelancer_django_client.get)(
+            reverse('invoices:invoice_comments', kwargs={'pk': self.invoice.pk}),
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        received = await client_ws.receive_from()
+        payload = _json.loads(received)
+        self.assertEqual(payload['event'], 'read_state')
+        self.assertEqual(payload['field'], 'read_by_freelancer_at')
+        self.assertIn(str(comment.pk), payload['ids'])
+
+        await database_sync_to_async(comment.refresh_from_db)()
+        self.assertIsNotNone(comment.read_by_freelancer_at)
+
+        await client_ws.disconnect()

@@ -949,12 +949,23 @@ export default function AppShell({ children }) {
               </>
             ) : (
               <>
-                <button
-                  onClick={() => setSelectMode(true)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text-tertiary)', padding: '2px 6px' }}
-                >
-                  Select
-                </button>
+                {/* Item 1 (this round): nothing to select with zero
+                    notifications — the control is simply absent, not
+                    disabled, matching this app's own established
+                    convention for an ineligible action. A matching-width
+                    spacer keeps "Notifications" visually centered either
+                    way, same technique the unreadCount===0 case on the
+                    right already uses. */}
+                {notifications.length > 0 ? (
+                  <button
+                    onClick={() => setSelectMode(true)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text-tertiary)', padding: '2px 6px' }}
+                  >
+                    Select
+                  </button>
+                ) : (
+                  <span style={{ width: 42 }} />
+                )}
                 <span style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)', flex: 1, textAlign: 'center' }}>
                   Notifications
                   {unreadCount > 0 && (

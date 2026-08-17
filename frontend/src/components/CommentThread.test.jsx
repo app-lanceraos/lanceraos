@@ -118,6 +118,37 @@ describe('CommentThread — live delivery via WebSocket', () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(screen.getAllByText('Hi there').length).toBe(1)
   })
+
+  it('a live read_state WS message flips the seen/sent indicator with no refetch (item 3 of the 16 August 2026 second verification pass)', async () => {
+    mock.onGet('/invoices/inv-1/comments/').reply(200, [
+      { id: 'c1', author_type: 'freelancer', author_name: 'Ali', source: 'app', body_text: 'Hi there', body_html: '', attachment_url: '', created_at: '2026-01-01T10:00:00Z', read_by_freelancer_at: null, read_by_client_at: null },
+    ])
+    render(<CommentThread commentsUrl="/invoices/inv-1/comments/" viewToken="tok-1" viewerType="freelancer" />)
+    await waitFor(() => expect(screen.getByText('Sent')).toBeTruthy())
+
+    onMessageCallback({ event: 'read_state', field: 'read_by_client_at', ids: ['c1'], at: '2026-01-01T10:05:00Z' })
+
+    await waitFor(() => expect(screen.getByText('Seen')).toBeTruthy())
+    expect(mock.history.get.length).toBe(1) // no extra GET triggered by the read_state message
+  })
+
+  it('a read_state WS message for a different comment id leaves other messages untouched', async () => {
+    mock.onGet('/invoices/inv-1/comments/').reply(200, [
+      { id: 'c1', author_type: 'freelancer', author_name: 'Ali', source: 'app', body_text: 'First', body_html: '', attachment_url: '', created_at: '2026-01-01T10:00:00Z', read_by_freelancer_at: null, read_by_client_at: null },
+      { id: 'c2', author_type: 'freelancer', author_name: 'Ali', source: 'app', body_text: 'Second', body_html: '', attachment_url: '', created_at: '2026-01-01T10:01:00Z', read_by_freelancer_at: null, read_by_client_at: null },
+    ])
+    render(<CommentThread commentsUrl="/invoices/inv-1/comments/" viewToken="tok-1" viewerType="freelancer" />)
+    await waitFor(() => expect(screen.getAllByText('Sent').length).toBe(2))
+
+    onMessageCallback({ event: 'read_state', field: 'read_by_client_at', ids: ['c2'], at: '2026-01-01T10:05:00Z' })
+
+    await waitFor(() => {
+      const sentCount = screen.getAllByText('Sent').length
+      const seenCount = screen.queryAllByText('Seen').length
+      expect(sentCount).toBe(1)
+      expect(seenCount).toBe(1)
+    })
+  })
 })
 
 describe('CommentThread — seen/sent indicators (item 9 of the verification pass)', () => {

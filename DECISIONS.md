@@ -3936,3 +3936,124 @@ several items share root causes (1/2/8/12 are all really the same "Outstanding/P
 on the same guard as item 13's Step 13 gap) — working through them together, in one continuous pass with
 full cross-item context, caught those connections directly rather than risking three independent,
 inconsistent fixes for what were really two underlying problems.
+
+---
+
+Date: 16 August 2026 (Invoices/Clients verification pass, second round)
+Decision: A second combined pass — a real architecture REVERSAL (filter behavior), several real bugs
+found by reading the actual consumer/notification/view code rather than guessing, and new UX (bulk
+delete, live read-state, portal claim status). Recorded together, one entry per sub-decision.
+
+**REVERSAL — non-"All" filters become real, independently-paginated server queries again.**
+Confirmed directly, a deliberate reversal of PART of the 11 August client-side-filter change (see that
+date's own DECISIONS.md entry): "All" is unchanged — a client-side window over the loaded page (10 ->
+Show More (20) -> real server-paged beyond that). Any specific status filter, or Overdue, is now a real
+`?status=X`/`?overdue=true` server query using the SAME tiered pagination shape, with its own real,
+complete `total` — never capped to whatever happened to already be loaded for "All". The backend
+(`invoice_list`, `apps/invoices/views.py`) already fully supported both params with real offset/limit/
+total pagination the whole time — this was a pure frontend change.
+Reason: the 11 August change's own stated motivation was eliminating a "reload feel" on every filter
+click — but the REAL root cause of that feel was a separate, already-independently-fixed bug (the
+loading skeleton unmounting the whole grid on every refetch, `loading && invoices.length === 0` vs the
+broader `loading` check it used to be). Client-side filtering was the WRONG fix for that bug — it also
+introduced a genuine correctness cost (a filter only ever searched whatever had already been loaded for
+"All", silently missing older matches until "Load More" caught up) for a symptom that had a real, more
+precise fix available. With the actual root cause fixed on its own terms, a real network call per filter
+click no longer feels like a reload, so there's no more reason to accept that correctness cost.
+Confirmed safe: `visibleInvoices`'s client-side filter memo removed entirely (redundant now — the server
+already returns exactly the right set); the old "not all loaded" disclosure banner removed too (nothing
+left to honestly disclose — a filter's `total` is now always the real, complete count); status/Overdue
+pill styling and mutual exclusivity unchanged. Verified directly, not assumed: a dedicated test confirms
+status/Overdue pill clicks correctly trigger real requests now (a REVERSAL of the exact assertion the
+previous round's own test suite made), and that a filter change still shows the previous list dimmed,
+not blanked, while the new request is in flight — the loading-state fix applies identically to a filter
+change as it already did to search/sort.
+Alternatives considered: keeping "All" server-paginated too, for total consistency. Rejected — "All" is
+the common, default, most-clicked-through view; keeping it as an eagerly-loaded client-side window
+(already fast, already correct, already tested) avoids a real query on first paint and every subsequent
+Show More that a specific filter doesn't need to pay.
+
+**Item 6 (this round) — reminders toggle hidden entirely on terminal statuses.** `InvoiceDetailPanel`'s
+Details-tab "Automatic reminders" toggle no longer renders at all once `invoice.status` is one of
+`paid`/`bad_debt`/`refunded`/`cancelled` — nothing left to remind anyone about on any of these. Chose
+to OMIT the block entirely rather than show a disabled control or a terminal-state message in its
+place — matches this panel's own established convention everywhere else (an ineligible action is
+simply absent, not disabled-with-explanation; e.g. Send/Mark-as-Sent/Refund/Cancel are all
+conditionally rendered, never conditionally disabled). A new `REMINDERS_HIDDEN_STATUSES` constant,
+deliberately separate from the existing `NO_PAYMENT_STATUSES` (which also includes `draft` — a draft
+hasn't been resolved, it just hasn't been sent yet, so its reminders toggle still makes sense).
+
+**Item 1 (this round) — the notification panel's "Select" (bulk-select-mode) control no longer renders
+with zero notifications.** Nothing to select with an empty list. A matching-width invisible spacer
+keeps "Notifications" visually centered either way, the same technique the panel's own
+`unreadCount === 0` case already used on the opposite side.
+
+**Item 2 (this round) — notification click-through for comment/claim (and, found along the way,
+acknowledgment/escalation/recurring-generation) notifications landed nowhere real.** Root cause,
+confirmed directly against `frontend/src/App.jsx`: `core.notifications.EVENT_ACTION_URLS` built a
+`/invoices/{id}` PATH for every one of these events, but there has never been an `/invoices/:id` ROUTE
+anywhere in this app — `Invoices.jsx`'s detail view is a slide-in panel driven by React state, not a
+routed page. Fixed on the URL-generation side (not the frontend's click handler, which was already
+correctly calling `navigate(n.action_url)` — the URL itself was simply wrong): every `{id}`-based entry
+now builds `/invoices?invoice={id}` (plus `&tab=comments`/`&tab=claims` for the two events that should
+land on a specific tab), and `Invoices.jsx` gained a real mount effect reading those query params,
+opening the target invoice's detail panel — directly on the requested tab via a new `initialTab` prop
+on `InvoiceDetailPanel` — then stripping the params so a refresh/Back doesn't reopen the same target.
+Deliberately did NOT also fix `recurring_generation_failed`/`recurring_generation_paused`'s
+`?filter=recurring` or `stale_drafts_digest`'s `?status=draft` — those don't use the `{id}` placeholder
+mechanism this pass touched at all, and Invoices.jsx has no `?filter=`/`?status=` URL-driven filter
+application logic to receive them (a separate, real, currently-unfixed gap, flagged here rather than
+silently left or silently expanded into out of this pass's stated scope).
+
+**Item 3 (this round) — comment seen/sent status required a page refresh to update.**
+`ClientThreadConsumer` already broadcast new comments (`comment.message`/`broadcast_comment`), but the
+existing mark-read-on-view mechanism (`invoice_comments`/`portal_invoice_comments`'s own GET handlers)
+never told the OTHER party's live connection when a `read_by_freelancer_at`/`read_by_client_at` got set
+— only a manual refetch would ever show it. Fixed with a new, symmetric `read_state.update` broadcast
+(`apps.invoices.comments.broadcast_read_state`, dispatched by a new `ClientThreadConsumer.
+read_state_update` handler) — deliberately a SEPARATE WS message shape from a comment payload (an
+`event: 'read_state'` key a real comment never has) rather than reusing/versioning the comment broadcast
+wire format, so `CommentThread.jsx` can discriminate without touching the existing, tested path. Both
+GET handlers changed from a bulk `.filter().update()` to capturing the affected ids FIRST, then updating,
+then broadcasting exactly those ids — never a re-query that could race a second concurrent read. Verified
+with a real 2-connection test (`ClientThreadConsumerBroadcastTests.
+test_a_read_state_change_broadcasts_live_to_the_other_partys_connection`): one WS connection held open by
+the client, the freelancer side hitting the REAL `invoice_comments` GET endpoint (not a direct call to
+the broadcast function), and the client's connection receiving the live update with no refetch of its
+own.
+
+**Item 5 (this round) — payment claims had no cap at submission time, and no client-visible status.**
+`PortalClaimCreateSerializer.validate_amount_claimed` now rejects `amount_claimed > invoice.
+outstanding_amount` (the real, current balance at submission time — accounts for any partial payments
+already recorded) with a specific error message, mirroring `InvoicePartialPaymentSerializer.
+validate_amount`'s own established pattern exactly, not a second independently-invented cap. The
+CONFIRM-time protection (`invoice_claim_confirm`'s reuse of that same serializer) already existed and is
+unchanged — this closes the earlier gap where a client got a false "submitted!" success for an amount
+that would only fail later, at review time. `portal_invoice_claims` gained real GET support (previously
+POST-only) returning that invoice's own claims via the SAME `PaymentClaimSerializer` the freelancer side
+already uses — no fields on it are sensitive to the client who submitted them. A one-time client reads
+via `?view_token=` in the query string (a GET has no body to carry it in, unlike POST) —
+`_resolve_portal_write_access` extended to check `request.query_params` as a fallback after
+`request.data`. Frontend: reused the existing "Report a Payment" modal (`ClaimModal`, `ClientPortal.jsx`)
+rather than building a separate claims-history screen — a client's own claims on one invoice are a small,
+single mental object, not a whole view's worth of content. The modal now fetches + shows real history
+(status badge, amount, source/date, and the freelancer's own `review_note` if rejected) above the
+submission form; the "Report a payment" action on the invoice ROW is now always shown (not hidden once
+`outstanding_amount` hits 0) since it doubles as "check your claim status," and the modal itself hides
+the submission form (history/Close only) once there's nothing left to claim.
+
+**Item 7 (this round) — bulk delete in the list, single delete in the detail panel.** The detail-panel
+side was ALREADY built correctly in the prior round's action-button reorganization (Delete, gated on
+`['draft', 'created'].includes(invoice.status)`, in the destructive/terminal group) — confirmed directly,
+no change needed there. List-side bulk select is new: a checkbox renders ONLY on a draft/created
+invoice (never a disabled one on anything else — matches `DELETE_ELIGIBLE_STATUSES`, a frontend constant
+copied from, and commented as reusing, `invoice_detail`'s own server-side DELETE rule, not re-derived
+independently); a floating bottom-right action bar (count + Select all + Clear + Delete selected) appears
+once ≥1 is selected; "Select all" only ever selects the currently-visible eligible ids (`invoices.
+filter(...).map(id)`, never a blind select-everything); deletion loops the existing single-delete
+endpoint client-side (confirmed no real bulk-delete endpoint exists in `apps/invoices/urls.py` before
+building this) behind a real confirm modal; any filter/search/sort/page change clears the current
+selection (the visible set just changed, so a stale selection could otherwise silently reference
+something no longer on screen).
+
+Docs: this entry. CLAUDE.md's own Module 2 narrative gets a matching dated addendum.

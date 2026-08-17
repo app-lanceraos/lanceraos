@@ -849,6 +849,33 @@ inline (thumbnail or document icon) via a shared click-to-view modal instead of 
 `Invoice.issue_date` added to the wizard (was previously write-only reachable, never exposed) and
 `due_date` made required + validated strictly after `issue_date`, both client- and server-side. See
 DECISIONS.md's 16 August 2026 (verification pass) entry for the full reasoning behind every item above.
+16 August 2026 (verification pass, second round) — another real REVERSAL (see DECISIONS.md): non-"All"
+invoice-list filters (a specific status, or Overdue) are real, independently-paginated server queries
+again (`?status=X`/`?overdue=true`, same tiered pagination shape as "All", own real `total`) — safe now
+that the 11 August reload-feel fix's actual root cause (the loading skeleton unmounting the whole grid
+on every refetch) is fixed on its own terms, so a real network call per filter click no longer feels
+like a reload; "All" itself is unchanged (client-side window over the loaded page). Real bugs found and
+fixed: notification click-through for comment/claim/acknowledgment/escalation/recurring-generation
+events landed nowhere real — `core.notifications.EVENT_ACTION_URLS` built a `/invoices/{id}` path that
+has never matched any real route (`Invoices.jsx`'s detail view is a state-driven panel, not a routed
+page); now builds `/invoices?invoice={id}` (+ `&tab=comments`/`&tab=claims` for the two tab-specific
+events), read by a new mount effect in `Invoices.jsx` that opens the target invoice directly on the
+right tab via a new `initialTab` prop on `InvoiceDetailPanel`. Comment seen/sent status required a
+manual refresh to update — `ClientThreadConsumer` already broadcast new comments but never read-state
+changes; a new `read_state.update` WS message (`apps.invoices.comments.broadcast_read_state`) fixes
+this, verified with a real 2-connection test. Payment claims could be submitted for more than the
+invoice's real outstanding balance (accepted, then only rejected later at freelancer-review time) — now
+capped at submission via the same real-balance-check pattern `InvoicePartialPaymentSerializer` already
+established. New UX: the notification panel's bulk-select control no longer renders with zero
+notifications; the Details-tab reminders toggle is hidden entirely on `paid`/`bad_debt`/`refunded`/
+`cancelled` (terminal — nothing left to remind about); bulk delete in the invoice list (checkbox only on
+draft/created invoices, Select-all scoped to only those, a real confirm step, client-side loop over the
+existing single-delete endpoint — no bulk endpoint existed to reuse) alongside the detail panel's own
+single-delete action (already correctly built in the prior round, confirmed unchanged); the client
+portal's existing "Report a Payment" modal now also shows real claim history (status + the freelancer's
+own rejection reason if applicable) via a new GET on `portal_invoice_claims`, and is reachable even once
+an invoice is fully paid (it doubles as "check your claim status", not just "report a new payment"). See
+DECISIONS.md's second 16 August 2026 entry for the full reasoning behind every item above.
 
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
@@ -1110,7 +1137,14 @@ see DECISIONS.md):
   saved client, OR reachable for a one-time client via that exact invoice's own view_token supplied
   in the request body, matching Step 12's own precedent since a one-time client has no
   ClientPortalSession possible at all; rate limited 5/hour, tighter than comments; rejects the
-  freelancer-preview-mode case with a real 403)
+  freelancer-preview-mode case with a real 403; amount_claimed capped at the invoice's real current
+  outstanding_amount at submission time, 16 August 2026 second verification-pass fix — see DECISIONS.md)
+- GET /api/invoices/portal/{id}/claims/ (16 August 2026 second verification pass — real, confirmed
+  gap: a client previously had no way to see whether their own submitted claim was confirmed/
+  rejected. Same access model as the POST above, including the one-time-client path — via
+  ?view_token= in the query string there, since a GET has no body. Reuses PaymentClaimSerializer
+  directly, the same freelancer-facing read representation, since none of its fields are sensitive
+  to the client who submitted them)
 - GET /api/invoices/{id}/claims/ (freelancer list)
 - POST /api/invoices/{id}/claims/{claim_id}/confirm/ + /reject/ (freelancer review — confirm creates
   a real InvoicePartialPayment via the exact same InvoicePartialPaymentSerializer +
@@ -1494,7 +1528,7 @@ Cloudinary account-level ACL restriction Step 10b works around; Client Acknowled
 portal action, Step 15), Recurring Invoice generation (Celery task + root-settings-read model +
 calendar-accurate scheduling + 3-strikes failure handling, Step 16), and Escalation notification +
 Formal Notice (a real, distinct, manual-only email with its own enforced disable setting, Step 17))
-built | Invoices list/detail/lifecycle/timeline (AR aging report removed 16 August 2026 — see DECISIONS.md) + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form + acknowledge action, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims/Acknowledge ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides) + an escalation banner/dismiss/Formal-Notice action + an "Edit Series" modal for a recurring root + a Formal Notice enable toggle in Settings > Business + a new `/invoices/analytics` page (Recharts, installed for real this pass) + a "Generate Statement" action + date-range modal in ClientDetailPanel.jsx, Step 12/13/14/15/16/17/18/19 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is client-side (11 Aug, matches v1's own architecture, zero network calls per pill click), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 824 passing (`python manage.py test`, whole suite, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 135 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`, `ErrorBoundary.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx/ClientDetailPanel.jsx component test file for their own newer actions, matching this component's existing convention for its other actions) | 16 August 2026 verification pass complete (see DECISIONS.md) — Admin panel screens and the full-module verification pass (Section 8, steps 20-21) remain |
+built | Invoices list/detail/lifecycle/timeline (AR aging report removed 16 August 2026 — see DECISIONS.md) + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form + acknowledge action, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims/Acknowledge ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides) + an escalation banner/dismiss/Formal-Notice action + an "Edit Series" modal for a recurring root + a Formal Notice enable toggle in Settings > Business + a new `/invoices/analytics` page (Recharts, installed for real this pass) + a "Generate Statement" action + date-range modal in ClientDetailPanel.jsx, Step 12/13/14/15/16/17/18/19 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is a real, independently-paginated server query again as of the 16 August second verification-pass reversal (only "All" stays the 11 Aug client-side window — see DECISIONS.md), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version) | Backend: 838 passing (`python manage.py test`, whole suite, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`). Frontend: 147 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`, `ErrorBoundary.test.jsx`) + a production `vite build` check (no dedicated InvoiceDetailPanel.jsx/ClientDetailPanel.jsx component test file for their own newer actions, matching this component's existing convention for its other actions) | Two 16 August 2026 verification passes complete (see DECISIONS.md) — Admin panel screens and the full-module verification pass (Section 8, steps 20-21) remain |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |

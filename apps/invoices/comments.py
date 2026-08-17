@@ -9,6 +9,7 @@ happen in exactly one place, not three.
 import logging
 import os
 
+from django.utils import timezone
 from PIL import Image as PILImage
 from PIL import UnidentifiedImageError
 from rest_framework import status
@@ -124,3 +125,51 @@ def broadcast_comment(comment):
         })
     except Exception:
         logger.exception('[INVOICES] Failed to broadcast comment_id=%s to WS group.', comment.pk)
+
+
+def broadcast_read_state(invoice, field, comment_ids):
+    """
+    Item 3 of the 16 August 2026 second verification pass — real,
+    confirmed gap: ClientThreadConsumer already broadcasts new comments
+    (broadcast_comment, above), but read-state changes (the mark-read-on-
+    view mechanism invoice_comments/portal_invoice_comments' own GET
+    handlers already had) never reached the OTHER party's live connection
+    at all — their seen/sent indicator only ever updated on a manual
+    refetch. This is the read-state equivalent of broadcast_comment,
+    same shared-group/never-raises contract, deliberately a SEPARATE
+    'read_state.update' WS message type rather than reusing
+    'comment.message' — the frontend needs to tell the two apart (a new
+    comment gets appended to the thread; a read-state update only flips
+    an existing message's seen/sent indicator) and a comment payload has
+    no `event` key at all, so CommentThread.jsx discriminates on that
+    field's presence without needing to touch the existing, tested
+    broadcast_comment wire format.
+
+    `field` is 'read_by_client_at' or 'read_by_freelancer_at' — whichever
+    side's read timestamp just got set. `comment_ids` are the exact rows
+    that were actually updated (never re-derived from a fresh query here,
+    so this can't race against a second read happening between the
+    caller's own UPDATE and this broadcast). No-ops immediately for an
+    empty list — a GET that marked nothing new as read has nothing to
+    tell anyone about.
+    """
+    if not comment_ids:
+        return
+
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+
+    group_name = f'invoice_thread_{invoice.view_token}'
+    try:
+        async_to_sync(channel_layer.group_send)(group_name, {
+            'type': 'read_state.update',
+            'field': field,
+            'ids': [str(pk) for pk in comment_ids],
+            'at': timezone.now().isoformat(),
+        })
+    except Exception:
+        logger.exception('[INVOICES] Failed to broadcast read-state update for invoice_id=%s to WS group.', invoice.pk)

@@ -46,7 +46,7 @@ from core.observability import get_client_ip, get_user_agent
 
 from apps.clients.portal import is_freelancer_previewing_portal, issue_or_renew_session, resolve_session_from_request
 
-from .comments import broadcast_comment, upload_comment_attachment
+from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
 from .models import Invoice, InvoiceComment, InvoiceViewEvent
 from .pdf_generator import render_invoice_portal_html
 from .serializers_claims import PaymentClaimSerializer, PortalClaimCreateSerializer
@@ -309,9 +309,15 @@ def portal_invoice_comments(request, pk):
 
     if request.method == 'GET':
         if not is_freelancer_previewing_portal(request):
-            InvoiceComment.objects.filter(
+            # ids captured BEFORE the update, not re-derived afterward —
+            # see invoice_comments' own identical comment (views.py) for
+            # why (item 3 of the 16 August 2026 second verification pass).
+            newly_read_ids = list(InvoiceComment.objects.filter(
                 invoice=invoice, author_type='freelancer', read_by_client_at__isnull=True,
-            ).update(read_by_client_at=timezone.now())
+            ).values_list('id', flat=True))
+            if newly_read_ids:
+                InvoiceComment.objects.filter(id__in=newly_read_ids).update(read_by_client_at=timezone.now())
+                broadcast_read_state(invoice, 'read_by_client_at', newly_read_ids)
         comments = invoice.comments.all()
         return Response(InvoiceCommentSerializer(comments, many=True).data)
 
@@ -378,13 +384,17 @@ def _resolve_portal_write_access(request, pk):
         return invoice, client.name, client.email, str(client.pk)
 
     invoice = get_object_or_404(Invoice, pk=pk)
-    submitted_token = request.data.get('view_token')
+    # request.data is the parsed BODY — empty for a real GET request, so a
+    # one-time client reading (not writing) needs the token from the query
+    # string instead. request.data checked first, unchanged for every
+    # existing POST caller.
+    submitted_token = request.data.get('view_token') or request.query_params.get('view_token')
     if invoice.client_id or not invoice.is_one_time_client or not submitted_token or submitted_token != invoice.view_token:
         return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
     return invoice, invoice.client_name, invoice.client_email, str(invoice.pk)
 
 
-@api_view(['POST'])
+@api_view(['GET', 'POST'])
 @permission_classes([AllowAny])
 def portal_invoice_claims(request, pk):
     """
@@ -393,18 +403,38 @@ def portal_invoice_claims(request, pk):
     invoice_claim_reject). Access resolution shared with
     portal_invoice_acknowledge via _resolve_portal_write_access above.
 
-    Rejects the submission outright (never silently drops it) when
+    GET (item 5 of the 16 August 2026 second verification pass — real,
+    confirmed gap: there was previously no way for a client to see
+    whether their own submitted claim was confirmed/rejected at all)
+    lists every claim on this invoice, newest first, reusing
+    PaymentClaimSerializer directly — the exact same freelancer-facing
+    read representation, not a second, redundant portal-specific one,
+    since none of its fields (the client's own submission data, status,
+    and the freelancer's own review_note if rejected) are sensitive to
+    the client who submitted them. A one-time client reads this via its
+    own view_token in the query string (?view_token=...), since a GET
+    has no request body to carry it in — see _resolve_portal_write_access's
+    own query_params fallback, above.
+
+    POST rejects the submission outright (never silently drops it) when
     is_freelancer_previewing_portal(request) is True — the same guard
     portal_invoice_view_html applies to view-tracking and this pass just
     added to portal_invoice_comments, applied here for the same reason:
     a freelancer clicking their own client's real portal link without
     logging out first must never have a claim attributed to "the client"
-    that was actually them clicking around their own preview.
+    that was actually them clicking around their own preview. GET has no
+    such guard — reading claim status has no write side effect to
+    misattribute, matching portal_invoice_comments' own GET (which
+    returns the thread regardless of preview mode; only ITS read-marking
+    side effect is preview-guarded).
     """
     result = _resolve_portal_write_access(request, pk)
     if isinstance(result, Response):
         return result
     invoice, client_name, client_email, rate_limit_key = result
+
+    if request.method == 'GET':
+        return Response(PaymentClaimSerializer(invoice.payment_claims.all(), many=True).data)
 
     if is_freelancer_previewing_portal(request):
         return Response(
@@ -415,7 +445,7 @@ def portal_invoice_claims(request, pk):
     if _check_portal_claim_rate_limit(rate_limit_key):
         return Response({'error': 'Too many claims submitted. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-    serializer = PortalClaimCreateSerializer(data=request.data)
+    serializer = PortalClaimCreateSerializer(data=request.data, context={'invoice': invoice})
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

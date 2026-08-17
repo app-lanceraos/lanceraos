@@ -174,16 +174,20 @@ export default function ClientPortal() {
                     <UserCheck size={14} />
                   </button>
                 )}
-                {inv.outstanding_amount > 0 && (
-                  <button
-                    onClick={() => setClaimInvoice(inv)}
-                    className="fos-btn fos-btn-ghost"
-                    style={{ fontSize: '0.78rem' }}
-                    aria-label={`Report a payment for ${inv.invoice_number || 'this invoice'}`}
-                  >
-                    <Receipt size={14} />
-                  </button>
-                )}
+                {/* Always shown now (item 5 of the 16 August 2026 second
+                    verification pass) — this doubles as "check your
+                    payment claim status" once outstanding hits 0, not
+                    just "report a new payment" while something's still
+                    owed; ClaimModal itself hides the submission form when
+                    there's nothing left to claim, showing history only. */}
+                <button
+                  onClick={() => setClaimInvoice(inv)}
+                  className="fos-btn fos-btn-ghost"
+                  style={{ fontSize: '0.78rem' }}
+                  aria-label={`Payment claims for ${inv.invoice_number || 'this invoice'}`}
+                >
+                  <Receipt size={14} />
+                </button>
                 <button
                   onClick={() => setMessagesInvoice(inv)}
                   className="fos-btn fos-btn-ghost"
@@ -240,6 +244,15 @@ function MessagesModal({ invoice, onClose }) {
 // real frontend surface yet — it exists on the backend for the same
 // reason Step 12's own view_token entry point did before this page's
 // equivalent landed, see DECISIONS.md).
+//
+// Also fetches + shows real claim HISTORY now (item 5 of the 16 August
+// 2026 second verification pass — real, confirmed gap: a client
+// previously had no way to see whether a claim they'd already submitted
+// was confirmed or rejected). Reuses the SAME "Report a Payment" modal
+// rather than a separate claims-history screen — the two are the same
+// mental object to a client (their own payment claims on this invoice),
+// and this invoice's claims are never numerous enough to need a whole
+// dedicated view.
 function ClaimModal({ invoice, onClose }) {
   const [source, setSource] = useState('other')
   const [amount, setAmount] = useState(invoice.outstanding_amount)
@@ -248,17 +261,25 @@ function ClaimModal({ invoice, onClose }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  const [claims, setClaims] = useState(null)
+
+  useEffect(() => {
+    api.get(`/invoices/portal/${invoice.id}/claims/`)
+      .then(({ data }) => setClaims(data))
+      .catch(() => setClaims([]))
+  }, [invoice.id])
 
   async function submit() {
     if (!amount || parseFloat(amount) <= 0) { setError('Enter a valid amount.'); return }
     setError('')
     setBusy(true)
     try {
-      await api.post(`/invoices/portal/${invoice.id}/claims/`, {
+      const { data } = await api.post(`/invoices/portal/${invoice.id}/claims/`, {
         payment_source: source, amount_claimed: amount, currency: invoice.currency,
         payment_date: paymentDate, client_note: note,
       })
       setSubmitted(true)
+      setClaims((prev) => [data, ...(prev || [])])
     } catch (e) {
       setError(e.response?.data?.error || 'Could not submit — please try again.')
     } finally {
@@ -266,15 +287,19 @@ function ClaimModal({ invoice, onClose }) {
     }
   }
 
+  const canSubmitNew = invoice.outstanding_amount > 0 && !submitted
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '20px 24px', width: '100%', maxWidth: 420 }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '20px 24px', width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-            Report a Payment
+            Payment Claims
           </h3>
           <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
         </div>
+
+        <ClaimHistory claims={claims} currency={invoice.currency} />
 
         {submitted ? (
           <div style={{ textAlign: 'center', padding: '20px 0' }}>
@@ -285,10 +310,10 @@ function ClaimModal({ invoice, onClose }) {
             </p>
             <button onClick={onClose} className="fos-btn fos-btn-primary" style={{ fontSize: '0.82rem' }}>Done</button>
           </div>
-        ) : (
+        ) : invoice.outstanding_amount > 0 ? (
           <>
-            <p style={{ margin: '0 0 14px', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-              Outstanding balance: {formatMoney(invoice.outstanding_amount, invoice.currency)}
+            <p style={{ margin: '18px 0 14px', fontSize: '0.82rem', color: 'var(--text-tertiary)', fontWeight: 600 }}>
+              Report a new payment — outstanding balance: {formatMoney(invoice.outstanding_amount, invoice.currency)}
             </p>
             {error && <FosAlert type="error" style={{ marginBottom: 12 }}>{error}</FosAlert>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 18 }}>
@@ -304,8 +329,50 @@ function ClaimModal({ invoice, onClose }) {
               </button>
             </div>
           </>
+        ) : (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+            <button onClick={onClose} className="fos-btn fos-btn-ghost">Close</button>
+          </div>
         )}
       </div>
+    </div>
+  )
+}
+
+const CLAIM_STATUS_META = {
+  pending: { label: 'Pending review', color: 'var(--status-amber-text)' },
+  confirmed: { label: 'Confirmed', color: 'var(--status-green-text)' },
+  rejected: { label: 'Rejected', color: 'var(--status-red-text)' },
+}
+
+function ClaimHistory({ claims, currency }) {
+  if (claims === null) {
+    return <p style={{ margin: '0 0 14px', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Loading your payment claims…</p>
+  }
+  if (claims.length === 0) {
+    return null // nothing submitted yet — no history section to show at all
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+      {claims.map((c) => {
+        const meta = CLAIM_STATUS_META[c.status] || CLAIM_STATUS_META.pending
+        return (
+          <div key={c.id} style={{ padding: '10px 12px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                {formatMoney(c.amount_claimed, currency)}
+              </p>
+              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: meta.color }}>{meta.label}</span>
+            </div>
+            <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+              via {c.payment_source} · {c.payment_date}
+            </p>
+            {c.status === 'rejected' && c.review_note && (
+              <p style={{ margin: '6px 0 0', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Note: {c.review_note}</p>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
