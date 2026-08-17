@@ -10,8 +10,12 @@
 // current view is deletion-eligible (draft/created) — a status-filtered
 // view showing only ineligible invoices (e.g. filtered to Sent) hides
 // the whole selection affordance (header cell included), rather than
-// rendering an empty, useless column. Header cell swaps to a delete
-// icon once ≥1 row is selected, same control, not a second one.
+// rendering an empty, useless column. Once ≥1 row is selected, the bulk
+// delete control appears in the ACTION column's own header (bug-fix
+// round — a real, reported misplacement: it used to overwrite the
+// checkbox-column header instead, which read as "the select-all control
+// just vanished" rather than "here's a bulk action"). The checkbox
+// column itself always stays a checkbox.
 import { PanelRightOpen, Trash2 } from 'lucide-react'
 
 import InvoiceStatusBadge from './InvoiceStatusBadge'
@@ -34,32 +38,32 @@ export default function InvoiceTable({ invoices, deleteEligibleStatuses, selecte
           <tr style={{ background: 'var(--bg-surface-2)' }}>
             {hasEligible && (
               <th style={{ ...th, width: 36 }}>
-                {selectedIds.size > 0 ? (
-                  <button
-                    onClick={onRequestBulkDelete}
-                    aria-label="Delete selected invoices"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-red-text)', display: 'flex', padding: 0 }}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                ) : (
-                  <input
-                    type="checkbox"
-                    checked={allEligibleSelected}
-                    onChange={() => (allEligibleSelected ? onClearSelection() : onSelectAllEligible())}
-                    aria-label="Select all eligible invoices on this page"
-                    style={{ accentColor: 'var(--accent)', width: 15, height: 15, cursor: 'pointer' }}
-                  />
-                )}
+                <input
+                  type="checkbox"
+                  checked={allEligibleSelected}
+                  onChange={() => (allEligibleSelected ? onClearSelection() : onSelectAllEligible())}
+                  aria-label="Select all eligible invoices on this page"
+                  style={{ accentColor: 'var(--accent)', width: 15, height: 15, cursor: 'pointer' }}
+                />
               </th>
             )}
-            <th style={th}>Invoice #</th>
+            <th style={th}>Invoice</th>
             <th style={th}>Client</th>
             <th style={th}>Amount</th>
             <th style={th}>Issue Date</th>
             <th style={th}>Due Date</th>
             <th style={th}>Status</th>
-            <th style={{ ...th, width: 48 }} aria-hidden="true" />
+            <th style={{ ...th, width: 48, textAlign: 'center' }} aria-hidden={selectedIds.size === 0}>
+              {selectedIds.size > 0 && (
+                <button
+                  onClick={onRequestBulkDelete}
+                  aria-label="Delete selected invoices"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-red-text)', display: 'inline-flex', padding: 0 }}
+                >
+                  <Trash2 size={15} />
+                </button>
+              )}
+            </th>
           </tr>
         </thead>
         <tbody>

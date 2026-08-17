@@ -219,13 +219,29 @@ export function formToPayload(form) {
   }
 }
 
+// Every status this invoice can never leave again — nothing left to
+// remind anyone about. Single source of truth: InvoiceDetailPanel.jsx's
+// own Details-tab reminders toggle imports this same constant rather
+// than keeping its own local copy (a real, confirmed bug this pass —
+// the toggle already hid itself correctly on these statuses, but
+// getSendBannerCopy below had no matching check at all, so a terminal
+// invoice with reminders_enabled=false still showed "Reminders are
+// off — turn them on below" pointing at a control that wasn't even on
+// screen).
+export const REMINDERS_HIDDEN_STATUSES = ['paid', 'bad_debt', 'refunded', 'cancelled']
+
 // Simplified banner rule (supersedes the earlier 3-state,
 // sent_via_platform-driven version — see DECISIONS.md):
-//   draft            -> no banner.
-//   created          -> unchanged copy: hasn't been sent through
-//                        LanceraOS yet, so reminders/tracking are inert.
-//   everything else  -> checks reminders_enabled ONLY. Off -> one line
-//                        pointing at the toggle. On -> no banner.
+//   draft                      -> no banner.
+//   created                    -> unchanged copy: hasn't been sent
+//                                  through LanceraOS yet, so reminders/
+//                                  tracking are inert.
+//   a terminal status          -> no banner — nothing left to remind
+//                                  about, matches REMINDERS_HIDDEN_STATUSES
+//                                  exactly (bug fix, this round).
+//   everything else            -> checks reminders_enabled ONLY. Off ->
+//                                  one line pointing at the toggle. On ->
+//                                  no banner.
 // No sent_via_platform check anywhere — a manual mark-sent and a real
 // platform send are treated identically past 'created' now, since the
 // only thing actually actionable from this banner is the reminders
@@ -236,6 +252,8 @@ export function getSendBannerCopy(invoice) {
   if (invoice.status === 'created') {
     return "This invoice hasn't been sent through LanceraOS — reminders, view tracking, and payment tracking won't activate until you send it.";
   }
+
+  if (REMINDERS_HIDDEN_STATUSES.includes(invoice.status)) return null
 
   if (!invoice.reminders_enabled) {
     return 'Reminders are off — turn them on below if you\'d like reminder emails to go out.'

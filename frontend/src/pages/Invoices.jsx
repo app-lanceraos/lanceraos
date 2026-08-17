@@ -339,14 +339,8 @@ export default function Invoices() {
 
   return (
     <>
-      {/* ── Page title ── */}
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)' }}>Invoices</h1>
-        {!loading && (
-          <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>{total} invoice{total !== 1 ? 's' : ''} in this view</p>
-        )}
-      </div>
-
+      {/* Page title + invoice-count line removed (bug-fix round) — redundant
+          with AppShell's own header title, which already shows "Invoices". */}
       {createError && (
         <FosAlert type="error" onDismiss={() => setCreateError(null)} style={{ marginBottom: 16 }}>{createError}</FosAlert>
       )}

@@ -4177,3 +4177,140 @@ described from code alone. Full backend suite: 857 passing (`python manage.py te
 from 838 — this pass's own new tests). Full frontend suite: 162 passing (`npm test`, `frontend/`).
 
 Docs: this entry. CLAUDE.md's own Module 2 narrative and build-status table get a matching addendum.
+
+---
+
+Date: 17 August 2026 (bug-hardening round, post-restructure)
+Decision: A Severity-1 "full reload" report plus 5 real, targeted fixes. Recorded together, one
+sub-decision per item, with the reload investigation's own root cause stated first and plainly since
+this is the THIRD time this exact symptom has been reported.
+
+**SEVERITY 1 — "filters causing a full reload again": re-investigated end to end, root cause is
+NOT new application code.** This is the third report of this exact symptom (11 August, 10 August's own
+correction of that, now this pass), so it was treated with the rigor that history deserves, not a
+point-fix: every one of the List/Table restructure's new files (`Pagination.jsx`, `InvoiceKPIStrip.jsx`,
+`InvoiceTable.jsx`, `DropdownMenu.jsx`, `usePageHeaderActions.js`, plus `FilterPill.jsx`/
+`FilterOverflowMenu.jsx`/`useFilterOverflow.js`) was read specifically for anything capable of a real
+browser navigation — a whole-file grep for `<form`, bare `<button>` without `type="button"` (present,
+but confirmed harmless: no `<form>` ancestor exists anywhere near either page, and this is the
+established convention in EVERY button in this codebase, not something this pass introduced — `grep -c
+'<button'`/`'type="button"'` across `Invoices.jsx`/`Clients.jsx`/`InvoiceDetailPanel.jsx`/
+`ClientDetailPanel.jsx` found zero explicit `type="button"` anywhere, pre-existing and unrelated), `<a
+href>`, and `window.location` writes — then verified live with a headless Chromium against the actual
+running dev servers, logging every response's `resourceType` and status code: every status pill, the
+Overdue toggle, both list currency filters, both sort controls, the KPI period/currency selectors, the
+header "More" dropdown, pagination Next/Prev, row checkboxes, opening/closing the detail panel and
+switching its tabs, "New Invoice", and client-side navigation to Analytics — at both a wide viewport
+(1920px, nothing overflowed) and a narrow one (900px, with the real "More filters" overflow dropdown
+opened and used) — on both pages. Zero `resourceType: 'document'` requests, zero 401s, across every
+interaction, with a live, valid session throughout.
+The ONLY code path in this entire frontend capable of a real `window.location` write is
+`api.js`'s `_forceLogout()` (lines 169-176) — confirmed by the SAME whole-codebase grep the 10 August
+investigation already ran, re-run here and unchanged in result. That mechanism is deliberate and
+correct (see the 10 August 2026 DECISIONS.md entry, "Reload-on-filter-click root cause found"): when a
+session has genuinely died (natural 15-minute access-token expiry with an already-invalid refresh
+token, or eviction by the 3-concurrent-session cap) and a silent-refresh attempt fails, a real hard
+redirect to `/login?session_expired=1` is correct and intentional — the alternative is a broken app
+silently failing every request forever. It is NOT specific to filter clicks; it fires on the FIRST API
+call made after the session dies, which is very often a filter click simply because that's usually the
+first thing someone does after returning to a tab. The List/Table restructure did increase how many
+requests fire in parallel on mount (up to 5: list, summary, presets, currencies, KPI strip) — this was
+checked specifically as a plausible NEW failure mode (a concurrent-401 race in the `isRefreshing`/
+`pendingQueue` queueing logic) and ruled out: `isRefreshing = true` is set synchronously, before any
+`await`, so JS's single-threaded execution model guarantees every 401 processed after the first one
+sees the flag already set and queues correctly, regardless of how many requests are in flight —
+confirmed by tracing the exact interleaving, not just re-reading the comment claiming it's safe. Every
+new endpoint this pass added (`invoice_currencies`, `client_currencies`, the modified `invoice_summary`)
+was also confirmed to carry the correct `@permission_classes([IsAuthenticated])`, ruling out a
+misconfigured decorator as a source of spurious 401s.
+The most likely proximate trigger for whatever was actually observed: this pass's own extensive
+Playwright-driven verification (screenshots, interaction sweeps) logged into the same
+`screenshot-demo@example.com` account repeatedly across many separate script runs, very plausibly
+cycling through or exceeding the 3-concurrent-session cap — the exact scenario the 10 August entry
+already identified as a real, if unrelated, contributing factor when automated testing and manual
+testing share an account. No code change was made to the reload mechanism itself, since none is needed
+— `_forceLogout()` stays exactly as documented in the 10 August entry. If this reappears a fourth time,
+check session/token state FIRST (age of the access-token cookie, session count via GET
+/api/auth/sessions/) before touching any list-page code again — that's what actually explains this
+class of report every time it's been chased down.
+
+**Item 1 — the page title + count line above the KPI cards removed, both pages.** Redundant with
+AppShell's own header title (which already renders "Invoices"/"Clients"). No test depended on that
+text (confirmed directly before removing it).
+
+**Item 2 — bulk-select delete control relocated to the Action column's own header.** A real, reported
+misplacement: it used to overwrite the CHECKBOX column's header once ≥1 row was selected, which read as
+"the select-all control just vanished," not "a bulk action appeared." The checkbox column
+(`InvoiceTable.jsx`) now always stays a checkbox; the previously-empty, `aria-hidden` last column
+(mirroring each row's own Action cell) shows the delete button instead, exactly when `selectedIds.size >
+0`, and is `aria-hidden` again the rest of the time. A new `InvoiceTable.test.jsx` (this component had
+no dedicated test file until now — it's small and self-contained enough to warrant one, unlike
+`InvoiceDetailPanel.jsx`/`ClientDetailPanel.jsx`, which stay covered indirectly per this project's own
+established convention) pins the exact placement down directly.
+
+**Item 3 — tooltips wired into `InvoiceDetailPanel.jsx` for the first time.** Real, confirmed gap, not
+a regression from this pass: `data-tooltip`/`initTooltipBindings()` (`useAppTooltip.js`) has ONLY ever
+been used in `AppShell.jsx` (confirmed via `grep -rl "data-tooltip" frontend/src/`) — neither
+`InvoiceDetailPanel.jsx` nor its sibling `ClientDetailPanel.jsx` ever wired it, and DESIGN.md names the
+mechanism's z-index stacking but doesn't mandate it on every icon button app-wide. Added `data-tooltip`
+to this panel's genuinely icon-only controls (the main Close (X) button, `ModalShell`'s shared close
+button used by ~10 sub-modals, and `PreviewAsClientModal`'s own close button) and a
+`useEffect(() => { initTooltipBindings() })` with no dependency array — cheap and idempotent
+(`dataset.tooltipBound` guards re-binding), so re-running it after every render (including tab
+switches and modal open/close, both of which mount fresh `[data-tooltip]` elements a mount-only effect
+wouldn't catch) is safe. The action-footer buttons (Finalise, Mark as Sent, etc.) were deliberately
+left alone — they already carry visible text labels, not just an icon, so a tooltip would be redundant
+there. A new, narrow `InvoiceDetailPanel.test.jsx` (the first for this component, deliberately scoped
+to only this) confirms the Close button's `data-tooltip` attribute AND that `dataset.tooltipBound`
+actually gets set after mount — not just that the markup looks right, but that the binding mechanism
+really ran against this panel's own DOM.
+
+**Item 4 — the reminders-off send-banner line no longer shows on a terminal invoice.** Real bug, found
+by checking `getSendBannerCopy` (`invoiceHelpers.js`) against the SAME terminal-status set the
+Details-tab reminders TOGGLE already correctly hides on — they had drifted apart. The toggle
+(`InvoiceDetailPanel.jsx`) checked its own local `REMINDERS_HIDDEN_STATUSES` correctly; the banner
+function had no matching check at all, so a `paid`/`bad_debt`/`refunded`/`cancelled` invoice with
+`reminders_enabled=false` (the common case — nothing turns reminders back on after an invoice resolves)
+still showed "Reminders are off — turn them on below," pointing at a control that wasn't even on
+screen. `REMINDERS_HIDDEN_STATUSES` is now a single exported constant in `invoiceHelpers.js` — both the
+banner function and the panel's own toggle import it, so they can't drift apart again. Not a
+restructure regression: this gap predates the List/Table pass entirely (`getSendBannerCopy` itself
+wasn't touched by that pass) — just never caught until now. `invoiceHelpers.test.js`'s own suite for
+this function is corrected to match: the old test asserted the WRONG (buggy) behavior for terminal
+statuses (that they showed the reminders-off line) and is now split into an active-status case (still
+shows it) and a terminal-status case (never shows it, regardless of `reminders_enabled`).
+
+**Item 5 — issue_date silently defaults to today when cleared; due_date can legally equal issue_date.**
+Two real serializer-level fixes (`InvoiceSerializer`, `apps/invoices/serializers.py`):
+(a) `issue_date` is now explicitly declared (`serializers.DateField(required=False, allow_null=True)`),
+overriding the ModelSerializer-auto-generated field that inherited the model column's own `null=False`
+— DRF's default auto-generated field for a model field with a `default` (here, `Invoice.issue_date`'s
+`default=_today`) is `required=False` but NOT `allow_null=True` unless the model field itself has
+`null=True`, which this one doesn't. That meant OMITTING issue_date already correctly fell back to the
+model's own default, but explicitly CLEARING it (autosave submitting `null`) was rejected outright by
+DRF's field-level validation before `validate()` ever ran — the exact "reject rather than default" bug
+reported. `validate()` now re-defaults an explicit `None` to `_today()` (imported from `.models` — the
+same `timezone.now().date()`-based function the model's own default uses, not a bare `date.today()`,
+since this app runs `USE_TZ=False` on PKT and that distinction is already codified there) before the
+due_date/issue_date cross-check runs, so a cleared issue_date is validated against the real, current
+value it's about to become, not `None`.
+(b) The due_date/issue_date boundary comparison changed from `due_date <= issue_date` (rejecting) to
+`due_date < issue_date` — same-day is a real, legal case (an invoice issued and due immediately) that
+was being wrongly rejected; only strictly BEFORE issue_date is actually invalid. The existing test that
+had encoded the old, wrong boundary
+(`DueDateValidationTests.test_update_rejects_due_date_not_after_issue_date`) is renamed and corrected
+to `test_update_accepts_due_date_equal_to_issue_date`, asserting 200 instead of 400. A new
+`IssueDateDefaultingTests` class covers: explicit-null on create, omitted-entirely on create (the
+model-default path, confirmed still working), clearing on an existing draft's autosave, clearing
+alongside another field edit (nothing else gets lost), and that a cleared-then-defaulted issue_date
+still participates correctly in the due_date cross-check (a due_date of yesterday, with issue_date
+cleared, is still correctly rejected against the real defaulted-to-today value — not silently skipped).
+
+Verification: 548 backend tests across `apps.invoices`/`apps.clients` (excluding the pre-existing,
+unrelated WeasyPrint segfault in `FinaliseAndSendTests` — reproduces intermittently regardless of this
+round's changes, not chased further here, consistent with the prior round's own note on it), all
+passing. 169 frontend tests (up from 162 — `InvoiceTable.test.jsx` and `InvoiceDetailPanel.test.jsx`
+are both new; `invoiceHelpers.test.js` corrected). Production `vite build` clean.
+
+Docs: this entry. No CLAUDE.md status-table change — this round is bug fixes to already-"built"
+functionality, not new scope.

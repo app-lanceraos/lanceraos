@@ -14,7 +14,7 @@ from apps.clients.models import Client
 from apps.clients.serializers import validate_currency_code
 
 from .design_schema import validate_design_data_schema
-from .models import Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem
+from .models import Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem, _today
 
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
@@ -97,6 +97,13 @@ class InvoiceSerializer(serializers.ModelSerializer):
     items = InvoiceItemSerializer(many=True, required=False)
     client_name = serializers.CharField(required=False, allow_blank=True, default='')
     client_email = serializers.EmailField(required=False, allow_blank=True, default='')
+    # Overrides the ModelSerializer-auto-generated field (which inherits
+    # the model field's `null=False`, rejecting an explicit `null` outright
+    # before `validate()` ever runs) — `allow_null=True` here so clearing
+    # the date in the wizard/autosave reaches `validate()` below, which
+    # silently re-defaults it to today rather than 400ing or persisting a
+    # NULL the DB column doesn't even allow.
+    issue_date = serializers.DateField(required=False, allow_null=True)
 
     class Meta:
         model = Invoice
@@ -119,32 +126,52 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         """
-        due_date, once set, must be strictly after issue_date — real
-        cross-field validation (item 6 of the verification pass), not
-        left to the frontend alone. due_date itself stays optional at
-        this layer (autosave on an incomplete draft must stay permissive,
-        matching client_name/client_email's own established precedent
-        above) — it's REQUIRED at the one real "leaving draft" gate
-        instead (invoice_finalise/_finalise_and_send/_mark_sent's own
+        due_date, once set, must be on or after issue_date — same-day is
+        legal (e.g. an invoice issued and due immediately), only strictly
+        BEFORE issue_date is rejected. Real cross-field validation (item 6
+        of the verification pass, boundary corrected in the bug-hardening
+        round that found `<=` was wrongly rejecting the legal same-day
+        case), not left to the frontend alone. due_date itself stays
+        optional at this layer (autosave on an incomplete draft must stay
+        permissive, matching client_name/client_email's own established
+        precedent above) — it's REQUIRED at the one real "leaving draft"
+        gate instead (invoice_finalise/_finalise_and_send/_mark_sent's own
         draft branch, apps/invoices/views.py).
 
-        Only actually checked when THIS request is touching one of the
-        two fields — falls back to the instance's own current value for
-        whichever side a partial (autosave) update doesn't touch, so a
-        due_date-only PATCH is still checked against the invoice's real
-        saved issue_date. Deliberately does NOT re-validate a pair that
-        was already saved before this rule existed and isn't part of
-        this request at all — a legacy invoice with a stale/blank
-        due_date must stay editable for every OTHER field (client_name,
-        notes, ...) without being blocked by a comparison neither field
-        of which the caller is even touching right now.
+        A cleared issue_date (explicit `null` — allowed only because the
+        field above overrides the model's own `null=False` default) is
+        silently re-defaulted to today via the model's own `_today()`
+        (not a bare `date.today()` — this app runs USE_TZ=False on PKT,
+        and `_today()` is the one place that distinction is already
+        codified) rather than rejected or persisted as NULL, which the DB
+        column doesn't allow anyway. This mirrors what a brand-new
+        invoice already gets for free from the model field's own
+        `default=_today` — the only gap was an EXISTING invoice's autosave
+        explicitly clearing the field back to null, which bypasses that
+        model-level default entirely since it's a real value being
+        assigned, not an omitted field.
+
+        The due_date/issue_date comparison below is only actually checked
+        when THIS request is touching one of the two fields — falls back
+        to the instance's own current value for whichever side a partial
+        (autosave) update doesn't touch, so a due_date-only PATCH is still
+        checked against the invoice's real saved issue_date. Deliberately
+        does NOT re-validate a pair that was already saved before this
+        rule existed and isn't part of this request at all — a legacy
+        invoice with a stale/blank due_date must stay editable for every
+        OTHER field (client_name, notes, ...) without being blocked by a
+        comparison neither field of which the caller is even touching
+        right now.
         """
+        if 'issue_date' in attrs and attrs['issue_date'] is None:
+            attrs['issue_date'] = _today()
+
         if 'issue_date' not in attrs and 'due_date' not in attrs:
             return attrs
         issue_date = attrs.get('issue_date', getattr(self.instance, 'issue_date', None))
         due_date = attrs.get('due_date', getattr(self.instance, 'due_date', None))
-        if due_date and issue_date and due_date <= issue_date:
-            raise serializers.ValidationError({'due_date': 'Due date must be after the issue date.'})
+        if due_date and issue_date and due_date < issue_date:
+            raise serializers.ValidationError({'due_date': 'Due date cannot be before the issue date.'})
         return attrs
 
     def create(self, validated_data):

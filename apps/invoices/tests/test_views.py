@@ -381,16 +381,24 @@ class DueDateValidationTests(InvoicesAPITestCase):
         resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
         self.assertEqual(resp.status_code, 200)
 
-    def test_update_rejects_due_date_not_after_issue_date(self):
+    def test_update_accepts_due_date_equal_to_issue_date(self):
+        """
+        Bug fix (bug-hardening round): same-day is a real, legal case —
+        an invoice issued and due immediately — and used to be wrongly
+        rejected by a `due_date <= issue_date` comparison. Only strictly
+        BEFORE issue_date is actually invalid; see the next test.
+        """
         invoice = self._invoice(status='draft', issue_date=date(2027, 1, 15))
         resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-01-15'})
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn('due_date', resp.json())
+        self.assertEqual(resp.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.due_date, date(2027, 1, 15))
 
     def test_update_rejects_due_date_before_issue_date(self):
         invoice = self._invoice(status='draft', issue_date=date(2027, 1, 15))
         resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'due_date': '2027-01-01'})
         self.assertEqual(resp.status_code, 400)
+        self.assertIn('due_date', resp.json())
 
     def test_update_accepts_due_date_strictly_after_issue_date(self):
         invoice = self._invoice(status='draft', issue_date=date(2027, 1, 15))
@@ -418,6 +426,65 @@ class DueDateValidationTests(InvoicesAPITestCase):
         invoice = self._invoice(status='draft', issue_date=date(2027, 6, 1), due_date=date(2020, 1, 1))
         resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'notes': 'Updated notes'})
         self.assertEqual(resp.status_code, 200)
+
+
+# ══════════════════════════════════════════════════════════════════
+# ISSUE DATE DEFAULTING — bug-hardening round. Clearing issue_date
+# (create or draft-edit autosave) must silently default to today at the
+# serializer layer, never reject or persist NULL (the DB column doesn't
+# allow it, and the model's own `default=_today` only ever applies when
+# the field is OMITTED, not when it's explicitly assigned None).
+# ══════════════════════════════════════════════════════════════════
+
+class IssueDateDefaultingTests(InvoicesAPITestCase):
+    def test_create_with_explicit_null_issue_date_defaults_to_today(self):
+        resp = self._post(reverse('invoices:invoice_list'), {
+            'client_name': 'Acme Co', 'client_email': 'acme@example.com', 'currency': 'USD',
+            'issue_date': None,
+        })
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['issue_date'], date.today().isoformat())
+
+    def test_create_omitting_issue_date_entirely_still_defaults_to_today(self):
+        """The model field's own `default=_today` — unaffected, still works when the key is simply absent."""
+        resp = self._post(reverse('invoices:invoice_list'), {
+            'client_name': 'Acme Co', 'client_email': 'acme@example.com', 'currency': 'USD',
+        })
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['issue_date'], date.today().isoformat())
+
+    def test_clearing_issue_date_on_an_existing_draft_defaults_to_today_not_400(self):
+        # due_date pushed well beyond "today" — make_invoice's own fixture
+        # default (2026-01-31) would otherwise legitimately collide with
+        # today's date once issue_date re-defaults to it, which is a real,
+        # correct rejection (due_date can't precede issue_date) and not
+        # what this test is about.
+        far_future_due_date = date.today() + timedelta(days=365)
+        invoice = self._invoice(status='draft', issue_date=date(2020, 1, 1), due_date=far_future_due_date)
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {'issue_date': None})
+        self.assertEqual(resp.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.issue_date, date.today())
+
+    def test_clearing_issue_date_alongside_other_fields_does_not_lose_them(self):
+        far_future_due_date = date.today() + timedelta(days=365)
+        invoice = self._invoice(status='draft', issue_date=date(2020, 1, 1), due_date=far_future_due_date, notes='old')
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {
+            'issue_date': None, 'notes': 'new notes',
+        })
+        self.assertEqual(resp.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.issue_date, date.today())
+        self.assertEqual(invoice.notes, 'new notes')
+
+    def test_a_cleared_issue_date_still_gets_validated_against_due_date(self):
+        """The defaulted-to-today issue_date is a real value by the time the due_date comparison runs — not skipped."""
+        invoice = self._invoice(status='draft', issue_date=date(2020, 1, 1))
+        resp = self._put(reverse('invoices:invoice_detail', kwargs={'pk': invoice.pk}), {
+            'issue_date': None, 'due_date': (date.today() - timedelta(days=1)).isoformat(),
+        })
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('due_date', resp.json())
 
 
 # ══════════════════════════════════════════════════════════════════

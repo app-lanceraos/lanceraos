@@ -223,14 +223,8 @@ export default function Clients() {
 
   return (
     <>
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)' }}>Clients</h1>
-        {!loading && (
-          <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-            {total} client{total !== 1 ? 's' : ''} in this view
-          </p>
-        )}
-      </div>
+      {/* Page title + client-count line removed (bug-fix round) — redundant
+          with AppShell's own header title, which already shows "Clients". */}
 
       {/* ── Search + Sort row ── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>

@@ -17,18 +17,30 @@ describe('getSendBannerCopy — draft/created/reminders-only rule', () => {
     expect(getSendBannerCopy({ status: 'created', reminders_enabled: false })).toMatch(/hasn't been sent through LanceraOS/)
   })
 
-  // Every other status checks reminders_enabled alone now — no more
-  // sent_via_platform branch, and no more distinguishing a manual
-  // mark-sent from a real platform send here at all.
-  it('shows the reminders-off line for any post-created status when reminders_enabled is false', () => {
-    for (const status of ['sent', 'viewed', 'partially_paid', 'paid', 'cancelled', 'refunded', 'bad_debt']) {
+  // Every ACTIVE (non-terminal) status checks reminders_enabled alone —
+  // no more sent_via_platform branch, and no more distinguishing a
+  // manual mark-sent from a real platform send here at all.
+  it('shows the reminders-off line for an active status when reminders_enabled is false', () => {
+    for (const status of ['sent', 'viewed', 'partially_paid']) {
       const copy = getSendBannerCopy({ status, reminders_enabled: false })
       expect(copy).toMatch(/Reminders are off/)
     }
   })
 
-  it('shows no banner at all for any post-created status when reminders_enabled is true', () => {
-    for (const status of ['sent', 'viewed', 'partially_paid', 'paid', 'cancelled', 'refunded', 'bad_debt']) {
+  it('shows no banner at all for an active status when reminders_enabled is true', () => {
+    for (const status of ['sent', 'viewed', 'partially_paid']) {
+      expect(getSendBannerCopy({ status, reminders_enabled: true })).toBeNull()
+    }
+  })
+
+  // Bug fix, this round: a TERMINAL status (nothing left to remind
+  // anyone about — matches REMINDERS_HIDDEN_STATUSES, the same set the
+  // Details-tab toggle itself hides on) must never show the reminders-off
+  // line, even with reminders_enabled=false — the control it points at
+  // isn't even on screen for these statuses.
+  it('never shows a banner for a terminal status, regardless of reminders_enabled', () => {
+    for (const status of ['paid', 'cancelled', 'refunded', 'bad_debt']) {
+      expect(getSendBannerCopy({ status, reminders_enabled: false })).toBeNull()
       expect(getSendBannerCopy({ status, reminders_enabled: true })).toBeNull()
     }
   })

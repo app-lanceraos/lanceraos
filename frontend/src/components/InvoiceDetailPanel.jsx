@@ -23,6 +23,7 @@ import api from '@/lib/api'
 import useAuthStore from '@/store/authStore'
 import useTimedMessage from '@/hooks/useTimedMessage'
 import useInvoiceAutosave from '@/hooks/useInvoiceAutosave'
+import { initTooltipBindings } from '@/hooks/useAppTooltip'
 import CommentThread from './CommentThread'
 import ErrorBoundary from './ErrorBoundary'
 import FormField from './FormField'
@@ -32,18 +33,16 @@ import InvoiceFormFields from './InvoiceFormFields'
 import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
-  PAYMENT_SOURCE_OPTIONS, RECURRING_INTERVAL_OPTIONS, UNDO_CONFIRMATION_AGE_DAYS, daysSince,
-  getSendBannerCopy, invoiceToForm, timelineDotColor, timelineLabel,
+  PAYMENT_SOURCE_OPTIONS, RECURRING_INTERVAL_OPTIONS, REMINDERS_HIDDEN_STATUSES, UNDO_CONFIRMATION_AGE_DAYS,
+  daysSince, getSendBannerCopy, invoiceToForm, timelineDotColor, timelineLabel,
 } from '@/pages/invoiceHelpers'
 
 const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']
 const NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']
-// Item 6 (this round): every status this invoice can never leave again —
-// nothing left to remind anyone about. Deliberately a separate constant
-// from NO_PAYMENT_STATUSES above (which also includes 'draft' — a draft
-// hasn't been resolved, it just hasn't been sent yet, so its reminders
-// toggle still makes sense to show in preparation for that).
-const REMINDERS_HIDDEN_STATUSES = ['paid', 'bad_debt', 'refunded', 'cancelled']
+// REMINDERS_HIDDEN_STATUSES now lives in invoiceHelpers.js — imported
+// above, not redefined here — so getSendBannerCopy and this panel's own
+// Details-tab toggle can never drift apart again (bug-fix round; see
+// that file's own comment for the real bug this fixes).
 
 // initialTab: opens directly on a specific tab instead of the 'details'
 // default — item 2 of this round's verification pass. Real consumer:
@@ -105,6 +104,17 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   }, [initialMessage])
   useEffect(() => { loadTimeline() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadClaims() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tooltips (bug-fix round — a real, confirmed gap: this panel's own
+  // [data-tooltip] icon buttons, e.g. the bare Close (X) button, were
+  // never wired at all; AppShell.jsx is the only place in this codebase
+  // that ever called initTooltipBindings(), so nothing outside its own
+  // sidebar/header ever got one). initTooltipBindings() is idempotent
+  // (dataset.tooltipBound guards against double-binding) and cheap, so
+  // re-running it after every render — including tab switches and modal
+  // open/close, both of which mount fresh [data-tooltip] elements this
+  // effect wouldn't otherwise know to re-scan for — is safe.
+  useEffect(() => { initTooltipBindings() })
 
   // The sole close path (X button + overlay click) — flushes first so
   // closing right after typing still saves, exactly like closing a Gmail
@@ -345,7 +355,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
         <div onClick={onClose} style={overlayStyle} />
         <div style={panelStyle}>
           <div style={{ padding: '20px 24px' }}>
-            <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 8, marginBottom: 12 }}><X size={16} /></button>
+            <button onClick={onClose} aria-label="Close" data-tooltip="Close" className="fos-btn fos-btn-ghost" style={{ padding: 8, marginBottom: 12 }}><X size={16} /></button>
             <FosAlert type="error">{error || 'Invoice not found.'}</FosAlert>
           </div>
         </div>
@@ -363,7 +373,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       <div onClick={handleClose} style={overlayStyle} />
       <div style={panelStyle}>
         <div style={{ padding: '20px 24px 100px' }}>
-          <button onClick={handleClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 8, marginBottom: 12 }}>
+          <button onClick={handleClose} aria-label="Close" data-tooltip="Close" className="fos-btn fos-btn-ghost" style={{ padding: 8, marginBottom: 12 }}>
             <X size={16} />
           </button>
 
@@ -882,7 +892,7 @@ function ModalShell({ title, onClose, children, maxWidth = 420 }) {
       <div style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '24px 28px', width: '100%', maxWidth, maxHeight: '90vh', overflowY: 'auto', animation: 'modal-in 0.2s cubic-bezier(0.22,1,0.36,1)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
           <h3 style={{ margin: 0, fontSize: '1.02rem', fontWeight: 700, color: 'var(--text-primary)' }}>{title}</h3>
-          <button onClick={onClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
+          <button onClick={onClose} aria-label="Close" data-tooltip="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
         </div>
         {children}
       </div>
@@ -908,7 +918,7 @@ function PreviewAsClientModal({ invoice, onClose }) {
         <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
           <Eye size={15} /> You're previewing as {invoice.client_name || 'this client'} — this is not the real portal
         </p>
-        <button onClick={onClose} className="fos-btn fos-btn-ghost" style={{ color: '#fff', padding: 6, flexShrink: 0 }} aria-label="Close preview"><X size={16} /></button>
+        <button onClick={onClose} className="fos-btn fos-btn-ghost" style={{ color: '#fff', padding: 6, flexShrink: 0 }} aria-label="Close preview" data-tooltip="Close preview"><X size={16} /></button>
       </div>
       <iframe
         src={previewUrl}
