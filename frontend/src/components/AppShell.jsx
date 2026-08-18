@@ -31,7 +31,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import ReactDOM from 'react-dom'
 import {
   Bell, CheckCircle2, CheckCheck, CheckSquare, Clock, CreditCard, DollarSign,
-  FileText, HelpCircle, LayoutGrid, LogOut, Mail, MoreHorizontal, RefreshCw,
+  FileText, HelpCircle, LayoutGrid, LogOut, Mail, SlidersHorizontal, RefreshCw,
   Receipt, Settings as SettingsIcon, Square, Trash2, TrendingUp, User as UserIcon,
   Users, Wallet, AlertTriangle, Eye,
 } from 'lucide-react'
@@ -681,7 +681,7 @@ export default function AppShell({ children }) {
                 action, which stays on the FAB, never duplicated here). */}
             {isMobile && pageHeaderActions.mobileItems.length > 0 && (
               <DropdownMenu
-                trigger={<MoreHorizontal size={20} strokeWidth={1.6} />}
+                trigger={<SlidersHorizontal size={20} strokeWidth={1.6} />}
                 triggerLabel="More actions"
                 items={pageHeaderActions.mobileItems}
                 bareTrigger

@@ -4805,4 +4805,97 @@ single-line ~45px at 320-480px (icon-only) — 600px alone shows the full-text v
 one line, more horizontal room available there) since the 500px breakpoint deliberately favors the
 clearer full-text labels wherever they actually fit.
 
+---
+
+Date: 18 August 2026 (fifth pass, same day — WebSocket console-error bug + InvoiceDetailPanel bug-
+hardening round 3)
+Decision/Reason:
+
+**Root cause of the real, reported "WebSocket connection ... failed: WebSocket is closed before the
+connection is established" console errors (`/ws/notifications/`, `/ws/invoices/thread/<token>/`):
+`useWebSocket.js`'s cleanup unconditionally called `ws.close()`, even when the socket was still
+`CONNECTING`.** That's the exact browser-level trigger for this warning — closing a socket before its
+handshake finishes. It fired on any fast mount/unmount (a panel like `InvoiceDetailPanel` opening and
+closing again before the handshake completed) and would also fire under React StrictMode's dev-only
+mount→cleanup→mount double-invoke of the same effect, had this codebase's actual `main.jsx` not already
+been past that specific risk in production builds — the underlying code path was wrong regardless. Fixed
+at the hook level (the one place CLAUDE.md's own frontend rules require, so both real consumers —
+`useNotificationSocket.js` and `CommentThread.jsx` — inherit the fix with no changes of their own):
+`onopen` now checks a `stopped` flag and closes the socket itself, cleanly, the moment the handshake
+actually completes, if cleanup already ran while it was in flight; cleanup itself now only calls
+`ws.close()` outright once `readyState` is past `CONNECTING`. No reconnect ever gets scheduled for an
+already-stopped socket either way (its `onclose` handler's own `if (stopped) return` guard was already
+correct) — the only thing that changed is *when* `.close()` gets called, never whether a reconnect fires.
+`useWebSocket.js` had no dedicated test file before this pass (both existing consumers' own tests mock it
+away entirely, by their own header comments) — added one (`useWebSocket.test.jsx`) with a local
+`MockWebSocket` (jsdom has no real `WebSocket`) that reproduces the exact real-browser symptom — a
+`console.error` fired the moment `.close()` is called on a `CONNECTING` socket — so the fix is verified
+against that directly rather than against private internals; confirmed the new tests actually fail
+against the pre-fix code (a real regression guard, not a tautology) before finalizing.
+
+**Reminders toggle moved out of the Details tab's own scrolling flow to a docked position directly above
+the footer.** Implemented as its own `flexShrink:0` flex sibling between the scrollable middle region and
+the footer (not literal CSS `position:fixed`, which the panel's own `position:fixed` container would make
+redundant for this purpose) — same effect (never scrolls with the rest of Details tab content, always
+visible directly above the footer) with no pixel-height guessing against the footer's own now-variable
+height. Same on/off exclusivity as before (`RemindersOffBanner` vs. this toggle, never both).
+
+**Duplicate replaces View Invoice as the footer's own secondary button everywhere View Invoice used to
+appear there** (not-yet-overdue-or-reminders-exhausted active invoices, every terminal status) — View
+Invoice is already reachable from the header, so it was redundant there, matching this exact reasoning
+already used for the header itself two rounds ago. Decision on whether Duplicate should ALSO stay listed
+in the More menu once promoted: **removed from More only for the specific statuses where the footer now
+shows it**, kept in More for every other status (`created` — Send/Mark as Sent occupy the footer; an
+overdue active invoice with reminders still available — Send Reminder N occupies it) where Duplicate has
+no other way to be reached. A blanket "always remove from More once promoted anywhere" would make
+Duplicate silently unreachable on `created` invoices and on overdue-with-reminders-available ones, since
+the footer never shows it in those two states — a real functionality regression for a redundancy trade
+that isn't worth it. The conditional exclusion (`footerShowsDuplicate`) is deterministic per status, so a
+user never sees the same action listed twice, but also never loses it.
+
+**Footer compacted** (`FOOTER_BTN_STYLE` — smaller padding/font/gap than `.fos-btn`'s own 10px/20px/0.88rem
+defaults) so primary + secondary + "More" fit one line at normal desktop width even for the longest
+realistic combination — verified by construction against "Send Reminder 4" + "Mark as Sent" + "More"
+specifically, per the report, even though those two buttons never actually co-occur in the real status
+matrix (Send Reminder only shows for an active/overdue status, Mark as Sent only for `created`) — treated
+as a deliberate stress case rather than skipped for not being reachable. No button went icon-only; every
+label stayed real text, only the sizing shrank.
+
+**Mobile header (375px): the invoice number wrapping onto 2 lines and the due-date/countdown line
+wrapping awkwardly**, both fixed with real responsive font shrink at `<=480px` (`.idp-invoice-number`,
+`.idp-due-line`, plus an always-on `white-space:nowrap` under the media query) — never truncation/
+ellipsis for the invoice number, exactly as asked; the due-date line got the identical treatment rather
+than a different (truncating) one, since matching the invoice number's own no-truncation approach is a
+strict superset of what was asked and keeps both lines fully readable. The header's own "View Invoice"
+button drops to icon-only at the same breakpoint (tooltip carries the label — the same established
+pattern the Close button right next to it already uses) to free the room the number/countdown column
+actually needs; this wasn't separately requested but follows directly from where the header's own
+horizontal budget goes at 375px.
+
+**Mobile tabs (375px): Details/Timeline/Claims/Comments used to require horizontal scrolling to reach all
+4** — real padding/font/icon-size shrink at `<=480px` (`.idp-tab-btn`) replaces reliance on scrolling as
+the primary fix (chosen over the icon+short-label alternative — lower-risk, no `TabButton` restructuring
+needed) with the row's own `overflowX:auto` kept only as a harmless fallback, not removed outright, in
+case of an unusually long Claims pending-count.
+
+**Header "More actions" icon**: this codebase's own hard rule is lucide-react exclusively, never a custom
+inline SVG, so the described "3 horizontal tracks with circular handles at different positions" icon was
+matched to lucide-react's own existing `SlidersHorizontal` export (confirmed present in the installed
+`lucide-react@0.577.0`) rather than adding a new local custom-SVG icon component — no custom-SVG pattern
+existed anywhere in this codebase to begin with, so introducing one for a single icon that lucide-react
+already ships would have violated the project's own icon rule for no benefit. Swapped only the one real
+call site (`AppShell.jsx`'s `usePageHeaderActions` mobile fold-in menu trigger) — click behavior and menu
+contents are untouched.
+
+Verification: 215 frontend tests passing (4 new in `useWebSocket.test.jsx`, 3 new in
+`InvoiceDetailPanel.test.jsx` covering the Duplicate/More-menu scoping, plus the existing footer-matrix/
+reminder-exhaustion tests updated for the View Invoice→Duplicate swap) + a clean production `vite build`.
+Honest gap: no live browser/Playwright tool was available in this session to capture real screenshots at
+375px the way prior rounds did — the 375px sizing above is verified by test coverage (jsdom does not
+apply CSS media queries, so the exact breakpoint behavior itself is unverified by the test suite either)
+and by deliberately conservative character-width budget math against the panel's own real 375px content
+width, not by an actual rendered screenshot. Flagged here rather than claimed as visually confirmed.
+
+Docs: this entry. CLAUDE.md status update.
+
 Docs: this entry. CLAUDE.md status update (Module 2 build notes + Section 8's env var list).

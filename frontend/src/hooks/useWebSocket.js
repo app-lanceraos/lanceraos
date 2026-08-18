@@ -22,6 +22,18 @@
 // useNotificationSocket.js) was the only thing that ever ran again, for
 // the rest of the page's life. Callers that don't need this can still
 // ignore it entirely; `connected` is the only thing they read.
+//
+// Real bug fixed: "WebSocket connection ... failed: WebSocket is closed
+// before the connection is established" was showing up in the console
+// on every fast mount/unmount — a panel (InvoiceDetailPanel) opening and
+// closing before the handshake finished, or React StrictMode's dev-only
+// mount->cleanup->mount double-invoke of this same effect. Root cause:
+// cleanup unconditionally called ws.close() even while the socket was
+// still CONNECTING, which is exactly what triggers that browser warning.
+// Fixed by never closing a CONNECTING socket directly — onopen itself
+// checks `stopped` and closes cleanly the moment the handshake actually
+// finishes, and cleanup only calls close() outright once the socket is
+// past CONNECTING.
 import { useEffect, useRef, useState } from 'react'
 
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
@@ -46,13 +58,23 @@ export default function useWebSocket(path, { onMessage } = {}) {
     let stopped = false
 
     const connect = () => {
-      ws = new WebSocket(`${WS_BASE_URL}${path}`)
+      const socket = new WebSocket(`${WS_BASE_URL}${path}`)
+      ws = socket
 
-      ws.onopen = () => {
+      socket.onopen = () => {
+        if (stopped) {
+          // Cleanup already ran while this handshake was still in
+          // flight (fast unmount, or StrictMode's double-invoke). Close
+          // it now that it's actually OPEN, never while CONNECTING —
+          // that's the deferred half of the fix, see this file's own
+          // header comment.
+          socket.close()
+          return
+        }
         attempt = 0
         setConnected(true)
       }
-      ws.onclose = () => {
+      socket.onclose = () => {
         setConnected(false)
         if (stopped) return
         const delay = Math.min(1000 * 2 ** attempt, MAX_RECONNECT_DELAY_MS)
@@ -62,8 +84,8 @@ export default function useWebSocket(path, { onMessage } = {}) {
       // A WebSocket always fires onclose right after onerror — the
       // reconnect is scheduled there, not here, so it's never scheduled
       // twice for the same failure.
-      ws.onerror = () => setConnected(false)
-      ws.onmessage = (event) => {
+      socket.onerror = () => setConnected(false)
+      socket.onmessage = (event) => {
         try {
           onMessageRef.current?.(JSON.parse(event.data))
         } catch {
@@ -77,7 +99,15 @@ export default function useWebSocket(path, { onMessage } = {}) {
     return () => {
       stopped = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
-      ws?.close()
+      // Only close outright once the handshake has actually settled
+      // (OPEN, or already CLOSING/CLOSED). While still CONNECTING, the
+      // onopen guard above finishes the teardown itself the moment the
+      // handshake completes — closing here instead is what produced the
+      // browser's "closed before the connection is established" console
+      // warning on every fast mount/unmount.
+      if (ws && ws.readyState !== WebSocket.CONNECTING) {
+        ws.close()
+      }
     }
   }, [path])
 

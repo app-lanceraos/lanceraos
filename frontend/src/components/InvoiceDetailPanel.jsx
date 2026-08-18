@@ -381,6 +381,10 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   const sendBannerCopy = getSendBannerCopy(invoice)
   const countdown = dueDateCountdown(invoice)
   const busy = busyKey !== null
+  // Docked bottom-right above the footer (moved out of DetailsTab's own
+  // scrolling flow this round) — same on/toggle-visible-vs-off-banner
+  // exclusivity as before, RemindersOffBanner above covers the "off" half.
+  const showRemindersToggle = !isDraft && activeTab === 'details' && ACTIVE_STATUSES.includes(invoice.status) && invoice.reminders_enabled
 
   // The real, backend-built URL (Invoice.portal_view_url — the frontend's
   // own /invoice/:token route, not the raw API host) — never re-derived
@@ -419,6 +423,14 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
 
   const nextReminderNumber = (invoice.reminder_count || 0) + 1
   const remindersExhausted = nextReminderNumber > 4
+  // Duplicate is now the footer's own secondary button (replacing View
+  // Invoice there — see the footer below) for active-not-currently-
+  // overdue-or-reminder-exhausted invoices and every terminal status.
+  // NOT for 'created' (Send/Mark as Sent occupy the footer) or an
+  // overdue active invoice with reminders still available (Send Reminder
+  // N occupies it instead) — Duplicate stays reachable via More only in
+  // those two cases.
+  const footerShowsDuplicate = !isDraft && (isTerminal || (ACTIVE_STATUSES.includes(invoice.status) && !(isOverdue && !remindersExhausted)))
 
   // ── More-menu items — every other existing lifecycle/utility action,
   // each only appearing when actually reachable for the current status
@@ -427,7 +439,14 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   const moreMenuItems = []
   if (!isDraft) {
     const dueDateEditable = ['created', ...ACTIVE_STATUSES].includes(invoice.status)
-    moreMenuItems.push({ key: 'duplicate', label: 'Duplicate', Icon: Copy, onClick: handleDuplicate })
+    // Skip when the footer already shows it as a real button — this
+    // panel's own established rule (see the header's "View Invoice is
+    // already reachable from the header — redundant as a footer
+    // secondary action" reasoning above): never list the same action
+    // twice for one status.
+    if (!footerShowsDuplicate) {
+      moreMenuItems.push({ key: 'duplicate', label: 'Duplicate', Icon: Copy, onClick: handleDuplicate })
+    }
     moreMenuItems.push({ key: 'save_preset', label: 'Save as Preset', Icon: BookmarkPlus, onClick: () => setModal({ kind: 'save_preset' }) })
     if (dueDateEditable) {
       moreMenuItems.push({ key: 'change_due_date', label: 'Change Due Date', Icon: CalendarClock, onClick: () => setModal({ kind: 'change_due_date' }) })
@@ -464,14 +483,14 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: isDraft ? 16 : 4 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                <h2 className="idp-invoice-number" style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                   {invoice.invoice_number || '(unnumbered draft)'}
                 </h2>
                 <InvoiceStatusBadge meta={meta} />
                 {isOverdue && <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[OVERDUE_BADGE.statusKey] }}>{OVERDUE_BADGE.label}</span>}
               </div>
               {!isDraft && (
-                <p style={{
+                <p className="idp-due-line" style={{
                   margin: 0, fontSize: '0.82rem',
                   color: countdown?.overdue ? 'var(--status-red-text)' : 'var(--text-tertiary)',
                   fontWeight: countdown?.overdue ? 600 : 400,
@@ -487,8 +506,11 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
               {!isDraft && portalViewUrl && (
-                <button onClick={openViewInvoice} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.76rem' }}>
-                  <ExternalLink size={13} /> View Invoice
+                <button
+                  onClick={openViewInvoice} data-tooltip="View Invoice"
+                  className="idp-header-view-invoice fos-btn fos-btn-ghost" style={{ fontSize: '0.76rem' }}
+                >
+                  <ExternalLink size={13} /> <span className="idp-view-invoice-label">View Invoice</span>
                 </button>
               )}
               <button onClick={handleClose} aria-label="Close" data-tooltip="Close" className="fos-btn fos-btn-ghost" style={{ padding: 8 }}>
@@ -522,13 +544,14 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
           {toast && <FosAlert type={toast.type} onDismiss={clearToast} style={{ marginBottom: 16 }}>{toast.text}</FosAlert>}
 
           {!isDraft && (
-            // overflowX:'auto' + flexShrink:0 per tab (TabButton) — 4 tabs
-            // (Details/Timeline/Claims/Comments) genuinely don't fit a
-            // 375px panel at their natural width; a real, confirmed mobile
-            // bug this round's own screenshot verification caught (the
-            // Comments label clipped to "Co…" with no way to reach it).
-            // Scrolling beats shrinking text/icons further, which was
-            // already near an unreadable floor.
+            // Real, reported bug (round 2): the previous fix (this row
+            // scrolling horizontally) forced a real, needed tab out of
+            // sight at 375px, with no visible affordance that scrolling
+            // was even possible. .idp-tab-btn's own real padding/font
+            // shrink at <=480px (see the <style> block below) is now
+            // enough to fit all 4 tabs on one line without scrolling —
+            // overflowX:'auto' stays only as a harmless fallback for an
+            // unusually long Claims count.
             <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border-subtle)', overflowX: 'auto' }}>
               <TabButton icon={Receipt} label="Details" active={activeTab === 'details'} onClick={() => setActiveTab('details')} />
               <TabButton icon={Clock} label="Timeline" active={activeTab === 'timeline'} onClick={() => setActiveTab('timeline')} />
@@ -560,7 +583,6 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
               {activeTab === 'details' && (
                 <DetailsTab
                   invoice={invoice} busy={busy}
-                  onToggleReminders={handleToggleReminders}
                   onPauseResume={handlePauseResume}
                   onEditSeries={() => setModal({ kind: 'edit_series' })}
                 />
@@ -593,62 +615,81 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
           )}
         </div>
 
+        {/* ── Reminders toggle — docked bottom-right, directly above the
+            footer, never scrolling with the rest of the Details tab
+            content (moved out of DetailsTab's own flow this round). Its
+            own flex item outside the scrollable middle region above, so
+            it stays put regardless of scroll position. ── */}
+        {showRemindersToggle && (
+          <div style={{ flexShrink: 0, padding: '0 24px 12px', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ padding: '8px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)' }}>Reminders</p>
+              <button onClick={handleToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
+                <Bell size={13} /> On
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ── Fixed footer — a real primary/secondary pair per status, plus
-            "More" for everything else. ── */}
-        <div style={{ flexShrink: 0, padding: '12px 24px', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            "More" for everything else. Sized compactly (smaller padding/
+            font than .fos-btn's own defaults) so the longest realistic
+            combination — e.g. "Send Reminder 4" + "Mark as Sent" + "More" —
+            still fits one line at normal desktop width without going
+            icon-only. ── */}
+        <div style={{ flexShrink: 0, padding: '10px 16px', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {isDraft ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              <button onClick={handleFinalise} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <button onClick={handleFinalise} disabled={busy} className="fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
                 {busyKey === 'finalise' ? <span className="fos-spinner" /> : <CheckCircle2 size={13} />} Finalise
               </button>
-              <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="fos-btn fos-btn-accent" style={{ fontSize: '0.78rem' }}>
+              <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="fos-btn fos-btn-accent" style={FOOTER_BTN_STYLE}>
                 <Send size={13} /> Mark as Sent
               </button>
-              <button onClick={() => setModal({ kind: 'delete' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem', color: 'var(--status-red-text)' }}>
+              <button onClick={() => setModal({ kind: 'delete' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ ...FOOTER_BTN_STYLE, color: 'var(--status-red-text)' }}>
                 <Trash2 size={13} /> Delete
               </button>
             </div>
           ) : (
             <>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {invoice.status === 'created' && (
                   <>
-                    <button onClick={() => setModal({ kind: 'send' })} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
+                    <button onClick={() => setModal({ kind: 'send' })} disabled={busy} className="fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
                       <Mail size={13} /> Send
                     </button>
-                    <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}>
+                    <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
                       <Send size={13} /> Mark as Sent
                     </button>
                   </>
                 )}
                 {ACTIVE_STATUSES.includes(invoice.status) && (
                   <>
-                    <button onClick={() => setModal({ kind: 'add_payment' })} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
+                    <button onClick={() => setModal({ kind: 'add_payment' })} disabled={busy} className="fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
                       <Wallet size={13} /> Add Payment
                     </button>
                     {isOverdue && !remindersExhausted ? (
-                      <button onClick={() => setModal({ kind: 'send_reminder' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}>
+                      <button onClick={() => setModal({ kind: 'send_reminder' })} disabled={busy} className="fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
                         <Bell size={13} /> Send Reminder {nextReminderNumber}
                       </button>
                     ) : (
-                      portalViewUrl && (
-                        <button onClick={openViewInvoice} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}>
-                          <ExternalLink size={13} /> View Invoice
-                        </button>
-                      )
+                      // View Invoice is already reachable from the header —
+                      // redundant as a footer secondary action. Duplicate
+                      // takes its place here (see footerShowsDuplicate).
+                      <button onClick={handleDuplicate} disabled={busy} className="fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
+                        <Copy size={13} /> Duplicate
+                      </button>
                     )}
                   </>
                 )}
                 {isTerminal && (
                   <>
-                    <button onClick={openDownload} disabled={busy} className="fos-btn fos-btn-primary" style={{ fontSize: '0.78rem' }}>
+                    <button onClick={openDownload} disabled={busy} className="fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
                       <Download size={13} /> Download Invoice
                     </button>
-                    {portalViewUrl && (
-                      <button onClick={openViewInvoice} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.78rem' }}>
-                        <ExternalLink size={13} /> View Invoice
-                      </button>
-                    )}
+                    <button onClick={handleDuplicate} disabled={busy} className="fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
+                      <Copy size={13} /> Duplicate
+                    </button>
                   </>
                 )}
               </div>
@@ -656,7 +697,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                 <DropdownMenu
                   trigger="More" showChevron placement="top"
                   triggerClassName="fos-btn fos-btn-ghost"
-                  triggerStyle={{ fontSize: '0.78rem' }}
+                  triggerStyle={FOOTER_BTN_STYLE}
                   items={moreMenuItems}
                 />
               )}
@@ -728,6 +769,29 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       {modal?.kind === 'change_due_date' && (
         <ChangeDueDateModal invoice={invoice} busy={busyKey === 'change_due_date'} onConfirm={handleChangeDueDate} onClose={() => setModal(null)} />
       )}
+
+      <style>{`
+        /* Real, reported bug (mobile screenshot, 375px): the invoice
+           number wrapped onto 2 lines (word-wrap breaking after the
+           hyphens in e.g. "INV-2026-0018"), and the due-date/countdown
+           line wrapped awkwardly too. Both get real responsive font
+           shrink here — never truncation/ellipsis, the full number must
+           always be readable. The header's own "View Invoice" button
+           drops to icon-only (tooltip carries the label, matching the
+           Close button's own established icon-only+tooltip pattern right
+           next to it) to free the room the number/countdown need.
+           Tabs: Details/Timeline/Claims/Comments used to need horizontal
+           scrolling to all be visible at 375px — real padding/font shrink
+           here instead, so all 4 fit on one line with no scrolling. */
+        @media (max-width: 480px) {
+          .idp-invoice-number { font-size: 0.98rem !important; white-space: nowrap; }
+          .idp-due-line { font-size: 0.72rem !important; white-space: nowrap; }
+          .idp-header-view-invoice { padding: 8px !important; }
+          .idp-header-view-invoice .idp-view-invoice-label { display: none; }
+          .idp-tab-btn { padding: 8px 6px !important; font-size: 0.68rem !important; gap: 4px !important; }
+          .idp-tab-btn svg { width: 11px !important; height: 11px !important; }
+        }
+      `}</style>
     </>
   )
 }
@@ -739,9 +803,15 @@ const panelStyle = {
   animation: 'panel-slide-in 0.2s cubic-bezier(0.22,1,0.36,1)',
   display: 'flex', flexDirection: 'column', overflow: 'hidden',
 }
+// Compact footer button sizing (below .fos-btn's own 10px/20px/0.88rem
+// defaults) — real, reported bug: the un-shrunk defaults couldn't fit
+// primary + secondary + "More" on one line at normal desktop width for
+// longer label combinations. Every footer button uses this, never
+// icon-only, so the shrink stays purely a size change.
+const FOOTER_BTN_STYLE = { fontSize: '0.74rem', padding: '7px 12px', gap: 6 }
 
 // ── RemindersOffBanner ───────────────────────────────────────────
-// Exactly one of {this banner, the Details-tab toggle below} ever
+// Exactly one of {this banner, the docked toggle above the footer} ever
 // renders — never both, never neither except a terminal/draft/created
 // invoice (nothing left to remind about, or reminders not yet relevant).
 function RemindersOffBanner({ invoice, busy, onTurnOn }) {
@@ -779,9 +849,8 @@ function SaveStatusIndicator({ state }) {
 // Reordered this round: Client Info -> Invoice/Due Date -> Line Items
 // (+ Subtotal/Total) -> Payment Terms/Currency -> Payment Status
 // (progress bar) -> Recurring (if applicable) -> Reminders section.
-function DetailsTab({ invoice, busy, onToggleReminders, onPauseResume, onEditSeries }) {
+function DetailsTab({ invoice, busy, onPauseResume, onEditSeries }) {
   const showPaymentProgress = Number(invoice.amount_paid) > 0 && invoice.status !== 'paid'
-  const showRemindersToggle = ACTIVE_STATUSES.includes(invoice.status) && invoice.reminders_enabled
 
   return (
     <div>
@@ -856,15 +925,6 @@ function DetailsTab({ invoice, busy, onToggleReminders, onPauseResume, onEditSer
               {invoice.recurring_paused ? 'Resume' : 'Pause'}
             </button>
           </div>
-        </div>
-      )}
-
-      {showRemindersToggle && (
-        <div style={{ padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)' }}>Reminders</p>
-          <button onClick={onToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-            <Bell size={13} /> On
-          </button>
         </div>
       )}
     </div>
@@ -1023,6 +1083,7 @@ function TabButton({ icon: Icon, label, active, onClick }) {
   return (
     <button
       onClick={onClick}
+      className="idp-tab-btn"
       style={{
         display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px',
         background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',

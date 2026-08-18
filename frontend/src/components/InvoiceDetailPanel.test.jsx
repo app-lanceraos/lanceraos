@@ -71,11 +71,11 @@ describe('InvoiceDetailPanel — footer primary/secondary matrix', () => {
     expect(screen.queryByRole('button', { name: /add payment/i })).toBeNull()
   })
 
-  it('sent, not overdue: Add Payment (primary) + View Invoice (secondary)', async () => {
+  it('sent, not overdue: Add Payment (primary) + Duplicate (secondary)', async () => {
     renderPanel({ status: 'sent', days_overdue: 0 })
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
     expect(screen.getByRole('button', { name: /add payment/i })).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: /view invoice/i }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /^duplicate$/i })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /send reminder/i })).toBeNull()
   })
 
@@ -86,18 +86,50 @@ describe('InvoiceDetailPanel — footer primary/secondary matrix', () => {
     expect(screen.getByRole('button', { name: /send reminder 1/i })).toBeTruthy()
   })
 
-  it('paid: Download Invoice (primary) + View Invoice (secondary)', async () => {
+  it('paid: Download Invoice (primary) + Duplicate (secondary)', async () => {
     renderPanel({ status: 'paid', amount_paid: '500.00', outstanding_amount: '0.00' })
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
     expect(screen.getByRole('button', { name: /download invoice/i })).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: /view invoice/i }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /^duplicate$/i })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /add payment/i })).toBeNull()
   })
 
-  it('cancelled: Download Invoice (primary) + View Invoice (secondary), same as other terminal statuses', async () => {
+  it('cancelled: Download Invoice (primary) + Duplicate (secondary), same as other terminal statuses', async () => {
     renderPanel({ status: 'cancelled' })
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
     expect(screen.getByRole('button', { name: /download invoice/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^duplicate$/i })).toBeTruthy()
+  })
+})
+
+describe('InvoiceDetailPanel — Duplicate promoted to footer secondary (replacing View Invoice)', () => {
+  it('is not also listed in the More menu once the footer already shows it (sent, not overdue)', async () => {
+    renderPanel({ status: 'sent', days_overdue: 0 })
+    await waitFor(() => expect(screen.getByRole('button', { name: /^duplicate$/i })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /^more/i }))
+    expect(screen.queryByRole('menuitem', { name: /duplicate/i })).toBeNull()
+  })
+
+  it('stays in the More menu when the footer shows Send Reminder N instead (overdue, reminders available)', async () => {
+    renderPanel({ status: 'sent', days_overdue: 5, reminder_count: 0 })
+    await waitFor(() => expect(screen.getByRole('button', { name: /send reminder 1/i })).toBeTruthy())
+    expect(screen.queryByRole('button', { name: /^duplicate$/i })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^more/i }))
+    expect(screen.getByRole('menuitem', { name: /duplicate/i })).toBeTruthy()
+  })
+
+  it('clicking the footer Duplicate button calls the real duplicate endpoint', async () => {
+    const invoice = invoiceFixture({ status: 'sent', days_overdue: 0 })
+    mock.onGet(`/invoices/${invoice.id}/`).reply(200, invoice)
+    mock.onGet(`/invoices/${invoice.id}/timeline/`).reply(200, { results: [] })
+    mock.onGet(`/invoices/${invoice.id}/claims/`).reply(200, [])
+    mock.onPost(`/invoices/${invoice.id}/duplicate/`).reply(200, { ...invoiceFixture({ id: 'inv-2', status: 'draft' }) })
+    render(<InvoiceDetailPanel invoiceId={invoice.id} onClose={() => {}} onChanged={() => {}} />)
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^duplicate$/i })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /^duplicate$/i }))
+
+    await waitFor(() => expect(mock.history.post.some((r) => r.url === `/invoices/${invoice.id}/duplicate/`)).toBe(true))
   })
 })
 
@@ -112,11 +144,11 @@ describe('InvoiceDetailPanel — Send Reminder numbering + exhaustion', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /send reminder 4/i })).toBeTruthy())
   })
 
-  it('once 4 have been sent, the button disappears entirely and falls back to View Invoice', async () => {
+  it('once 4 have been sent, the button disappears entirely and falls back to Duplicate', async () => {
     renderPanel({ status: 'sent', days_overdue: 35, reminder_count: 4 })
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
     expect(screen.queryByRole('button', { name: /send reminder/i })).toBeNull()
-    expect(screen.getAllByRole('button', { name: /view invoice/i }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /^duplicate$/i })).toBeTruthy()
   })
 
   it('sending a reminder calls the real endpoint and refreshes from the response', async () => {
