@@ -15,7 +15,19 @@
 // displayed figure) — Outstanding/Overdue never get one, deliberately:
 // a delta on a balance-type figure would need a historical snapshot
 // that doesn't exist and risks showing a confidently wrong number.
-import { useEffect, useRef, useState } from 'react'
+//
+// Real, reported bug this pass: the mobile layout used to be a
+// horizontally-swipeable carousel (one card at ~82% width, the other two
+// requiring a swipe/scroll to reach) — the actual complaint was that all
+// 3 KPIs should be visible AT ONCE on any device, never requiring a
+// scroll to see the others. The swipeable row is removed entirely;
+// there's now exactly one grid, always exactly 3 columns side by side,
+// with typography/padding that scales down at narrower widths instead of
+// the layout itself changing shape. Below a phone-width breakpoint the
+// Collected card's delta line also drops to just the arrow + percentage
+// (no "vs last month" / amount text) — the fuller text still fits fine
+// at tablet width and above, so it's kept there.
+import { useEffect, useState } from 'react'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -55,31 +67,30 @@ export default function InvoiceKPIStrip() {
     <div style={{ marginBottom: 20 }}>
       <KPIControls period={period} onPeriodChange={setPeriod} currency={effectiveCurrency} onCurrencyChange={setCurrency} />
 
-      {/* Desktop: static grid. Mobile (≤768px): swipeable row + dot
-          indicator — both always rendered, CSS media query toggles which
-          is visible, matching this app's existing responsive convention
-          (Invoices.jsx/Clients.jsx's own filter-row-desktop/mobile split)
-          rather than a JS isMobile prop. */}
-      <div className="kpi-grid-desktop">
-        <div className="kpi-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-          {cards.map((c) => <KPICard key={c.key} card={c} loading={loading} currency={effectiveCurrency} />)}
-        </div>
-      </div>
-      <div className="kpi-swipe-mobile" style={{ display: 'none' }}>
-        <MobileSwipeRow cards={cards} loading={loading} currency={effectiveCurrency} />
+      {/* Always exactly 3 columns, side by side, at every viewport width —
+          never a scroll/swipe to see the other cards. Typography/padding
+          scale down at narrower widths (see the media queries below)
+          instead of the grid itself reflowing. */}
+      <div className="kpi-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+        {cards.map((c) => <KPICard key={c.key} card={c} loading={loading} currency={effectiveCurrency} />)}
       </div>
 
       <style>{`
         @media (max-width: 939px) {
-          .kpi-strip { grid-template-columns: repeat(3, 1fr) !important; gap: 6px !important; }
-          .kpi-card { padding: 8px 8px !important; }
-          .kpi-card-label { font-size: 0.58rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-          .kpi-card-value { font-size: 0.92rem !important; }
-          .kpi-card-count { font-size: 0.62rem !important; }
+          .kpi-strip { gap: 8px !important; }
+          .kpi-card { padding: 10px 10px !important; }
+          .kpi-card-label { font-size: 0.62rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .kpi-card-value { font-size: 1rem !important; }
+          .kpi-card-count { font-size: 0.66rem !important; }
         }
-        @media (max-width: 768px) {
-          .kpi-grid-desktop { display: none !important; }
-          .kpi-swipe-mobile { display: block !important; }
+        @media (max-width: 480px) {
+          .kpi-strip { gap: 5px !important; }
+          .kpi-card { padding: 7px 6px !important; border-radius: var(--radius-md) !important; }
+          .kpi-card-label { font-size: 0.52rem !important; }
+          .kpi-card-value { font-size: 0.8rem !important; }
+          .kpi-card-count { font-size: 0.56rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .kpi-delta-full { display: none !important; }
+          .kpi-delta-compact { display: flex !important; }
         }
       `}</style>
     </div>
@@ -110,61 +121,6 @@ function KPIControls({ period, onPeriodChange, currency, onCurrencyChange }) {
           .kpi-controls select { flex: 1; min-width: 0 !important; }
         }
       `}</style>
-    </div>
-  )
-}
-
-// Horizontally swipeable row with a dot-page indicator — mobile only.
-// Real scroll-snap (not a fake transform carousel), each card is
-// `scroll-snap-align: center` at ~82% of the container so the next card
-// peeks at the edge. The active dot is driven by a real scroll listener
-// scoped to this row's own container, not window scroll.
-function MobileSwipeRow({ cards, loading, currency }) {
-  const scrollerRef = useRef(null)
-  const [activeIndex, setActiveIndex] = useState(0)
-
-  useEffect(() => {
-    const el = scrollerRef.current
-    if (!el) return
-    let raf = null
-    const onScroll = () => {
-      if (raf) cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        const cardWidth = el.scrollWidth / cards.length
-        setActiveIndex(Math.round(el.scrollLeft / cardWidth))
-      })
-    }
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
-  }, [cards.length])
-
-  return (
-    <div>
-      <div
-        ref={scrollerRef}
-        style={{
-          display: 'flex', gap: 10, overflowX: 'auto', scrollSnapType: 'x mandatory',
-          WebkitOverflowScrolling: 'touch', paddingBottom: 4,
-        }}
-      >
-        {cards.map((c) => (
-          <div key={c.key} style={{ flex: '0 0 82%', scrollSnapAlign: 'center' }}>
-            <KPICard card={c} loading={loading} currency={currency} />
-          </div>
-        ))}
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 8 }}>
-        {cards.map((c, i) => (
-          <span
-            key={c.key}
-            style={{
-              width: 6, height: 6, borderRadius: '50%',
-              background: i === activeIndex ? 'var(--accent)' : 'var(--border-subtle)',
-              transition: 'background 0.15s ease',
-            }}
-          />
-        ))}
-      </div>
     </div>
   )
 }
@@ -202,11 +158,27 @@ function DeltaIndicator({ delta, currency }) {
 
   const changeLabel = pct !== null ? `${Math.abs(pct).toFixed(1)}% vs last month` : 'New vs last month'
   const amountLabel = pct !== null ? ` (${isUp ? '+' : '−'}${formatMoney(Math.abs(amount), currency)})` : ''
+  const pctLabel = pct !== null ? `${Math.abs(pct).toFixed(1)}%` : 'New'
 
   return (
-    <p style={{ margin: '4px 0 0', fontSize: '0.7rem', color, display: 'flex', alignItems: 'center', gap: 3 }}>
-      <Icon size={11} />
-      <span>{changeLabel}{amountLabel}</span>
-    </p>
+    <>
+      {/* Full text — "12.3% vs last month (+$150)" — fits comfortably
+          from tablet width up; hidden below the phone breakpoint (see
+          this file's own media queries) in favor of the compact variant
+          right below. Both are always rendered — CSS toggles which is
+          visible, matching this component's existing responsive
+          convention rather than a JS width check. */}
+      <p className="kpi-delta-full" style={{ margin: '4px 0 0', fontSize: '0.7rem', color, display: 'flex', alignItems: 'center', gap: 3 }}>
+        <Icon size={11} />
+        <span>{changeLabel}{amountLabel}</span>
+      </p>
+      {/* Compact — just the arrow + percentage, no "vs last month" text —
+          the only thing that reliably fits a ~1/3-viewport-wide card at
+          phone width. */}
+      <p className="kpi-delta-compact" style={{ margin: '4px 0 0', fontSize: '0.66rem', color, display: 'none', alignItems: 'center', gap: 2 }}>
+        <Icon size={11} />
+        <span>{pctLabel}</span>
+      </p>
+    </>
   )
 }

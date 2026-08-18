@@ -4458,3 +4458,32 @@ footer state, and the Comments tab's fixed-header/scrollable-thread/fixed-input 
 
 Docs: this entry. No CLAUDE.md status-table change — this round is bug fixes to already-"built"
 functionality, not new scope.
+
+---
+
+Date: 18 August 2026
+Decision: `InvoiceKPIStrip.jsx`'s mobile layout — the horizontally-swipeable carousel (one card at
+~82% width, `scroll-snap`, a dot-page indicator) is removed entirely and replaced with a single grid
+that always shows exactly 3 columns, at every viewport width, with typography/padding scaling down
+instead of the layout changing shape. Below 480px specifically, the Collected card's delta line also
+switches from the full "12.3% vs last month (+$150)" to a compact "↑ 12.3%" (arrow + bare percentage,
+no comparison text) — both variants are always rendered, a CSS class toggles which is visible (matching
+this component's own established responsive convention, and `useAppTooltip.js`/`DropdownMenu.jsx`'s
+convention of preferring CSS-driven visibility over a JS width check elsewhere in this codebase).
+Reason: real user report — the swipe carousel meant only one of the 3 KPI cards was ever visible at a
+time on a phone or tablet, requiring a scroll/swipe to see the other two; the actual requirement was all
+3 visible at once, on every device, never a scroll to reach the others. Confirmed with a real
+`document.documentElement.scrollWidth` check at 320/375/480/600/768/1280px (no horizontal overflow at
+any of them) plus live screenshots — 320px is the narrowest width this app is expected to support and
+was the tightest real test of "3 cards, no scroll, still readable."
+Alternatives considered: keeping the swipe carousel but just making the dots more obvious — rejected,
+doesn't address the actual complaint (still requires an extra interaction to see 2 of 3 KPIs); a 2-column
+grid with the 3rd card wrapping to its own row — rejected, the user asked for all 3 fitting side by side,
+not a partial reflow.
+Verification: `InvoiceKPIStrip.test.jsx` — a new suite confirming exactly one `.kpi-strip` grid exists
+(no `.kpi-swipe-mobile`/scroll markup left over), the grid is always `repeat(3, 1fr)` with 3 `.kpi-card`
+children, and the compact delta variant's text content is exactly the bare percentage (or "New"), never
+containing "vs last month" — 200 frontend tests passing total, production `vite build` clean, real
+Playwright screenshots at 320/375/480/600/768px confirming the compact-vs-full delta boundary lands
+exactly at the intended breakpoint and nothing clips or wraps unreadably at the narrowest supported
+width.

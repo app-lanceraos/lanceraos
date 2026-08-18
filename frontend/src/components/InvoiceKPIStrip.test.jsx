@@ -88,9 +88,7 @@ describe('InvoiceKPIStrip — Collected delta', () => {
   it('shows the delta at period=this_month (the default)', async () => {
     mock.onGet('/invoices/summary/').reply(200, summaryFixture())
     render(<InvoiceKPIStrip />)
-    // Rendered twice — once in the desktop grid, once in the mobile
-    // swipe row (both always mounted, CSS toggles which is visible).
-    await waitFor(() => expect(screen.getAllByText(/150\.0% vs last month/i).length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getByText(/150\.0% vs last month/i)).toBeTruthy())
   })
 
   it('hides the delta once period is no longer this_month', async () => {
@@ -107,5 +105,58 @@ describe('InvoiceKPIStrip — Collected delta', () => {
     }))
     render(<InvoiceKPIStrip />)
     await waitFor(() => expect(screen.getAllByText(/New vs last month/i).length).toBeGreaterThan(0))
+  })
+})
+
+// Real, reported bug this pass: the mobile layout used to require a
+// horizontal swipe/scroll to see all 3 KPI cards. Fixed by removing the
+// swipeable carousel entirely — there is now exactly one grid, always 3
+// columns, with a CSS-toggled compact delta (icon + bare percentage, no
+// "vs last month" text) below the phone breakpoint. jsdom doesn't apply
+// media queries, so both the full and compact variants are always
+// present in the DOM at once here — this suite checks their CONTENT is
+// correct and that no carousel/scroll markup exists at all, not which
+// one is visually shown at a given width (that's a CSS concern, verified
+// separately via live screenshots).
+describe('InvoiceKPIStrip — no horizontal scroll/carousel; compact delta variant', () => {
+  it('renders exactly one grid with all 3 cards — no swipeable/scrollable row', async () => {
+    mock.onGet('/invoices/summary/').reply(200, summaryFixture())
+    const { container } = render(<InvoiceKPIStrip />)
+    await waitFor(() => expect(screen.getByText('Collected')).toBeTruthy())
+
+    expect(container.querySelectorAll('.kpi-strip').length).toBe(1)
+    expect(container.querySelector('.kpi-swipe-mobile')).toBeNull()
+    expect(container.querySelector('[style*="overflow-x"]')).toBeNull()
+  })
+
+  it('always renders exactly 3 columns (Outstanding, Collected, Overdue) side by side', async () => {
+    mock.onGet('/invoices/summary/').reply(200, summaryFixture())
+    const { container } = render(<InvoiceKPIStrip />)
+    await waitFor(() => expect(screen.getByText('Collected')).toBeTruthy())
+
+    const grid = container.querySelector('.kpi-strip')
+    expect(grid.style.gridTemplateColumns).toBe('repeat(3, 1fr)')
+    expect(grid.querySelectorAll('.kpi-card').length).toBe(3)
+  })
+
+  it('the compact delta variant carries the arrow + bare percentage, with no "vs last month" text', async () => {
+    mock.onGet('/invoices/summary/').reply(200, summaryFixture())
+    const { container } = render(<InvoiceKPIStrip />)
+    await waitFor(() => expect(screen.getByText(/150\.0% vs last month/i)).toBeTruthy())
+
+    const compact = container.querySelector('.kpi-delta-compact')
+    expect(compact).toBeTruthy()
+    expect(compact.textContent).toBe('150.0%')
+    expect(compact.textContent).not.toMatch(/vs last month/i)
+  })
+
+  it('the compact variant shows "New" (not a percentage) when there was no prior-month activity', async () => {
+    mock.onGet('/invoices/summary/').reply(200, summaryFixture({
+      total_paid: { count: 1, total: '50.00', unconverted_count: 0, delta: { current: '50.00', previous: '0.00', amount_change: '50.00', pct_change: null } },
+    }))
+    const { container } = render(<InvoiceKPIStrip />)
+    await waitFor(() => expect(screen.getByText(/New vs last month/i)).toBeTruthy())
+
+    expect(container.querySelector('.kpi-delta-compact').textContent).toBe('New')
   })
 })
