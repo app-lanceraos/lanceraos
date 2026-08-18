@@ -252,11 +252,21 @@ class InvoiceListSerializer(serializers.ModelSerializer):
     days_overdue = serializers.IntegerField(read_only=True)
     outstanding_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     is_editable = serializers.BooleanField(read_only=True)
+    # Exposes the real, pre-built URL (Invoice.portal_view_url) so the
+    # frontend never has to re-derive it client-side from view_token —
+    # deriving the same URL in two places (this backend property, plus a
+    # hand-built '${api.defaults.baseURL}/invoices/portal/view/...'
+    # string on the frontend) is exactly how the raw backend host used to
+    # leak into "View Invoice"/"Copy Invoice Link" even after
+    # portal_view_url itself was fixed to point at the frontend — see
+    # DECISIONS.md's real-frontend-domain-invoice-view-page entry. One
+    # authoritative source, consumed directly.
+    portal_view_url = serializers.CharField(read_only=True)
 
     class Meta:
         model = Invoice
         fields = [
-            'id', 'invoice_number', 'status', 'sent_via_platform', 'view_token',
+            'id', 'invoice_number', 'status', 'sent_via_platform', 'view_token', 'portal_view_url',
             'client', 'client_name', 'client_email', 'client_company', 'client_address', 'client_phone',
             'currency', 'subtotal', 'tax_rate', 'tax_amount', 'discount_amount', 'total', 'amount_paid',
             'refunded_amount',

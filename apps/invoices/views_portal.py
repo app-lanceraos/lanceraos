@@ -47,6 +47,7 @@ from core.observability import get_client_ip, get_user_agent
 from apps.clients.portal import is_freelancer_previewing_portal, issue_or_renew_session, resolve_session_from_request
 
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
+from .email_service import fetch_invoice_pdf_bytes
 from .models import Invoice, InvoiceComment, InvoiceViewEvent
 from .pdf_generator import render_invoice_portal_html
 from .serializers_claims import PaymentClaimSerializer, PortalClaimCreateSerializer
@@ -206,6 +207,43 @@ def portal_invoice_view_html(request, view_token):
 
     _record_invoice_view_if_appropriate(invoice, request)
 
+    return response
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def portal_invoice_pdf_download(request, view_token):
+    """
+    Real, public PDF download for the invoice VIEW page (frontend's own
+    `/invoice/<token>/` route, see DECISIONS.md) — added alongside that
+    page since the shared invoice templates have no Download link of
+    their own (confirmed directly: no template references pdf_url or any
+    download affordance), and the freelancer-facing GET
+    /api/invoices/<pk>/pdf/ is IsAuthenticated/owner-scoped, unreachable
+    by an actual client with no LanceraOS account. Same
+    view_token-is-the-credential trust model as portal_invoice_view_html
+    right above (AllowAny, real 404 for an unknown token) — this is a
+    read-only, side-effect-free action (no view-tracking, no session
+    minting) unlike that view, so it doesn't duplicate any of its side
+    effects.
+
+    Reuses fetch_invoice_pdf_bytes — the exact same self-heal chain
+    invoice_pdf/invoice_send/the reminder task all already rely on, not a
+    second, parallel fetch implementation — so this download is resilient
+    to the same Cloudinary ACL condition invoice_pdf's own rework fixes
+    for the freelancer-facing side (see that view's own docstring).
+    """
+    invoice = get_object_or_404(Invoice, view_token=view_token)
+
+    pdf_bytes = fetch_invoice_pdf_bytes(invoice)
+    if pdf_bytes is None:
+        return Response(
+            {'error': "Could not prepare this invoice's PDF right now. Please try again shortly."},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    response = HttpResponse(pdf_bytes, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{invoice.invoice_number or "invoice"}.pdf"'
     return response
 
 

@@ -30,6 +30,7 @@ import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
 import ClientPortal from '@/pages/portal/ClientPortal'
 import PortalEnter from '@/pages/portal/PortalEnter'
+import InvoiceView from '@/pages/InvoiceView'
 
 export default function App() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -71,13 +72,20 @@ export default function App() {
         {/* Client Portal (Step 12) — its own auth entirely (a portal-
             session cookie, apps.clients.cookies), unrelated to
             useAuthStore/PrivateRoute, so neither route is wrapped in
-            either. The individual invoice VIEW deliberately has NO
-            React route at all — clicking an invoice in ClientPortal.jsx
-            navigates directly to the backend's HTML-serving endpoint
-            (a plain <a href>, not client-side routing); see that file's
-            own comment and DECISIONS.md for why. */}
+            either. */}
         <Route path="/portal" element={<ClientPortal />} />
         <Route path="/portal/enter/:token" element={<PortalEnter />} />
+
+        {/* The individual invoice VIEW — REWORKED (real frontend-domain
+            invoice view page, see DECISIONS.md): now a real React route
+            after all, superseding the earlier "non-SPA-navigation
+            exception" this comment used to describe. Public/shell-less
+            like the routes above (Invoice.portal_view_url now points
+            here instead of the raw backend host) — InvoiceView.jsx is a
+            thin wrapper that fetches the SAME backend-rendered HTML and
+            displays it, never a second reimplementation of the invoice
+            layout; see that file's own comment. */}
+        <Route path="/invoice/:token" element={<InvoiceView />} />
 
         {/* Private — require an active session */}
         {/* Onboarding is deliberately NOT wrapped in AppShell — it's a

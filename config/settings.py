@@ -320,14 +320,15 @@ DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='LanceraOS <noreply@lance
 RESEND_FROM_NAME = env('RESEND_FROM_NAME', default='LanceraOS')
 
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:5173')
-# Step 12 — the portal invoice-view page is a real Django-served HTML
-# endpoint with no React wrapper (see apps/invoices/views_portal.py's own
-# docstring), so email links to it need the BACKEND's own public URL, not
-# FRONTEND_URL. Deliberately a separate setting from the frontend's own
-# VITE_API_URL (same real value in production, api.lanceraos.com) rather
-# than Django reading a Vite-prefixed var — keeps the two tools' configs
-# independent even though they happen to agree today.
-BACKEND_URL = env('BACKEND_URL', default='http://localhost:8000')
+# Used to build every client-facing link (Invoice.portal_view_url, the
+# client-portal magic-link resend flow, etc.) — including, as of 18
+# August 2026, the invoice VIEW page itself: apps/invoices/models.py's
+# Invoice.portal_view_url now points at the frontend's own real React
+# route (/invoice/:token, InvoiceView.jsx) instead of the raw backend/API
+# host, so a client always sees the actual product domain in their
+# address bar. See DECISIONS.md's real-frontend-domain-invoice-view-page
+# entry — that same entry is why BACKEND_URL (which existed solely to
+# build that one link) was removed entirely rather than left unused.
 
 # Step 13 — apps/invoices/views_email.py's inbound email-reply webhook
 # (POST /api/invoices/email/incoming/) authenticates the real Cloudflare

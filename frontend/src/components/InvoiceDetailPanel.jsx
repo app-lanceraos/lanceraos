@@ -382,7 +382,12 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   const countdown = dueDateCountdown(invoice)
   const busy = busyKey !== null
 
-  const portalViewUrl = invoice.view_token ? `${api.defaults.baseURL}/invoices/portal/view/${invoice.view_token}/` : null
+  // The real, backend-built URL (Invoice.portal_view_url — the frontend's
+  // own /invoice/:token route, not the raw API host) — never re-derived
+  // client-side. Re-deriving it here used to be exactly how the backend
+  // host leaked into "View Invoice"/"Copy Invoice Link" even after
+  // portal_view_url itself pointed at the frontend — see DECISIONS.md.
+  const portalViewUrl = invoice.portal_view_url || null
   const pdfDownloadUrl = `${api.defaults.baseURL}/invoices/${invoice.id}/pdf/`
   const openViewInvoice = () => portalViewUrl && window.open(portalViewUrl, '_blank', 'noopener,noreferrer')
   const openDownload = () => window.open(pdfDownloadUrl, '_blank', 'noopener,noreferrer')

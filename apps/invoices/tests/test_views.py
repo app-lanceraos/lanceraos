@@ -85,6 +85,12 @@ class InvoiceCRUDTests(InvoicesAPITestCase):
         self.assertIsNone(body['invoice_number'])  # unassigned until finalise
         self.assertTrue(body['view_token'])
         self.assertTrue(body['is_editable'])
+        # Real frontend-domain invoice view page follow-up (see
+        # DECISIONS.md) — exposed so InvoiceDetailPanel's "View Invoice"/
+        # "Copy Invoice Link" use this authoritative URL directly rather
+        # than re-deriving it client-side from view_token.
+        self.assertIn('/invoice/', body['portal_view_url'])
+        self.assertIn(body['view_token'], body['portal_view_url'])
 
     def test_create_allows_bare_empty_draft(self):
         """

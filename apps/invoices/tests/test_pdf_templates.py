@@ -215,7 +215,11 @@ class PdfTemplateRenderTests(TestCase):
         """
         invoice = make_invoice_with_items(self.user, n_items=1)
         self.assertEqual(invoice.payment_page_url, invoice.portal_view_url)
-        self.assertIn(f'/api/invoices/portal/view/{invoice.view_token}/', invoice.payment_page_url)
+        # portal_view_url (and therefore payment_page_url, and therefore
+        # the PDF's own QR code) now points at the frontend's real
+        # /invoice/:token page, not the raw backend host — see
+        # DECISIONS.md's real-frontend-domain-invoice-view-page entry.
+        self.assertIn(f'/invoice/{invoice.view_token}/', invoice.payment_page_url)
 
     def test_logo_and_signature_and_qr_slots_are_conditional_not_hardcoded(self):
         """No template should reference the old local test asset filenames anymore."""

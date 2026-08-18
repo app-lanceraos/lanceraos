@@ -17,7 +17,7 @@ third-party service to pass.
 import base64
 from datetime import date
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import fitz  # PyMuPDF
 from django.template.loader import render_to_string
@@ -195,7 +195,22 @@ class RenderPipelineTests(TestCase):
 
 
 class InvoicePdfEndpointTests(InvoicesAPITestCase):
-    """GET /api/invoices/<pk>/pdf/ — the spec's exact draft/created-live-render vs sent-or-beyond-stored-redirect rule."""
+    """
+    GET /api/invoices/<pk>/pdf/ — draft still live-renders inline
+    (nothing frozen yet). REWORKED (Cloudinary-ACL-401 follow-up — see
+    DECISIONS.md): created-or-beyond used to 302-redirect straight to the
+    stored Cloudinary secure_url, surfacing that account's real ACL 401
+    directly to the browser; it now proxies the actual bytes through this
+    endpoint via fetch_invoice_pdf_bytes (mocked here at the same
+    apps.invoices.views.fetch_invoice_pdf_bytes patch point
+    ResendInvoiceTests already established — the real self-heal chain
+    itself, including its Cloudinary-401 resilience, is covered directly
+    by email_service's own tests, not re-tested here), with a real
+    Content-Disposition: attachment (the "Download Invoice" button's own
+    name, and the only real consumer of this branch — "View Invoice"
+    never touches this endpoint at all, it's the separate HTML
+    portal_invoice_view_html route).
+    """
 
     def test_live_renders_for_draft(self):
         invoice = self._invoice(status='draft')
@@ -204,28 +219,59 @@ class InvoicePdfEndpointTests(InvoicesAPITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp['Content-Type'], 'application/pdf')
         self.assertTrue(resp.content.startswith(b'%PDF'))
+        self.assertNotIn('Content-Disposition', resp)  # inline preview, not a forced download
 
-    def test_live_renders_for_created(self):
+    @patch('apps.invoices.views.fetch_invoice_pdf_bytes')
+    def test_proxies_real_bytes_for_created(self, mock_fetch):
+        mock_fetch.return_value = b'%PDF-fake-bytes'
         invoice = self._invoice(status='created')
         resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': invoice.pk}))
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.content.startswith(b'%PDF'))
+        self.assertEqual(resp.content, b'%PDF-fake-bytes')
+        mock_fetch.assert_called_once_with(invoice)
 
-    def test_redirects_to_stored_url_when_sent_with_pdf_url(self):
+    @patch('apps.invoices.views.fetch_invoice_pdf_bytes')
+    def test_proxies_stored_pdf_bytes_when_sent(self, mock_fetch):
+        mock_fetch.return_value = b'%PDF-real-invoice-bytes'
         invoice = self._invoice(status='sent', sent_at='2026-08-01T00:00:00Z')
         invoice.pdf_url = 'https://res.cloudinary.com/demo/raw/upload/invoice_stored.pdf'
         invoice.save(update_fields=['pdf_url'])
         resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': invoice.pk}))
-        self.assertEqual(resp.status_code, 302)
-        self.assertEqual(resp['Location'], 'https://res.cloudinary.com/demo/raw/upload/invoice_stored.pdf')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+        self.assertEqual(resp.content, b'%PDF-real-invoice-bytes')
+        self.assertIn('attachment', resp['Content-Disposition'])
+        self.assertIn(invoice.invoice_number, resp['Content-Disposition'])
+        # Never a redirect — this is the whole point of the fix: even if
+        # Cloudinary's stored URL itself is unreachable from a raw
+        # unauthenticated browser GET, this endpoint's own backend
+        # credentials (inside fetch_invoice_pdf_bytes) can still reach it,
+        # so the browser is never handed a broken redirect to follow.
+        self.assertNotEqual(resp.status_code, 302)
 
-    def test_falls_back_to_live_render_when_sent_but_pdf_url_blank(self):
-        """A genuine anomaly (mark-sent's render+store failed) — must not 404, falls back to a live render."""
+    @patch('apps.invoices.views.fetch_invoice_pdf_bytes')
+    def test_falls_back_to_live_render_when_sent_but_pdf_url_blank(self, mock_fetch):
+        """
+        A genuine anomaly (mark-sent's render+store failed) — must not
+        404. fetch_invoice_pdf_bytes' own self-heal chain (a blank
+        pdf_url is treated like a failed fetch) is what actually produces
+        a real fallback render in production; here it's mocked at the
+        view's own patch point like every other case in this class, since
+        that chain's real behavior is this function's own responsibility
+        to test, not invoice_pdf's.
+        """
+        mock_fetch.return_value = b'%PDF-live-fallback'
         invoice = self._invoice(status='sent', sent_at='2026-08-01T00:00:00Z')
         self.assertEqual(invoice.pdf_url, '')
         resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': invoice.pk}))
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.content.startswith(b'%PDF'))
+        self.assertEqual(resp.content, b'%PDF-live-fallback')
+
+    @patch('apps.invoices.views.fetch_invoice_pdf_bytes', return_value=None)
+    def test_returns_502_when_every_fetch_render_path_fails(self, mock_fetch):
+        invoice = self._invoice(status='sent', sent_at='2026-08-01T00:00:00Z')
+        resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 502)
 
     def test_never_reached_for_another_users_invoice(self):
         from apps.users.models import User
@@ -235,6 +281,43 @@ class InvoicePdfEndpointTests(InvoicesAPITestCase):
         their_invoice.save(update_fields=['user'])
         resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': their_invoice.pk}))
         self.assertEqual(resp.status_code, 404)
+
+    @patch('apps.invoices.email_service.requests.get')
+    def test_download_still_works_end_to_end_under_the_real_cloudinary_401_condition(self, mock_get):
+        """
+        The actual point of this whole rework: this account's stored raw/
+        PDF assets genuinely 401 on a direct unauthenticated GET (see
+        upload_pdf_bytes's own docstring — a real, confirmed Cloudinary
+        Console ACL restriction, not hypothetical). This proves the
+        fix holds under THAT real condition specifically, exercising the
+        real fetch_invoice_pdf_bytes self-heal chain end to end through
+        this actual view (nothing mocked at the view's own level, unlike
+        this class's other tests above) — not just that the view
+        correctly delegates to an already-mocked function. Mirrors
+        test_send.py's own test_pdf_fetch_failure_self_heals_via_reupload_
+        and_still_sends, which proves the identical thing for /send/ — the
+        exact same underlying chain now backs both consumers.
+        """
+        import requests
+        mock_get.side_effect = requests.RequestException('401 unauthorized — deny or ACL failure')
+        invoice = self._invoice(status='sent', sent_at='2026-08-01T00:00:00Z')
+        invoice.pdf_url = 'https://res.cloudinary.com/demo/raw/upload/invoice_401.pdf'
+        invoice.save(update_fields=['pdf_url'])
+
+        with patch('apps.invoices.email_service.upload_pdf_bytes') as mock_upload:
+            mock_upload.return_value = {
+                'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_healed.pdf',
+                'public_id': 'lanceraos/invoices/invoice_healed.pdf',
+            }
+            resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': invoice.pk}))
+
+        # A real, valid PDF — never a 302 to the still-401 URL, never a
+        # Cloudinary error page reaching the browser.
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+        self.assertTrue(resp.content.startswith(b'%PDF'))
+        self.assertIn('attachment', resp['Content-Disposition'])
+        mock_upload.assert_called_once()  # the self-heal re-upload attempt actually ran
 
 
 class FinalisePdfStoreTests(InvoicesAPITestCase):
@@ -263,7 +346,17 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
         self.assertIsNotNone(invoice.finalised_at)
 
     def test_pdf_never_rerendered_on_subsequent_gets(self):
-        """Once stored, GET .../pdf/ must redirect to the SAME url forever — never re-render, per the frozen-artifact guarantee."""
+        """
+        Once stored, GET .../pdf/ must fetch the SAME frozen pdf_url
+        forever (never re-render/re-store it) — per the frozen-artifact
+        guarantee. store_invoice_pdf (finalise's own one-time render+
+        upload) stays mocked as before; fetch_invoice_pdf_bytes (this
+        endpoint's own fetch, proxying real bytes rather than redirecting
+        since the Cloudinary-ACL-401 follow-up) is mocked separately so
+        this test proves the real, distinct thing each call is
+        responsible for: finalise stores once, GET fetches (not
+        re-renders) every time after.
+        """
         invoice = self._invoice(status='draft')
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store:
@@ -272,12 +365,15 @@ class FinalisePdfStoreTests(InvoicesAPITestCase):
                 'public_id': 'lanceraos/invoices/invoice_frozen.pdf',
             }
             self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}), {})
+        mock_store.assert_called_once()  # finalise's own one-time render+store
 
+        with patch('apps.invoices.views.fetch_invoice_pdf_bytes') as mock_fetch:
+            mock_fetch.return_value = b'%PDF-frozen-bytes'
             for _ in range(3):
                 resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': invoice.pk}))
-                self.assertEqual(resp.status_code, 302)
-                self.assertEqual(resp['Location'], 'https://res.cloudinary.com/demo/raw/upload/invoice_frozen.pdf')
-            mock_store.assert_called_once()  # still exactly once, across every subsequent GET
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.content, b'%PDF-frozen-bytes')
+            self.assertEqual(mock_fetch.call_count, 3)  # called every GET — fetching, not caching in-process
 
     def test_finalise_pdf_failure_does_not_block_status_transition(self):
         invoice = self._invoice(status='draft')

@@ -1,8 +1,9 @@
 // src/pages/portal/ClientPortal.jsx
 //
-// /portal — the client's own invoice LIST. A real React page (a list/
-// dashboard genuinely is UI), unlike the individual invoice VIEW below,
-// which is deliberately NOT a React component.
+// /portal — the client's own invoice LIST. Real React, same as the
+// individual invoice VIEW itself now is (InvoiceView.jsx, /invoice/:token
+// — see DECISIONS.md for why that page changed from a plain backend
+// <a href> to a real frontend route).
 //
 // Portal-session-authenticated via the httpOnly lanceraos_portal_session
 // cookie (apps.clients.cookies) — GET /api/invoices/portal/me/ 401s with
@@ -134,18 +135,18 @@ export default function ClientPortal() {
                 padding: '14px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)',
               }}
             >
-              {/* Real browser navigation, not client-side routing — this
-                  <a> points directly at the backend's own HTML-serving
-                  endpoint (GET /api/invoices/portal/view/<token>/). A
-                  plain href, deliberately not a React Router <Link> or
-                  an onClick+navigate()+fetch: the invoice document
-                  itself is the one shared render artifact (PDF/portal/
-                  editor-preview), never a second React reimplementation
-                  of the layout — see DECISIONS.md. This is the one
-                  intentional exception to this app's otherwise-
-                  universal client-side routing. Messages, below, are
-                  genuinely interactive UI with no such artifact to stay
-                  in sync with, so that part IS real React. */}
+              {/* portal_view_url now points at InvoiceView.jsx's own
+                  /invoice/:token route (see DECISIONS.md) — still a
+                  plain <a href>, not a React Router <Link>, since it's
+                  simplest and the destination renders no shared chrome
+                  to preserve statefully across a soft navigation anyway.
+                  That destination page is itself still just a thin
+                  wrapper fetching the one shared render artifact
+                  (PDF/portal/editor-preview all come from the same
+                  Django template), never a second reimplementation of
+                  the invoice layout. Messages, below, are genuinely
+                  interactive UI with no such artifact to stay in sync
+                  with, so that part IS real React, unchanged. */}
               <a href={inv.portal_view_url} style={{ textDecoration: 'none', color: 'inherit', flex: 1, minWidth: 0 }}>
                 <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                   {inv.invoice_number || '(unnumbered)'}

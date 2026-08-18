@@ -946,6 +946,38 @@ this one call site. See DECISIONS.md's 17 August 2026 (InvoiceDetailPanel redesi
 reasoning on every item above, including the deliberate More-menu scoping calls (Edit and Archive
 omitted as non-functional; Refund/Undo Payment/Delete included despite not being explicitly named).
 
+18 August 2026 (real frontend-domain invoice view page + Download proxy fix) — a real, reported issue
+fixed: every client-facing invoice link (the "View Invoice Online" email link, the portal list's own
+row link, the PDF's QR code/"Pay online" link, "View Invoice"/Copy Invoice Link in InvoiceDetailPanel)
+used to point at the raw backend/API host, never the actual product domain. `Invoice.portal_view_url`
+(`apps/invoices/models.py`) now builds `{FRONTEND_URL}/invoice/<token>/` instead of the old
+`{BACKEND_URL}/api/invoices/portal/view/<token>/` — every consumer flows through this one property
+automatically. A real new React route, `/invoice/:token` (`frontend/src/pages/InvoiceView.jsx`, no
+AppShell — shell-less like `DeletionReview.jsx`/`PortalEnter.jsx`), serves it: fetches the exact same
+backend-rendered HTML `portal_invoice_view_html` already produces (unchanged — still every real
+access-control side effect, `is_freelancer_previewing_portal` etc., entirely server-side) and displays
+it in a fully sandboxed `<iframe srcDoc>`, with a real `<base href>` fix for a genuine bug this pass
+caught (srcDoc content's relative `/static/...` font URLs otherwise resolve against the FRONTEND's own
+origin, not the backend's, silently falling back to system fonts). This supersedes the earlier
+"non-SPA-navigation exception" (`App.jsx`/`ClientPortal.jsx`/`PortalEnter.jsx` comments all updated) for
+a purely cosmetic/branding reason — the one-shared-renderer principle itself is unchanged.
+`InvoiceListSerializer` gained a real `portal_view_url` field so the frontend reads this authoritative
+URL directly instead of re-deriving it from `view_token` (the exact drift that let the backend host leak
+back in previously). Separately, `GET /api/invoices/<pk>/pdf/`'s old sent-or-beyond behavior — a bare 302
+redirect straight to the stored Cloudinary `secure_url` — is what surfaced this account's real, already-
+confirmed raw/PDF-delivery ACL restriction directly to the browser as a broken download; reworked to
+proxy the actual bytes through the endpoint via `fetch_invoice_pdf_bytes` (the same self-heal chain
+`/send/`/`/resend/` already use) with a real `Content-Disposition: attachment`, making Download resilient
+regardless of that Cloudinary Console setting. A genuinely new public endpoint,
+`GET /api/invoices/portal/view/<token>/pdf/` (`portal_invoice_pdf_download`), gives `InvoiceView.jsx`'s
+own Download button something to call — the shared templates had no download link of their own, and the
+freelancer-facing `/pdf/` is authenticated/owner-scoped, unreachable by an actual client. Verified live
+against the real dev Cloudinary account's actual ACL restriction (not simulated): Copy Invoice Link/View
+Invoice both produce the new frontend URL, the rendered page shows correct custom typography (not a
+font-fallback), and Download on both the public and freelancer-authenticated paths produced a real, valid
+PDF file even though a raw redirect to the same stored asset would 401. See DECISIONS.md's 18 August 2026
+entry for the full reasoning.
+
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
 
@@ -1190,7 +1222,14 @@ apps.clients.portal's session utility, never the reverse — see DECISIONS.md):
   template the PDF renders, via build_portal_context's browser-fetchable font URLs; mints/renews a
   real ClientPortalSession for a saved client, creates none for a one-time client; also where the
   Sent->Viewed transition + InvoiceViewEvent logging first fire for real, gated by the
-  freelancer-own-session guard built ahead of time in Step 11)
+  freelancer-own-session guard built ahead of time in Step 11. Reached today via the frontend's own
+  /invoice/:token route, InvoiceView.jsx — see this module's 18 August 2026 entry — never linked to
+  directly anymore)
+- GET /api/invoices/portal/view/<str:view_token>/pdf/ (18 August 2026 — real, public, side-effect-free
+  PDF download for InvoiceView.jsx's own Download button; same view_token-is-the-credential trust model
+  as the HTML view beside it, AllowAny, real 404 for an unknown token; proxies real bytes via
+  fetch_invoice_pdf_bytes rather than redirecting, so it works even under this account's real
+  Cloudinary raw/PDF-delivery ACL restriction)
 - GET /api/invoices/{id}/preview-as-client/ (freelancer-facing, IsAuthenticated — renders the same
   HTML inside the authenticated app; never mints a session, never logs a view)
 
@@ -1605,7 +1644,7 @@ Cloudinary account-level ACL restriction Step 10b works around; Client Acknowled
 portal action, Step 15), Recurring Invoice generation (Celery task + root-settings-read model +
 calendar-accurate scheduling + 3-strikes failure handling, Step 16), and Escalation notification +
 Formal Notice (a real, distinct, manual-only email with its own enforced disable setting, Step 17))
-built | Invoices list/detail/lifecycle/timeline (AR aging report removed 16 August 2026 — see DECISIONS.md) + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form + acknowledge action, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is deliberately a plain `<a href>` to the backend's HTML endpoint, not a React route, while Messages/Claims/Acknowledge ARE real React — see DECISIONS.md's non-SPA-navigation exception) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides) + an escalation banner/dismiss/Formal-Notice action + an "Edit Series" modal for a recurring root + a Formal Notice enable toggle in Settings > Business + a new `/invoices/analytics` page (Recharts, installed for real this pass) + a "Generate Statement" action + date-range modal in ClientDetailPanel.jsx, Step 12/13/14/15/16/17/18/19 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is a real, independently-paginated server query again as of the 16 August second verification-pass reversal (only "All" stayed the 11 Aug client-side window until the 17 August List/Table restructure removed the tiered/client-side pagination system entirely — see DECISIONS.md), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version). 17 August 2026: both list pages rebuilt on top of the above — uniform real pagination (`Pagination.jsx`), a real filter-row overflow (`useFilterOverflow.js`), a real WHERE-clause currency filter on both lists, a real KPI period+currency strip (`InvoiceKPIStrip.jsx`) with a Collected-only month-over-month delta, and header actions relocated into AppShell's own header via a new `usePageHeaderActions.js` mechanism (see DECISIONS.md's 17 August entry). Same day, InvoiceDetailPanel redesign: Preview-as-Client removed (View Invoice opens the real portal page directly, freelancer-own-session guard untouched and re-verified), header/tabs/reminders-banner-vs-toggle/action-footer all rebuilt, a new Send Reminder N + Resend Invoice + Change Due Date, a unified Add Payment two-path popup, a real 3-region flex layout so the Comments tab gets its own fixed/scrollable structure, and the invoice list's whole row now opens the panel (`InvoiceTable.jsx`'s Action column removed, bulk delete unified into the existing floating action bar) — see DECISIONS.md's 17 August 2026 (InvoiceDetailPanel redesign) entry | Backend: 723 passing (`python manage.py test`, whole suite, `--keepdb`, incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`, this pass's own KPI-period/currency-filter coverage, and the InvoiceDetailPanel redesign's new Send Reminder/Resend/Change Due Date/freelancer-preview-guard-regression coverage). Frontend: 196 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `Pagination.test.jsx`, `InvoiceKPIStrip.test.jsx`, `useFilterOverflow.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`, `ErrorBoundary.test.jsx`, `InvoiceTable.test.jsx` rewritten for row-click-vs-checkbox-click, `InvoiceDetailPanel.test.jsx` substantially expanded past its prior narrow tooltip-only suite) + a production `vite build` check + real Playwright screenshots at 375/768/1280/1920 light/dark against the running dev servers | Two 16 August 2026 verification passes, the 17 August 2026 List/Table restructure, and the same-day InvoiceDetailPanel redesign complete (see DECISIONS.md) — Admin panel screens and the full-module verification pass (Section 8, steps 20-21) remain |
+built | Invoices list/detail/lifecycle/timeline (AR aging report removed 16 August 2026 — see DECISIONS.md) + delayed-creation 3-stage wizard with draft-edit mode + search-driven client step (`NewInvoiceWizard.jsx`, Step 9b/9c) + design gallery/canvas editor + AI-seed upload + real Send action (Step 10) + combined Finalise & Send action with honest partial-failure handoff (Step 10b) + Preview-as-Client modal + a real Comments tab in InvoiceDetailPanel.jsx + a real Claims tab in InvoiceDetailPanel.jsx (confirm/reject, Step 14) + the standalone Client Portal frontend (`ClientPortal.jsx` list + per-invoice Messages panel + a "Report a Payment" claim form + acknowledge action, `PortalEnter.jsx` magic-link handoff, `PortalRequestLinkForm.jsx`; the invoice VIEW itself is a real React route as of 18 August 2026 — `InvoiceView.jsx` at `/invoice/:token`, superseding the earlier plain-`<a href>`-to-the-backend approach, see DECISIONS.md) + `CommentThread.jsx`/`useWebSocket.js` (shared between both sides) + an escalation banner/dismiss/Formal-Notice action + an "Edit Series" modal for a recurring root + a Formal Notice enable toggle in Settings > Business + a new `/invoices/analytics` page (Recharts, installed for real this pass) + a "Generate Statement" action + date-range modal in ClientDetailPanel.jsx, Step 12/13/14/15/16/17/18/19 built (Client CRM frontend, signature upload UI not yet); Invoices.jsx status/Overdue filtering is a real, independently-paginated server query again as of the 16 August second verification-pass reversal (only "All" stayed the 11 Aug client-side window until the 17 August List/Table restructure removed the tiered/client-side pagination system entirely — see DECISIONS.md), both list pages collapse their filter pills into a mobile dropdown ≤768px; send banner simplified to a draft/created/reminders-only rule (Step 10b, supersedes the short-lived 3-state version). 17 August 2026: both list pages rebuilt on top of the above — uniform real pagination (`Pagination.jsx`), a real filter-row overflow (`useFilterOverflow.js`), a real WHERE-clause currency filter on both lists, a real KPI period+currency strip (`InvoiceKPIStrip.jsx`) with a Collected-only month-over-month delta, and header actions relocated into AppShell's own header via a new `usePageHeaderActions.js` mechanism (see DECISIONS.md's 17 August entry). Same day, InvoiceDetailPanel redesign: Preview-as-Client removed (View Invoice opens the real portal page directly, freelancer-own-session guard untouched and re-verified), header/tabs/reminders-banner-vs-toggle/action-footer all rebuilt, a new Send Reminder N + Resend Invoice + Change Due Date, a unified Add Payment two-path popup, a real 3-region flex layout so the Comments tab gets its own fixed/scrollable structure, and the invoice list's whole row now opens the panel (`InvoiceTable.jsx`'s Action column removed, bulk delete unified into the existing floating action bar) — see DECISIONS.md's 17 August 2026 (InvoiceDetailPanel redesign) entry. 18 August 2026: the KPI strip's mobile swipe carousel removed for a uniform always-3-columns grid with a compact delta variant below phone width (`InvoiceKPIStrip.jsx`, see DECISIONS.md); `Invoice.portal_view_url` now builds a real frontend URL (`/invoice/:token`, `InvoiceView.jsx`) instead of the backend host, and `GET /api/invoices/<pk>/pdf/` proxies real bytes instead of redirecting to Cloudinary, both verified live against the real dev Cloudinary account's actual ACL restriction — see DECISIONS.md's 18 August 2026 entry | Backend: 620+ passing across `apps.invoices` (`python manage.py test`, `--keepdb` — every test module passes individually/in batches; a full single-process run intermittently hits an unrelated, already-documented native WeasyPrint/GC segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`, this pass's own KPI-period/currency-filter coverage, the InvoiceDetailPanel redesign's Send Reminder/Resend/Change Due Date/freelancer-preview-guard-regression coverage, and the 18 August pass's real end-to-end Cloudinary-401 proof for both PDF download endpoints. Frontend: 206 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `Pagination.test.jsx`, `InvoiceKPIStrip.test.jsx` (rewritten for the no-carousel/compact-delta redesign), `useFilterOverflow.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`, `ErrorBoundary.test.jsx`, `InvoiceTable.test.jsx` rewritten for row-click-vs-checkbox-click, `InvoiceDetailPanel.test.jsx` substantially expanded past its prior narrow tooltip-only suite, `InvoiceView.test.jsx` new) + a production `vite build` check + real Playwright screenshots (375/768/1280/1920 light/dark for the InvoiceDetailPanel redesign; 320/375/480/600/768 for the KPI strip fix; a live run against the real dev Cloudinary account for the frontend-domain/Download fix) against the running dev servers | Two 16 August 2026 verification passes, the 17 August 2026 List/Table restructure, the same-day InvoiceDetailPanel redesign, and the 18 August 2026 KPI-strip/frontend-domain/Download-proxy fixes complete (see DECISIONS.md) — Admin panel screens and the full-module verification pass (Section 8, steps 20-21) remain |
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
@@ -1646,12 +1685,13 @@ FACEBOOK_APP_SECRET=
 VITE_API_URL=http://localhost:8000
 VITE_WS_URL=ws://localhost:8000
 FRONTEND_URL=http://localhost:5173
-BACKEND_URL=http://localhost:8000
-# Backend's own public URL (api.lanceraos.com in production) — used to
-# build email links to Django-served pages with no React wrapper (the
-# portal invoice-view page, Step 12). Deliberately separate from the
-# frontend's VITE_API_URL despite sharing the same real value in
-# production — see DECISIONS.md.
+# Also used to build Invoice.portal_view_url (the invoice VIEW itself,
+# InvoiceView.jsx's real /invoice/:token route) as of 18 August 2026 —
+# see DECISIONS.md's real-frontend-domain-invoice-view-page entry.
+# REMOVED same day: BACKEND_URL (config/settings.py) — its one real
+# consumer was that same link, back when it pointed at the raw backend/
+# API host instead. Left removed rather than defined-but-unused, per
+# this project's own dead-config convention.
 
 ### Cookies (httpOnly JWT + CSRF — see DECISIONS.md)
 COOKIE_DOMAIN=

@@ -22,6 +22,7 @@ urlpatterns = [
     # with this file's other route groups.
     path('portal/me/', views_portal.portal_invoice_list, name='portal_invoice_list'),
     path('portal/view/<str:view_token>/', views_portal.portal_invoice_view_html, name='portal_invoice_view_html'),
+    path('portal/view/<str:view_token>/pdf/', views_portal.portal_invoice_pdf_download, name='portal_invoice_pdf_download'),
     path('portal/<uuid:pk>/', views_portal.portal_invoice_detail, name='portal_invoice_detail'),
     path('portal/<uuid:pk>/comments/', views_portal.portal_invoice_comments, name='portal_invoice_comments'),
     path('portal/<uuid:pk>/claims/', views_portal.portal_invoice_claims, name='portal_invoice_claims'),

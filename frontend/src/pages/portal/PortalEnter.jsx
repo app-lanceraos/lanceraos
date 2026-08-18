@@ -5,10 +5,10 @@
 // a JSON endpoint that mints/renews the real ClientPortalSession cookie).
 // This page's only job is: call it, then hand off to /portal (the real
 // list page). An invoice's own view_token link (the "View Invoice
-// Online" email link) does NOT come through here at all — that's a
-// direct, non-React navigation straight to the backend's HTML-serving
-// endpoint (apps/invoices/views_portal.py's portal_invoice_view_html),
-// per this step's own non-SPA-navigation exception; see ClientPortal.jsx.
+// Online" email link) does NOT come through here at all — it's its own
+// real route, InvoiceView.jsx at /invoice/:token, which fetches and
+// displays the backend's rendered HTML directly rather than minting a
+// session itself; see that file's own comment and DECISIONS.md.
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 

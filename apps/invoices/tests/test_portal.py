@@ -12,6 +12,7 @@ ClientPortalSession, and the new "View Invoice Online" email link.
 import json
 from datetime import date
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.core.cache import cache
 from django.middleware.csrf import get_token
@@ -205,6 +206,93 @@ class PortalViewHtmlTests(PortalContentAPITestCase):
         # And there is no portal list access at all for a one-time client —
         # confirm no session exists to even attempt portal_invoice_list with.
         self.assertEqual(ClientPortalSession.objects.count(), 0)
+
+
+class PortalPdfDownloadTests(PortalContentAPITestCase):
+    """
+    GET /api/invoices/portal/view/<token>/pdf/ — real frontend-domain
+    invoice view page follow-up (see DECISIONS.md). Added because the
+    shared invoice templates have no Download link of their own
+    (confirmed directly), and the freelancer-facing GET
+    /api/invoices/<pk>/pdf/ is IsAuthenticated/owner-scoped, unreachable
+    by an actual client. Same view_token-is-the-credential trust model as
+    portal_invoice_view_html — AllowAny, real 404 for an unknown token —
+    but read-only/side-effect-free: no session minting, no view-tracking.
+    """
+    def test_unknown_token_is_a_real_404(self):
+        resp = self._get(reverse('invoices:portal_invoice_pdf_download', kwargs={'view_token': 'never-issued'}))
+        self.assertEqual(resp.status_code, 404)
+
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes')
+    def test_proxies_real_bytes_with_a_real_download_disposition(self, mock_fetch):
+        mock_fetch.return_value = b'%PDF-portal-download'
+        invoice = self._invoice_for(self.portal_client)
+        resp = self._get(reverse('invoices:portal_invoice_pdf_download', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+        self.assertEqual(resp.content, b'%PDF-portal-download')
+        self.assertIn('attachment', resp['Content-Disposition'])
+        self.assertIn(invoice.invoice_number, resp['Content-Disposition'])
+        mock_fetch.assert_called_once_with(invoice)
+
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=None)
+    def test_returns_502_when_every_fetch_render_path_fails(self, mock_fetch):
+        invoice = self._invoice_for(self.portal_client)
+        resp = self._get(reverse('invoices:portal_invoice_pdf_download', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(resp.status_code, 502)
+
+    @patch('apps.invoices.email_service.requests.get')
+    def test_download_still_works_end_to_end_under_the_real_cloudinary_401_condition(self, mock_get):
+        """
+        Real, end-to-end proof (nothing mocked at this view's own level,
+        unlike this class's other tests) that a client's public download
+        still works even when this account's real, confirmed raw/PDF
+        delivery ACL restriction blocks a direct unauthenticated fetch of
+        the stored asset — the actual point of building this endpoint on
+        fetch_invoice_pdf_bytes rather than a redirect. Mirrors
+        apps/invoices/tests/test_pdf_pipeline.py's identical proof for
+        the freelancer-facing GET /api/invoices/<pk>/pdf/ — same
+        underlying chain, same real failure condition, different caller.
+        """
+        import requests
+        mock_get.side_effect = requests.RequestException('401 unauthorized — deny or ACL failure')
+        invoice = self._invoice_for(self.portal_client)
+        invoice.pdf_url = 'https://res.cloudinary.com/demo/raw/upload/invoice_401.pdf'
+        invoice.save(update_fields=['pdf_url'])
+
+        with patch('apps.invoices.email_service.upload_pdf_bytes') as mock_upload:
+            mock_upload.return_value = {
+                'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice_healed.pdf',
+                'public_id': 'lanceraos/invoices/invoice_healed.pdf',
+            }
+            resp = self._get(reverse('invoices:portal_invoice_pdf_download', kwargs={'view_token': invoice.view_token}))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+        self.assertTrue(resp.content.startswith(b'%PDF'))
+        mock_upload.assert_called_once()
+
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes')
+    def test_never_mints_a_session_or_logs_a_view_unlike_the_html_view(self, mock_fetch):
+        """
+        A real, deliberate difference from portal_invoice_view_html right
+        above it — downloading the PDF is a read-only action with none of
+        that endpoint's side effects. A client visiting the real HTML
+        page first (which does mint a session / log a view) is the actual
+        real-world sequence; this download endpoint on its own must never
+        duplicate either side effect.
+        """
+        mock_fetch.return_value = b'%PDF-no-side-effects'
+        invoice = self._invoice_for(self.portal_client)
+        self.assertEqual(invoice.status, 'sent')
+
+        resp = self._get(reverse('invoices:portal_invoice_pdf_download', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(resp.status_code, 200)
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'sent')  # NOT advanced to 'viewed'
+        self.assertEqual(InvoiceViewEvent.objects.filter(invoice=invoice).count(), 0)
+        self.assertEqual(ClientPortalSession.objects.filter(client=self.portal_client).count(), 0)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -503,7 +591,7 @@ class ViewOnlineLinkTests(TestCase):
         subject, html, plain = build_invoice_send_email(invoice)
         self.assertIn(invoice.portal_view_url, html)
         self.assertIn(invoice.portal_view_url, plain)
-        self.assertIn('/api/invoices/portal/view/', invoice.portal_view_url)
+        self.assertIn('/invoice/', invoice.portal_view_url)
         self.assertIn(invoice.view_token, invoice.portal_view_url)
 
     def test_every_reminder_tier_includes_the_link(self):
@@ -515,8 +603,20 @@ class ViewOnlineLinkTests(TestCase):
                 self.assertIn(invoice.portal_view_url, html)
                 self.assertIn(invoice.portal_view_url, plain)
 
-    def test_portal_view_url_uses_backend_url_not_frontend_url(self):
+    def test_portal_view_url_uses_frontend_url_not_the_raw_api_host(self):
+        """
+        REVERSED (real frontend-domain invoice view page — see
+        DECISIONS.md): this used to pin down the OPPOSITE, deliberately —
+        the raw backend/API host was the correct destination back when
+        the invoice VIEW had no React route of its own at all. Now that
+        InvoiceView.jsx (/invoice/:token) exists as a real frontend page,
+        a client should see the actual product domain in their address
+        bar, never api.lanceraos.com. settings.BACKEND_URL itself was
+        removed entirely (this was its only real consumer) rather than
+        left defined-but-unused — see DECISIONS.md.
+        """
         from django.conf import settings
         invoice = make_invoice(self.user, client=self.client_obj)
-        self.assertTrue(invoice.portal_view_url.startswith(settings.BACKEND_URL))
-        self.assertFalse(invoice.portal_view_url.startswith(settings.FRONTEND_URL))
+        self.assertTrue(invoice.portal_view_url.startswith(settings.FRONTEND_URL))
+        self.assertNotIn('/api/', invoice.portal_view_url)
+        self.assertIn(f'/invoice/{invoice.view_token}/', invoice.portal_view_url)

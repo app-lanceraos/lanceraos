@@ -27,7 +27,7 @@ from PIL import UnidentifiedImageError
 from django.core.cache import cache
 from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import TruncMonth
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -423,26 +423,35 @@ def invoice_detail(request, pk):
 @permission_classes([IsAuthenticated])
 def invoice_pdf(request, pk):
     """
-    Live-vs-stored boundary moved in this pass: only `draft` still
-    live-renders (nothing frozen yet, nothing to break — this is also
-    what backs the wizard's "Preview PDF" action before finalising).
-    Everything from `created` onward serves the frozen `pdf_url` artifact
-    instead — a redirect to its Cloudinary URL, never a fresh render,
-    regardless of any later InvoiceDesign edit. `created` used to live-
-    render here too (grouped with `draft`), which was real, pointless
-    work: `is_editable` already only allows edits at status='draft', so a
-    `created` invoice can never change again, and invoice_finalise (this
-    pass) now freezes its PDF the moment it leaves draft — see
-    _finalise_invoice. Redirecting (not proxying the bytes through this
-    endpoint) matches how every other Cloudinary-hosted asset in this app
-    is already served — apps/users' upload_logo returns the raw
-    secure_url directly and the frontend fetches it itself; there's no
-    existing proxy-through pattern to break from.
+    Live-vs-stored boundary: only `draft` still live-renders (nothing
+    frozen yet, nothing to break — this is also what backs the wizard's
+    "Preview PDF" action before finalising), served inline (no
+    Content-Disposition — a preview, not a download). `created` used to
+    live-render here too (grouped with `draft`), which was real,
+    pointless work: `is_editable` already only allows edits at
+    status='draft', so a `created` invoice can never change again, and
+    invoice_finalise freezes its PDF the moment it leaves draft — see
+    _finalise_invoice.
 
-    If a created-or-beyond invoice somehow has no pdf_url yet
-    (_finalise_invoice's render+store is deliberately non-fatal to the
-    status transition itself), this is a genuine anomaly: falls back to a
-    live render rather than a bare 404, but logs it as such.
+    REWORKED (Cloudinary-ACL-401 follow-up — see DECISIONS.md): a
+    `created`-or-beyond invoice used to get a bare 302 redirect straight
+    to the stored Cloudinary secure_url. That surfaced this account's
+    real, confirmed raw/PDF-delivery ACL restriction (see
+    upload_pdf_bytes's own docstring) DIRECTLY to the browser as a
+    Cloudinary 401 error page the moment the redirect resolved — this
+    endpoint's own backend credentials can always reach the asset even
+    when a raw unauthenticated browser GET against the same URL can't, so
+    proxying the actual bytes through here (reusing
+    fetch_invoice_pdf_bytes — the exact same self-heal chain
+    invoice_send/the reminder task already rely on, not a second,
+    parallel fetch implementation) makes this endpoint correct regardless
+    of whether that Cloudinary Console setting ever changes. This is the
+    ONLY consumer of this route that reaches a non-draft invoice — "View
+    Invoice" is a structurally separate endpoint (portal_invoice_view_html,
+    HTML not PDF) that never touches this view at all — so
+    Content-Disposition is unconditionally `attachment` here, matching
+    the "Download Invoice" button's own name; no inline/query-param case
+    exists to route between.
     """
     invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
 
@@ -450,12 +459,14 @@ def invoice_pdf(request, pk):
         pdf_bytes = render_invoice_pdf(invoice)
         return HttpResponse(pdf_bytes, content_type='application/pdf')
 
-    if invoice.pdf_url:
-        return HttpResponseRedirect(invoice.pdf_url)
+    pdf_bytes = fetch_invoice_pdf_bytes(invoice)
+    if pdf_bytes is None:
+        logger.error('[INVOICES] Invoice %s (status=%s): every PDF fetch/render path failed — cannot serve a download.', invoice.invoice_number, invoice.status)
+        return Response({'error': "Could not prepare this invoice's PDF right now. Please try again shortly."}, status=status.HTTP_502_BAD_GATEWAY)
 
-    logger.error('[INVOICES] Invoice %s is status=%s with no pdf_url — falling back to a live render.', invoice.invoice_number, invoice.status)
-    pdf_bytes = render_invoice_pdf(invoice)
-    return HttpResponse(pdf_bytes, content_type='application/pdf')
+    response = HttpResponse(pdf_bytes, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{invoice.invoice_number or "invoice"}.pdf"'
+    return response
 
 
 # ══════════════════════════════════════════════════════════════════

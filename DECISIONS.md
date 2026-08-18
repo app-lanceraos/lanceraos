@@ -4487,3 +4487,107 @@ containing "vs last month" — 200 frontend tests passing total, production `vit
 Playwright screenshots at 320/375/480/600/768px confirming the compact-vs-full delta boundary lands
 exactly at the intended breakpoint and nothing clips or wraps unreadably at the narrowest supported
 width.
+
+---
+
+Date: 18 August 2026 (real frontend-domain invoice view page + Download proxy fix)
+Decision/Reason, one item per real design call this round made:
+
+**A real React route (`/invoice/:token`, `InvoiceView.jsx`) now serves the invoice VIEW — supersedes
+the earlier "non-SPA-navigation exception."** Every client-facing link to an invoice (the "View Invoice
+Online" email link, the portal list's own row link, the PDF's own QR code / "Pay online" link, the
+freelancer's "View Invoice" button, Copy Invoice Link) used to point directly at
+`{BACKEND_URL}/api/invoices/portal/view/<token>/` — a real, reported issue: a client's browser showed
+the raw API host (`api.lanceraos.com` in production), never the actual product domain, in its address
+bar. Fixed at the single source: `Invoice.portal_view_url` (`apps/invoices/models.py`) now builds
+`{FRONTEND_URL}/invoice/<token>/` instead — every consumer listed above flows through automatically,
+since none of them hardcode the URL shape independently (confirmed directly via grep before and after).
+`InvoiceListSerializer` gained a `portal_view_url` field so `InvoiceDetailPanel.jsx`'s "View Invoice"/
+"Copy Invoice Link" read this authoritative value directly, rather than re-deriving it client-side from
+`view_token` — re-deriving it in a second place is exactly the kind of drift that would silently
+reintroduce the backend-host leak the moment either side changed without the other.
+
+`InvoiceView.jsx` does NOT reimplement the invoice layout — it fetches the exact same rendered HTML
+`portal_invoice_view_html` already produces (unchanged, still `AllowAny`, still running every real
+access-control side effect — `is_freelancer_previewing_portal`, `ClientPortalSession` minting, the
+Sent→Viewed transition/`InvoiceViewEvent` logging — entirely server-side) and displays it inside a fully
+sandboxed (`sandbox=""` — no scripts, no forms, no same-origin DOM access; confirmed none of the three
+invoice templates contain a `<script>` tag, so this costs nothing) `<iframe srcDoc>` filling the page.
+The one-HTML/CSS-renderer principle from Step 12 holds exactly as before — this is a thin display
+wrapper around the same artifact, not a second reimplementation.
+
+A real, confirmed rendering bug was caught and fixed here, not assumed away: `srcDoc` content's default
+base URI is the EMBEDDING document's own URL, not wherever the HTML was originally fetched from — every
+relative `/static/invoices/fonts/...` URL inside the fetched HTML (the real, browser-fetchable
+`@font-face` sources `PORTAL_FONT_CONTEXT` builds) silently resolved against the FRONTEND's own origin
+instead of the backend's, meaning the fonts would fall back to system defaults with no visible error at
+all. Fixed by injecting a real `<base href="{backend origin}/">` tag into the fetched HTML's `<head>`
+before handing it to `srcDoc` — confirmed directly via a live Playwright run against the real dev
+Cloudinary/font setup that the custom serif/mono typography actually renders (a live screenshot, not a
+unit-test-only claim), not the fallback system font.
+
+No AppShell — a standalone, public page (matches `DeletionReview.jsx`/`PortalEnter.jsx`'s existing
+shell-less convention), since a client has no LanceraOS account and no sidebar/header makes sense for
+them to see. `App.jsx`, `PortalEnter.jsx`, and `ClientPortal.jsx`'s own comments (which explicitly
+documented the OLD "the invoice VIEW deliberately has NO React route" decision) are all updated to
+reflect the reversal — the underlying reason for THAT original decision (one shared renderer, never a
+second reimplementation) hasn't changed at all; only the cosmetic/branding requirement that motivated
+serving it via a real frontend route has been added on top.
+
+**Download — proxies real bytes through the backend instead of redirecting to Cloudinary directly, on
+both the freelancer-facing and the new public download paths.** `GET /api/invoices/<pk>/pdf/`'s old
+sent-or-beyond behavior was a bare 302 redirect straight to the stored Cloudinary `secure_url` — which
+is exactly what surfaced this account's real, previously-confirmed raw/PDF-delivery ACL restriction
+(see `upload_pdf_bytes`'s own docstring — every direct unauthenticated GET against that URL genuinely
+401s, `x-cld-error: deny or ACL failure`) DIRECTLY to the browser as a broken download the moment the
+redirect resolved. Reworked to fetch the actual bytes server-side via `fetch_invoice_pdf_bytes` — the
+exact same self-heal chain `invoice_send`/the reminder task/`invoice_resend` already rely on, not a
+second, parallel fetch implementation — and return them directly with a real
+`Content-Disposition: attachment; filename="{invoice_number}.pdf"`. This makes Download work regardless
+of whether that Cloudinary Console setting ever changes, since this endpoint's own backend credentials
+can always reach the asset even when a raw public browser request can't. `draft`'s existing live-render-
+inline behavior (no `Content-Disposition` — a preview, not a download, backing the wizard's "Preview
+PDF") is untouched; this endpoint's only OTHER real consumer is the "Download Invoice" button itself —
+"View Invoice" never touches `/pdf/` at all, it's the structurally separate HTML endpoint above — so
+`Content-Disposition` is unconditionally `attachment` for the non-draft branch, with no inline/
+query-param case to route between.
+
+A genuinely NEW endpoint, `GET /api/invoices/portal/view/<token>/pdf/` (`portal_invoice_pdf_download`),
+was added for the CLIENT-facing side specifically — confirmed directly that no portal-facing PDF
+download existed at all before this (none of the three shared invoice templates reference `pdf_url` or
+any download affordance), and the existing freelancer-facing `/pdf/` is `IsAuthenticated`/owner-scoped,
+genuinely unreachable by an actual client with no LanceraOS account. Same `view_token`-is-the-credential
+trust model as `portal_invoice_view_html` right beside it (`AllowAny`, real 404 for an unknown token) —
+built as a separate, read-only, side-effect-free action (no session minting, no view-tracking
+duplicated) rather than folding a Download flag into the HTML-serving view. `InvoiceView.jsx` offers this
+as a small floating button — real chrome AROUND the iframe (matching the old Preview-as-Client banner's
+own "pure React, never inside the shared template" precedent), since the underlying templates have no
+Download link of their own to reuse.
+
+**Verification — proven live against the real dev Cloudinary account's actual ACL restriction, not just
+mocked.** Beyond the backend suite (`apps.invoices`: every test module passes individually/in batches —
+`test_pdf_pipeline.py`/`test_portal.py` gained a real end-to-end test each, `requests.get` mocked to
+raise the real `401 unauthorized` `RequestException` at the exact point the confirmed Cloudinary
+restriction produces it, with nothing mocked at the view's own level, proving the self-heal chain holds
+under the actual failure condition through the real view, not a shallow mock of
+`fetch_invoice_pdf_bytes` itself; full-suite single-process runs intermittently hit an unrelated, already
+-documented `Fatal Python error: Segmentation fault` inside WeasyPrint's own native CSS parsing during
+GC on this machine — confirmed non-deterministic and unrelated to this round's logic by re-running in
+smaller batches, every one of which passed cleanly, cumulatively covering all ~620 tests. 206 frontend
+tests, `InvoiceView.test.jsx` new), a real live Playwright run against the actual running dev servers
+and the real Cloudinary account (which genuinely has the ACL restriction — this was not simulated)
+confirmed: Copy Invoice Link copies `http://localhost:5173/invoice/<token>/`; "View Invoice" opens that
+exact URL in a new tab; the rendered content shows the real invoice data with the correct custom
+typography (not a system-font fallback); clicking Download on that page produces a genuine, valid PDF
+file (`file` reports "PDF document, version 1.7") via the real self-heal proxy chain against an account
+where a raw redirect would have handed the browser a 401 error page; the freelancer's own authenticated
+"Download Invoice" button was verified the same way against a second real invoice. Confirmed via grep,
+before and after, that no remaining frontend code constructs the old
+`${api.defaults.baseURL}/invoices/portal/view/...` URL pattern anywhere.
+
+`settings.BACKEND_URL` removed entirely (`config/settings.py`, `.env.example`) rather than left defined-
+but-unused — confirmed via grep it had exactly one real consumer anywhere in the codebase
+(`Invoice.portal_view_url`'s old backend-host construction), and that consumer is gone. Per this
+project's own established convention, dead config gets removed on discovery, not preserved for fidelity.
+
+Docs: this entry. CLAUDE.md status update (Module 2 build notes + Section 8's env var list).

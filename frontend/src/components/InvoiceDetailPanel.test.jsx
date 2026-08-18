@@ -34,6 +34,10 @@ function invoiceFixture(overrides = {}) {
     escalation_required: false, escalation_dismissed: false,
     client_acknowledged: false, client_acknowledged_at: null,
     formal_notice_sent_at: null, view_token: 'tok-abc123', client: 'client-1',
+    // The real, backend-built URL (Invoice.portal_view_url) — the panel
+    // reads this directly rather than re-deriving it from view_token, so
+    // the fixture must carry it too; see DECISIONS.md.
+    portal_view_url: 'http://localhost:5173/invoice/tok-abc123/',
     items: [{ description: 'Design work', quantity: '1', unit_price: '500.00', total: '500.00' }],
     ...overrides,
   }
@@ -249,15 +253,16 @@ describe('InvoiceDetailPanel — Preview-as-Client removal', () => {
     expect(screen.queryByText(/preview as client/i)).toBeNull()
   })
 
-  it('"View Invoice" opens the real portal URL in a new tab, not an in-app iframe', async () => {
+  it('"View Invoice" opens the real, backend-provided portal_view_url in a new tab, not an in-app iframe', async () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
     const invoice = renderPanel({ status: 'sent' })
     await waitFor(() => expect(screen.getAllByRole('button', { name: /view invoice/i }).length).toBeGreaterThan(0))
     fireEvent.click(screen.getAllByRole('button', { name: /view invoice/i })[0])
-    expect(openSpy).toHaveBeenCalledWith(
-      expect.stringContaining(`/invoices/portal/view/${invoice.view_token}/`),
-      '_blank', expect.any(String),
-    )
+    // Never re-derived client-side (that's exactly how the backend host
+    // used to leak back in even after portal_view_url itself was fixed
+    // to point at the frontend — see DECISIONS.md) — must be the exact
+    // value the backend sent.
+    expect(openSpy).toHaveBeenCalledWith(invoice.portal_view_url, '_blank', expect.any(String))
     openSpy.mockRestore()
   })
 })

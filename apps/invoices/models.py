@@ -412,16 +412,25 @@ class Invoice(models.Model):
     @property
     def portal_view_url(self):
         """
-        The real, live-rendered HTML view of this invoice (Step 12) — a
-        direct Django-served endpoint with no React wrapper (see
-        apps/invoices/views_portal.py's own docstring: clicking an
-        invoice in the portal list is a real browser navigation to this
-        URL, not a route the frontend reimplements). Backend's own
-        public URL (BACKEND_URL), not FRONTEND_URL — unlike
-        payment_page_url above, this page IS served directly by Django,
-        not the React app.
+        The public, client-facing URL for this invoice — REWORKED (real
+        frontend-domain invoice view page, see DECISIONS.md): now points
+        at the frontend's own `/invoice/<token>/` route (FRONTEND_URL),
+        not the raw backend/API host. A client clicking this link (in an
+        email, the portal list, a QR code) now sees the actual product
+        domain in their address bar instead of api.lanceraos.com —
+        that's the entire reason for the change; the underlying rendered
+        content is byte-for-byte identical, since the frontend route is a
+        thin wrapper that fetches this SAME view_token's HTML from
+        GET /api/invoices/portal/view/<token>/ (still served by Django,
+        still going through every access-control side effect —
+        is_freelancer_previewing_portal, session minting, view-tracking —
+        exactly as before) and displays it, never a second
+        reimplementation of the invoice layout. This supersedes the
+        earlier "non-SPA-navigation exception" (see this same
+        DECISIONS.md entry) for a purely cosmetic/branding reason, not
+        because the one-shared-renderer architecture itself changed.
         """
-        return f'{settings.BACKEND_URL}/api/invoices/portal/view/{self.view_token}/'
+        return f'{settings.FRONTEND_URL}/invoice/{self.view_token}/'
 
     @property
     def client_currency_conversion(self):
