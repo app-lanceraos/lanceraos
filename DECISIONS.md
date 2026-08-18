@@ -4590,4 +4590,219 @@ but-unused — confirmed via grep it had exactly one real consumer anywhere in t
 (`Invoice.portal_view_url`'s old backend-host construction), and that consumer is gone. Per this
 project's own established convention, dead config gets removed on discovery, not preserved for fidelity.
 
+---
+
+Date: 18 August 2026 (View Invoice serves the frozen PDF, not a live re-render; backend-host fully
+hidden; portal-list scoping; payment-claim message fixes)
+Decision/Reason, one item per real design call this round made:
+
+**View Invoice now shows the ACTUAL FROZEN PDF, never a fresh re-render — the real drift bug this
+closes.** Traced directly (not assumed): `portal_invoice_view_html` used to call
+`render_invoice_portal_html`/`build_portal_context` on every single request, which pulls the
+freelancer's CURRENT `FreelancerProfile` (business name, logo, payment methods, signature) fresh each
+time — even though the invoice's own fields are frozen (`is_editable` blocks changes past draft). A
+freelancer editing their profile after sending an invoice could silently change what "View Invoice"
+showed a client days later, while the real downloadable PDF stayed correctly frozen: two documents, same
+invoice, able to disagree. `portal_invoice_view_html` no longer calls that renderer at all — it serves
+the same frozen bytes `portal_invoice_pdf_download` serves (via a new, stricter
+`_resolve_invoice_pdf_bytes_for_view` helper), inline, with the browser's own native PDF viewer. Every
+real path that can reach this endpoint was traced end to end, not assumed: the "View Invoice Online"
+email link, the portal list's row link, the PDF's own QR code / "Pay online" link, and the freelancer's
+own "View Invoice" button all only exist for a `created`-or-beyond invoice — a draft's `view_token` is
+never exposed through any of them (no email is ever sent pre-finalise; the wizard's own "Preview PDF"
+hits a completely different, freelancer-authenticated endpoint, `invoice_pdf`; and the portal list now
+excludes `draft`/`created` entirely, this same round's own item 3 below) — so in practice this endpoint
+is only ever reached once a real `pdf_url` exists or is about to.
+
+When no frozen PDF exists yet — a real, narrow window right after finalising, before
+`_finalise_invoice`'s background Celery task lands — this returns a real `503` with a specific "isn't
+ready to view yet" message, deliberately checked BEFORE `fetch_invoice_pdf_bytes` is ever called at all
+(a blank `pdf_url` never reaches that function's own self-heal chain from this call site), rather than
+ever falling back to a live re-render — the exact drift problem being fixed. `render_invoice_portal_html`
+itself is unchanged and still real — it remains `invoice_preview_as_client`'s own renderer, a
+structurally separate, freelancer-only endpoint that deliberately WANTS current data, for any status
+including still-draft (currently unreachable from the frontend UI since Preview-as-Client's own button
+was removed in an earlier round). Session-minting and view-tracking (`issue_or_renew_session`,
+`_record_invoice_view_if_appropriate`) both still fire unconditionally regardless of which branch
+produced the response — a client who followed a real link is still tracked as having visited even in
+the rare case the PDF isn't ready.
+
+**A real, deliberately narrow scoping decision: Download's OWN resilience (`fetch_invoice_pdf_bytes`'s
+full self-heal chain, including its live-render-from-current-data fallback) is left completely
+UNCHANGED.** Only View got the stricter "no frozen PDF yet = a clear 503, never a live render" rule.
+This was a genuine, considered trade-off, not an oversight: Download's self-heal chain already exists,
+is tested, and is documented precisely because this account has a REAL, confirmed Cloudinary raw/PDF-
+delivery ACL restriction that makes the direct fetch fail essentially every time in this dev environment
+— redesigning that chain's own recovery behavior is a materially larger, separate effort (it would need
+real profile-snapshotting infrastructure at freeze time to fully eliminate residual drift, since there's
+nowhere else to regenerate a "truly frozen" document from once the original bytes are unreachable), well
+outside this task's actual scope. A genuine, live-tested finding from building this (not hypothetical):
+downloading the SAME invoice twice, with a profile edit in between, in THIS dev environment (where the
+Cloudinary ACL issue is real and persistent) produced two DIFFERENT PDFs — proof that self-heal's own
+live-render fallback still carries a narrower, infrastructure-failure-only version of the same drift
+risk. This is captured honestly, not swept under the rug: it's the PRE-EXISTING, already-documented
+self-heal chain's own known limitation, unrelated to and unchanged by this pass — see
+`fetch_invoice_pdf_bytes`'s own docstring, which already describes step 2 as deliberately not
+re-freezing anything. What this pass actually, provably fixes is the DOMINANT, always-active drift
+source (an unconditional live re-render on literally every view) — confirmed via a real backend test
+(`PortalViewHtmlTests.test_view_and_download_stay_identical_after_a_profile_edit_when_the_stored_pdf_is_
+actually_reachable`) that isolates the CORRECT, scoped claim: whenever the original fetch actually
+succeeds — which it always will once/if that Cloudinary Console setting is ever fixed, this account's
+own ACL restriction being the only thing standing between "sometimes" and "always" here — View and
+Download are provably, permanently identical, unaffected by any later profile edit.
+
+**The backend host is now fully hidden from every client-facing surface — via same-origin blob URLs,
+not a URL rename.** `InvoiceView.jsx`'s Download button used to link directly to the backend/API host
+(visible on hover/right-click even though it now returns real proxied bytes rather than a broken
+redirect). Considered two approaches per the task's own framing: (a) a thin frontend route/same-origin
+reverse proxy, or (b) fetching as a blob and handing the browser a `blob:` object URL. Chose (b) — this
+project's frontend is a static Vite/React SPA on Vercel with no server-side runtime of its own to host a
+proxy through, and this app's cross-origin cookie/CORS architecture (the frontend domain vs.
+`api.lanceraos.com`, `CORS_ALLOWED_ORIGINS`/`CORS_ALLOW_CREDENTIALS` already configured for exactly this
+split) is a deliberate, existing design this task has no reason to touch. A `blob:` URL is same-origin by
+construction — nothing a client could hover, right-click-copy-link, or view-source on ever shows the
+backend host, for EITHER View (the iframe's own `src`) or Download (a programmatic `<a download>`
+click) — both fetch via `api.get(url, { responseType: 'blob' })` and never render a plain `<a href>`/
+`<iframe src>` pointing at the raw API origin. `CORS_EXPOSE_HEADERS = ['Content-Disposition']` was added
+(a small, safe, single-header exposure) so Download can still recover the real filename
+(`INV-2026-0002.pdf`, not a generic fallback) from that header, which browsers hide from cross-origin JS
+reads by default. Confirmed via a comprehensive grep sweep, before and after: the freelancer's OWN
+authenticated Download/Preview-PDF/Statement-PDF buttons (`InvoiceDetailPanel.jsx`, `NewInvoiceWizard.jsx`,
+`ClientDetailPanel.jsx`) deliberately still use the backend host directly — they're not client-facing at
+all (only the invoice's own freelancer, already logged into their own dashboard, ever sees them), so
+hiding the host there would be pointless; every genuinely client-facing surface (the "View Invoice
+Online" email link, the QR code, the portal list, Copy Invoice Link) already flows through
+`Invoice.portal_view_url`, unaffected.
+
+**Real bug fixed: the client portal's invoice list showed draft and finalised-but-never-sent invoices.**
+`portal_invoice_list` used to return every invoice for the resolved client with zero status filtering —
+a client who already had portal access via one real sent invoice could see (and know about) every OTHER
+invoice from that same freelancer too, including ones that never reached them by any means at all. Fixed
+by excluding `draft` and `created` — the same "has this actually been delivered by some real means"
+boundary this app already draws everywhere an invoice's reachability matters (e.g. `invoice_pdf`'s own
+live-vs-frozen split, `InvoiceDetailPanel`'s "hasn't been sent" banner): status only ever advances past
+`created` via a real `invoice_mark_sent` or `/send/` call — manual or platform, either way a genuine
+real-world delivery event — so `status not in (draft, created)` is exactly "reached the client by some
+real means," not a new, independently-invented definition.
+
+**Real bugs fixed in payment claims: no duplicate-pending check, and a whole class of validation
+messages that were silently never reaching the client at all.** Two real, separate fixes: (1) nothing
+previously stopped a second claim being submitted while a real pending one already existed for the same
+invoice — now rejected outright with a specific "already being reviewed" message, before either of the
+checks below even run. (2) Traced the ACTUAL current failure path rather than assuming new validation
+logic was needed (per the task's own instruction): an already-fully-paid invoice WAS already being
+rejected, by `validate_amount_claimed`'s existing outstanding-amount cap (Step 14) — but that rejection,
+like every OTHER serializer-level validation error on this endpoint, surfaced as DRF's default
+field-keyed shape (`{'amount_claimed': [...]}`), which `ClientPortal.jsx`'s `ClaimModal` was NEVER ABLE
+TO READ AT ALL — it only ever checks a flat top-level `e.response?.data?.error` string, so every real,
+specific message this endpoint ever built (the "cannot exceed the outstanding balance of X" case
+included, not just the new one) silently fell back to a generic "Could not submit — please try again."
+The already-paid-in-full case now gets its own specific message, checked explicitly before the serializer
+even runs; every other validation failure on this endpoint now has its real first error message
+re-surfaced under that same top-level `error` key the frontend already reads, closing the SAME root-cause
+gap for a case beyond just the two named in this round's own brief.
+
+Verification: `apps.invoices` — every affected test module passes (`PortalViewHtmlTests` fully reworked
+for the frozen-PDF-vs-live-render boundary, including the direct before/after drift proof; the old font-
+URL/CSS-wrapper tests MOVED to `PreviewAsClientTests`, the one remaining real consumer of
+`render_invoice_portal_html`; `PortalPdfDownloadTests` unchanged; new `PortalInvoiceListTests` coverage
+for the draft/created exclusion; `test_claims.py` gained duplicate-pending and already-resolved coverage,
+plus a fix to an existing test that was itself asserting the OLD, now-fixed field-keyed error shape).
+206 frontend tests (`InvoiceView.jsx` rewritten entirely — blob-fetching, a real distinct "not ready yet"
+(503) state vs. a genuinely invalid link, `InvoiceView.test.jsx` rewritten to match). Production `vite
+build` clean. A real, live end-to-end run against the actual running dev servers and the real dev
+Cloudinary account (its ACL restriction genuinely active, not simulated) confirmed every item: View
+Invoice's iframe `src` is a real `blob:` URL (never the backend host); Download produces a real, valid
+PDF with the correct real filename (`INV-2026-0002.pdf`, via the new `CORS_EXPOSE_HEADERS`); the
+before/after profile-edit drift test (documented above, an honest, real finding, not swept under the
+rug); the portal list for a real client (Acme Studios, via its own magic link, zero freelancer
+involvement) showed ONLY its one real sent/paid invoice, correctly excluding its own draft and
+finalised-unsent invoices; both new payment-claim error messages ("already been paid in full",
+"already being reviewed") and the pre-existing "cannot exceed the outstanding balance" message all
+verified via direct API calls to return the exact real, specific text under the real `error` key the
+frontend reads.
+
+Docs: this entry. CLAUDE.md status update (Module 2 build notes).
+
+---
+
+Date: 18 August 2026 (third pass, same day — two real regressions from the blob-based rework above)
+Decision/Reason:
+
+**Chrome refused to render the invoice at all ("this page has been blocked") — `InvoiceView.jsx`'s
+`<iframe sandbox="">` was appropriate for the OLD `srcDoc`-HTML approach, wrong for the new blob-PDF
+one.** `sandbox=""` blocks script execution inside the framed document — correct when the framed content
+was arbitrary invoice-template HTML (the earlier round's real, if narrower, threat model). Chrome's own
+built-in PDF viewer needs script execution for its internal toolbar/zoom/search UI; without it, Chrome
+refuses to render the PDF inline at all. A PDF blob built ourselves, from our own backend's own response,
+has no arbitrary-script-execution risk to sandbox against in the first place — there's no untrusted
+third party in this path the way there would be for, say, an arbitrary uploaded file. Fixed by removing
+the `sandbox` attribute entirely, rather than guessing at which specific flag combination (`allow-scripts`
+alone? plus `allow-same-origin`?) Chrome's PDF viewer needs — real Chrome PDF-viewer-in-sandboxed-iframe
+behavior has been inconsistent across versions historically, so "no sandbox, matching a normal unrestricted
+`<iframe src="file.pdf">`" is the one guaranteed-robust answer, not a guess.
+
+**`InvoiceDetailPanel.jsx`'s freelancer-facing "Download Invoice" button was still a bare
+`window.open(backendUrl, '_blank')` — a real, reported gap in the same round's own "hide the backend
+host" fix, which only touched `InvoiceView.jsx`'s Download at the time.** The earlier round's own scoping
+call (freelancer-only buttons aren't client-facing, so leave them alone) turned out not to match what was
+actually wanted — the user explicitly flagged this exact button, a new tab whose address bar showed the
+raw API host directly. Fixed to match `InvoiceView.jsx`'s own pattern exactly: fetch the PDF as a blob via
+the existing `api` instance, then a same-origin, in-place `<a download>` click — no new tab, no visible
+backend host anywhere, reusing `runAction`'s existing busy-state/error-toast handling rather than a
+bespoke implementation.
+
+**A real, related performance finding, documented rather than silently worked around:** the terminal logs
+that surfaced these two bugs also showed `portal_invoice_view_html` taking 3+ seconds per request — this
+account's real, already-documented Cloudinary ACL restriction forces `fetch_invoice_pdf_bytes`'s full
+self-heal chain (render, upload, retry, fall back) on every single request in this dev environment, not
+just occasionally. Genuinely out of this pass's scope (an account-level Cloudinary Console setting, not a
+code fix — see the earlier round's own entry). What WAS fixed, as a real, low-risk, and directly relevant
+improvement: `InvoiceView.jsx`'s own fetch now uses a real `AbortController` instead of an ignore-the-
+result flag, so `React.StrictMode`'s real dev-only double-invoke of `useEffect` (confirmed present in
+`main.jsx`) actually CANCELS the superseded first request instead of letting it complete and discarding
+the result — halving the visible wait in dev without touching the underlying account-level slowness at all.
+
+Verification: 208 frontend tests (`InvoiceView.test.jsx`'s sandboxed-iframe assertion replaced with one
+confirming NO `sandbox` attribute is present at all — a deliberate, previously-correct assertion that
+became the wrong thing to test once the underlying design changed; `InvoiceDetailPanel.test.jsx` gained a
+new test confirming Download never calls `window.open` and fetches as a blob instead). A real, live re-run
+against the actual running dev servers (not simulated): the invoice that previously got stuck on "Loading
+invoice…" indefinitely (matching the user's own "blocked by Chrome" report) now shows a real iframe with
+a genuine `blob:` src, zero console errors, and a working Download button; confirmed via Playwright's own
+page-count tracking that clicking Download — on both `InvoiceView.jsx` (client-facing) and
+`InvoiceDetailPanel.jsx` (freelancer-facing) — never opens a second browser tab, and the resulting
+download's own URL is a same-origin `blob:` one, never the backend host.
+
+Docs: this entry. No CLAUDE.md status-table change — this pass is bug fixes to already-"built"
+functionality from the same day's earlier passes, not new scope.
+
+---
+
+Date: 18 August 2026 (fourth pass, same day — the bulk-select bar's own mobile layout, two rounds)
+Decision: `Invoices.jsx`'s floating bulk-select bar (`.bulk-bar-mobile` — "N selected" + Select all/Clear/
+Delete selected) never had a real mobile treatment of its own — anchored via `right: 24` alone with no
+left bound, no wrap, and no width cap, its natural content width routinely exceeded what was left of a
+phone-width viewport, running off the left edge of the screen. First fix (flexWrap + a real `maxWidth`
+cap, plus a ≤768px override spanning it edge-to-edge with symmetric insets) stopped the overflow but
+traded it for "Delete selected" wrapping onto its own second line — reported back as still not what was
+wanted; a single, compact row reads better on a phone than a two-line toolbar. Reworked: below 500px,
+every button drops to icon-only (`CheckCheck`/`X`/`Trash2`, already this app's own icons for these exact
+actions elsewhere) via a `.bulk-bar-label` span the media query hides outright, with a real `[data-tooltip]`
++ `aria-label` on each button carrying the meaning a bare icon can't — small enough that the count text
+plus all 3 buttons fit one line even at 320px, no wrapping needed. `initTooltipBindings()` (already this
+codebase's own mechanism — `useAppTooltip.js`) is now called from `Invoices.jsx` itself too (previously
+only `AppShell.jsx`/`InvoiceDetailPanel.jsx` did), since the bulk bar's own icon-only buttons mount/unmount
+dynamically as `selectedIds` toggles and need their own real binding pass. Also fixed alongside, a real,
+related overlap this round's own screenshots caught: the mobile "New Invoice" FAB and this bar share the
+exact same bottom-right corner — the FAB is now conditionally NOT RENDERED at all while a bulk selection
+is active (a `display` toggle couldn't win against the FAB's own `display: flex !important` CSS override
+at mobile width, so this had to be a real conditional-render, not a style tweak).
+Verification: 208 frontend tests passing (no prior test asserted on this bar's exact markup, so nothing
+broke). Real, live Playwright verification at 320/375/480/600px — a real `boundingBox()` check confirms
+the bar's own x/width never exceeds the viewport at any of them, and its height stays at a genuine
+single-line ~45px at 320-480px (icon-only) — 600px alone shows the full-text variant (still comfortably
+one line, more horizontal room available there) since the 500px breakpoint deliberately favors the
+clearer full-text labels wherever they actually fit.
+
 Docs: this entry. CLAUDE.md status update (Module 2 build notes + Section 8's env var list).

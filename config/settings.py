@@ -176,6 +176,15 @@ CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
 # never sent cookies at all (JWT lived in localStorage + Authorization
 # header instead).
 CORS_ALLOW_CREDENTIALS = True
+# Response headers a browser normally hides from cross-origin JS reads
+# unless explicitly exposed. Content-Disposition specifically: InvoiceView.jsx
+# (frontend/src/pages/InvoiceView.jsx) fetches invoice PDFs as a blob and
+# reads this header to recover the real filename
+# (portal_invoice_pdf_download's own `attachment; filename="..."` value)
+# for the browser's save dialog — without this, every download would
+# silently fall back to a generic "invoice.pdf". Exposing just this one,
+# already-public header costs nothing security-wise.
+CORS_EXPOSE_HEADERS = ['Content-Disposition']
 
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
     'http://localhost:5173',

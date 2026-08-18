@@ -45,6 +45,16 @@ class PortalClaimCreateSerializer(serializers.ModelSerializer):
         (portal_invoice_claims, views_portal.py) — never raises on a
         missing context key, matching that same precedent's own
         defensive `if invoice is not None` guard.
+
+        The outstanding_amount==0 case (fully paid already) is now caught
+        EARLIER, in portal_invoice_claims itself, with its own specific
+        "already been paid in full" message — before this serializer ever
+        runs — so in practice this branch's own comparison only ever
+        fires for a genuine PARTIAL overpayment against a still-positive
+        balance. Left as real, correct, freestanding validation here
+        regardless (this serializer has no other guarantee its caller
+        pre-checked that case, and duplicated cheap safety beats a
+        implicit cross-file assumption).
         """
         if value <= 0:
             raise serializers.ValidationError('Claimed amount must be greater than zero.')

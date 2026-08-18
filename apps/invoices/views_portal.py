@@ -21,13 +21,15 @@ Two real portal-entry semantics, both landing on portal_invoice_view_html:
     ClientPortalSession — there's no Client row to attach one to. Access
     is scoped to this exact invoice only, via its own view_token.
 
-The actual invoice HTML is never a second, hand-built reimplementation
-of the PDF layout — render_invoice_portal_html (pdf_generator.py) reuses
-the exact same Django template _select_template_name already picks for
-the PDF, just with browser-fetchable font URLs instead of WeasyPrint's
-file:// ones. Preview-as-Client (invoice_preview_as_client, below) calls
-that same renderer too — one shared renderer, three total consumers
-(PDF, portal view, freelancer preview).
+portal_invoice_view_html itself now serves the actual FROZEN PDF inline
+once one exists (see that view's own docstring and DECISIONS.md's
+frozen-PDF-vs-live-render entry) — render_invoice_portal_html
+(pdf_generator.py) is no longer called from there at all. It's still the
+real, shared HTML renderer for invoice_preview_as_client (below) — a
+structurally separate, freelancer-only endpoint that deliberately DOES
+want CURRENT data, for any status including still-draft — so the
+one-shared-renderer principle (never a hand-built reimplementation of
+the PDF layout) still holds for that one remaining consumer.
 """
 import logging
 
@@ -151,12 +153,30 @@ def portal_invoice_list(request):
     401, not empty-list, when no valid session is present — a client
     with no session shouldn't see "you have zero invoices," they should
     see "you're not logged in."
+
+    FIXED (real, confirmed bug — see DECISIONS.md): this used to return
+    EVERY invoice for the resolved client, including draft and
+    created-but-never-sent ones — a client who already has portal access
+    via one real sent invoice could see (and know about) invoices that
+    genuinely never reached them by any means. Now excludes 'draft' and
+    'created' — the same "has this actually been delivered by some real
+    means" boundary this app already draws everywhere else an invoice's
+    reachability matters (e.g. invoice_pdf's own live-vs-frozen split,
+    InvoiceDetailPanel's "hasn't been sent" banner): status only ever
+    advances past 'created' via invoice_mark_sent or the real /send/ —
+    manual or platform, either way a genuine real-world delivery event —
+    so 'status not in (draft, created)' is exactly "reached the client by
+    some real means," not a new, independently-invented definition.
     """
     client = resolve_session_from_request(request)
     if client is None:
         return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
 
-    invoices = Invoice.objects.filter(client=client).order_by('-issue_date', '-created_at')
+    invoices = (
+        Invoice.objects.filter(client=client)
+        .exclude(status__in=('draft', 'created'))
+        .order_by('-issue_date', '-created_at')
+    )
     return Response(PortalInvoiceListSerializer(invoices, many=True).data)
 
 
@@ -180,24 +200,92 @@ def portal_invoice_detail(request, pk):
     return Response(PortalInvoiceDetailSerializer(invoice).data)
 
 
+def _resolve_invoice_pdf_bytes_for_view(invoice):
+    """
+    STRICTER than fetch_invoice_pdf_bytes' own contract, deliberately — a
+    blank pdf_url here is treated as "genuinely not ready yet," never as
+    "render live instead." This is the real, confirmed fix for a real
+    drift bug (see DECISIONS.md): build_portal_context used to pull the
+    freelancer's CURRENT FreelancerProfile (business name, logo, payment
+    methods, signature) fresh on every single view, even though the
+    invoice's own fields are frozen (is_editable blocks changes past
+    draft) — so a freelancer editing their profile after sending an
+    invoice silently changed what "View Invoice" showed a client days
+    later, while the actual downloadable PDF stayed correctly frozen. Two
+    documents, same invoice, able to disagree.
+
+    Once a real pdf_url DOES exist, this still calls fetch_invoice_pdf_bytes
+    — its own self-heal chain (re-upload+retry, then a live-render
+    fallback only as a last resort under a genuine Cloudinary-side
+    failure) is left exactly as-is here, matching Download's own
+    resilience for that narrow, infrequent case: by the time a real
+    pdf_url was ever set, the invoice was genuinely frozen at some point,
+    so self-heal there is real recovery, not routine, every-view
+    behavior — a fundamentally different risk profile than the "current
+    profile data on literally every request" bug this function exists to
+    close.
+    """
+    if not invoice.pdf_url:
+        return None
+    return fetch_invoice_pdf_bytes(invoice)
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def portal_invoice_view_html(request, view_token):
     """
-    The real rendered HTML page (Content-Type text/html, not JSON) —
-    matching invoice_pdf's existing live-render pattern but serving HTML
-    via render_invoice_portal_html + the same template selection logic
-    the PDF path uses. Public/unauthenticated by design (view_token
-    itself is the credential, same trust model as
-    GET /api/invoices/public/<token>/ elsewhere in this app) — a real
-    404 for an unknown token, not a redirect or an empty page, so an
-    invalid link doesn't look like "this invoice was deleted" or leak
-    which tokens almost matched.
+    The real invoice VIEW. REWORKED (see DECISIONS.md's frozen-PDF-vs-
+    live-render entry): now serves the ACTUAL FROZEN PDF inline — the
+    exact same bytes portal_invoice_pdf_download serves as an attachment
+    — instead of live-rendering the shared HTML template from CURRENT
+    invoice+profile data on every single request. Every real path that
+    can reach this endpoint (the "View Invoice Online" email link, the
+    portal list, the PDF's own QR code / "Pay online" link, the
+    freelancer's own "View Invoice" button) was traced directly, not
+    assumed: every one only exists for a created-or-beyond invoice, which
+    already has — or will shortly have, via _finalise_invoice's own
+    background render+store — a real stored pdf_url. A draft invoice's
+    view_token is never exposed through any of those paths at all (no
+    email is ever sent for a draft, the wizard's own "Preview PDF" action
+    hits a completely different, freelancer-authenticated endpoint,
+    apps/invoices/views.py's invoice_pdf, and the client-portal list now
+    excludes draft/created entirely — see this same DECISIONS.md entry's
+    portal-list-scoping half).
+
+    When no frozen PDF exists yet (the invoice was only just finalised
+    and the background task hasn't landed, or a total infrastructure
+    failure), this returns a real 503 with a clear, specific error rather
+    than ever falling back to a live re-render — the exact drift problem
+    this rework closes. Content-Type text/html is gone from this view's
+    own successful path entirely; render_invoice_portal_html/
+    build_portal_context remain used elsewhere (invoice_preview_as_client,
+    below — a structurally separate, freelancer-only preview with a
+    fundamentally different intent: showing CURRENT data on purpose, for
+    any status including still-draft, currently unreachable from the
+    frontend UI since Preview-as-Client's own button was removed — see
+    that view's own docstring) but are no longer called from here at all.
+
+    Session minting + view-tracking (issue_or_renew_session,
+    _record_invoice_view_if_appropriate) both still fire unconditionally,
+    regardless of which branch produced the response — a client who
+    followed a real link should still be tracked as having visited, even
+    in the rare case where the PDF isn't ready yet. Public/unauthenticated
+    by design (view_token itself is the credential) — a real 404 for an
+    unknown token, not a redirect or an empty page, so an invalid link
+    doesn't look like "this invoice was deleted" or leak which tokens
+    almost matched.
     """
     invoice = get_object_or_404(Invoice, view_token=view_token)
 
-    html = render_invoice_portal_html(invoice)
-    response = HttpResponse(html, content_type='text/html')
+    pdf_bytes = _resolve_invoice_pdf_bytes_for_view(invoice)
+    if pdf_bytes is not None:
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="{invoice.invoice_number or "invoice"}.pdf"'
+    else:
+        response = Response(
+            {'error': "This invoice isn't ready to view yet. Please check back in a moment."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     if invoice.client_id:
         issue_or_renew_session(invoice.client, request, response)
@@ -465,6 +553,28 @@ def portal_invoice_claims(request, pk):
     misattribute, matching portal_invoice_comments' own GET (which
     returns the thread regardless of preview mode; only ITS read-marking
     side effect is preview-guarded).
+
+    Two real, confirmed bugs fixed this pass (see DECISIONS.md):
+    (1) Nothing stopped a second claim being submitted while a real
+    pending one already existed — now rejected outright, before either of
+    the two checks below, with a specific "already being reviewed"
+    message. (2) A client submitting a claim against an invoice that's
+    already fully paid (outstanding_amount already 0 — whether from a
+    previously CONFIRMED claim or a direct payment recorded elsewhere)
+    was already being rejected, but only by validate_amount_claimed's
+    generic "cannot exceed the outstanding balance of 0.00 USD" message —
+    and that message, along with every other field-keyed
+    serializer.errors entry, was NEVER ACTUALLY REACHING the client at
+    all: ClientPortal.jsx's ClaimModal only ever reads a flat top-level
+    `e.response?.data?.error` string, which DRF's default
+    `{field: [messages]}` error shape doesn't provide, so every real
+    validation message silently fell back to a generic "Could not submit
+    — please try again." The already-paid-in-full case is now caught
+    explicitly with its own specific message before the serializer even
+    runs; every OTHER serializer validation error (e.g. a partial
+    overpayment against a still-positive balance) now has its real first
+    message re-surfaced under that same top-level `error` key instead of
+    silently vanishing behind the generic fallback.
     """
     result = _resolve_portal_write_access(request, pk)
     if isinstance(result, Response):
@@ -483,9 +593,16 @@ def portal_invoice_claims(request, pk):
     if _check_portal_claim_rate_limit(rate_limit_key):
         return Response({'error': 'Too many claims submitted. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
+    if invoice.outstanding_amount <= 0:
+        return Response({'error': 'This invoice has already been paid in full.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if invoice.payment_claims.filter(status='pending').exists():
+        return Response({'error': 'A payment claim is already being reviewed for this invoice.'}, status=status.HTTP_400_BAD_REQUEST)
+
     serializer = PortalClaimCreateSerializer(data=request.data, context={'invoice': invoice})
     if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        first_error = next(iter(serializer.errors.values()))[0] if serializer.errors else 'Invalid submission.'
+        return Response({'error': str(first_error)}, status=status.HTTP_400_BAD_REQUEST)
 
     claim = serializer.save(invoice=invoice, client_name=client_name, client_email=client_email)
     emit('PaymentClaimSubmitted', invoice_id=str(invoice.pk), user_id=str(invoice.user_id), claim_id=str(claim.pk))

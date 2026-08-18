@@ -40,13 +40,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Search, X, Plus, FileText, BookmarkPlus, LayoutTemplate, BarChart3, Trash2, ArrowUpDown,
+  Search, X, Plus, FileText, BookmarkPlus, LayoutTemplate, BarChart3, Trash2, ArrowUpDown, CheckCheck,
 } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import usePageHeaderActions from '@/hooks/usePageHeaderActions'
 import useFilterOverflow from '@/hooks/useFilterOverflow'
+import { initTooltipBindings } from '@/hooks/useAppTooltip'
 import DropdownMenu from '@/components/DropdownMenu'
 import FilterPill from '@/components/FilterPill'
 import FilterOverflowMenu from '@/components/FilterOverflowMenu'
@@ -197,6 +198,13 @@ export default function Invoices() {
     api.get('/invoices/presets/').then(({ data }) => setPresets(data)).catch(() => setPresets([]))
     api.get('/invoices/currencies/').then(({ data }) => setAvailableCurrencies(data.currencies || [])).catch(() => setAvailableCurrencies([]))
   }, [])
+
+  // The bulk-select bar's buttons go icon-only on mobile (below) and
+  // rely on a real [data-tooltip] for clarity — idempotent + cheap, so
+  // re-running on every render (including when the bar itself mounts/
+  // unmounts as selectedIds toggles) is safe, matching
+  // InvoiceDetailPanel.jsx's own identical convention.
+  useEffect(() => { initTooltipBindings() })
 
   // Notification click-through — unchanged from the prior round.
   useEffect(() => {
@@ -500,18 +508,44 @@ export default function Invoices() {
           mobile cards' own selection affordance — it now renders at
           every width instead of being CSS-gated to ≤768px. ── */}
       {selectedIds.size > 0 && (
+        // Real, reported bug (round 2): the first fix (flexWrap + a
+        // maxWidth cap) stopped the row running off-screen, but wrapping
+        // "Delete selected" onto its own second line wasn't actually
+        // what was wanted — a single, compact row reads better on a
+        // phone than a two-line toolbar. Each button below now carries
+        // an icon plus a `.bulk-bar-label` span that the ≤480px override
+        // hides outright, leaving real icon-only buttons (with a real
+        // [data-tooltip] + aria-label each, matching this app's own
+        // established icon-only-button convention) — small enough that
+        // all 3 fit the same line as the count text even at 320px, no
+        // wrap needed at all. flexWrap stays on as a harmless safety net
+        // regardless.
         <div className="bulk-bar-mobile" style={{
           display: 'flex', position: 'fixed', bottom: 24, right: 24, zIndex: 95,
           background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)',
           boxShadow: '0 8px 32px rgba(0,0,0,0.2)', padding: '10px 14px', alignItems: 'center', gap: 10,
+          flexWrap: 'wrap', maxWidth: 'calc(100vw - 32px)',
         }}>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+          <span className="bulk-bar-count" style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600, whiteSpace: 'nowrap' }}>
             {selectedIds.size} selected
           </span>
-          <button className="fos-btn fos-btn-ghost" style={{ fontSize: '0.76rem' }} onClick={selectAllEligible}>Select all</button>
-          <button className="fos-btn fos-btn-ghost" style={{ fontSize: '0.76rem' }} onClick={clearSelection}>Clear</button>
-          <button className="fos-btn fos-btn-danger" style={{ fontSize: '0.76rem' }} onClick={() => setShowBulkDeleteConfirm(true)}>
-            <Trash2 size={13} /> Delete selected
+          <button
+            className="fos-btn fos-btn-ghost" style={{ fontSize: '0.76rem' }}
+            onClick={selectAllEligible} aria-label="Select all" data-tooltip="Select all"
+          >
+            <CheckCheck size={13} /> <span >Select all</span>
+          </button>
+          <button
+            className="fos-btn fos-btn-ghost" style={{ fontSize: '0.76rem' }}
+            onClick={clearSelection} aria-label="Clear selection" data-tooltip="Clear selection"
+          >
+            <X size={13} /> <span >Clear</span>
+          </button>
+          <button
+            className="fos-btn fos-btn-danger" style={{ fontSize: '0.76rem' }}
+            onClick={() => setShowBulkDeleteConfirm(true)} aria-label="Delete selected" data-tooltip="Delete selected"
+          >
+            <Trash2 size={13} /> <span>Delete <span className="bulk-bar-label"> selected </span> </span>
           </button>
         </div>
       )}
@@ -523,15 +557,21 @@ export default function Invoices() {
         />
       )}
 
-      {/* ── Mobile FAB — the real "New Invoice" entry point at phone width, never duplicated in the header's 3-dot menu. ── */}
-      <button className="page-fab" onClick={handleNewInvoice} aria-label="New invoice" style={{
-        display: 'none', position: 'fixed', bottom: 24, right: 24, width: 56, height: 56,
-        borderRadius: '50%', background: 'var(--accent)', color: '#000', border: 'none',
-        boxShadow: '0 4px 20px var(--accent-glow-lg)', alignItems: 'center', justifyContent: 'center',
-        cursor: 'pointer', zIndex: 90,
-      }}>
-        <Plus size={24} />
-      </button>
+      {/* ── Mobile FAB — the real "New Invoice" entry point at phone width, never duplicated in the header's 3-dot menu.
+          Hidden outright while a bulk selection is active (real, reported bug: both this and the bulk-select bar
+          above are anchored to the exact same bottom-right corner, so they overlapped whenever both were visible
+          at once — conditionally rendering, not a `display` toggle, since the ≤768px CSS override below already
+          forces `display: flex !important`, which no inline style could out-rank). ── */}
+      {selectedIds.size === 0 && (
+        <button className="page-fab" onClick={handleNewInvoice} aria-label="New invoice" style={{
+          display: 'none', position: 'fixed', bottom: 24, right: 24, width: 56, height: 56,
+          borderRadius: '50%', background: 'var(--accent)', color: '#000', border: 'none',
+          boxShadow: '0 4px 20px var(--accent-glow-lg)', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', zIndex: 90,
+        }}>
+          <Plus size={24} />
+        </button>
+      )}
 
       {showPresetPicker && (
         <PresetPickerModal
@@ -573,6 +613,24 @@ export default function Invoices() {
           .list-mobile { display: grid !important; }
           .pagination-desktop { display: none !important; }
           .pagination-mobile { display: block !important; }
+          /* Real, reported bug: right-anchored alone, this row's content
+             (the count + 3 buttons) routinely didn't fit what was left
+             of a phone-width viewport. Spanning it edge-to-edge with
+             symmetric insets gives it real room instead. */
+          .bulk-bar-mobile { left: 16px !important; right: 16px !important; justify-content: space-between !important; }
+        }
+        /* Real, reported bug (round 2): even edge-to-edge, 3 full-text
+           buttons + the count still didn't fit one line on a genuine
+           phone width — "Delete selected" wrapped onto its own row.
+           Below 480px, drop every button to icon-only (a real
+           [data-tooltip] + aria-label carries the label instead) and
+           shrink padding/gaps/font so the whole row is compact enough
+           to stay on one line without wrapping at all. */
+          @media (max-width: 500px) {
+            .bulk-bar-mobile { padding: 8px 10px !important; gap: 6px !important; }
+          .bulk-bar-mobile .bulk-bar-label { display: none; }
+          .bulk-bar-mobile .bulk-bar-count { font-size: 0.7rem !important; }
+          .bulk-bar-mobile .fos-btn { padding: 6px 8px !important; gap: 0 !important; }
         }
       `}</style>
     </>

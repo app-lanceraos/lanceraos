@@ -1,16 +1,19 @@
 // src/pages/InvoiceView.test.jsx
 //
 // /invoice/:token — the real frontend-domain invoice view page (see
-// DECISIONS.md). Covers: fetches the backend's rendered HTML as raw text
-// (never JSON-parsed), injects a <base> tag pointing at the backend
-// origin so relative /static/... URLs (the embedded @font-face files)
-// resolve correctly inside the iframe's own srcDoc context, renders it
-// in a fully sandboxed iframe, shows a real error state for an unknown
-// token, and offers a real Download link pointing at the new public
-// per-view_token PDF endpoint.
-import { render, screen, waitFor } from '@testing-library/react'
+// DECISIONS.md's frozen-PDF-vs-live-render entry). REWORKED this pass:
+// this page no longer fetches/renders live HTML at all — it fetches the
+// ACTUAL FROZEN PDF as a blob and displays it via the browser's own
+// native PDF viewer (a same-origin blob: URL, never a visible link/src
+// pointing at the backend host), shows a real "not ready yet" state on
+// a 503 (the real, specific response portal_invoice_view_html now
+// returns when nothing's frozen — never a live-render fallback), and a
+// real error state for anything else (unknown token, total failure).
+// Download is a real <button> (not a plain <a href>) that fetches the
+// PDF as a blob and triggers a programmatic, same-origin download.
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MockAdapter from 'axios-mock-adapter'
 
 import api from '@/lib/api'
@@ -18,8 +21,19 @@ import InvoiceView from './InvoiceView'
 
 let mock
 
-beforeEach(() => { mock = new MockAdapter(api) })
-afterEach(() => { mock.restore() })
+beforeEach(() => {
+  mock = new MockAdapter(api)
+  // jsdom's own createObjectURL/revokeObjectURL support is unreliable
+  // across versions — stubbed explicitly so every test here is
+  // deterministic regardless of the actual test environment's Blob
+  // support, matching this suite's own job (proving InvoiceView.jsx's
+  // OWN logic, not the browser's).
+  vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:mock-url'), revokeObjectURL: vi.fn() })
+})
+afterEach(() => {
+  mock.restore()
+  vi.unstubAllGlobals()
+})
 
 function renderAt(token) {
   return render(
@@ -31,60 +45,81 @@ function renderAt(token) {
   )
 }
 
-const SAMPLE_HTML = '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"></head><body><p>Invoice INV-2026-0001</p></body></html>'
+const FAKE_PDF_BLOB = new Blob(['%PDF-fake'], { type: 'application/pdf' })
 
-describe('InvoiceView — fetches and displays the shared backend-rendered HTML', () => {
-  it('fetches the real portal-view HTML endpoint for the URL token', async () => {
-    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, SAMPLE_HTML)
+describe('InvoiceView — shows the actual frozen PDF, never a live re-render', () => {
+  it('fetches the real portal-view endpoint as a blob for the URL token', async () => {
+    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, FAKE_PDF_BLOB)
     renderAt('tok-abc123')
     await waitFor(() => expect(mock.history.get.some((r) => r.url === '/invoices/portal/view/tok-abc123/')).toBe(true))
+    expect(mock.history.get[0].responseType).toBe('blob')
   })
 
-  it('renders the fetched HTML inside a fully sandboxed iframe, filling the page', async () => {
-    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, SAMPLE_HTML)
+  it('renders the fetched PDF inside an iframe via a same-origin object URL, filling the page', async () => {
+    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, FAKE_PDF_BLOB)
     const { container } = renderAt('tok-abc123')
     await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy())
 
     const iframe = container.querySelector('iframe')
-    expect(iframe.getAttribute('sandbox')).toBe('') // no scripts, no forms, no same-origin DOM access — a static document
-    expect(iframe.srcdoc).toContain('Invoice INV-2026-0001')
+    expect(iframe.getAttribute('src')).toBe('blob:mock-url') // never the backend host
   })
 
-  it('injects a <base> tag pointing at the backend origin, so relative /static/... URLs resolve correctly inside the iframe', async () => {
-    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, SAMPLE_HTML)
+  it('carries no sandbox attribute — a real, confirmed bug this pass: sandbox="" made Chrome refuse to render the PDF at all ("this page has been blocked")', async () => {
+    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, FAKE_PDF_BLOB)
     const { container } = renderAt('tok-abc123')
     await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy())
 
-    const iframe = container.querySelector('iframe')
-    expect(iframe.srcdoc).toMatch(/<base href="https?:\/\/[^"]+\/">/)
-    // Confirms the injected base actually precedes the original <head>
-    // content (not appended after it, which some browsers would still
-    // honor but is fragile) — a real ordering assertion, not just
-    // presence.
-    expect(iframe.srcdoc.indexOf('<base')).toBeLessThan(iframe.srcdoc.indexOf('<meta charset'))
-  })
-
-  it('never JSON-parses the response — the raw HTML string reaches the iframe verbatim', async () => {
-    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, SAMPLE_HTML)
-    const { container } = renderAt('tok-abc123')
-    await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy())
-    expect(container.querySelector('iframe').srcdoc).toContain('<!DOCTYPE html>')
+    // A PDF blob we built ourselves from our own backend's response has
+    // no arbitrary-script-execution risk to sandbox against in the first
+    // place (unlike the OLD srcDoc-HTML approach) — Chrome's own native
+    // PDF viewer needs script execution for its internal toolbar/zoom/
+    // search UI, and a sandboxed iframe blocks that outright.
+    expect(container.querySelector('iframe').hasAttribute('sandbox')).toBe(false)
   })
 })
 
-describe('InvoiceView — a real, offered Download action', () => {
-  it('offers a Download link pointing at the real public per-token PDF endpoint, not the authenticated freelancer one', async () => {
-    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, SAMPLE_HTML)
-    renderAt('tok-abc123')
-    const downloadLink = await screen.findByRole('link', { name: /download/i })
-    expect(downloadLink.getAttribute('href')).toMatch(/\/api\/invoices\/portal\/view\/tok-abc123\/pdf\/$/)
+describe('InvoiceView — "not ready yet" (503) vs a genuinely invalid link (404/other)', () => {
+  it('shows a real "not ready yet" message on a 503 — never falls back to rendering something else', async () => {
+    mock.onGet('/invoices/portal/view/tok-notready/').reply(503, { error: "This invoice isn't ready to view yet." })
+    renderAt('tok-notready')
+    await waitFor(() => expect(screen.getByText(/isn't ready to view yet/i)).toBeTruthy())
+    expect(screen.queryByTitle('Invoice')).toBeNull() // no iframe at all
   })
-})
 
-describe('InvoiceView — unknown/invalid token', () => {
-  it('shows a real error, not a blank page or a crash', async () => {
+  it('shows a real "invalid or no longer available" error for an unknown token (404)', async () => {
     mock.onGet('/invoices/portal/view/bad-token/').reply(404)
     renderAt('bad-token')
     await waitFor(() => expect(screen.getByText(/invalid or no longer available/i)).toBeTruthy())
+  })
+
+  it('the 503 and 404 states are visibly distinct messages, not the same generic fallback', async () => {
+    mock.onGet('/invoices/portal/view/tok-a/').reply(503)
+    const { unmount } = renderAt('tok-a')
+    await waitFor(() => expect(screen.getByText(/isn't ready to view yet/i)).toBeTruthy())
+    unmount()
+
+    mock.onGet('/invoices/portal/view/tok-b/').reply(500)
+    renderAt('tok-b')
+    await waitFor(() => expect(screen.getByText(/invalid or no longer available/i)).toBeTruthy())
+  })
+})
+
+describe('InvoiceView — Download, hides the backend host', () => {
+  it('fetches the real public per-token PDF endpoint as a blob and triggers a same-origin download, never a visible backend link', async () => {
+    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, FAKE_PDF_BLOB)
+    mock.onGet('/invoices/portal/view/tok-abc123/pdf/').reply(200, FAKE_PDF_BLOB, { 'content-disposition': 'attachment; filename="INV-2026-0001.pdf"' })
+    renderAt('tok-abc123')
+
+    const downloadBtn = await screen.findByRole('button', { name: /download/i })
+    // A real <button>, not an <a href> a client could hover/right-click
+    // to see the backend host — the whole point of this round's fix.
+    expect(downloadBtn.tagName).toBe('BUTTON')
+
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    fireEvent.click(downloadBtn)
+
+    await waitFor(() => expect(mock.history.get.some((r) => r.url === '/invoices/portal/view/tok-abc123/pdf/')).toBe(true))
+    await waitFor(() => expect(clickSpy).toHaveBeenCalled())
+    clickSpy.mockRestore()
   })
 })

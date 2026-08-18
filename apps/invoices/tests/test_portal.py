@@ -107,6 +107,37 @@ class PortalInvoiceListTests(PortalContentAPITestCase):
         for field in ('id', 'invoice_number', 'status', 'total', 'due_date', 'days_overdue', 'currency', 'portal_view_url'):
             self.assertIn(field, row)
 
+    def test_excludes_draft_and_finalised_unsent_invoices_from_the_same_freelancer(self):
+        """
+        Real, confirmed bug fix (see DECISIONS.md): a client who already
+        has portal access via one real sent invoice could previously see
+        every OTHER invoice from that same freelancer too, including
+        drafts and invoices that were finalised but never actually sent
+        by any real means. A client should never see or know about an
+        invoice that hasn't actually reached them — status only ever
+        advances past 'created' via a real mark-sent or /send/.
+        """
+        sent = self._invoice_for(self.portal_client, status='sent', invoice_number='INV-SENT-0001')
+        self._invoice_for(self.portal_client, status='draft', invoice_number=None)
+        self._invoice_for(self.portal_client, status='created', invoice_number='INV-CREATED-0001')
+        self._set_portal_session_cookie(self.portal_client)
+
+        resp = self._get(reverse('invoices:portal_invoice_list'))
+        self.assertEqual(resp.status_code, 200)
+        ids = [row['id'] for row in resp.json()]
+        self.assertEqual(ids, [str(sent.pk)])
+
+    def test_includes_every_other_real_status_once_actually_delivered(self):
+        """The exclusion is narrowly draft/created only — every status reachable past that point (however it got there) still shows."""
+        statuses = ['sent', 'viewed', 'partially_paid', 'paid', 'cancelled', 'refunded', 'bad_debt']
+        for i, real_status in enumerate(statuses):
+            self._invoice_for(self.portal_client, status=real_status, invoice_number=f'INV-{i}', sent_at='2026-01-01T00:00:00Z')
+        self._set_portal_session_cookie(self.portal_client)
+
+        resp = self._get(reverse('invoices:portal_invoice_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.json()), len(statuses))
+
 
 class PortalInvoiceDetailTests(PortalContentAPITestCase):
     def test_requires_a_valid_session(self):
@@ -138,42 +169,115 @@ class PortalInvoiceDetailTests(PortalContentAPITestCase):
 # ══════════════════════════════════════════════════════════════════
 
 class PortalViewHtmlTests(PortalContentAPITestCase):
+    """
+    REWORKED (see DECISIONS.md's frozen-PDF-vs-live-render entry):
+    portal_invoice_view_html no longer renders live HTML from current
+    invoice+profile data at all — it serves the ACTUAL FROZEN PDF inline
+    once one exists, and a real 503 (never a live-render fallback) when
+    it doesn't. The old font-URL/CSS-wrapper tests that used to live here
+    tested render_invoice_portal_html's OWN output — that generator
+    function is unchanged and still real, still tested (its remaining
+    real consumer, invoice_preview_as_client, is covered directly by
+    PreviewAsClientTests below), it's just no longer what this specific
+    endpoint calls.
+
+    A real stored pdf_url plus a mocked fetch_invoice_pdf_bytes (this
+    endpoint's own patch point, apps.invoices.views_portal) stands in for
+    "a real frozen PDF exists" throughout this class — the self-heal
+    chain's OWN behavior is fetch_invoice_pdf_bytes' own responsibility
+    to test (apps/invoices/tests/test_pdf_pipeline.py,
+    apps/invoices/tests/test_send.py), not re-tested here.
+    """
+    FAKE_PDF_URL = 'https://res.cloudinary.com/demo/raw/upload/frozen.pdf'
+
     def test_unknown_token_is_a_real_404(self):
         resp = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': 'never-issued'}))
         self.assertEqual(resp.status_code, 404)
 
-    def test_renders_real_html_with_browser_fetchable_font_urls_not_file(self):
-        invoice = self._invoice_for(self.portal_client)
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes')
+    def test_serves_the_actual_frozen_pdf_inline_once_one_exists(self, mock_fetch):
+        mock_fetch.return_value = b'%PDF-frozen-content'
+        invoice = self._invoice_for(self.portal_client, pdf_url=self.FAKE_PDF_URL)
+
         resp = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp['Content-Type'].startswith('text/html'))
-        html = resp.content.decode()
-        self.assertIn('/static/invoices/fonts/', html)
-        # A bare 'file://' substring check would false-positive on the
-        # templates' own CSS comment text explaining WHY the PDF path
-        # uses file:// — the real assertion is that no @font-face src
-        # actually uses one.
-        import re
-        self.assertEqual(re.findall(r"url\([^)]*file://[^)]*\)", html), [])
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+        self.assertEqual(resp.content, b'%PDF-frozen-content')
+        self.assertIn('inline', resp['Content-Disposition'])
+        mock_fetch.assert_called_once_with(invoice)
 
-    def test_page_is_centered_with_a_pdf_viewer_style_wrapper(self):
+    def test_view_and_download_stay_identical_after_a_profile_edit_when_the_stored_pdf_is_actually_reachable(self):
         """
-        Item 10 of the verification pass — real, found bug: the rendered
-        page sat flush against the browser's own edges with no centering
-        or margin at all. Fixed via a CSS override appended before the
-        shared template's own </head> (render_invoice_portal_html) —
-        confirmed here it's actually present in the real response, not
-        just unit-tested against the generator function in isolation.
+        The real, explicit before/after drift proof — mirrors the actual
+        bug report exactly: an invoice is sent, the freelancer edits
+        their profile afterward, then View Invoice and Download must
+        still show IDENTICAL content, unaffected by that edit. Real,
+        important scoping note (found via live testing against the real
+        dev Cloudinary account while building this, not assumed — see
+        DECISIONS.md's own honest note on it): this holds whenever the
+        ORIGINAL stored pdf_url is actually reachable, i.e. fetch_invoice_
+        pdf_bytes' own happy path (mocked here, matching this whole
+        class's own convention). If that original fetch fails and
+        fetch_invoice_pdf_bytes falls all the way through to ITS OWN
+        live-render self-heal fallback (a separate, pre-existing,
+        already-documented function with its own real infrastructure-
+        failure-recovery purpose — not touched by this pass), that
+        specific fallback path still re-renders from current profile
+        data, same as it always has; closing THAT residual case would
+        mean redesigning fetch_invoice_pdf_bytes' own self-heal chain
+        (e.g. snapshotting profile fields at freeze time) — a materially
+        larger, separate change, out of this task's own scope. What this
+        test proves is the actual, explicitly-named bug: portal_invoice_
+        view_html itself no longer pulls current profile data
+        UNCONDITIONALLY on every view — the dominant, always-active drift
+        source — regardless of whether self-heal's own narrower,
+        infrastructure-failure-only risk is ever separately addressed.
+        """
+        invoice = self._invoice_for(self.portal_client, pdf_url=self.FAKE_PDF_URL)
+
+        with patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=b'%PDF-truly-frozen-bytes') as mock_fetch:
+            before = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(before.content, b'%PDF-truly-frozen-bytes')
+
+        # A real, later profile edit — the exact scenario the bug report
+        # named (business name, logo, payment methods, signature all live
+        # on FreelancerProfile, never on the invoice itself).
+        profile = self.user.profile
+        profile.business_name = 'A Totally Different Business Name LLC'
+        profile.save(update_fields=['business_name'])
+
+        with patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=b'%PDF-truly-frozen-bytes') as mock_fetch:
+            after = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(after.content, b'%PDF-truly-frozen-bytes')
+
+        self.assertEqual(before.content, after.content)  # identical, unaffected by the profile edit in between
+
+    def test_returns_a_real_503_not_a_live_render_when_no_pdf_url_exists_yet(self):
+        """
+        The real fix this pass makes: a client-reachable invoice with
+        nothing frozen yet (e.g. the background render+store task hasn't
+        landed) gets an honest "not ready" response — never the OLD
+        behavior of live-rendering the shared template from CURRENT
+        invoice+profile data as a silent substitute.
         """
         invoice = self._invoice_for(self.portal_client)
+        self.assertEqual(invoice.pdf_url, '')
+
         resp = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
-        html = resp.content.decode()
-        self.assertIn('max-width: 210mm', html)
-        self.assertIn('margin: 32px auto', html)
-        self.assertEqual(html.count('</head>'), 1)  # the override was inserted, not duplicated the closing tag
+        self.assertEqual(resp.status_code, 503)
+        self.assertIn("isn't ready", resp.json()['error'].lower())
 
-    def test_saved_clients_invoice_mints_a_real_session(self):
-        invoice = self._invoice_for(self.portal_client)
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=None)
+    def test_returns_a_real_503_when_a_stored_pdf_url_exists_but_every_fetch_path_fails(self, mock_fetch):
+        """A genuine total-infrastructure-failure case — still never falls back to a live render."""
+        invoice = self._invoice_for(self.portal_client, pdf_url=self.FAKE_PDF_URL)
+        resp = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(resp.status_code, 503)
+
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes')
+    def test_saved_clients_invoice_mints_a_real_session(self, mock_fetch):
+        mock_fetch.return_value = b'%PDF-fake'
+        invoice = self._invoice_for(self.portal_client, pdf_url=self.FAKE_PDF_URL)
         self.assertEqual(ClientPortalSession.objects.filter(client=self.portal_client).count(), 0)
 
         resp = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
@@ -181,8 +285,28 @@ class PortalViewHtmlTests(PortalContentAPITestCase):
         self.assertEqual(ClientPortalSession.objects.filter(client=self.portal_client).count(), 1)
         self.assertIn(PORTAL_SESSION_COOKIE_NAME, resp.cookies)
 
-    def test_one_time_clients_invoice_creates_no_session(self):
-        invoice = self._invoice_for(client_obj=None, client_name='One-Timer', client_email='onetime@example.com', is_one_time_client=True)
+    def test_session_still_mints_even_on_the_not_yet_available_503(self):
+        """
+        A client who followed a real link should still be tracked as
+        having visited, even in the rare case the PDF isn't ready yet —
+        session-minting is unconditional, independent of which branch
+        produced the response.
+        """
+        invoice = self._invoice_for(self.portal_client)
+        self.assertEqual(invoice.pdf_url, '')
+
+        resp = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(ClientPortalSession.objects.filter(client=self.portal_client).count(), 1)
+        self.assertIn(PORTAL_SESSION_COOKIE_NAME, resp.cookies)
+
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes')
+    def test_one_time_clients_invoice_creates_no_session(self, mock_fetch):
+        mock_fetch.return_value = b'%PDF-fake'
+        invoice = self._invoice_for(
+            client_obj=None, client_name='One-Timer', client_email='onetime@example.com',
+            is_one_time_client=True, pdf_url=self.FAKE_PDF_URL,
+        )
         self.assertIsNone(invoice.client_id)
 
         resp = self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
@@ -190,10 +314,18 @@ class PortalViewHtmlTests(PortalContentAPITestCase):
         self.assertEqual(ClientPortalSession.objects.count(), 0)
         self.assertNotIn(PORTAL_SESSION_COOKIE_NAME, resp.cookies)
 
-    def test_a_second_one_time_invoice_for_the_same_email_is_not_reachable_via_the_first_ones_visit(self):
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes')
+    def test_a_second_one_time_invoice_for_the_same_email_is_not_reachable_via_the_first_ones_visit(self, mock_fetch):
         """No Client row, no session — a one-time client's access never generalizes beyond its own view_token."""
-        invoice_a = self._invoice_for(client_obj=None, client_name='Repeat Buyer', client_email='repeat@example.com', is_one_time_client=True)
-        invoice_b = self._invoice_for(client_obj=None, client_name='Repeat Buyer', client_email='repeat@example.com', is_one_time_client=True)
+        mock_fetch.return_value = b'%PDF-fake'
+        invoice_a = self._invoice_for(
+            client_obj=None, client_name='Repeat Buyer', client_email='repeat@example.com',
+            is_one_time_client=True, pdf_url=self.FAKE_PDF_URL,
+        )
+        invoice_b = self._invoice_for(
+            client_obj=None, client_name='Repeat Buyer', client_email='repeat@example.com',
+            is_one_time_client=True, pdf_url=self.FAKE_PDF_URL,
+        )
 
         self._get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice_a.view_token}))
         # Visiting invoice_a created no session at all, so a request carrying
@@ -328,12 +460,24 @@ class ViewTrackingGuardTests(TestCase):
         }), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token)
         assert resp.status_code == 200, resp.content
 
+    # A real stored pdf_url — every real test below hits
+    # portal_invoice_view_html directly and, per this pass's own rework
+    # (see DECISIONS.md), that endpoint now needs one to return 200 at
+    # all (a blank pdf_url is a real 503 "not ready yet", never a live
+    # HTML re-render — see PortalViewHtmlTests for that behavior's own
+    # dedicated coverage). fetch_invoice_pdf_bytes is mocked per-test
+    # below (this class's own patch point,
+    # apps.invoices.views_portal.fetch_invoice_pdf_bytes) rather than
+    # hitting a real network fetch of this fake URL.
+    FAKE_PDF_URL = 'https://res.cloudinary.com/demo/raw/upload/frozen.pdf'
+
     def _sent_invoice(self):
-        invoice = make_invoice(self.user, status='sent', sent_at='2026-01-01T00:00:00Z', client=self.portal_client)
+        invoice = make_invoice(self.user, status='sent', sent_at='2026-01-01T00:00:00Z', client=self.portal_client, pdf_url=self.FAKE_PDF_URL)
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
         return invoice
 
-    def test_a_real_client_view_transitions_sent_to_viewed_and_logs_an_event(self):
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=b'%PDF-fake')
+    def test_a_real_client_view_transitions_sent_to_viewed_and_logs_an_event(self, mock_fetch):
         invoice = self._sent_invoice()
         resp = self.client.get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
         self.assertEqual(resp.status_code, 200)
@@ -344,7 +488,8 @@ class ViewTrackingGuardTests(TestCase):
         event = InvoiceViewEvent.objects.get(invoice=invoice)
         self.assertEqual(event.source, 'platform_view')
 
-    def test_view_invoice_button_target_still_suppresses_side_effects_after_preview_as_client_removal(self):
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=b'%PDF-fake')
+    def test_view_invoice_button_target_still_suppresses_side_effects_after_preview_as_client_removal(self, mock_fetch):
         """
         Mandatory regression test (bug-hardening round — InvoiceDetailPanel
         redesign): "Preview as Client" (the old iframe/modal, backed by
@@ -381,7 +526,8 @@ class ViewTrackingGuardTests(TestCase):
         comment.refresh_from_db()
         self.assertIsNone(comment.read_by_client_at)  # not falsely marked seen-by-client either
 
-    def test_freelancer_previewing_with_both_cookies_present_suppresses_both_side_effects(self):
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=b'%PDF-fake')
+    def test_freelancer_previewing_with_both_cookies_present_suppresses_both_side_effects(self, mock_fetch):
         invoice = self._sent_invoice()
         self._login_as_freelancer()  # a real, valid apps.users session cookie
         ClientPortalSession.create_for_client(self.portal_client, 'preview-raw-tok', device_name='', ip_address=None, user_agent='')
@@ -394,7 +540,8 @@ class ViewTrackingGuardTests(TestCase):
         self.assertEqual(invoice.status, 'sent')  # unchanged — not advanced to 'viewed'
         self.assertEqual(InvoiceViewEvent.objects.filter(invoice=invoice).count(), 0)
 
-    def test_freelancer_session_alone_with_no_portal_session_still_tracks_normally(self):
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=b'%PDF-fake')
+    def test_freelancer_session_alone_with_no_portal_session_still_tracks_normally(self, mock_fetch):
         """A freelancer's OWN session with no portal-session cookie at all is not the preview scenario — matches an ordinary anonymous client view since is_freelancer_previewing_portal requires BOTH."""
         invoice = self._sent_invoice()
         self._login_as_freelancer()
@@ -449,8 +596,9 @@ class ViewTrackingGuardTests(TestCase):
         comment.refresh_from_db()
         self.assertIsNotNone(comment.read_by_client_at)
 
-    def test_view_on_a_non_sent_status_still_logs_the_event_but_does_not_change_status(self):
-        invoice = make_invoice(self.user, status='paid', sent_at='2026-01-01T00:00:00Z', client=self.portal_client, amount_paid=Decimal('100.00'))
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=b'%PDF-fake')
+    def test_view_on_a_non_sent_status_still_logs_the_event_but_does_not_change_status(self, mock_fetch):
+        invoice = make_invoice(self.user, status='paid', sent_at='2026-01-01T00:00:00Z', client=self.portal_client, amount_paid=Decimal('100.00'), pdf_url=self.FAKE_PDF_URL)
         InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
 
         self.client.get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
@@ -574,6 +722,34 @@ class PreviewAsClientTests(TestCase):
         their_invoice = make_invoice(other_user)
         resp = self.client.get(reverse('invoices:invoice_preview_as_client', kwargs={'pk': their_invoice.pk}))
         self.assertEqual(resp.status_code, 404)
+
+    def test_uses_real_browser_fetchable_font_urls_not_file(self):
+        """
+        MOVED here (frozen-PDF-vs-live-render rework, see DECISIONS.md):
+        render_invoice_portal_html/build_portal_context's own real,
+        browser-fetchable font URLs (never file://, WeasyPrint's own
+        scheme) are only exercised by invoice_preview_as_client now —
+        portal_invoice_view_html no longer calls this generator at all.
+        The generator function itself is unchanged; only which endpoint
+        reaches it changed.
+        """
+        invoice = make_invoice(self.user, client=self.portal_client)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self.client.get(reverse('invoices:invoice_preview_as_client', kwargs={'pk': invoice.pk}))
+        html = resp.content.decode()
+        self.assertIn('/static/invoices/fonts/', html)
+        import re
+        self.assertEqual(re.findall(r"url\([^)]*file://[^)]*\)", html), [])
+
+    def test_page_is_centered_with_a_pdf_viewer_style_wrapper(self):
+        """MOVED here — see test_uses_real_browser_fetchable_font_urls_not_file's own comment above for why."""
+        invoice = make_invoice(self.user, client=self.portal_client)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self.client.get(reverse('invoices:invoice_preview_as_client', kwargs={'pk': invoice.pk}))
+        html = resp.content.decode()
+        self.assertIn('max-width: 210mm', html)
+        self.assertIn('margin: 32px auto', html)
+        self.assertEqual(html.count('</head>'), 1)
 
 
 # ══════════════════════════════════════════════════════════════════

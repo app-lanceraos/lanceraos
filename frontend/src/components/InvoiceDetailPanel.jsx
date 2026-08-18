@@ -388,9 +388,25 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   // host leaked into "View Invoice"/"Copy Invoice Link" even after
   // portal_view_url itself pointed at the frontend — see DECISIONS.md.
   const portalViewUrl = invoice.portal_view_url || null
-  const pdfDownloadUrl = `${api.defaults.baseURL}/invoices/${invoice.id}/pdf/`
   const openViewInvoice = () => portalViewUrl && window.open(portalViewUrl, '_blank', 'noopener,noreferrer')
-  const openDownload = () => window.open(pdfDownloadUrl, '_blank', 'noopener,noreferrer')
+  // Real, reported bug fixed: this used to be a bare window.open(backendUrl,
+  // '_blank') — a new tab whose address bar showed the raw API host
+  // directly. Fetches as a blob and triggers a same-origin, in-place
+  // download instead (matching InvoiceView.jsx's own client-facing
+  // Download button) — no new tab, no backend host ever visible anywhere.
+  async function downloadInvoicePdf() {
+    const res = await api.get(`/invoices/${invoice.id}/pdf/`, { responseType: 'blob' })
+    const blobUrl = URL.createObjectURL(res.data)
+    const match = /filename="?([^"]+)"?/i.exec(res.headers['content-disposition'] || '')
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = match ? match[1] : `${invoice.invoice_number || 'invoice'}.pdf`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(blobUrl)
+  }
+  const openDownload = () => runAction('download', downloadInvoicePdf)
   async function copyInvoiceLink() {
     if (!portalViewUrl) return
     try {

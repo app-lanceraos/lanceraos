@@ -138,10 +138,19 @@ class PortalClaimSubmissionTests(ClaimsAPITestCaseBase):
         self.assertEqual(resp.status_code, 201)
 
     def test_amount_one_cent_over_outstanding_is_rejected_with_a_real_error(self):
+        """
+        FIXED (real, confirmed bug this pass — see DECISIONS.md): the
+        view used to return DRF's raw serializer.errors shape
+        ({'amount_claimed': [...]})  — but ClientPortal.jsx's ClaimModal
+        only ever reads a flat top-level `error` key, so this real,
+        specific message never actually reached the client at all,
+        silently falling back to a generic "Could not submit" instead.
+        Now surfaced under that same top-level key.
+        """
         self._set_portal_session()
         resp = self._submit({'amount_claimed': '100.01'})
         self.assertEqual(resp.status_code, 400)
-        self.assertIn('outstanding balance', resp.json()['amount_claimed'][0])
+        self.assertIn('outstanding balance', resp.json()['error'])
         self.assertEqual(PaymentClaim.objects.filter(invoice=self.invoice).count(), 0)  # never silently accepted
 
     def test_amount_far_over_outstanding_is_rejected(self):
@@ -162,12 +171,79 @@ class PortalClaimSubmissionTests(ClaimsAPITestCaseBase):
         resp = self._submit({'amount_claimed': '40.00'})
         self.assertEqual(resp.status_code, 201)
 
+    # ── Real bugs fixed this pass — see DECISIONS.md ──
+
+    def test_a_second_claim_is_rejected_while_one_is_still_pending(self):
+        self._set_portal_session()
+        first = self._submit({'amount_claimed': '40.00'})
+        self.assertEqual(first.status_code, 201)
+
+        second = self._submit({'amount_claimed': '30.00'})
+        self.assertEqual(second.status_code, 400)
+        self.assertIn('already being reviewed', second.json()['error'])
+        self.assertEqual(PaymentClaim.objects.filter(invoice=self.invoice).count(), 1)  # the second was never created
+
+    def test_a_new_claim_is_allowed_again_once_the_pending_one_is_rejected(self):
+        self._set_portal_session()
+        first = self._submit({'amount_claimed': '40.00'})
+        claim_id = first.json()['id']
+        claim = PaymentClaim.objects.get(pk=claim_id)
+        claim.status = 'rejected'
+        claim.review_note = 'Not found in our records.'
+        claim.save(update_fields=['status', 'review_note'])
+
+        second = self._submit({'amount_claimed': '40.00'})
+        self.assertEqual(second.status_code, 201)  # no longer blocked — the earlier one is resolved, not pending
+
+    def test_rejected_with_a_specific_message_once_the_invoice_is_already_fully_paid(self):
+        """
+        FIXED (real, confirmed gap this pass — see DECISIONS.md): this
+        case was already rejected by the existing outstanding-amount cap
+        (Step 14), but only with the generic "cannot exceed the
+        outstanding balance of 0.00 USD" message, which — like every
+        other field-keyed serializer error — never actually reached the
+        client (ClientPortal.jsx only reads a top-level `error` key).
+        Now caught explicitly, before the serializer even runs, with its
+        own clear message.
+        """
+        self.invoice.amount_paid = Decimal('100.00')
+        self.invoice.status = 'paid'
+        self.invoice.save(update_fields=['amount_paid', 'status'])
+        self.assertEqual(self.invoice.outstanding_amount, Decimal('0.00'))
+        self._set_portal_session()
+
+        resp = self._submit({'amount_claimed': '10.00'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('already been paid in full', resp.json()['error'])
+        self.assertEqual(PaymentClaim.objects.count(), 0)
+
     def test_rate_limited_after_5_submissions_in_an_hour(self):
+        """
+        One real claim per invoice (rather than 6 against self.invoice)
+        — otherwise the 2nd submission alone would already be rejected
+        by this pass's own new duplicate-pending-claim check, never
+        reaching the rate limiter at all. Rate limiting is keyed by
+        client.pk (_resolve_portal_write_access), not per-invoice, so 6
+        distinct invoices for the SAME client still share one counter —
+        this isolates "rate limited" from "duplicate pending" as the two
+        real, independent things they are.
+        """
         self._set_portal_session()
         for _ in range(5):
-            resp = self._submit()
+            invoice = make_invoice(self.user, client=self.portal_client, status='sent', sent_at='2026-01-01T00:00:00Z')
+            InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+            resp = self._post_json(reverse('invoices:portal_invoice_claims', kwargs={'pk': invoice.pk}), {
+                'payment_source': 'wise', 'amount_claimed': '100.00', 'currency': 'USD',
+                'payment_date': '2026-01-15', 'client_note': 'Paid via Wise.',
+            })
             self.assertEqual(resp.status_code, 201)
-        resp = self._submit()
+
+        sixth_invoice = make_invoice(self.user, client=self.portal_client, status='sent', sent_at='2026-01-01T00:00:00Z')
+        InvoiceItem.objects.create(invoice=sixth_invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        resp = self._post_json(reverse('invoices:portal_invoice_claims', kwargs={'pk': sixth_invoice.pk}), {
+            'payment_source': 'wise', 'amount_claimed': '100.00', 'currency': 'USD',
+            'payment_date': '2026-01-15', 'client_note': 'Paid via Wise.',
+        })
         self.assertEqual(resp.status_code, 429)
 
     def test_freelancer_previewing_own_portal_is_rejected(self):

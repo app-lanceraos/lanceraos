@@ -267,6 +267,35 @@ describe('InvoiceDetailPanel — Preview-as-Client removal', () => {
   })
 })
 
+describe('InvoiceDetailPanel — Download Invoice hides the backend host', () => {
+  it('fetches the PDF as a blob and triggers a same-origin download — never window.open on the raw backend URL', async () => {
+    const invoice = invoiceFixture({ status: 'paid', amount_paid: '500.00', outstanding_amount: '0.00' })
+    mock.onGet(`/invoices/${invoice.id}/`).reply(200, invoice)
+    mock.onGet(`/invoices/${invoice.id}/timeline/`).reply(200, { results: [] })
+    mock.onGet(`/invoices/${invoice.id}/claims/`).reply(200, [])
+    mock.onGet(`/invoices/${invoice.id}/pdf/`).reply(200, 'fake-pdf-bytes', { 'content-disposition': 'attachment; filename="INV-2026-0001.pdf"' })
+    render(<InvoiceDetailPanel invoiceId={invoice.id} onClose={() => {}} onChanged={() => {}} />)
+
+    const openSpy = vi.spyOn(window, 'open')
+    global.URL.createObjectURL = vi.fn(() => 'blob:mock-download-url')
+    global.URL.revokeObjectURL = vi.fn()
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /download invoice/i })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /download invoice/i }))
+
+    await waitFor(() => expect(mock.history.get.some((r) => r.url === `/invoices/${invoice.id}/pdf/`)).toBe(true))
+    await waitFor(() => expect(clickSpy).toHaveBeenCalled())
+    // The whole point of this fix — this used to be a bare
+    // window.open(backendUrl, '_blank'), a new tab whose address bar
+    // showed the raw API host directly.
+    expect(openSpy).not.toHaveBeenCalled()
+
+    openSpy.mockRestore()
+    clickSpy.mockRestore()
+  })
+})
+
 describe('InvoiceDetailPanel — tooltips', () => {
   it('the Close button carries a real data-tooltip and gets bound by initTooltipBindings on mount', async () => {
     renderPanel({ status: 'sent' })

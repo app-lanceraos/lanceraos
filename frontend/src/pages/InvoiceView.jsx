@@ -1,30 +1,38 @@
 // src/pages/InvoiceView.jsx
 //
-// /invoice/:token — the real, frontend-domain invoice view page. Fixes a
-// real, reported issue: a client opening "View Invoice Online" (the
-// email link), the portal list, Copy Invoice Link, or the QR code on the
-// PDF used to land on the raw backend/API host
-// (api.lanceraos.com/api/invoices/portal/view/<token>/) — this product's
-// actual domain never appeared in their address bar at all.
+// /invoice/:token — the real, frontend-domain invoice view page.
 //
-// Does NOT reimplement the invoice layout — fetches the exact same
-// rendered HTML apps/invoices/views_portal.py's portal_invoice_view_html
-// already produces (GET /api/invoices/portal/view/<token>/, still
-// AllowAny/unauthenticated-except-for-portal-session, still going
-// through every real access-control side effect —
-// is_freelancer_previewing_portal, ClientPortalSession minting, the
-// Sent->Viewed transition/InvoiceViewEvent logging — entirely
-// server-side, unchanged) and displays it inside a sandboxed
-// <iframe srcDoc>, filling the page. This page is a thin display
-// wrapper, never a second reimplementation of the shared template — the
-// one-HTML/CSS-renderer principle (Step 12) holds exactly as before.
+// REWORKED this pass (see DECISIONS.md's frozen-PDF-vs-live-render
+// entry): this page used to fetch and display the backend's LIVE-
+// RENDERED HTML on every visit — which pulled the freelancer's CURRENT
+// FreelancerProfile (business name, logo, payment methods, signature)
+// fresh every time, even though the invoice's own fields are frozen. A
+// freelancer editing their profile after sending an invoice could
+// silently change what a client saw on "View Invoice" days later, while
+// the actual downloadable PDF stayed correctly frozen — two documents,
+// same invoice, able to disagree. Now this page shows the ACTUAL FROZEN
+// PDF — the exact same bytes Download serves — via the browser's own
+// native PDF viewer, never a fresh re-render. GET
+// /api/invoices/portal/view/<token>/ (apps/invoices/views_portal.py's
+// portal_invoice_view_html) itself now serves that same frozen PDF
+// inline; a real 503 with a clear message when nothing's frozen yet
+// (never a live-render fallback — the exact drift this rework closes).
+// Every real path that can reach this page was traced directly: a
+// draft/finalised-but-unsent invoice's token is never exposed through
+// any of them (no email is sent pre-send; the client-portal list now
+// excludes draft/created — see that same DECISIONS.md entry), so in
+// practice the "not ready yet" state is a narrow, honest window right
+// after finalising, not a routine one.
 //
-// Supersedes the earlier "non-SPA-navigation exception" (App.jsx/
-// ClientPortal.jsx/PortalEnter.jsx's own prior comments, and
-// DECISIONS.md) — the invoice VIEW is now a real React route after all,
-// for a purely cosmetic/branding reason (frontend domain in the address
-// bar), not because the underlying shared-renderer architecture changed
-// at all.
+// Both the view and the Download action fetch via axios as a `blob`
+// (never a plain <a href>/<iframe src> pointing at the backend URL) and
+// hand the browser a same-origin `blob:` object URL instead — this is
+// what actually hides the backend/API host from anything a client could
+// hover, right-click, or view-source on, fitting this project's
+// deployment shape (a static Vite/React SPA with no server-side runtime
+// of its own to run a same-origin reverse proxy through) without
+// touching the app's existing, deliberate cross-origin cookie/CORS
+// architecture (app domain vs api.lanceraos.com) at all.
 //
 // No AppShell — a standalone, public page, matching DeletionReview.jsx/
 // PortalEnter.jsx's own shell-less convention (no sidebar/header makes
@@ -32,43 +40,79 @@
 // is looking at).
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { AlertCircle, Download } from 'lucide-react'
+import { AlertCircle, Clock, Download } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 
-const BACKEND_ORIGIN = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
-// Injected into the fetched HTML's own <head> before it's handed to the
-// iframe's srcDoc. WITHOUT this, every relative /static/... URL inside
-// it (the embedded @font-face files — see apps/invoices/pdf_generator.py's
-// PORTAL_FONT_CONTEXT) resolves against THIS PAGE's own origin instead of
-// the backend's, since srcDoc content's default base URI is the
-// embedding document's URL, not wherever the HTML was originally fetched
-// from. Confirmed directly (not assumed) — without this line the fonts
-// silently fall back to system defaults; a real <base> tag fixes it.
-function withBackendBase(html) {
-  return html.replace('<head>', `<head><base href="${BACKEND_ORIGIN}/">`)
+function filenameFromContentDisposition(header, fallback) {
+  const match = /filename="?([^"]+)"?/i.exec(header || '')
+  return match ? match[1] : fallback
 }
 
 export default function InvoiceView() {
   useTitle('Invoice — LanceraOS')
   const { token } = useParams()
-  const [html, setHtml] = useState(null)
-  const [error, setError] = useState(false)
+  // 'loading' | 'ready' | 'not_yet_available' | 'error'
+  const [state, setState] = useState('loading')
+  const [pdfUrl, setPdfUrl] = useState(null) // a same-origin blob: URL
+  const [downloading, setDownloading] = useState(false)
 
   useEffect(() => {
-    let cancelled = false
-    api.get(`/invoices/portal/view/${token}/`, {
-      responseType: 'text',
-      transformResponse: [(data) => data], // raw HTML, never JSON-parsed
-    })
-      .then(({ data }) => { if (!cancelled) setHtml(withBackendBase(data)) })
-      .catch(() => { if (!cancelled) setError(true) })
-    return () => { cancelled = true }
+    // A real AbortController, not just an ignore-the-result flag — this
+    // request is slow (this account's self-heal chain — see
+    // fetch_invoice_pdf_bytes' own docstring — routinely takes 3+
+    // seconds under the real, confirmed Cloudinary ACL condition), so
+    // React.StrictMode's real dev-only mount/unmount/remount cycle (main.jsx)
+    // would otherwise fire it twice and pay that cost twice, discarding
+    // the first response. Aborting the superseded request actually
+    // cancels the wasted backend work instead of just ignoring it.
+    const controller = new AbortController()
+    let objectUrl = null
+    api.get(`/invoices/portal/view/${token}/`, { responseType: 'blob', signal: controller.signal })
+      .then(({ data }) => {
+        objectUrl = URL.createObjectURL(data)
+        setPdfUrl(objectUrl)
+        setState('ready')
+      })
+      .catch((e) => {
+        if (e.code === 'ERR_CANCELED') return
+        // 503 — the real, specific "nothing frozen yet" case
+        // portal_invoice_view_html returns; everything else (404, a
+        // genuine total failure) reads as a plain invalid/unavailable
+        // link, matching this page's own prior behavior.
+        setState(e.response?.status === 503 ? 'not_yet_available' : 'error')
+      })
+    return () => {
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
   }, [token])
 
-  if (error) {
+  async function handleDownload() {
+    setDownloading(true)
+    try {
+      const res = await api.get(`/invoices/portal/view/${token}/pdf/`, { responseType: 'blob' })
+      const blobUrl = URL.createObjectURL(res.data)
+      const filename = filenameFromContentDisposition(res.headers['content-disposition'], 'invoice.pdf')
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(blobUrl)
+    } catch {
+      // A failed download leaves the button clickable for a retry — a
+      // secondary action on a page whose primary content (the iframe)
+      // already loaded successfully doesn't need its own dedicated
+      // error state.
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  if (state === 'error') {
     return (
       <div style={pageWrapStyle}>
         <div style={{ textAlign: 'center', maxWidth: 360 }}>
@@ -81,7 +125,21 @@ export default function InvoiceView() {
     )
   }
 
-  if (html === null) {
+  if (state === 'not_yet_available') {
+    return (
+      <div style={pageWrapStyle}>
+        <div style={{ textAlign: 'center', maxWidth: 360 }}>
+          <Clock size={28} style={{ color: '#8a7d5c', marginBottom: 10 }} />
+          <p style={{ margin: 0, fontSize: '0.95rem', color: '#2d2a26', fontWeight: 600 }}>
+            This invoice isn't ready to view yet.
+          </p>
+          <p style={{ margin: '6px 0 0', fontSize: '0.82rem', color: '#6b6558' }}>Please check back in a moment.</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (state === 'loading') {
     return (
       <div style={pageWrapStyle}>
         <p style={{ margin: 0, fontSize: '0.9rem', color: '#6b6558' }}>Loading invoice…</p>
@@ -91,26 +149,27 @@ export default function InvoiceView() {
 
   return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+      {/* A same-origin blob: URL — never the backend host — and the
+          browser's own native PDF viewer, not a re-rendered HTML
+          approximation. Deliberately NO sandbox attribute (a real,
+          confirmed bug this pass: sandbox="" — appropriate for the
+          OLD srcDoc-HTML approach, where the concern was arbitrary
+          third-party markup — made Chrome refuse to render the PDF at
+          all ("this page has been blocked"), since Chrome's own
+          built-in PDF viewer needs script execution for its internal
+          toolbar/zoom/search UI. The threat model is different for a
+          PDF blob we built ourselves from our own backend's response:
+          there's no arbitrary-script-execution risk to sandbox against
+          in the first place, so restricting this iframe bought nothing
+          but broke the actual feature. */}
       <iframe
         title="Invoice"
-        srcDoc={html}
-        sandbox=""
+        src={pdfUrl}
         style={{ display: 'block', width: '100%', height: '100%', border: 'none' }}
       />
-      {/* Real chrome AROUND the iframe, never inside the shared template
-          itself — same principle the old Preview-as-Client banner used
-          (pure React, the template markup never diverges between render
-          paths). The shared invoice templates have no Download
-          affordance of their own (confirmed directly — none references
-          pdf_url), so this is genuinely the only way a client without a
-          LanceraOS account can get the PDF from this page. */}
-      <a
-        href={`${BACKEND_ORIGIN}/api/invoices/portal/view/${token}/pdf/`}
-        style={downloadButtonStyle}
-        aria-label="Download invoice PDF"
-      >
-        <Download size={14} /> Download
-      </a>
+      <button onClick={handleDownload} disabled={downloading} style={downloadButtonStyle} aria-label="Download invoice PDF">
+        <Download size={14} /> {downloading ? 'Preparing…' : 'Download'}
+      </button>
     </div>
   )
 }
@@ -123,8 +182,8 @@ const pageWrapStyle = {
 const downloadButtonStyle = {
   position: 'fixed', top: 16, right: 16, zIndex: 10,
   display: 'flex', alignItems: 'center', gap: 6,
-  padding: '9px 16px', borderRadius: 999,
+  padding: '9px 16px', borderRadius: 999, border: 'none', cursor: 'pointer',
   background: '#1e1b2e', color: '#fff', fontSize: '0.82rem', fontWeight: 600,
-  textDecoration: 'none', boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+  boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
   fontFamily: "'DM Sans', sans-serif",
 }
