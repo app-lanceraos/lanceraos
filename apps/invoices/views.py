@@ -25,6 +25,7 @@ from dateutil.relativedelta import relativedelta
 from PIL import Image as PILImage
 from PIL import UnidentifiedImageError
 from django.core.cache import cache
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.http import HttpResponse
@@ -43,7 +44,7 @@ from apps.clients.models import Client
 from apps.clients.scoring import EXCLUDED_STATUSES as CLIENT_SCORING_EXCLUDED_STATUSES
 from apps.clients.serializers import validate_currency_code
 from apps.payments.models import ExchangeRateSnapshot
-from apps.users.models import FreelancerProfile
+from apps.users.models import FreelancerProfile, User
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
 
 from .ai_design import seed_design_data_from_image
@@ -94,6 +95,13 @@ KPI_PERIOD_CHOICES = ('this_month', 'last_6_months', 'this_year', 'all_time')
 # concern; this endpoint only needs the binary old/not-old gate.
 UNDO_CONFIRMATION_AGE_DAYS = 7
 
+# _finalise_invoice's own bound on invoice_number collision retries (see
+# its docstring, finding INV-004) — generous relative to how rare an
+# actual collision is (it requires two concurrent finalise calls for the
+# SAME user landing within the same commit window), never expected to be
+# exhausted in real traffic.
+_FINALISE_NUMBER_MAX_ATTEMPTS = 5
+
 
 def _check_moderate_rate_limit(action, user):
     key = f'ratelimit_invoices_{action}_{user.pk}'
@@ -106,6 +114,41 @@ def _check_moderate_rate_limit(action, user):
 
 def _too_many_requests(message):
     return Response({'error': message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+def _get_locked_invoice(pk, user):
+    """
+    Fetches an invoice row with SELECT ... FOR UPDATE, for every view that
+    mutates amount_paid/status based on a check against the invoice's
+    current data. MUST be called from inside a transaction.atomic() block
+    (select_for_update() raises TransactionManagementError otherwise) —
+    every call site below wraps its whole read-check-write sequence in
+    one, so the lock is held for the sequence's full duration and released
+    only on commit.
+
+    Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
+    2026, findings INV-003/DB-002/INV-009): before this, every payment-
+    recording and status-mutating view read the invoice with a plain,
+    unlocked get_object_or_404, validated a request against that snapshot,
+    then wrote — with no lock and no re-validation against fresher data.
+    Live-reproduced: 3 concurrent $700 payments against a real $1000
+    invoice all passed their own (independent, stale) validation and all
+    committed, leaving amount_paid=$2100 on a $1000 total (see invoice
+    c6559f99-48b1-45e8-a562-76ab950f6500 / INV-2026-0031, left in the
+    database as historical evidence). A second, concurrent request now
+    blocks on the row lock until the first transaction commits, then
+    re-fetches genuinely current data (this function is called again,
+    fresh, at the start of the now-unblocked request) — so every
+    invariant checked afterward (outstanding_amount, status) is checked
+    against real, post-first-request state, not a stale pre-lock read.
+
+    Shared by every one of the 6 endpoints the audit named for this fix
+    (invoice_add_payment, invoice_mark_paid, invoice_claim_confirm,
+    invoice_cancel, invoice_refund, invoice_mark_bad_debt) rather than 6
+    independently-written locking blocks, per the audit's own explicit
+    request for one consistent pattern.
+    """
+    return get_object_or_404(Invoice.objects.select_for_update(), pk=pk, user=user)
 
 
 def _lookup_rate_to_usd(currency):
@@ -537,16 +580,72 @@ def _finalise_invoice(invoice, force_reminders_off=True):
     error, so a PDF request that arrives before the background task
     finishes still gets a correct PDF, just via a live render instead of
     the frozen artifact — see both call sites' own docstrings.
+
+    Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
+    2026, finding INV-004): Invoice.generate_invoice_number()'s own
+    docstring has always documented, unfixed, that two concurrent calls
+    for the same user in the same year can read the same "last" number
+    before either saves — the unique_together(user, invoice_number)
+    constraint prevented a silently duplicated number, but turned the
+    race into a raw, unhandled IntegrityError 500 reaching a real client.
+    Live-reproduced: 4 concurrent finalise calls for 4 of the same user's
+    fresh drafts produced 2 successes and 2 Django debug-mode 500s
+    ("duplicate key value violates unique constraint... Key (user_id,
+    invoice_number)=(..., INV-2026-0029) already exists.").
+
+    Fixed with approach (a) from the audit's own fix list —
+    select_for_update() on a real per-user locking point — not the
+    bounded-retry approach (b) this function tried first: under real
+    concurrency-test load (8 simultaneous finalise calls, no lock, just
+    retry), independent uncoordinated retries could still collide with
+    each other repeatedly — a real "thundering herd" against the same
+    unlocked counter read, exhausting even a 5-attempt retry budget in
+    testing. Locking the User row for the duration of generation+save
+    (identical pattern to apps.users.models.Session.create_for_user's own
+    3-session-cap race fix — "locks the user row for the duration so
+    concurrent [operations] can't both read the same under-cap count and
+    race past" — the same class of per-user-counter race, same fix)
+    fully serializes number assignment per user instead of leaving it to
+    chance: only one finalise for this user can be inside the
+    generate+save critical section at a time, so every retry (kept below,
+    now genuinely defense-in-depth rather than the primary mechanism)
+    sees truly current data on its very first attempt.
     """
     invoice.recalculate_totals()
-    if not invoice.invoice_number:
-        invoice.invoice_number = Invoice.generate_invoice_number(invoice.user)
     invoice.capture_issue_rate()
     invoice.status = 'created'
     invoice.finalised_at = timezone.now()
     if force_reminders_off:
         invoice.reminders_enabled = False
-    invoice.save()
+
+    if invoice.invoice_number:
+        # Already assigned (e.g. a duplicate that kept its source number,
+        # or a re-entrant call) — no number race is possible here, a
+        # plain save is correct and unchanged from before this fix.
+        invoice.save()
+    else:
+        for attempt in range(1, _FINALISE_NUMBER_MAX_ATTEMPTS + 1):
+            try:
+                with transaction.atomic():
+                    # Locks the SAME user row Session.create_for_user()
+                    # locks for its own per-user-counter race — serializes
+                    # every concurrent finalise for this one user so only
+                    # one is ever generating+saving a number at a time.
+                    User.objects.select_for_update().get(pk=invoice.user_id)
+                    invoice.invoice_number = Invoice.generate_invoice_number(invoice.user)
+                    invoice.save()
+                break
+            except IntegrityError:
+                if attempt == _FINALISE_NUMBER_MAX_ATTEMPTS:
+                    logger.error(
+                        '[INVOICES] Could not assign a unique invoice number for user %s after %s attempts.',
+                        invoice.user_id, _FINALISE_NUMBER_MAX_ATTEMPTS,
+                    )
+                    raise
+                logger.warning(
+                    '[INVOICES] invoice_number collision on %s for user %s — retrying (attempt %s/%s).',
+                    invoice.invoice_number, invoice.user_id, attempt, _FINALISE_NUMBER_MAX_ATTEMPTS,
+                )
 
     render_and_store_invoice_pdf.delay(str(invoice.pk))
 
@@ -824,32 +923,38 @@ def invoice_mark_paid(request, pk):
     row (the same structured entry flow invoice_add_payment uses), then
     delegates to update_paid_status() — never a bare status edit, so
     payment history stays accurate and undo-able like any other payment.
+
+    Audit fix (finding INV-003/DB-002): the whole read-check-write
+    sequence now runs under a locked invoice row (_get_locked_invoice) —
+    see that helper's docstring for the live-reproduced overpayment this
+    closes.
     """
     if _check_moderate_rate_limit('mark_paid', request.user):
         return _too_many_requests('Too many actions. Please try again later.')
 
-    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
-    if invoice.status in ('cancelled', 'bad_debt', 'refunded', 'draft'):
-        return Response({'error': f'Cannot mark a {invoice.status} invoice as paid.'}, status=status.HTTP_400_BAD_REQUEST)
+    with transaction.atomic():
+        invoice = _get_locked_invoice(pk, request.user)
+        if invoice.status in ('cancelled', 'bad_debt', 'refunded', 'draft'):
+            return Response({'error': f'Cannot mark a {invoice.status} invoice as paid.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    outstanding = invoice.outstanding_amount
-    if outstanding <= Decimal('0'):
-        return Response({'error': 'This invoice has no outstanding balance.'}, status=status.HTTP_400_BAD_REQUEST)
+        outstanding = invoice.outstanding_amount
+        if outstanding <= Decimal('0'):
+            return Response({'error': 'This invoice has no outstanding balance.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    payload = {
-        'amount': str(outstanding),
-        'currency': invoice.currency,
-        'source': request.data.get('source', 'other'),
-        'payment_date': request.data.get('payment_date') or timezone.now().date().isoformat(),
-        'notes': request.data.get('notes', ''),
-    }
-    serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request})
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(invoice.currency))
+        payload = {
+            'amount': str(outstanding),
+            'currency': invoice.currency,
+            'source': request.data.get('source', 'other'),
+            'payment_date': request.data.get('payment_date') or timezone.now().date().isoformat(),
+            'notes': request.data.get('notes', ''),
+        }
+        serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request, 'invoice': invoice})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(invoice.currency))
 
-    invoice.update_paid_status()
-    invoice.refresh_from_db()
+        invoice.update_paid_status()
+        invoice.refresh_from_db()
 
     emit('InvoicePaid', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
     logger.info('[INVOICES] Marked invoice %s as paid.', invoice.invoice_number)
@@ -859,27 +964,44 @@ def invoice_mark_paid(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def invoice_add_payment(request, pk):
-    """Records a partial payment and recomputes status via update_paid_status()."""
+    """
+    Records a partial payment and recomputes status via update_paid_status().
+
+    Audit fix (finding INV-003/DB-002 — the audit's primary CRITICAL
+    finding): the whole read-check-write sequence now runs under a locked
+    invoice row (_get_locked_invoice). Before this fix, 3 concurrent $700
+    requests against a real $1000 invoice each independently validated
+    against the SAME stale $1000 outstanding_amount and all 3 committed —
+    amount_paid ended up at $2100 with no error anywhere (see invoice
+    c6559f99-48b1-45e8-a562-76ab950f6500 / INV-2026-0031, left in the
+    database as historical evidence). Locking the row means a second
+    concurrent request now blocks until the first commits, then validates
+    against the invoice's real, post-first-payment outstanding_amount —
+    so a second $700 request against the same $1000 invoice is correctly
+    rejected once the first has already been recorded, regardless of how
+    many requests arrive at once.
+    """
     if _check_moderate_rate_limit('add_payment', request.user):
         return _too_many_requests('Too many actions. Please try again later.')
 
-    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
-    if invoice.status in ('cancelled', 'bad_debt', 'refunded', 'draft'):
-        return Response({'error': f'Cannot record a payment on a {invoice.status} invoice.'}, status=status.HTTP_400_BAD_REQUEST)
+    with transaction.atomic():
+        invoice = _get_locked_invoice(pk, request.user)
+        if invoice.status in ('cancelled', 'bad_debt', 'refunded', 'draft'):
+            return Response({'error': f'Cannot record a payment on a {invoice.status} invoice.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    serializer = InvoicePartialPaymentSerializer(data=request.data, context={'request': request, 'invoice': invoice})
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer = InvoicePartialPaymentSerializer(data=request.data, context={'request': request, 'invoice': invoice})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    # 'currency' is omitted from validated_data entirely (not defaulted
-    # to 'USD') when the request doesn't supply it — DRF only injects a
-    # serializer-field default when one is explicitly declared, which
-    # this field isn't (it relies on the MODEL's own default=). Falls
-    # back to the same 'USD' the model itself would use on save().
-    payment_currency = serializer.validated_data.get('currency', 'USD')
-    payment = serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(payment_currency))
-    invoice.update_paid_status()
-    invoice.refresh_from_db()
+        # 'currency' is omitted from validated_data entirely (not defaulted
+        # to 'USD') when the request doesn't supply it — DRF only injects a
+        # serializer-field default when one is explicitly declared, which
+        # this field isn't (it relies on the MODEL's own default=). Falls
+        # back to the same 'USD' the model itself would use on save().
+        payment_currency = serializer.validated_data.get('currency', 'USD')
+        payment = serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(payment_currency))
+        invoice.update_paid_status()
+        invoice.refresh_from_db()
 
     event_name = 'InvoicePaid' if invoice.status == 'paid' else 'InvoicePartiallyPaid'
     emit(event_name, invoice_id=str(invoice.pk), user_id=str(request.user.pk), amount=str(payment.amount))
@@ -902,29 +1024,57 @@ def invoice_undo_payment(request, pk):
     400 with requires_confirmation so the frontend knows to re-prompt.
     Confirmation-strictness scaling by age is Step 6's concern, not this
     endpoint's.
+
+    Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
+    2026, finding INV-009/FE-001): this endpoint used to have NO status
+    guard at all — unlike invoice_add_payment/invoice_mark_paid, which
+    both correctly reject cancelled/bad_debt/refunded/draft.
+    update_paid_status()'s own status-preservation branches protect the
+    `status` FIELD on those three terminal statuses, but always
+    unconditionally recompute amount_paid from a fresh SUM() over
+    whatever payment rows remain — so undo on a refunded invoice deleted
+    a real payment row and reset amount_paid to $0 while leaving
+    status='refunded' and refunded_amount untouched, live-reproduced on
+    invoice 76472345-cdb5-4800-a2f0-6cc8ba1547e8 / INV-2026-0025 (left in
+    the database as historical evidence: status=refunded, amount_paid=0,
+    refunded_amount=300, outstanding_amount=900 — an invoice that is
+    simultaneously "refunded" and "owes its full balance again"). The
+    guard below matches invoice_add_payment/invoice_mark_paid's own list
+    exactly, closing the identical gap for cancelled/bad_debt too, not
+    just the refunded case the audit's live reproduction happened to hit.
+    Also now runs under a locked invoice row (_get_locked_invoice), so a
+    concurrent undo can't race a concurrent add-payment/mark-paid on the
+    same invoice either.
     """
     if _check_moderate_rate_limit('undo_payment', request.user):
         return _too_many_requests('Too many actions. Please try again later.')
 
-    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
-    last_payment = invoice.partial_payments.order_by('-recorded_at').first()
-    if last_payment is None:
-        return Response({'error': 'This invoice has no payments to undo.'}, status=status.HTTP_400_BAD_REQUEST)
+    with transaction.atomic():
+        invoice = _get_locked_invoice(pk, request.user)
+        if invoice.status in ('cancelled', 'bad_debt', 'refunded', 'draft'):
+            return Response(
+                {'error': f'Cannot undo a payment on a {invoice.status} invoice.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    age = timezone.now() - last_payment.recorded_at
-    if age > timedelta(days=UNDO_CONFIRMATION_AGE_DAYS) and not request.data.get('confirmed_old'):
-        return Response(
-            {
-                'error': f'This payment was recorded more than {UNDO_CONFIRMATION_AGE_DAYS} days ago. '
-                         'Confirm to undo it anyway.',
-                'requires_confirmation': True,
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        last_payment = invoice.partial_payments.order_by('-recorded_at').first()
+        if last_payment is None:
+            return Response({'error': 'This invoice has no payments to undo.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    last_payment.delete()
-    invoice.update_paid_status()
-    invoice.refresh_from_db()
+        age = timezone.now() - last_payment.recorded_at
+        if age > timedelta(days=UNDO_CONFIRMATION_AGE_DAYS) and not request.data.get('confirmed_old'):
+            return Response(
+                {
+                    'error': f'This payment was recorded more than {UNDO_CONFIRMATION_AGE_DAYS} days ago. '
+                             'Confirm to undo it anyway.',
+                    'requires_confirmation': True,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        last_payment.delete()
+        invoice.update_paid_status()
+        invoice.refresh_from_db()
 
     logger.info('[INVOICES] Undid the most recent payment on invoice %s.', invoice.invoice_number)
     return Response(InvoiceListSerializer(invoice).data)
@@ -941,19 +1091,26 @@ def invoice_cancel(request, pk):
     InvoicePartialPayment rows are preserved untouched, per the dashboard
     rules — a cancelled invoice's payment history isn't erased, just
     excluded from active totals going forward.
+
+    Audit fix (finding INV-003/DB-002): locked (_get_locked_invoice) so
+    this can't lost-update against a concurrent payment reaching 'paid'
+    (or another concurrent cancel/refund/bad-debt) on the same invoice —
+    the status check below now reads genuinely current data, not a
+    snapshot taken before some other request's write.
     """
     if _check_moderate_rate_limit('cancel', request.user):
         return _too_many_requests('Too many actions. Please try again later.')
 
-    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
-    if invoice.status not in ACTIVE_STATUSES:
-        return Response(
-            {'error': 'Only sent, viewed, or partially paid invoices can be cancelled.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    with transaction.atomic():
+        invoice = _get_locked_invoice(pk, request.user)
+        if invoice.status not in ACTIVE_STATUSES:
+            return Response(
+                {'error': 'Only sent, viewed, or partially paid invoices can be cancelled.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    invoice.status = 'cancelled'
-    invoice.save(update_fields=['status', 'updated_at'])
+        invoice.status = 'cancelled'
+        invoice.save(update_fields=['status', 'updated_at'])
 
     emit('InvoiceCancelled', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
     logger.info('[INVOICES] Cancelled invoice %s.', invoice.invoice_number)
@@ -983,32 +1140,38 @@ def invoice_refund(request, pk):
     matches how invoice_cancel/invoice_mark_bad_debt already behave (also
     one-shot terminal transitions with no "call again" concept). See
     DECISIONS.md.
+
+    Audit fix (finding INV-003/DB-002): locked (_get_locked_invoice) —
+    the one-shot "already refunded" guard and the amount<=amount_paid
+    check both now read genuinely current, post-any-concurrent-write
+    data, not a pre-lock snapshot.
     """
     if _check_moderate_rate_limit('refund', request.user):
         return _too_many_requests('Too many actions. Please try again later.')
 
-    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
-    if invoice.status == 'refunded':
-        return Response({'error': 'This invoice has already been refunded.'}, status=status.HTTP_400_BAD_REQUEST)
-    if invoice.status not in ('paid', 'partially_paid'):
-        return Response({'error': 'Only paid or partially paid invoices can be refunded.'}, status=status.HTTP_400_BAD_REQUEST)
+    with transaction.atomic():
+        invoice = _get_locked_invoice(pk, request.user)
+        if invoice.status == 'refunded':
+            return Response({'error': 'This invoice has already been refunded.'}, status=status.HTTP_400_BAD_REQUEST)
+        if invoice.status not in ('paid', 'partially_paid'):
+            return Response({'error': 'Only paid or partially paid invoices can be refunded.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    amount_raw = request.data.get('amount')
-    if amount_raw is None:
-        return Response({'error': 'amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
-    try:
-        amount = Decimal(str(amount_raw))
-    except InvalidOperation:
-        return Response({'error': 'amount must be a valid number.'}, status=status.HTTP_400_BAD_REQUEST)
-    if amount <= Decimal('0') or amount > invoice.amount_paid:
-        return Response(
-            {'error': f'amount must be greater than 0 and no more than the amount already paid ({invoice.amount_paid}).'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        amount_raw = request.data.get('amount')
+        if amount_raw is None:
+            return Response({'error': 'amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount = Decimal(str(amount_raw))
+        except InvalidOperation:
+            return Response({'error': 'amount must be a valid number.'}, status=status.HTTP_400_BAD_REQUEST)
+        if amount <= Decimal('0') or amount > invoice.amount_paid:
+            return Response(
+                {'error': f'amount must be greater than 0 and no more than the amount already paid ({invoice.amount_paid}).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    invoice.status = 'refunded'
-    invoice.refunded_amount = amount
-    invoice.save(update_fields=['status', 'refunded_amount', 'updated_at'])
+        invoice.status = 'refunded'
+        invoice.refunded_amount = amount
+        invoice.save(update_fields=['status', 'refunded_amount', 'updated_at'])
 
     emit('InvoiceRefunded', invoice_id=str(invoice.pk), user_id=str(request.user.pk), amount=str(amount))
     logger.info('[INVOICES] Refunded %s on invoice %s.', amount, invoice.invoice_number)
@@ -1018,19 +1181,26 @@ def invoice_refund(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def invoice_mark_bad_debt(request, pk):
-    """Manual only, per Step 4's confirmed decision. Same eligibility as invoice_cancel."""
+    """
+    Manual only, per Step 4's confirmed decision. Same eligibility as
+    invoice_cancel.
+
+    Audit fix (finding INV-003/DB-002): locked (_get_locked_invoice), same
+    reasoning as invoice_cancel above.
+    """
     if _check_moderate_rate_limit('bad_debt', request.user):
         return _too_many_requests('Too many actions. Please try again later.')
 
-    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
-    if invoice.status not in ACTIVE_STATUSES:
-        return Response(
-            {'error': 'Only sent, viewed, or partially paid invoices can be marked bad debt.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    with transaction.atomic():
+        invoice = _get_locked_invoice(pk, request.user)
+        if invoice.status not in ACTIVE_STATUSES:
+            return Response(
+                {'error': 'Only sent, viewed, or partially paid invoices can be marked bad debt.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    invoice.status = 'bad_debt'
-    invoice.save(update_fields=['status', 'updated_at'])
+        invoice.status = 'bad_debt'
+        invoice.save(update_fields=['status', 'updated_at'])
 
     emit('InvoiceMarkedBadDebt', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
     logger.info('[INVOICES] Marked invoice %s as bad debt.', invoice.invoice_number)
@@ -1530,6 +1700,19 @@ def invoice_claim_confirm(request, pk, claim_id):
 
     Requires confirm:true, matching this module's established pattern
     for every action that touches amount_paid (mark_paid, add_payment).
+
+    Audit fix (finding INV-003/DB-002): the invoice row is now locked
+    (_get_locked_invoice) for the same reason as invoice_add_payment —
+    this endpoint reuses that exact payment-recording path, so it
+    inherited the identical overpayment-race exposure. The claim row is
+    ALSO locked here (select_for_update, scoped to this same atomic
+    block) — a claim has no independent "invoice" concept that the shared
+    helper covers, but re-checking claim.status == 'pending' against a
+    locked row closes the sibling race the audit named as "same code
+    path, not separately live-verified": two concurrent confirms for the
+    SAME claim_id could otherwise both read status='pending' before
+    either wrote, and both create a real InvoicePartialPayment for one
+    claim.
     """
     if _check_moderate_rate_limit('claim_confirm', request.user):
         return _too_many_requests('Too many actions. Please try again later.')
@@ -1537,30 +1720,31 @@ def invoice_claim_confirm(request, pk, claim_id):
     if not request.data.get('confirm'):
         return Response({'error': 'confirm: true is required to confirm this claim.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    invoice = get_object_or_404(Invoice, pk=pk, user=request.user)
-    claim = get_object_or_404(PaymentClaim, pk=claim_id, invoice=invoice)
-    if claim.status != 'pending':
-        return Response({'error': f'This claim has already been {claim.status}.'}, status=status.HTTP_400_BAD_REQUEST)
+    with transaction.atomic():
+        invoice = _get_locked_invoice(pk, request.user)
+        claim = get_object_or_404(PaymentClaim.objects.select_for_update(), pk=claim_id, invoice=invoice)
+        if claim.status != 'pending':
+            return Response({'error': f'This claim has already been {claim.status}.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    payload = {
-        'amount': str(claim.amount_claimed),
-        'currency': claim.currency,
-        'source': claim.payment_source,
-        'payment_date': claim.payment_date.isoformat(),
-        'notes': f'Confirmed from client payment claim (submitted {claim.submitted_at.date().isoformat()}).',
-    }
-    serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request, 'invoice': invoice})
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(claim.currency))
+        payload = {
+            'amount': str(claim.amount_claimed),
+            'currency': claim.currency,
+            'source': claim.payment_source,
+            'payment_date': claim.payment_date.isoformat(),
+            'notes': f'Confirmed from client payment claim (submitted {claim.submitted_at.date().isoformat()}).',
+        }
+        serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request, 'invoice': invoice})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(claim.currency))
 
-    invoice.update_paid_status()
-    invoice.refresh_from_db()
+        invoice.update_paid_status()
+        invoice.refresh_from_db()
 
-    claim.status = 'confirmed'
-    claim.reviewed_at = timezone.now()
-    claim.review_note = request.data.get('review_note', '')
-    claim.save(update_fields=['status', 'reviewed_at', 'review_note'])
+        claim.status = 'confirmed'
+        claim.reviewed_at = timezone.now()
+        claim.review_note = request.data.get('review_note', '')
+        claim.save(update_fields=['status', 'reviewed_at', 'review_note'])
 
     emit('PaymentClaimConfirmed', invoice_id=str(invoice.pk), user_id=str(request.user.pk), claim_id=str(claim.pk))
     logger.info('[INVOICES] Payment claim %s confirmed on invoice %s.', claim.pk, invoice.invoice_number)

@@ -5008,4 +5008,194 @@ in `InvoiceDetailPanel.test.jsx` updated for the RemindersOffBanner's new, short
 off"/"Turn on" instead of "Reminders are turned off for this invoice."/"Turn on reminders"), production
 `vite build` clean.
 
+Date: 19 August 2026 (audit fix — INV-003/DB-002, concurrent payment overpayment)
+Decision/Reason:
+
+Closed the first CRITICAL finding of `LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md` (19 August 2026):
+`apps/invoices` had zero real uses of `select_for_update()`/`transaction.atomic()` anywhere, and every
+payment-recording/status-mutating endpoint read the invoice with a plain, unlocked `get_object_or_404`,
+validated a request against that snapshot, then wrote — with no lock and no re-validation against fresher
+data. Live-reproduced by the audit before any fix: 3 concurrent $700 `POST .../payments/` requests against
+a real $1000 invoice all passed their own independent validation and all committed, leaving
+`amount_paid=$2100` on a `$1000` total with no error anywhere. That exact corrupted row —
+`c6559f99-48b1-45e8-a562-76ab950f6500` / `INV-2026-0031` — was left in the database by the audit
+specifically to be the before-state for this fix, and stays there untouched (not part of this fix's scope
+to repair; a real, separate data-repair task, not assigned here).
+
+Fixed with a new shared helper, `_get_locked_invoice(pk, user)` (`apps/invoices/views.py`), wrapping
+`Invoice.objects.select_for_update()` in `get_object_or_404` — used, inside a `with transaction.atomic():`
+block spanning the FULL read-check-write sequence, by every one of the 6 endpoints the audit named:
+`invoice_add_payment`, `invoice_mark_paid`, `invoice_claim_confirm` (which also now locks the `PaymentClaim`
+row itself, closing the sibling "two concurrent confirms for the same claim" race the audit flagged as
+"same code path, not separately live-verified"), `invoice_cancel`, `invoice_refund`, and
+`invoice_mark_bad_debt`. One shared helper, not 6 independently-written locking blocks, per the audit's own
+explicit ask. A second request now genuinely blocks on the row lock until the first commits, then
+re-validates against real, current `outstanding_amount`/`status` — not a pre-lock snapshot.
+
+Alternatives considered: an application-level advisory lock or a dedicated "invoice lock" table — rejected
+as unnecessary complexity; Postgres's own row-level `SELECT ... FOR UPDATE` is the standard tool for exactly
+this shape of problem and is already the pattern this codebase uses elsewhere (`apps.users.models.Session.
+create_for_user`'s own per-user session-cap race fix).
+
+Verification: `apps/invoices/tests/test_concurrency.py` (new file) — `ConcurrentOverpaymentRaceTests`
+fires GENUINE concurrent requests via real Python threads (each with its own DB connection,
+`TransactionTestCase` not `TestCase`, since `TestCase`'s outer transaction would hide writes from other
+threads' connections and `select_for_update()` needs two real transactions to observe blocking at all).
+`test_audit_exact_scenario_more_concurrent_attempts_than_originally_reproduced` reconstructs the audit's
+exact $700-on-$1000 scenario with 6 concurrent attempts (double the original 3), run across 3 fresh-fixture
+trials — exactly 1 success every time, the other 5 rejected with a real error citing the actual $300
+remaining balance, `amount_paid` never exceeding `total`.
+`test_multiple_legitimate_concurrent_payments_all_serialize_correctly` is a stronger test than "only one
+request can ever win": 5 concurrent $300 requests against a $1000 invoice, where exactly 3 legitimately
+fit — proving the lock correctly serializes multiple successful writes in turn, not just that it blocks
+everything after the first. `test_concurrent_mark_paid_calls_never_double_pay` covers the sibling endpoint.
+All 3 new tests pass; full `apps.invoices` suite (646 tests) and `apps.clients`/`apps.payments` (113 tests)
+still pass with no regressions.
+
+Docs: this entry. CLAUDE.md status update.
+
+Date: 19 August 2026 (audit fix — INV-009/FE-001, Undo Payment on a terminal-status invoice)
+Decision/Reason:
+
+Closed the second CRITICAL finding of `LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`: `invoice_undo_payment`
+had NO status guard at all — unlike `invoice_add_payment`/`invoice_mark_paid`, which both correctly reject
+`cancelled`/`bad_debt`/`refunded`/`draft`. `update_paid_status()`'s own status-preservation branches protect
+the `status` FIELD on those three terminal statuses, but always unconditionally recompute `amount_paid`
+from a fresh `SUM()` over whatever payment rows remain — so calling undo on a refunded invoice deleted a
+real payment row and reset `amount_paid` to `$0` while leaving `status='refunded'` and `refunded_amount`
+untouched. Live-reproduced by the audit: invoice `76472345-cdb5-4800-a2f0-6cc8ba1547e8` / `INV-2026-0025`
+(paid $900, partially refunded $300) had its most recent payment undone via the existing, reachable "Undo
+Payment" action, leaving `status=refunded, amount_paid=0.00, refunded_amount=300.00,
+outstanding_amount=900.00` — an invoice simultaneously "refunded" and "owing its full balance again," with
+no code path to reconcile it. That exact corrupted row is left in the database untouched, as the audit's
+own before-state evidence for this fix (not repaired here — a real, separate data-repair task, not
+assigned).
+
+Backend fix (`apps/invoices/views.py`'s `invoice_undo_payment`): added the exact same status guard
+`invoice_add_payment`/`invoice_mark_paid` already have — reject `cancelled`/`bad_debt`/`refunded`/`draft`
+with a real, specific error naming the invoice's actual status. `draft` is included for consistency with
+those two endpoints' own guard list even though a draft invoice can't currently acquire a payment through
+any endpoint this audit's fix touched (confirmed: both payment-recording endpoints already excluded draft
+before this fix) — matching the sibling guard exactly, rather than a bespoke, narrower list, is what keeps
+the three endpoints from drifting apart from each other the way the frontend's own two lists already had
+(see below). Also now runs under `_get_locked_invoice` (the same lock added for INV-003/DB-002 above), so
+a concurrent undo can't race a concurrent add-payment/mark-paid on the same invoice either.
+
+Frontend fix (`InvoiceDetailPanel.jsx`): the real "Undo Payment" More-menu gate was a separately hand-rolled
+`!['cancelled', 'bad_debt'].includes(invoice.status)` that had drifted from the `NO_PAYMENT_STATUSES`
+constant sitting a few lines above it in the same file — a constant that existed but was **dead code**,
+referenced nowhere else, and which correctly included `'refunded'` while the real gate did not. Rather than
+just adding `'refunded'` to the hand-rolled condition (re-syncing two copies of one rule, the exact drift
+pattern this project has hit before — see `REMINDERS_HIDDEN_STATUSES`'s own cross-file-import fix, same
+file), the hand-rolled condition was deleted entirely and the gate now reads `NO_PAYMENT_STATUSES` directly
+— one list, one place it can drift from the backend's own guard, not two.
+
+Alternatives considered: scaling confirmation-strictness by payment age for undo-on-terminal-status (mirroring
+the existing >7-day-old confirmation gate) instead of an outright rejection — rejected; undoing a payment on
+a terminal invoice isn't a "proceed with caution" action the way undoing an old-but-still-open invoice's
+payment is, it's a state that should never be reachable at all, matching how `invoice_add_payment`/
+`invoice_mark_paid` already treat these same four statuses as a hard stop, not a soft warning.
+
+Verification: `apps/invoices/tests/test_concurrency.py`'s `UndoPaymentTerminalStatusGuardTests` reconstructs
+the audit's exact refunded scenario on a FRESH fixture (the original corrupted row stays untouched) —
+`test_audit_exact_refunded_scenario_is_now_rejected_and_leaves_state_untouched` confirms a real 400, and
+that `amount_paid`/`refunded_amount`/the payment row count are ALL completely unchanged by the rejected
+request, not just that the status string didn't change. `test_undo_rejected_on_cancelled_invoice` and
+`test_undo_rejected_on_bad_debt_invoice` close the audit's own explicitly-flagged gap ("same code path, not
+separately live-verified") for real, for both remaining terminal statuses. A fourth test,
+`test_undo_still_works_normally_on_a_non_terminal_status`, guards against the fix over-blocking the
+legitimate case. All 4 pass. Frontend: `InvoiceDetailPanel.test.jsx` gained a new
+`describe('InvoiceDetailPanel — Undo Payment More-menu gate (audit fix INV-009/FE-001)')` block — 5 new
+tests (the 3 terminal statuses via `it.each`, the legitimate non-terminal case, and the no-payment-history
+case) — all pass; full frontend suite (220 tests, up from 215) and production `vite build` both clean.
+
+Docs: this entry. CLAUDE.md status update.
+
+Date: 19 August 2026 (audit fix — INV-004, invoice-number generation race)
+Decision/Reason:
+
+Closed the third finding (HIGH) of `LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`:
+`Invoice.generate_invoice_number()`'s own docstring had always documented, unfixed, that two concurrent
+calls for the same user in the same year could read the same "last" number before either saved — the
+`unique_together(user, invoice_number)` constraint prevented a silently duplicated number, but turned the
+race into a raw, unhandled `IntegrityError` 500 reaching a real client. Live-reproduced by the audit: 4
+concurrent `finalise` calls for 4 of the same user's fresh drafts produced 2 successes and 2 real Django
+debug-mode 500s ("duplicate key value violates unique constraint... Key (user_id, invoice_number)=(...,
+INV-2026-0029) already exists.").
+
+First attempt, per the audit's own offered approach (b) (a bounded `try/except IntegrityError` retry, no
+new lock), turned out to be insufficient under real load once this fix's own concurrency test pushed harder
+than the audit's original reproduction: with 8 simultaneous finalise calls and no lock at all on the
+generation step, independent, uncoordinated retries could keep colliding with EACH OTHER repeatedly — a
+real "thundering herd" against the same unlocked counter read — and exhausted even a 5-attempt retry budget
+in testing (a genuine, reproduced test failure, not a hypothetical). Switched to approach (a) instead:
+`select_for_update()` on the invoice's own `User` row (matching this codebase's own already-established
+pattern for the identical class of problem — `apps.users.models.Session.create_for_user`'s own docstring:
+"Locks the user row for the duration so concurrent logins can't both read the same under-cap count and race
+past" the session cap), wrapping the number-generation-and-save sequence inside `with transaction.atomic():`.
+This fully serializes number assignment per user — only one finalise for a given user can be inside the
+generate+save critical section at a time — rather than leaving convergence to chance. The bounded retry
+loop is kept as defense-in-depth (in case of a genuinely unrelated `IntegrityError`) but should now never
+actually fire under normal concurrency, since the lock removes the race it existed to paper over.
+
+Centralized in `_finalise_invoice` (`apps/invoices/views.py`) — the one function all 3 real call sites
+(`invoice_finalise`, `invoice_mark_sent`'s own finalise-first branch when called directly on a draft, and
+`invoice_finalise_and_send`) already share, rather than duplicating the fix 3 times at each view.
+
+Verification: `apps/invoices/tests/test_concurrency.py`'s `ConcurrentInvoiceNumberingTests` — real
+concurrent threads, `TransactionTestCase`, `render_and_store_invoice_pdf.delay` mocked out (this fix's own
+correctness has nothing to do with PDF rendering, and mocking keeps the test fast and avoids this dev
+machine's own already-documented native WeasyPrint/Celery-fork segfault under thread contention).
+`test_audit_exact_scenario_more_concurrent_drafts_than_originally_reproduced` fires 8 concurrent finalise
+calls (well above the audit's original 4-5) across 2 fresh-fixture trials — every one of the 16 total
+requests succeeds with 200 (never a 500), every resulting `invoice_number` is real, unique, and correctly
+sequential (`INV-2026-0001` through `INV-2026-0008` for the first trial, `INV-2026-0009` through
+`INV-2026-0016` for the second, confirmed via `assertEqual(len(numbers), len(set(numbers)))`). This test
+DID catch a real regression during development of this fix — the first, retry-only implementation failed
+this exact test with a genuine, unhandled `IntegrityError` surfacing past the retry budget, which is what
+drove the switch from approach (b) to (a) above. Full `apps.invoices` suite (646 tests) passes with no
+regressions.
+
+Docs: this entry. CLAUDE.md status update.
+
+Date: 19 August 2026 (audit fix — INV-001, stale total when all line items are cleared)
+Decision/Reason:
+
+Closed the fourth finding (HIGH) of `LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`: `recalculate_totals()`
+(`apps/invoices/models.py`) had a v1-inherited `if item_total > 0: self.subtotal = item_total` guard — when
+every line item on an already-persisted invoice was deleted (`item_total == 0`), `subtotal`/`tax_amount`/
+`total` were left holding their previous, now-stale values instead of resolving to zero. Live-reproduced by
+the audit via the real API: a real 2-item draft invoice ($900 subtotal, $945 total with 5% tax) was `PUT`
+with `{"items": []}` — the exact path `InvoiceSerializer.update()`/the wizard's own autosave uses on every
+edit — and the response showed `items: []` with `subtotal` and `total` still reading `$900`/`$945`.
+
+Fixed by making the assignment unconditional: `self.subtotal = item_total` always, not gated on
+`item_total > 0`. A zero-item invoice now always resolves to a zero subtotal/tax/total, not just "not
+negative" (the pre-existing, separate, still-correct clamp for when `discount_amount` exceeds
+`subtotal + tax_amount`). Verified this doesn't regress the one real caller that creates an invoice via
+`Invoice.objects.create()` before any items exist (`InvoiceSerializer.create()`,
+`preset_create_invoice`): `subtotal`'s own model field default is already `Decimal('0')`, so a fresh invoice
+with zero items produces the exact same `subtotal=0` result either way — this fix only changes behavior for
+the case that was actually broken (an EXISTING invoice losing all its items), never the fresh-creation case.
+
+Alternatives considered: clamping to zero only when the invoice previously had items and now has none
+(tracking a "had items before" flag) — rejected as unnecessary complexity; unconditionally deriving
+`subtotal` from the real, current sum of line items is simply the correct behavior in every case, with no
+special-casing needed.
+
+Verification: `apps/invoices/tests/test_models.py`'s `RecalculateTotalsTests` — the existing
+`test_zero_items_keeps_the_existing_subtotal` test (which had literally codified the bug as intended
+behavior, per its own docstring: "v1 only overwrites subtotal when item_total > 0 — ported directly,
+unchanged") was rewritten as `test_zero_items_zeroes_out_a_previously_nonzero_subtotal`, asserting the
+OPPOSITE, correct outcome. A new `test_clearing_all_items_via_put_zeroes_the_stored_total` reconstructs the
+exact audit scenario at the model layer (real multi-item invoice, `recalculate_totals()` after emptying
+`items`). A further view-layer regression test,
+`apps/invoices/tests/test_concurrency.py`'s `ClearAllItemsViaApiZeroesTotalsTests.
+test_put_with_empty_items_zeroes_subtotal_and_total_via_the_real_api`, reconstructs the exact live-reproduced
+path end to end — real `PUT /api/invoices/<pk>/` with `items: []` — confirming the actual JSON response
+and the post-refresh database row both show `0.00` for `subtotal`/`tax_amount`/`total`. All pass; full
+`apps.invoices` suite (646 tests) passes with no regressions.
+
+Docs: this entry. CLAUDE.md status update.
+
 Docs: this entry. CLAUDE.md status update.

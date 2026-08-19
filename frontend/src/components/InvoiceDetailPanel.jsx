@@ -81,6 +81,18 @@ import {
 } from '@/pages/invoiceHelpers'
 
 const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']
+// Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
+// 2026, finding INV-009/FE-001): this constant existed but was dead code
+// — the actual "Undo Payment" More-menu gate was a separately hand-rolled
+// `!['cancelled', 'bad_debt'].includes(...)` that had drifted from this
+// list and omitted 'refunded', making Undo Payment reachable (and, before
+// the matching backend fix in apps/invoices/views.py's
+// invoice_undo_payment, actually destructive) on a refunded invoice —
+// live-reproduced on invoice 76472345-cdb5-4800-a2f0-6cc8ba1547e8 /
+// INV-2026-0025. This list is now the ONE place that decision lives; the
+// gate below reads it directly instead of re-deriving its own copy.
+// Matches invoice_add_payment/invoice_mark_paid/invoice_undo_payment's
+// own status guard on the backend exactly — keep both in sync.
 const NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']
 // REMINDERS_HIDDEN_STATUSES lives in invoiceHelpers.js — imported above,
 // not redefined here — so RemindersOffBanner/the Details-tab toggle and
@@ -458,7 +470,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     if (['paid', 'partially_paid'].includes(invoice.status)) {
       moreMenuItems.push({ key: 'refund', label: 'Refund', Icon: Undo2, danger: true, onClick: () => setModal({ kind: 'refund' }) })
     }
-    if (Number(invoice.amount_paid) > 0 && !['cancelled', 'bad_debt'].includes(invoice.status)) {
+    if (Number(invoice.amount_paid) > 0 && !NO_PAYMENT_STATUSES.includes(invoice.status)) {
       moreMenuItems.push({ key: 'undo_payment', label: 'Undo Payment', Icon: Undo2, onClick: requestUndoPayment })
     }
     if (ACTIVE_STATUSES.includes(invoice.status)) {

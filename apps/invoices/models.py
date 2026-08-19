@@ -568,10 +568,21 @@ class Invoice(models.Model):
         directly from v1 (lines 364-372) — no field-name changes needed,
         since none of the fields this touches (subtotal/tax_rate/
         tax_amount/discount_amount/total) changed shape from v1.
+
+        Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md,
+        19 August 2026, finding INV-001): v1's `if item_total > 0` guard
+        was meant to protect against a caller invoking this before any
+        InvoiceItem rows exist yet (self.pk is None), but it also meant
+        that DELETING every existing item (item_total == 0 on an
+        already-persisted invoice) left subtotal/tax_amount/total holding
+        their previous, now-stale values — live-reproduced via
+        `PUT /api/invoices/<pk>/` with `items: []` on a real 2-item, $945
+        draft, which stayed at "$945" with zero items afterward. Now
+        unconditional: item_total is always the correct subtotal,
+        including zero.
         """
         item_total = sum((item.total for item in self.items.all()), Decimal('0')) if self.pk else Decimal('0')
-        if item_total > 0:
-            self.subtotal = item_total
+        self.subtotal = item_total
         self.tax_amount = (self.subtotal * self.tax_rate / 100).quantize(Decimal('0.01'))
         self.total = (self.subtotal + self.tax_amount - self.discount_amount).quantize(Decimal('0.01'))
         if self.total < Decimal('0'):

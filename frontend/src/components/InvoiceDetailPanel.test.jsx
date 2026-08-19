@@ -328,6 +328,38 @@ describe('InvoiceDetailPanel — Download Invoice hides the backend host', () =>
   })
 })
 
+describe('InvoiceDetailPanel — Undo Payment More-menu gate (audit fix INV-009/FE-001)', () => {
+  // LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August 2026: the
+  // real gate used to be a separately hand-rolled condition that omitted
+  // 'refunded', drifted apart from the (until then unused) NO_PAYMENT_STATUSES
+  // constant — live-reproduced destructively on invoice
+  // 76472345-cdb5-4800-a2f0-6cc8ba1547e8 / INV-2026-0025. The gate now
+  // reads NO_PAYMENT_STATUSES directly; these are the regression tests.
+  it.each(['refunded', 'cancelled', 'bad_debt'])(
+    'is absent from the More menu for a %s invoice with a real payment history',
+    async (status) => {
+      renderPanel({ status, amount_paid: '900.00', outstanding_amount: '0.00', refunded_amount: '300.00' })
+      await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+      fireEvent.click(screen.getByRole('button', { name: /^more/i }))
+      expect(screen.queryByRole('menuitem', { name: /undo payment/i })).toBeNull()
+    },
+  )
+
+  it('is present in the More menu for a non-terminal status with a real payment history (partially_paid)', async () => {
+    renderPanel({ status: 'partially_paid', amount_paid: '100.00', outstanding_amount: '400.00' })
+    await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /^more/i }))
+    expect(screen.getByRole('menuitem', { name: /undo payment/i })).toBeTruthy()
+  })
+
+  it('is absent when there is no payment history at all, regardless of status', async () => {
+    renderPanel({ status: 'sent', amount_paid: '0.00', outstanding_amount: '500.00' })
+    await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /^more/i }))
+    expect(screen.queryByRole('menuitem', { name: /undo payment/i })).toBeNull()
+  })
+})
+
 describe('InvoiceDetailPanel — tooltips', () => {
   it('the Close button carries a real data-tooltip and gets bound by initTooltipBindings on mount', async () => {
     renderPanel({ status: 'sent' })

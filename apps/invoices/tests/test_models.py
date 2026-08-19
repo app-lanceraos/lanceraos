@@ -276,13 +276,48 @@ class RecalculateTotalsTests(TestCase):
         self.assertEqual(invoice.tax_amount, Decimal('10.00'))
         self.assertEqual(invoice.total, Decimal('105.00'))
 
-    def test_zero_items_keeps_the_existing_subtotal(self):
-        """v1 only overwrites subtotal when item_total > 0 (line 367) — ported directly, unchanged."""
-        invoice = make_invoice(self.user, subtotal=Decimal('50.00'), tax_rate=Decimal('0'))
+    def test_zero_items_zeroes_out_a_previously_nonzero_subtotal(self):
+        """
+        Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
+        2026, finding INV-001): this used to assert the OPPOSITE — v1's
+        `if item_total > 0` guard left subtotal/total holding their stale
+        pre-edit value when every item was removed, live-reproduced via a
+        real PUT with items:[] on a real 2-item draft that stayed at its
+        original non-zero total with zero items showing. A zero-item
+        invoice must always resolve to a zero subtotal/total, unconditionally,
+        not just "not negative" — this is the regression test for that fix.
+        """
+        invoice = make_invoice(self.user, subtotal=Decimal('50.00'), total=Decimal('50.00'), tax_rate=Decimal('0'))
         invoice.save()
         invoice.recalculate_totals()
-        self.assertEqual(invoice.subtotal, Decimal('50.00'))
-        self.assertEqual(invoice.total, Decimal('50.00'))
+        self.assertEqual(invoice.subtotal, Decimal('0.00'))
+        self.assertEqual(invoice.total, Decimal('0.00'))
+
+    def test_clearing_all_items_via_put_zeroes_the_stored_total(self):
+        """
+        The exact live-reproduced path from the audit: a real, persisted
+        multi-item draft, PUT with items: [] (InvoiceSerializer.update()),
+        must leave subtotal/tax_amount/total all at zero — not the
+        pre-edit $900/$945 the audit found still stored afterward.
+        """
+        from apps.invoices.serializers import InvoiceSerializer
+
+        invoice = make_invoice(self.user, tax_rate=Decimal('5.00'), discount_amount=Decimal('0'))
+        InvoiceItem.objects.create(invoice=invoice, description='Homepage', quantity=Decimal('10'), unit_price=Decimal('50.00'), sort_order=1)
+        InvoiceItem.objects.create(invoice=invoice, description='Checkout', quantity=Decimal('5'), unit_price=Decimal('80.00'), sort_order=2)
+        invoice.recalculate_totals()
+        invoice.save()
+        self.assertEqual(invoice.subtotal, Decimal('900.00'))
+        self.assertEqual(invoice.total, Decimal('945.00'))
+
+        serializer = InvoiceSerializer(invoice, data={'items': []}, partial=True, context={'request': None})
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        serializer.save()
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.items.count(), 0)
+        self.assertEqual(invoice.subtotal, Decimal('0.00'))
+        self.assertEqual(invoice.tax_amount, Decimal('0.00'))
+        self.assertEqual(invoice.total, Decimal('0.00'))
 
     def test_zero_tax_rate(self):
         invoice = make_invoice(self.user, tax_rate=Decimal('0'))
