@@ -5728,3 +5728,101 @@ render runs).
 Docs: this entry. CLAUDE.md's "Running This Locally" section updated with the real `--pool=solo` command,
 the confirmed-ruled-out `OBJC_DISABLE_INITIALIZE_FORK_SAFETY` note, and the explicit Linux-production
 unconfirmed caveat.
+---
+
+Date: 19 August 2026 (first real Celery/Beat run investigation)
+Decision: Investigated a real report — Celery/Beat ran for the first time ever on this project today;
+send_invoice_reminders sent exactly 1 reminder despite many real overdue invoices, and
+generate_recurring_invoices generated 0 despite recurring invoices that "should have fired long ago."
+Both investigated against real database state, not reasoned about abstractly.
+
+**Finding 1 — Reminders: NOT a bug, confirmed correct behavior given real data.** Queried every real
+overdue invoice (9 total, `due_date__lt=today`, excluding `NON_OVERDUE_STATUSES`) directly. Of those 9,
+only 3 have `sent_via_platform=True` (the rest were manually marked sent via `invoice_mark_sent`'s dropdown
+flip — which, per its own field `help_text` and this project's own design, deliberately never sets
+`sent_via_platform`, since that flag only exists to gate the real `/send/` action from Step 10, and most of
+this account's real invoices predate Step 10 existing at all). Of those 3, only 1
+(`INV-2026-0001`/viewed/9 days overdue) also has `reminders_enabled=True` — the other 2 have reminders
+manually toggled off. So exactly 1 invoice was ever eligible today, and exactly 1 reminder was sent — the
+task behaved correctly against the real data it was given.
+
+Separately confirmed the eligibility logic itself IS already gap-tolerant, contrary to this investigation's
+own initial hypothesis (a narrow per-tier day-window that could strand an invoice past its earlier tiers).
+`REMINDER_SCHEDULE` (`apps/invoices/tasks.py`) is ascending `[(3,1), (7,2), (14,3), (30,4)]`, and the loop's
+`if days_overdue < min_days: continue` / `already_sent` check means: for each tier in ascending order, the
+first tier the invoice has reached AND hasn't already received becomes the one sent this run, then
+`break`. This naturally recovers from any gap — the SAME invoice that had zero prior reminders and was
+already 9 days overdue (well past the day-3 threshold) received reminder level 1 (the lowest missing tier)
+in this very run, proven directly by the real query above, not simulated. A genuinely gapped invoice
+therefore gets exactly one catch-up reminder per daily run, walking forward through missed tiers one level
+at a time on subsequent days — never silently skipped, never spammed with multiple backdated reminders in
+one run. This IS the product judgment call this investigation was asked to flag if a fix were needed; since
+no fix was needed, it's recorded here as the confirmed existing (and correct) behavior instead.
+No code changes for this finding — reported, not fixed, since nothing was broken.
+
+**Finding 2 — Recurring invoices: a real, confirmed bug, now fixed.** Queried all 4 real recurring root
+invoices (`is_recurring=True`, `parent_invoice__isnull=True`) directly: every one of them had
+`next_recurring_date=None`, including 3 finalised weeks before this session (`finalised_at` set,
+`recurring_interval_days` set, `recurring_paused=False`) — `generate_recurring_invoices`' own query
+(`next_recurring_date__lte=today`) can never match a NULL value, so 0 generated was mechanically guaranteed
+regardless of how overdue any of them actually were.
+
+Traced the root cause: `next_recurring_date` is a plain nullable `DateField` that is ONLY ever written by
+`generate_recurring_invoices` itself, to ADVANCE an existing value (`tasks.py` line ~379,
+`_advance_recurring_date(invoice.next_recurring_date, interval_days)`) — nothing anywhere in the real
+creation/finalise/edit flow ever SEEDS the first value. `InvoiceSerializer` (the writable serializer behind
+invoice creation/the wizard) accepts `is_recurring`/`recurring_interval_days` as real writable fields but
+does not include `next_recurring_date` at all; `_finalise_invoice` (the real "leaving draft" event, where
+`invoice_number`/`finalised_at`/the exchange-rate lock all get set) never touched it either.
+`test_recurring.py`'s own existing fixture, `_recurring_invoice()`, hand-sets `next_recurring_date` directly
+via `make_invoice(..., next_recurring_date=...)` — every single test in that file (including the ones
+proving the generation task itself works correctly) started from a pre-seeded value that nothing in the
+real application ever actually produces. The task's own logic was always correct; the invoice never reached
+it in a state the task could act on.
+
+Fixed in `_finalise_invoice` (`apps/invoices/views.py`): when an invoice being finalised is a recurring
+root (`is_recurring=True`, `parent_invoice_id is None`, `recurring_interval_days` set) with no
+`next_recurring_date` yet, seeds one via the exact same `_advance_recurring_date` helper the generation
+task already uses — anchored from `issue_date` (never `today`, matching the existing "anchor from the
+invoice's own base date, not the day the code happens to run" principle `_advance_recurring_date`'s own
+docstring already states) advanced by one interval, so a weekly series finalised today generates its first
+real occurrence one week from its issue date, calendar-accurate for the month-based intervals (30/60/90/365
+day codes) exactly like every subsequent advance already is. `_advance_recurring_date` imported into
+`views.py` from `.tasks` rather than duplicated. A generated child can never independently re-trigger this
+(its own `is_recurring` is reset to `False` by `_duplicate_invoice_core` before finalise would ever see it;
+verified directly with a test that deliberately forces `is_recurring=True` on a child anyway, proving the
+`parent_invoice_id is None` guard alone is what stops it, belt-and-suspenders against that field ever
+changing).
+
+**Real production data backfilled**, not left broken: a new one-time management command,
+`backfill_recurring_next_dates` (`apps/invoices/management/commands/`, mirrors
+`backfill_invoice_pdf_public_ids`'s own established one-time-backfill convention exactly), seeded
+`next_recurring_date` for the 4 real affected rows using the identical `_advance_recurring_date(issue_date,
+interval)` anchor the fix itself uses. Run for real (confirmed with Ali first, since 3 of the 4 have
+`recurring_auto_send=True` and would become immediately eligible — client_email on all 3 is Ali's own
+`aliamir@lanceraos.com` test address, so a real auto-send triggered by the next `generate_recurring_invoices`
+tick is harmless): `INV-2026-0028` -> 2026-09-19 (not yet due), `INV-2026-0003`/`INV-2026-0002`/`INV-2026-0001`
+-> 2026-08-16 (already past, so all 3 become eligible on the very next Beat tick — this is the actual,
+correct "should have fired long ago" catch-up moment for these specific rows, not a bug).
+
+Alternatives considered: seeding `next_recurring_date` at invoice CREATION time (draft) instead of finalise
+— rejected, since a draft's `issue_date` isn't final until finalise assigns `finalised_at`/locks the
+exchange rate, and a still-draft invoice was never live enough for a generation schedule to mean anything
+yet (matching how `invoice_number` itself is also deliberately deferred to finalise, not creation).
+Anchoring the first occurrence from `today` (the day finalise happens) instead of `issue_date` — rejected
+for consistency: every SUBSEQUENT advance is anchored from the invoice's own stored date, never `today`
+(specifically to avoid a late-running task compounding drift into the schedule, per
+`_advance_recurring_date`'s own docstring) — anchoring only the FIRST occurrence differently would be an
+inconsistent special case with no real justification, since `issue_date` and finalise-time are normally the
+same day anyway in real usage.
+
+Tests: `apps/invoices/tests/test_recurring.py`'s new `RecurringNextDateInitializationTests` — reconstructs
+the exact real gap end-to-end through the actual `POST .../finalise/` endpoint (not the test-only
+`_recurring_invoice()` factory that every other test in this file uses): weekly interval seeds `issue_date
++ 7 days`; monthly interval seeds a real calendar-accurate month (Jan 31 -> Feb 28, not +30 days); a
+non-recurring draft never gets a value; a generated child forced `is_recurring=True` still never gets one
+(the `parent_invoice_id` guard); and a full reconstruction — draft created with `issue_date` 7 days in the
+past, finalised through the real endpoint, then `generate_recurring_invoices()` actually finding and
+generating it, proving the whole pipeline now works end to end, not just the seed value in isolation. Full
+`apps.invoices` suite (671 tests via `--keepdb` per-module run) and the existing `FinaliseTests`/
+`test_recurring.py` suites all pass with no regressions.

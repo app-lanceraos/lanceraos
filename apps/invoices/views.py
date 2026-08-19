@@ -58,7 +58,7 @@ from .models import (
     InvoicePreset, InvoicePresetItem, InvoiceReminder, PaymentClaim,
 )
 from .pdf_generator import render_invoice_pdf
-from .tasks import REMINDER_SCHEDULE, _send_reminder, render_and_store_invoice_pdf
+from .tasks import REMINDER_SCHEDULE, _advance_recurring_date, _send_reminder, render_and_store_invoice_pdf
 from .serializers import (
     DueDateOnlySerializer, InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer,
     InvoicePresetSerializer, InvoiceSerializer, RecurringSeriesSettingsSerializer,
@@ -617,6 +617,25 @@ def _finalise_invoice(invoice, force_reminders_off=True):
     invoice.finalised_at = timezone.now()
     if force_reminders_off:
         invoice.reminders_enabled = False
+
+    # A recurring root's next_recurring_date was never being set anywhere
+    # (Step 16 only ever advances it once a value already exists) — every
+    # recurring invoice created through the real wizard/creation flow sat
+    # with next_recurring_date=None forever, so generate_recurring_invoices'
+    # own next_recurring_date__lte=today filter could never match it. This
+    # is the real "leaving draft" event and the earliest point an
+    # is_recurring invoice is actually live, so it's the right place to
+    # seed the first occurrence — anchored from issue_date via the same
+    # _advance_recurring_date helper the generation task itself uses, so a
+    # weekly series created and finalised today generates its first real
+    # occurrence one week from today, not today itself.
+    if (
+        invoice.is_recurring
+        and invoice.parent_invoice_id is None
+        and invoice.recurring_interval_days
+        and invoice.next_recurring_date is None
+    ):
+        invoice.next_recurring_date = _advance_recurring_date(invoice.issue_date, invoice.recurring_interval_days)
 
     if invoice.invoice_number:
         # Already assigned (e.g. a duplicate that kept its source number,

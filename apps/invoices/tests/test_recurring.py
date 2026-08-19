@@ -398,3 +398,100 @@ class RecurringRealAutoSendIntegrationTests(TestCase):
         self.assertEqual(child.status, 'sent')
         self.assertTrue(child.sent_via_platform)
         self.assertTrue(child.pdf_url)
+
+
+class RecurringNextDateInitializationTests(TestCase):
+    """
+    Real, confirmed bug found 19 August 2026: next_recurring_date was never
+    set anywhere outside this file's own test fixtures (_recurring_invoice
+    hand-sets it directly) or generate_recurring_invoices' own advance step
+    (which only runs once a value already exists). A recurring invoice
+    created and finalised through the REAL wizard/API flow sat with
+    next_recurring_date=None forever, so it could never satisfy
+    next_recurring_date__lte=today and generate_recurring_invoices always
+    saw 0 eligible invoices for it — confirmed live against real production
+    data (4 real recurring roots, all next_recurring_date=None despite
+    finalised_at set weeks ago). Reconstructs the real gap end-to-end
+    through the actual finalise endpoint, not the test-only factory.
+    """
+    def setUp(self):
+        cache.clear()
+        self.rf = RequestFactory()
+        self.client = DjangoTestClient(enforce_csrf_checks=True)
+        self.user = User.objects.create_user(email='freelancer@example.com', password='Sup3r$ecret1')
+        self.user.is_email_verified = True
+        self.user.is_active = True
+        self.user.save()
+        self._login()
+
+    def _csrf_token(self):
+        dummy = self.rf.get('/')
+        token = get_token(dummy)
+        self.client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        return token
+
+    def _login(self):
+        csrf_token = self._csrf_token()
+        resp = self.client.post(reverse('users:login'), data=json.dumps({
+            'login': self.user.email, 'password': 'Sup3r$ecret1',
+        }), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token)
+        assert resp.status_code == 200, resp.content
+
+    def _post(self, url, data=None):
+        csrf_token = self._csrf_token()
+        return self.client.post(url, data=json.dumps(data or {}), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token)
+
+    def _draft_recurring_invoice(self, interval_days, issue_date):
+        invoice = make_invoice(
+            self.user, status='draft', invoice_number=None, is_recurring=True,
+            recurring_interval_days=interval_days, issue_date=issue_date,
+            due_date=issue_date + timedelta(days=14),
+        )
+        InvoiceItem.objects.create(invoice=invoice, description='Retainer', quantity=Decimal('1'), unit_price=Decimal('100'))
+        return invoice
+
+    def test_finalising_a_weekly_recurring_draft_seeds_next_recurring_date(self):
+        invoice = self._draft_recurring_invoice(7, date(2026, 1, 1))
+        resp = self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.next_recurring_date, date(2026, 1, 8))  # issue_date + 1 week, matching _advance_recurring_date
+
+    def test_finalising_a_monthly_recurring_draft_seeds_a_calendar_accurate_date(self):
+        invoice = self._draft_recurring_invoice(30, date(2026, 1, 31))
+        self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.next_recurring_date, date(2026, 2, 28))  # real calendar month, not +30 days
+
+    def test_finalising_a_non_recurring_draft_never_sets_next_recurring_date(self):
+        invoice = make_invoice(self.user, status='draft', invoice_number=None, is_recurring=False)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        invoice.refresh_from_db()
+        self.assertIsNone(invoice.next_recurring_date)
+
+    def test_finalising_a_generated_child_never_sets_its_own_next_recurring_date(self):
+        """A generated child has is_recurring reset to False by _duplicate_invoice_core before this could ever matter — belt and suspenders, matching test_generated_child_never_independently_retriggers above."""
+        root = self._draft_recurring_invoice(7, date(2026, 1, 1))
+        self._post(reverse('invoices:invoice_finalise', kwargs={'pk': root.pk}))
+        root.refresh_from_db()
+
+        child = make_invoice(
+            self.user, status='draft', invoice_number=None, parent_invoice=root,
+            is_recurring=True, recurring_interval_days=7,  # deliberately forced True, to prove the parent_invoice_id guard alone stops it
+        )
+        InvoiceItem.objects.create(invoice=child, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        self._post(reverse('invoices:invoice_finalise', kwargs={'pk': child.pk}))
+        child.refresh_from_db()
+        self.assertIsNone(child.next_recurring_date)
+
+    def test_full_real_gap_reconstruction_finalise_then_generation_picks_it_up_once_due(self):
+        """The exact reported scenario: a real invoice created+finalised through the real endpoint, then generate_recurring_invoices() actually finding and generating it once next_recurring_date arrives — not a fixture pre-seeded with a working value."""
+        invoice = self._draft_recurring_invoice(7, date.today() - timedelta(days=7))
+        self._post(reverse('invoices:invoice_finalise', kwargs={'pk': invoice.pk}))
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.next_recurring_date, date.today())  # issue_date (7 days ago) + 1 week = today, so it's due now
+
+        result = generate_recurring_invoices()
+        self.assertEqual(result['generated'], 1)
+        self.assertTrue(Invoice.objects.filter(parent_invoice=invoice).exists())
