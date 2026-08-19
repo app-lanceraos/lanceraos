@@ -634,7 +634,7 @@ class FinaliseAndSendTests(InvoicesAPITestCase):
         invoice.refresh_from_db()
         self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/already-frozen.pdf')
 
-        with patch('apps.invoices.email_service.requests.get') as mock_get, \
+        with patch('apps.invoices.email_service._pdf_fetch_session.get') as mock_get, \
              patch('apps.invoices.email_service.render_invoice_pdf') as mock_render, \
              patch('requests.post') as mock_post:
             mock_get.return_value = _mock_pdf_fetch_response()
@@ -661,10 +661,19 @@ class FinaliseAndSendTests(InvoicesAPITestCase):
         from apps.invoices.tests.test_send import _mock_pdf_fetch_response
         for starting_value in (True, False):
             with self.subTest(starting_value=starting_value):
+                # Both iterations mock the SAME dummy pdf_url
+                # ('.../x.pdf') — a real invoice's own pdf_url is always
+                # invoice-unique (Cloudinary's public_id embeds
+                # invoice.pk), so this collision is purely a test-fixture
+                # artifact. Cleared explicitly so fetch_invoice_pdf_bytes'
+                # real PDF-bytes cache (keyed by URL — see DECISIONS.md)
+                # can't serve iteration 2 a cache hit from iteration 1
+                # instead of exercising its own real mocked fetch.
+                cache.clear()
                 invoice = self._invoice(status='draft', invoice_number=None, reminders_enabled=starting_value)
                 InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
                 with patch('apps.invoices.pdf_generator.store_invoice_pdf') as mock_store, \
-                     patch('apps.invoices.email_service.requests.get') as mock_get, \
+                     patch('apps.invoices.email_service._pdf_fetch_session.get') as mock_get, \
                      patch('requests.post') as mock_post:
                     mock_store.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/x.pdf', 'public_id': 'lanceraos/invoices/x.pdf'}
                     mock_get.return_value = _mock_pdf_fetch_response()
@@ -700,7 +709,7 @@ class FinaliseAndSendTests(InvoicesAPITestCase):
         invoice.refresh_from_db()
         self.assertTrue(invoice.reminders_enabled)
 
-        with patch('apps.invoices.email_service.requests.get') as mock_get, patch('requests.post') as mock_post:
+        with patch('apps.invoices.email_service._pdf_fetch_session.get') as mock_get, patch('requests.post') as mock_post:
             mock_get.return_value = _mock_pdf_fetch_response()
             fake_resend = MagicMock(status_code=200, text='')
             fake_resend.json.return_value = {'id': 'x'}

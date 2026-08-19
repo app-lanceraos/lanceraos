@@ -282,7 +282,7 @@ class InvoicePdfEndpointTests(InvoicesAPITestCase):
         resp = self._get(reverse('invoices:invoice_pdf', kwargs={'pk': their_invoice.pk}))
         self.assertEqual(resp.status_code, 404)
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_download_still_works_end_to_end_under_the_real_cloudinary_401_condition(self, mock_get):
         """
         The actual point of this whole rework: this account's stored raw/

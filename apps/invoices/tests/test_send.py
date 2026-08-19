@@ -95,7 +95,7 @@ class InvoiceSendGatingTests(InvoicesAPITestCase):
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, 'created')
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_pdf_fetch_failure_self_heals_via_reupload_and_still_sends(self, mock_get):
         """
         A stored-PDF fetch failure (e.g. the confirmed Cloudinary access-mode
@@ -124,7 +124,7 @@ class InvoiceSendGatingTests(InvoicesAPITestCase):
         self.assertEqual(invoice.pdf_url, 'https://res.cloudinary.com/demo/raw/upload/healed.pdf')
         self.assertEqual(invoice.pdf_public_id, 'lanceraos/invoices/healed.pdf')
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_total_pdf_failure_returns_502_with_specific_error_and_does_not_change_status(self, mock_get):
         """
         The genuine total-failure case: the stored fetch fails, and the
@@ -149,7 +149,7 @@ class InvoiceSendGatingTests(InvoicesAPITestCase):
         self.assertEqual(invoice.status, 'created')
         self.assertFalse(invoice.sent_via_platform)
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_both_custom_smtp_and_resend_failing_returns_specific_error_and_leaves_invoice_unsent(self, mock_get):
         """The item-8 atomicity case: custom SMTP AND its Resend fallback both fail — the error must name what actually happened, not a generic string, and the invoice must stay 'created'."""
         mock_get.return_value = _mock_pdf_fetch_response()
@@ -179,7 +179,7 @@ class InvoiceSendGatingTests(InvoicesAPITestCase):
         self.assertEqual(invoice.status, 'created')
         self.assertFalse(invoice.sent_via_platform)
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_never_re_renders_or_re_stores_the_pdf(self, mock_get):
         """
         The PDF is already frozen by _finalise_invoice — invoice_send must
@@ -214,7 +214,7 @@ class PdfReuploadCircuitBreakerTests(InvoicesAPITestCase):
     """
     @patch('apps.invoices.email_service.render_invoice_pdf', return_value=FAKE_PDF_BYTES)
     @patch('apps.invoices.email_service.upload_pdf_bytes')
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_second_call_within_the_window_skips_the_reupload_and_retry_fetch(self, mock_get, mock_upload, mock_render):
         import requests
         from apps.invoices.email_service import fetch_invoice_pdf_bytes
@@ -234,7 +234,7 @@ class PdfReuploadCircuitBreakerTests(InvoicesAPITestCase):
 
     @patch('apps.invoices.email_service.render_invoice_pdf', return_value=FAKE_PDF_BYTES)
     @patch('apps.invoices.email_service.upload_pdf_bytes')
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_breaker_is_scoped_per_invoice_not_global(self, mock_get, mock_upload, mock_render):
         import requests
         from apps.invoices.email_service import fetch_invoice_pdf_bytes
@@ -254,7 +254,7 @@ class PdfReuploadCircuitBreakerTests(InvoicesAPITestCase):
 
     @patch('apps.invoices.email_service.render_invoice_pdf', return_value=FAKE_PDF_BYTES)
     @patch('apps.invoices.email_service.upload_pdf_bytes')
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_a_successful_reupload_never_trips_the_breaker(self, mock_get, mock_upload, mock_render):
         """Only the stored-url fetch fails; the post-upload retry fetch succeeds — the happy self-heal path, which must never trip the breaker for next time."""
         import requests
@@ -270,7 +270,7 @@ class PdfReuploadCircuitBreakerTests(InvoicesAPITestCase):
 
     @patch('apps.invoices.email_service.render_invoice_pdf', return_value=FAKE_PDF_BYTES)
     @patch('apps.invoices.email_service.upload_pdf_bytes')
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_real_measured_timing_improvement_on_the_second_call(self, mock_get, mock_upload, mock_render):
         """
         Real before/after timing, not just call-count assertions: simulates
@@ -319,10 +319,136 @@ class PdfReuploadCircuitBreakerTests(InvoicesAPITestCase):
         )
 
 
+class PdfFetchConnectionReuseAndByteCacheTests(InvoicesAPITestCase):
+    """
+    Real, reported performance follow-up (see DECISIONS.md): now that the
+    Cloudinary Console ACL fix has landed, every fetch succeeds
+    (outcome=stored_fetch_succeeded), but cloudinary_fetch_ms varied
+    wildly for identical, successful GETs — the SAME invoice fetched
+    twice 7 seconds apart at 193ms then 2425ms, a real connection-reuse
+    signal, not the fetch itself being unpredictably slow. Two real fixes:
+    (1) a shared requests.Session() (_pdf_fetch_session) instead of a
+    bare requests.get() per call, for real TCP/TLS connection reuse; (2)
+    a short Redis cache of successfully-fetched bytes, keyed by pdf_url,
+    so a repeat view of the SAME invoice within the cache window pays no
+    network round trip at all.
+    """
+
+    def test_try_fetch_uses_the_shared_session_not_a_bare_requests_get(self):
+        """
+        Direct regression guard against silently reintroducing a bare
+        requests.get() (which would defeat connection reuse entirely,
+        with no test failure to catch it otherwise, since a mocked
+        requests.get would still make every other test in this file pass).
+        """
+        from apps.invoices import email_service
+        self.assertIsInstance(email_service._pdf_fetch_session, __import__('requests').Session)
+
+        with patch.object(email_service._pdf_fetch_session, 'get') as mock_session_get, \
+             patch('requests.get') as mock_bare_get:
+            mock_session_get.return_value = _mock_pdf_fetch_response()
+            email_service._try_fetch(FAKE_PDF_URL)
+
+        mock_session_get.assert_called_once_with(FAKE_PDF_URL, timeout=email_service.REQUEST_TIMEOUT_SECONDS)
+        mock_bare_get.assert_not_called()
+
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
+    def test_second_fetch_of_the_same_invoice_within_the_cache_window_never_touches_the_network(self, mock_get):
+        """
+        The exact repeated-same-invoice pattern from the real log evidence
+        (193ms then 2425ms 7 seconds apart) — reconstructed here as a call
+        -count assertion, not just a timing one: the second call must not
+        invoke the underlying fetch AT ALL once the first call's bytes are
+        cached, not merely be faster.
+        """
+        from apps.invoices.email_service import fetch_invoice_pdf_bytes
+
+        mock_get.return_value = _mock_pdf_fetch_response()
+        invoice = _sendable_invoice(self.user)
+
+        first = fetch_invoice_pdf_bytes(invoice)
+        self.assertEqual(first, FAKE_PDF_BYTES)
+        mock_get.assert_called_once()
+
+        second = fetch_invoice_pdf_bytes(invoice)
+        self.assertEqual(second, FAKE_PDF_BYTES)
+        mock_get.assert_called_once()  # still exactly once — the second call was a real cache hit
+
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
+    def test_real_measured_timing_improvement_from_the_cache_on_the_second_call(self, mock_get):
+        """
+        Real before/after timing (not just a call-count assertion),
+        mirroring PdfReuploadCircuitBreakerTests' own established pattern
+        for the same class of claim: a mocked-but-realistic network delay
+        per call, proving the cached second call is dramatically faster
+        because it never reaches the network at all — this environment
+        cannot reach the real Cloudinary account directly.
+        """
+        import time
+
+        from apps.invoices.email_service import fetch_invoice_pdf_bytes
+
+        NETWORK_DELAY_SECONDS = 0.05
+
+        def slow_get(*args, **kwargs):
+            time.sleep(NETWORK_DELAY_SECONDS)
+            return _mock_pdf_fetch_response()
+
+        mock_get.side_effect = slow_get
+        invoice = _sendable_invoice(self.user)
+
+        start = time.perf_counter()
+        fetch_invoice_pdf_bytes(invoice)
+        first_call_seconds = time.perf_counter() - start
+
+        start = time.perf_counter()
+        fetch_invoice_pdf_bytes(invoice)
+        second_call_seconds = time.perf_counter() - start
+
+        # The cached second call has no artificial network delay left to
+        # pay at all — a real, dramatic speed-up, not a marginal one.
+        self.assertLess(second_call_seconds, first_call_seconds * 0.3)
+        print(  # noqa: T201 — deliberate, the real before/after number this round's task asked to verify
+            f'\n[PDF bytes cache] first call: {first_call_seconds:.3f}s, '
+            f'second call: {second_call_seconds:.3f}s '
+            f'({(1 - second_call_seconds / first_call_seconds) * 100:.0f}% faster)',
+        )
+
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
+    def test_cache_is_bypassed_once_pdf_url_changes_never_serves_stale_bytes(self, mock_get):
+        """
+        The task's own explicit correctness requirement: a fresh self-heal
+        re-upload changes pdf_url to a new secure_url — the cache (keyed
+        by URL, see _pdf_bytes_cache_key's own docstring) must never serve
+        the OLD url's cached bytes for the new one; it must genuinely
+        fetch again.
+        """
+        from apps.invoices.email_service import fetch_invoice_pdf_bytes
+
+        first_response = MagicMock(status_code=200, content=b'%PDF-original-bytes')
+        first_response.raise_for_status = MagicMock()
+        second_response = MagicMock(status_code=200, content=b'%PDF-regenerated-bytes')
+        second_response.raise_for_status = MagicMock()
+        mock_get.side_effect = [first_response, second_response]
+
+        invoice = _sendable_invoice(self.user)  # pdf_url = FAKE_PDF_URL
+        first = fetch_invoice_pdf_bytes(invoice)
+        self.assertEqual(first, b'%PDF-original-bytes')
+
+        # Simulate a fresh self-heal re-upload writing a genuinely new URL
+        # (the exact real-world trigger for a pdf_url change).
+        invoice.pdf_url = 'https://res.cloudinary.com/lanceraos-test/invoice_regenerated.pdf'
+        invoice.save(update_fields=['pdf_url'])
+
+        second = fetch_invoice_pdf_bytes(invoice)
+        self.assertEqual(second, b'%PDF-regenerated-bytes')  # NOT the stale first_response bytes
+        self.assertEqual(mock_get.call_count, 2)  # a real second fetch happened, not a cache hit
+
+
 class InvoiceSendResendPathTests(InvoicesAPITestCase):
     """Default path — no custom SMTP configured at all."""
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_send_success_sets_status_and_sent_via_platform(self, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
         invoice = _sendable_invoice(self.user)
@@ -336,7 +462,7 @@ class InvoiceSendResendPathTests(InvoicesAPITestCase):
         self.assertTrue(invoice.sent_via_platform)
         self.assertIsNotNone(invoice.sent_at)
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_send_reaches_resend_with_pdf_attached_cc_and_reply_to(self, mock_get):
         """
         Real assertion on the actual Resend HTTP payload — not just that
@@ -365,7 +491,7 @@ class InvoiceSendResendPathTests(InvoicesAPITestCase):
         self.assertTrue(payload['attachments'][0]['filename'].endswith('.pdf'))
         self.assertTrue(len(payload['attachments'][0]['content']) > 0)  # base64 content present
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_send_failure_from_resend_returns_502_and_leaves_invoice_unsent(self, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
         invoice = _sendable_invoice(self.user)
@@ -377,7 +503,7 @@ class InvoiceSendResendPathTests(InvoicesAPITestCase):
         self.assertEqual(invoice.status, 'created')
         self.assertFalse(invoice.sent_via_platform)
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_reminders_enabled_value_is_left_untouched_by_send(self, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
         for starting_value in (True, False):
@@ -403,7 +529,7 @@ class InvoiceSendCustomSmtpPathTests(InvoicesAPITestCase):
         profile.save()
         return profile
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     @patch('django.core.mail.backends.smtp.EmailBackend.send_messages', return_value=1)
     def test_enabled_and_verified_sends_via_custom_smtp_never_touches_resend(self, mock_smtp_send, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
@@ -420,7 +546,7 @@ class InvoiceSendCustomSmtpPathTests(InvoicesAPITestCase):
         self.assertEqual(invoice.status, 'sent')
         self.assertTrue(invoice.sent_via_platform)
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     @patch('django.core.mail.backends.smtp.EmailBackend.send_messages', return_value=1)
     def test_custom_smtp_message_uses_the_users_own_from_address(self, mock_smtp_send, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
@@ -443,7 +569,7 @@ class InvoiceSendCustomSmtpPathTests(InvoicesAPITestCase):
         self.assertEqual(msg.cc, [self.user.email])
         self.assertTrue(any(a[0].endswith('.pdf') for a in msg.attachments))
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     @patch('django.core.mail.backends.smtp.EmailBackend.send_messages', side_effect=OSError('Connection refused'))
     def test_custom_smtp_failure_falls_back_to_resend_immediately(self, mock_smtp_send, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
@@ -461,7 +587,7 @@ class InvoiceSendCustomSmtpPathTests(InvoicesAPITestCase):
         self.assertEqual(invoice.status, 'sent')
         self.assertTrue(invoice.sent_via_platform)
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     @patch('django.core.mail.backends.smtp.EmailBackend.send_messages', side_effect=OSError('Connection refused'))
     def test_custom_smtp_failure_the_client_facing_email_is_identical_either_way(self, mock_smtp_send, mock_get):
         """
@@ -484,7 +610,7 @@ class InvoiceSendCustomSmtpPathTests(InvoicesAPITestCase):
         self.assertNotIn('fallback', payload['subject'].lower())
         self.assertNotIn('smtp', payload['html'].lower())
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     @patch('django.core.mail.backends.smtp.EmailBackend.send_messages', side_effect=OSError('Auth failed: bad credentials'))
     def test_custom_smtp_failure_writes_the_exact_in_app_notification_copy(self, mock_smtp_send, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
@@ -513,7 +639,7 @@ class InvoiceSendCustomSmtpPathTests(InvoicesAPITestCase):
             'because your custom email failed. Check your SMTP settings.',
         )
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     @patch('django.core.mail.backends.smtp.EmailBackend.send_messages', side_effect=OSError('boom'))
     def test_custom_smtp_failed_appears_in_the_real_notification_bell_endpoint(self, mock_smtp_send, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
@@ -534,7 +660,7 @@ class InvoiceSendCustomSmtpPathTests(InvoicesAPITestCase):
 
     def test_disabled_custom_smtp_uses_resend(self):
         # custom_smtp_enabled defaults False — never explicitly enabled here.
-        with patch('apps.invoices.email_service.requests.get') as mock_get, patch('requests.post') as mock_post:
+        with patch('apps.invoices.email_service._pdf_fetch_session.get') as mock_get, patch('requests.post') as mock_post:
             mock_get.return_value = _mock_pdf_fetch_response()
             fake_resp = MagicMock(status_code=200, text='')
             fake_resp.json.return_value = {'id': 'x'}
@@ -544,7 +670,7 @@ class InvoiceSendCustomSmtpPathTests(InvoicesAPITestCase):
             self.assertEqual(resp.status_code, 200)
             mock_post.assert_called_once()
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_enabled_but_not_yet_verified_uses_resend_not_custom_smtp(self, mock_get):
         """
         custom_smtp_enabled=True alone is not enough — verified must also
@@ -573,7 +699,7 @@ class InvoiceSendCustomSmtpPathTests(InvoicesAPITestCase):
 
 
 class InvoiceSendEventsAndAuditTests(InvoicesAPITestCase):
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_invoice_sent_event_recorded_with_via_platform(self, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
         invoice = _sendable_invoice(self.user)
@@ -583,7 +709,7 @@ class InvoiceSendEventsAndAuditTests(InvoicesAPITestCase):
         self.assertEqual(log.metadata['via'], 'platform')
         self.assertEqual(log.metadata['invoice_id'], str(invoice.pk))
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_timeline_shows_sent_by_lanceraos_for_a_real_send(self, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
         invoice = _sendable_invoice(self.user)
@@ -601,7 +727,7 @@ class SendBannerConditionTests(InvoicesAPITestCase):
     all) had no real data to exercise it until this step — confirming
     directly against the real backend response now that one exists.
     """
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_real_send_response_has_sent_via_platform_true(self, mock_get):
         mock_get.return_value = _mock_pdf_fetch_response()
         invoice = _sendable_invoice(self.user)
@@ -622,7 +748,7 @@ class SendBannerConditionTests(InvoicesAPITestCase):
 class RateLimitTests(InvoicesAPITestCase):
     def test_send_is_rate_limited(self):
         cache.clear()
-        with patch('apps.invoices.email_service.requests.get') as mock_get, patch('requests.post') as mock_post:
+        with patch('apps.invoices.email_service._pdf_fetch_session.get') as mock_get, patch('requests.post') as mock_post:
             mock_get.return_value = _mock_pdf_fetch_response()
             fake_resp = MagicMock(status_code=200, text='')
             fake_resp.json.return_value = {'id': 'x'}

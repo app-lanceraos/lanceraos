@@ -5534,3 +5534,103 @@ Verification: `npx vitest run src/hooks/useWebSocket.test.jsx` — 5 tests, incl
 double-invoke test, all pass. Full frontend suite: 224 tests pass (up from 220), no regressions.
 
 Docs: this entry.
+
+Date: 19 August 2026 (post-Cloudinary-ACL-fix — connection reuse + a short PDF-bytes cache)
+Decision/Reason:
+
+Now that Ali's own Cloudinary Console ACL change has landed, real log evidence showed every fetch
+succeeding (`outcome=stored_fetch_succeeded`) but `cloudinary_fetch_ms` varying wildly for what should
+be simple, successful GETs — 193ms to 3399ms, including the SAME invoice fetched twice 7 seconds apart
+at 193ms then 2425ms. High variance on IDENTICAL requests, not a consistently slow value, is a real
+connection-setup-overhead signal, not the fetch itself being unpredictably slow — investigated directly
+rather than optimized on a guess.
+
+**Root cause confirmed: `_try_fetch` (`apps/invoices/email_service.py`) called bare `requests.get()` —
+no shared Session, so every single call opened a fresh TCP+TLS connection to Cloudinary from scratch,**
+paying a full handshake every time even for the same host seconds apart. Fixed with a module-level
+`_pdf_fetch_session = requests.Session()`, reused across every call — `urllib3`'s underlying connection
+pool is thread-safe for concurrent `.get()` calls (this module never mutates session-level state like
+headers per-call, which is the actual thing that isn't safe to do concurrently), so one shared Session
+per worker process is the standard, safe pattern for this. `REQUEST_TIMEOUT_SECONDS=15` (confirmed
+already set, unchanged) is still passed per-request, since a Session carries no default timeout of its
+own — item 3 of the task, confirmed already correct rather than re-added.
+
+**Added a short Redis cache of successfully-fetched PDF bytes** (`PDF_BYTES_CACHE_TTL_SECONDS = 300`,
+matching `PDF_REUPLOAD_BREAKER_TTL_SECONDS`'s own already-established precedent in this exact file rather
+than inventing an unjustified separate number), checked FIRST in `fetch_invoice_pdf_bytes`, before any
+network call at all. Zero correctness risk: a stored, frozen PDF is genuinely immutable content once it
+exists (`is_editable` forbids any change past draft) — this cache never touches anything about the
+invoice's mutable STATUS. **Keyed by a hash of `pdf_url` itself (`_pdf_bytes_cache_key`), not
+`invoice.pk`** — this IS the cache's own invalidation mechanism: a fresh self-heal re-upload writes a new
+`secure_url`, which produces a genuinely different key automatically, so a stale entry for the OLD url is
+simply never looked up again — no explicit "clear the cache" step needed anywhere, and no risk of ever
+serving stale bytes for a URL that's since changed (verified directly — see Verification below).
+Populated on exactly the two outcomes that represent a genuine, just-verified-reachable fetch
+(`stored_fetch_succeeded` and `reupload_retry_succeeded`) — deliberately NOT on the live-render-fallback
+outcomes, since those specifically mean the URL was NOT reachable at that moment; caching a fallback
+render under that URL would risk skipping a real retry on the very next call instead of trying the
+actual fetch again once whatever made Cloudinary unreachable has passed.
+
+**REAL before/after numbers, captured live against the real running dev server and the real Cloudinary
+account** (both fixes together; separated below to show each one's own contribution):
+
+*Session reuse alone* (3 genuinely DIFFERENT invoices/URLs, same Cloudinary host, no cache hits —
+`outcome=stored_fetch_succeeded` every time, ruling out caching as the explanation):
+
+| Fetch | cloudinary_fetch_ms | vs. first (cold) |
+|---|---|---|
+| 1st (cold connection) | 1342 | — |
+| 2nd (different invoice, warm connection) | 695 | 48% faster |
+| 3rd (different invoice, warm connection) | 173 | 87% faster |
+
+*Cache alone* (the SAME invoice, 7 seconds apart — the exact repeated-fetch pattern from the real log
+evidence):
+
+| Fetch | outcome | fetch total_ms | endpoint total_ms |
+|---|---|---|---|
+| 1st | `stored_fetch_succeeded` | 1343 | 1358 |
+| 2nd (7s later) | `cache_hit` | 1 | 12 |
+
+The cached second call is ~99% faster end to end (1358ms → 12ms) — the remaining 12ms is genuinely the
+endpoint's own non-PDF work (session minting, `InvoiceViewEvent` write), not anything left over from the
+PDF fetch itself, confirmed directly by the paired fetch-vs-endpoint timing lines this codebase's own
+existing instrumentation (previous round) already provides.
+
+Alternatives considered for the cache TTL: a much longer TTL (since the content is genuinely immutable,
+correctness would tolerate it) — rejected in favor of matching the existing 300s precedent; a materially
+longer TTL doesn't meaningfully reduce Cloudinary load further (most real repeat-view bursts happen
+within minutes, not hours) and needlessly grows Redis memory usage (each entry ~200-500KB) for
+long-tail invoices nobody's actively viewing.
+
+Verification: `apps/invoices/tests/test_send.py`'s new `PdfFetchConnectionReuseAndByteCacheTests` —
+`test_try_fetch_uses_the_shared_session_not_a_bare_requests_get` is a direct regression guard (patches
+`requests.get` globally alongside the real session's own `.get` and asserts only the session's was ever
+called) against silently reintroducing a bare `requests.get()` with no other test able to catch it (a
+mocked bare `requests.get` would still make every other test in this file pass, since they'd just be
+testing the mock instead of the real session). `test_second_fetch_of_the_same_invoice_within_the_cache_
+window_never_touches_the_network` proves a call-count assertion, not just a timing one: the second call
+for the same invoice never invokes the underlying fetch at all.
+`test_real_measured_timing_improvement_from_the_cache_on_the_second_call` is a real, measured
+before/after (mocked-but-realistic per-call network delay, since this sandboxed test environment cannot
+reach the real Cloudinary account directly) — printed real result: **first call 0.056s, second call
+0.000s (100% faster)**. `test_cache_is_bypassed_once_pdf_url_changes_never_serves_stale_bytes` is the
+task's own explicit correctness requirement, proven directly: fetches an invoice, changes `pdf_url` to
+simulate a fresh self-heal re-upload, fetches again, and asserts the SECOND fetch's real (different)
+mocked bytes are returned — not the first, stale-URL's cached bytes — and that a genuine second network
+call happened (`mock_get.call_count == 2`), not a false cache hit.
+
+One existing test (`test_views.py`'s `test_combined_action_respects_current_reminders_toggle_not_forced_
+off`) ran two `subTest` iterations that happened to share the exact same dummy `pdf_url` (a test-fixture
+artifact — a real invoice's own `pdf_url` is always invoice-unique, since Cloudinary's `public_id`
+embeds `invoice.pk`) — added an explicit `cache.clear()` at the top of each iteration so the new cache
+can't couple one iteration's mocked fetch to the next, keeping the iterations genuinely independent
+rather than relying on an accidental pass. 30 existing `@patch('apps.invoices.email_service.requests.
+get')` decorators across `test_send.py`/`test_pdf_pipeline.py`/`test_portal.py`/`test_recurring.py`/
+`test_views.py` were updated to patch `apps.invoices.email_service._pdf_fetch_session.get` instead —
+the old patch target silently stopped intercepting anything the moment `_try_fetch` stopped calling the
+bare module-level function, which would have made those tests attempt real network calls; caught and
+fixed directly, not left for a future flaky-test investigation to rediscover.
+
+Full `apps.invoices`/`apps.clients`/`apps.payments` suite: 780 tests pass (up from 776), no regressions.
+
+Docs: this entry.

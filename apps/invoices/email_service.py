@@ -18,6 +18,7 @@ Both invoice_send (views.py) and the reminder Celery task (tasks.py)
 call send_invoice_related_email() below, so this invoice-specific
 assembly exists exactly once, not duplicated per caller.
 """
+import hashlib
 import logging
 import time
 
@@ -34,6 +35,21 @@ from .models import CURRENCY_SYMBOLS
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_SECONDS = 15
+
+# A single, module-level Session — real, measured fix (see
+# fetch_invoice_pdf_bytes' own docstring / DECISIONS.md): a bare
+# requests.get() opens a brand-new TCP+TLS connection on every single
+# call, paying a full handshake every time even for the SAME Cloudinary
+# host requested seconds apart. A shared Session's underlying connection
+# pool (urllib3, thread-safe for concurrent .get() calls — this module
+# never mutates session-level state like headers per-call, which is the
+# actual thing that isn't safe to do concurrently) lets the OS-level
+# connection be reused (keep-alive) across calls within one worker
+# process's lifetime, closing exactly the "same invoice fetched twice 7
+# seconds apart at 193ms then 2425ms" variance real log evidence showed
+# — high variance on identical requests is a real connection-reuse
+# signal, not the fetch itself being unpredictably slow.
+_pdf_fetch_session = requests.Session()
 
 # Self-heal circuit breaker (see fetch_invoice_pdf_bytes) — how long a
 # confirmed re-upload+retry-fetch failure for one invoice is trusted to
@@ -489,9 +505,42 @@ def get_reply_to_address(invoice):
 
 
 def _try_fetch(url):
-    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
+    # _pdf_fetch_session, not a bare requests.get() — see that Session's
+    # own module-level comment for why. timeout is still passed
+    # per-request (a Session does not carry a default timeout of its
+    # own) — REQUEST_TIMEOUT_SECONDS=15 already bounds this, unchanged.
+    resp = _pdf_fetch_session.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
     resp.raise_for_status()
     return resp.content
+
+
+def _pdf_bytes_cache_key(pdf_url):
+    """
+    Deliberately derived from the URL itself, not just invoice.pk — this
+    IS the cache's own invalidation mechanism (see fetch_invoice_pdf_bytes'
+    caching section): if pdf_url is ever regenerated (a fresh self-heal
+    re-upload writes a new secure_url), the key changes automatically and
+    the old entry is simply never looked up again — no explicit "clear
+    the old cache entry" step needed anywhere, and no risk of serving
+    stale bytes for a URL that's since changed. Hashed (not the raw URL)
+    purely for a short, clean, greppable Redis key — the URL itself
+    carries no secret worth hiding (Cloudinary's own access control is
+    what's authoritative, not obscurity of this key).
+    """
+    return f'invoice_pdf_bytes_{hashlib.sha256(pdf_url.encode()).hexdigest()}'
+
+
+# How long successfully-fetched PDF bytes stay cached, keyed per pdf_url.
+# Matches PDF_REUPLOAD_BREAKER_TTL_SECONDS' own already-established
+# precedent in this exact file (300s / 5 minutes) rather than inventing a
+# separate, unjustified number — long enough that a real burst of repeat
+# views of the same invoice (someone reopening it, a reminder email's own
+# fetch landing close to a manual portal view) only pays one real
+# Cloudinary round-trip, short enough that this stays "a short cache," not
+# an unbounded one. Zero correctness risk either way — the cached bytes
+# ARE the frozen, immutable content for that specific pdf_url (never the
+# invoice's mutable STATUS, which this cache never touches at all).
+PDF_BYTES_CACHE_TTL_SECONDS = 300
 
 
 def fetch_invoice_pdf_bytes(invoice, request_id=None):
@@ -586,6 +635,26 @@ def fetch_invoice_pdf_bytes(invoice, request_id=None):
     no request in scope (the reminder Celery task, etc.) simply omit it —
     this field logs as None there, same as any other stage that didn't
     apply.
+
+    CACHE (real, measured fix — see DECISIONS.md): once the Cloudinary
+    Console ACL restriction was fixed, real log evidence showed the SAME
+    invoice fetched twice 7 seconds apart still paid a full network round
+    trip both times — a stored, frozen PDF is genuinely immutable content
+    once it exists (is_editable forbids any change past draft), so
+    there's zero correctness risk in caching successfully-fetched bytes
+    briefly. Checked FIRST, before any network call at all — a cache hit
+    returns near-instantly with no Cloudinary request whatsoever.
+    Populated only on the two outcomes that represent a genuine,
+    just-verified-reachable fetch (`stored_fetch_succeeded` and
+    `reupload_retry_succeeded`) — deliberately NOT on the live-render
+    fallback outcomes, since those specifically mean the URL was NOT
+    reachable at that moment; caching a fallback render under that URL
+    would risk serving stale fallback bytes instead of trying the real
+    fetch again on the very next call, once whatever made Cloudinary
+    unreachable that one time has passed. See _pdf_bytes_cache_key's own
+    docstring for how a pdf_url change (a fresh self-heal re-upload)
+    invalidates itself automatically, with no explicit cache-clearing
+    step needed anywhere.
     """
     call_started = time.perf_counter()
     timings = {'cloudinary_fetch_ms': None, 'render_ms': None, 'upload_ms': None, 'retry_fetch_ms': None}
@@ -601,10 +670,16 @@ def fetch_invoice_pdf_bytes(invoice, request_id=None):
         return result
 
     if invoice.pdf_url:
+        cache_key = _pdf_bytes_cache_key(invoice.pdf_url)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return _finish('cache_hit', cached)
+
         stage_started = time.perf_counter()
         try:
             content = _try_fetch(invoice.pdf_url)
             timings['cloudinary_fetch_ms'] = int((time.perf_counter() - stage_started) * 1000)
+            cache.set(cache_key, content, timeout=PDF_BYTES_CACHE_TTL_SECONDS)
             return _finish('stored_fetch_succeeded', content)
         except requests.RequestException as exc:
             timings['cloudinary_fetch_ms'] = int((time.perf_counter() - stage_started) * 1000)
@@ -653,6 +728,11 @@ def fetch_invoice_pdf_bytes(invoice, request_id=None):
         try:
             content = _try_fetch(invoice.pdf_url)
             timings['retry_fetch_ms'] = int((time.perf_counter() - retry_started) * 1000)
+            # invoice.pdf_url was JUST updated above (the new secure_url
+            # from this re-upload) — keying on it here, not the original
+            # pre-upload URL, is what makes this cache entry correctly
+            # tied to the URL these bytes actually came from.
+            cache.set(_pdf_bytes_cache_key(invoice.pdf_url), content, timeout=PDF_BYTES_CACHE_TTL_SECONDS)
             logger.info('[INVOICES] Self-heal re-upload+retry succeeded for invoice_id=%s.', invoice.pk)
             cache.delete(breaker_key)
             return _finish('reupload_retry_succeeded', content)

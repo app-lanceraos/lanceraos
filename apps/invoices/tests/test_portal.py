@@ -379,7 +379,7 @@ class PortalPdfDownloadTests(PortalContentAPITestCase):
         resp = self._get(reverse('invoices:portal_invoice_pdf_download', kwargs={'view_token': invoice.view_token}))
         self.assertEqual(resp.status_code, 502)
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     def test_download_still_works_end_to_end_under_the_real_cloudinary_401_condition(self, mock_get):
         """
         Real, end-to-end proof (nothing mocked at this view's own level,

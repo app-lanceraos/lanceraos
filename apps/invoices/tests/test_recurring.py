@@ -382,7 +382,7 @@ class RecurringRealAutoSendIntegrationTests(TestCase):
         cache.clear()
         self.user = User.objects.create_user(email='freelancer@example.com', password='Sup3r$ecret1')
 
-    @patch('apps.invoices.email_service.requests.get')
+    @patch('apps.invoices.email_service._pdf_fetch_session.get')
     @patch('cloudinary.uploader.upload')
     def test_auto_send_generates_finalises_and_sends_for_real(self, mock_upload, mock_get):
         mock_upload.return_value = {'secure_url': 'https://res.cloudinary.com/demo/raw/upload/invoice.pdf', 'public_id': 'invoice_x'}
