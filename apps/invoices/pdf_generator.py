@@ -16,6 +16,27 @@ Two entry points, deliberately separate responsibilities:
   when to persist those fields, since "render+upload" and "this invoice
   now has a frozen PDF" are different responsibilities, and a caller
   might reasonably want to retry the DB save without re-uploading.
+
+`from weasyprint import HTML` is deliberately NOT imported here at
+module level (see LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md's
+PERF-001 and DECISIONS.md's own resolution entry) — it's imported
+locally inside render_invoice_pdf/render_client_statement_pdf instead,
+the two functions that actually call HTML(...). WeasyPrint pulls in
+Cairo/Pango/GObject via ctypes at import time; this module gets imported
+transitively at Celery worker startup (apps.invoices.tasks imports
+apps.invoices.email_service, which imports THIS module, all at module
+level) — well before any task actually runs, and in a prefork pool,
+before the worker forks its child processes. Deferring the weasyprint
+import specifically to first real use means that native-library load
+now happens inside whichever process (in --pool=solo, the single worker
+process; in a forked child under prefork, that child) actually renders
+a PDF, not unconditionally in the parent at startup. This is NOT
+confirmed to be the actual fix for the real, reproduced macOS prefork
+segfault (--pool=solo — avoiding the fork entirely — is the confirmed
+fix; see DECISIONS.md) — it's a real, independently-good practice
+(don't pay a heavyweight native-library import cost in every process
+that merely imports this module) done regardless of whether it also
+helps the fork-safety issue, which remains unconfirmed either way.
 """
 import base64
 import io
@@ -27,7 +48,6 @@ import qrcode
 from django.template.loader import render_to_string
 from django.templatetags.static import static
 from django.utils import timezone
-from weasyprint import HTML
 
 from core.money import Money
 
@@ -176,7 +196,21 @@ def build_pdf_context(invoice):
 
 
 def render_invoice_pdf(invoice):
-    """Live-renders `invoice` to PDF bytes. No storage side effect — see this module's own docstring for why draft/created invoices always call this fresh."""
+    """
+    Live-renders `invoice` to PDF bytes. No storage side effect — see
+    this module's own docstring for why draft/created invoices always
+    call this fresh.
+
+    `from weasyprint import HTML` is deliberately deferred to here rather
+    than a module-level import (see this module's own docstring for the
+    full reasoning) — WeasyPrint pulls in Cairo/Pango/GObject via ctypes
+    at import time, and this keeps that native-library load out of every
+    process that merely imports this module (e.g. a Celery worker at
+    startup, well before any task actually runs) and confined to the one
+    call site that genuinely needs it.
+    """
+    from weasyprint import HTML
+
     template_name = _select_template_name(invoice)
     html_string = render_to_string(template_name, build_pdf_context(invoice))
     return HTML(string=html_string).write_pdf()
@@ -379,6 +413,13 @@ def build_statement_context(client, start_date, end_date):
 
 
 def render_client_statement_pdf(client, start_date, end_date):
-    """Live-rendered on every call — no frozen-artifact concept here, unlike a sent invoice's PDF. A statement reflects current data for whatever range is requested."""
+    """
+    Live-rendered on every call — no frozen-artifact concept here, unlike
+    a sent invoice's PDF. A statement reflects current data for whatever
+    range is requested. See render_invoice_pdf's own docstring for why
+    the weasyprint import is deferred to here rather than module level.
+    """
+    from weasyprint import HTML
+
     html_string = render_to_string('invoices/statement.html', build_statement_context(client, start_date, end_date))
     return HTML(string=html_string).write_pdf()

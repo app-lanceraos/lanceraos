@@ -1926,7 +1926,7 @@ just the two (`runserver` + `npm run dev`) that were enough before scheduled bac
 redis-server                                    # brew services start redis — leave this always-on
 python manage.py runserver                      # Django backend, :8000
 npm run dev                                      # Vite frontend, :5173  (run from frontend/)
-celery -A config worker -l info                  # actually executes scheduled/background tasks
+celery -A config worker -l info --pool=solo      # actually executes scheduled/background tasks
 celery -A config beat -l info                    # actually triggers them on schedule
 ```
 
@@ -1942,13 +1942,38 @@ schedule, a silently-running worker executing stale code because you forgot it w
 worse failure mode than "oh right, I need to start it." Revisit this once more modules land and
 scheduled tasks are relied on constantly, not just when deliberately testing this specific area.
 
-**macOS-specific gotcha, will bite you every time otherwise:** the Celery worker crashes the
-moment it tries to fork a child process to actually run a task (`WorkerLostError: signal 6
-(SIGABRT)`, from Apple's Objective-C runtime not tolerating being forked into). Not a Celery bug
-— start the worker with this env var set:
-```
-OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES celery -A config worker -l info
-```
+**macOS-specific gotcha, will bite you every time otherwise — use `--pool=solo`:** the default
+prefork pool crashes the worker the moment it forks a child process to actually run a task
+(`WorkerLostError: signal 11 (SIGSEGV)`). Real, confirmed cause (closing PERF-001 from the
+19 August 2026 production audit — see DECISIONS.md for the full investigation): something in
+WeasyPrint's native library chain (Cairo/Pango/GObject, loaded via `ctypes`, pulled in by any
+task touching invoice PDF generation) is not fork-safe on macOS specifically — forking a process
+that has already loaded these libraries corrupts their internal state, and the child segfaults
+the instant it tries to use them. `--pool=solo` runs the worker as a single process with no
+forking at all, trading task concurrency for stability — for local dev, where you're rarely
+running more than one background task at a time anyway, that trade is free.
+
+**Two things this is NOT, confirmed directly rather than assumed:**
+- **Not an Objective-C-runtime-specific issue.** The previously-documented
+  `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` workaround was real-world tested (with the default
+  prefork pool, both with and without this env var) and did **not** stop the segfault either way —
+  ruling out that specific ObjC-runtime mechanism as the actual cause, not just an ineffective
+  band-aid over the real one. Dropped from this doc; `--pool=solo` is the one real fix.
+- **Not (as far as this session could determine) an import-timing issue.** WeasyPrint used to be
+  imported at Django module-load time in `apps/invoices/pdf_generator.py` — transitively pulled in
+  by `apps.invoices.tasks` at Celery worker startup, before any fork. That import is now deferred
+  into the two functions that actually call it (see DECISIONS.md) as a real, independently-good
+  practice regardless — but this was done ON TOP OF `--pool=solo` being the confirmed fix, not
+  verified as a fix on its own against the default prefork pool. Don't assume it would let you drop
+  `--pool=solo` and go back to prefork without testing that combination for real first.
+
+**Believed macOS-only — genuinely unconfirmed on Linux, flagged rather than assumed:** this
+project's actual deployment target (Railway, per this doc's own Infrastructure section) runs
+Linux containers, where this specific fork-safety failure mode is NOT expected to reproduce —
+standard prefork concurrency (no `--pool=solo` restriction) is expected to work there. This has
+**not actually been verified against a real Linux staging/production container** as of this
+writing — treat `--pool=solo` as a local-macOS-dev-only requirement until someone confirms
+prefork's real behavior on the actual deployment target directly, not by assumption.
 
 **To manually trigger a scheduled task right now**, without waiting for Beat's schedule (useful
 for testing deletion/cleanup behavior): `python manage.py shell`, then

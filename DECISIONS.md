@@ -5634,3 +5634,97 @@ fixed directly, not left for a future flaky-test investigation to rediscover.
 Full `apps.invoices`/`apps.clients`/`apps.payments` suite: 780 tests pass (up from 776), no regressions.
 
 Docs: this entry.
+
+Date: 19 August 2026 (PERF-001 closed — real macOS Celery prefork segfault, root cause confirmed, --pool=solo is the fix)
+Decision/Reason:
+
+Closes finding PERF-001 (INFO/OPERATIONAL in `LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`, 19 August
+2026): the Celery worker on this local macOS dev machine segfaulted (`WorkerLostError: signal 11
+(SIGSEGV)`) every time it forked a child process to actually run a task touching invoice PDF generation
+— confirmed repeatedly, live, across multiple sessions this same day (the WeasyPrint timing-instrumentation
+work, the PDF-fetch-caching work) — and the audit flagged whether this was a local-machine-only artifact
+or something that could also affect the real production container as a genuinely open, unverified question.
+
+**The originally-documented `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` workaround is REAL-WORLD RULED OUT,
+not just unconfirmed.** Ali tested the default prefork pool both with and without this env var set — the
+segfault reproduced identically either way. This specifically rules out the Objective-C runtime's own
+`initialize`-during-fork protection as the actual mechanism (that workaround targets a real, different,
+well-known macOS fork hazard — it just isn't THIS one). Removed from CLAUDE.md's "Running This Locally"
+section entirely rather than left as a discredited-but-still-documented step.
+
+**The real, confirmed fix: `celery -A config worker -l info --pool=solo`.** Ali ran this live —
+`apps.invoices.tasks.notify_unread_comments` (the every-15-minute task, itself real evidence the crash
+wasn't specific to one particular task) completed successfully end to end, with real timestamps and real
+output, where the default prefork pool crashed on the exact same task every single time. `--pool=solo` runs
+the worker as a single process with no forking at all — this doesn't fix whatever makes the fork itself
+unsafe, it avoids forking entirely, trading task concurrency for stability. CLAUDE.md's "Running This
+Locally" section updated to make this the documented default worker command for local macOS dev, with the
+real reasoning (not the ruled-out one) and an explicit, flagged caveat that this is believed macOS-specific
+and NOT yet confirmed against the actual Railway/Linux production deployment target — prefork's normal
+concurrency is EXPECTED to work fine there, but this is stated as an expectation needing real confirmation
+once actually deployed, not asserted as fact just because it's the more common, "boring" outcome.
+
+**Real code-level investigation, item 3 of this round's task — is WeasyPrint imported eagerly anywhere?**
+Traced the actual import graph rather than assuming: `apps/invoices/pdf_generator.py` had a module-level
+`from weasyprint import HTML`. `pdf_generator.py` is imported at module level by `apps/invoices/email_
+service.py`, which is in turn imported at module level by `apps/invoices/tasks.py` — and `tasks.py` is
+exactly what Celery's own task autodiscovery imports at WORKER STARTUP, in the parent process, before a
+prefork pool ever forks a single child. So yes: WeasyPrint (and the Cairo/Pango/GObject native libraries it
+loads via `ctypes`) was genuinely being imported eagerly, in every Celery worker process, whether or not
+that worker ever actually rendered a PDF. (A separate, already-existing lazy `from .pdf_generator import
+store_invoice_pdf` inside `render_and_store_invoice_pdf`'s own function body in `tasks.py` turned out to be
+moot for THIS specific concern — by the time that lazy import runs, the `pdf_generator` module is already
+fully loaded and cached in `sys.modules` via the eager `tasks.py -> email_service.py -> pdf_generator.py`
+chain, so it changes nothing about when WeasyPrint itself gets pulled in.)
+
+Fixed: moved `from weasyprint import HTML` out of `pdf_generator.py`'s module level and into the two
+functions that actually call `HTML(...)` — `render_invoice_pdf` and `render_client_statement_pdf`. This
+means WeasyPrint's own native-library load now happens inside whichever process actually renders a PDF for
+the first time (in `--pool=solo`, the single worker process, on first real use; in a hypothetical forked
+child under prefork, that child specifically), not unconditionally in the parent at Celery startup. A real,
+directly observable side effect confirms the import is genuinely deferred now, not just moved on paper: a
+bare `manage.py check` used to print WeasyPrint's own default-stylesheet-parsing log lines
+(`weasyprint.progress: Step 2 - Fetching and parsing CSS...`) before running any check at all, on every
+single command all session — that noise is now gone from `manage.py check`, and only appears when a real
+render actually happens (confirmed directly, not assumed, by running both before and after this change).
+
+**Stated honestly, per the task's own explicit framing, NOT claimed as a fix for the segfault**: this
+lazy-import change is real, independently good practice (a heavyweight native-library import cost should
+never be paid by every process that merely imports a module, only by the process that actually uses it) —
+but it was made ON TOP OF `--pool=solo` already being the confirmed fix, not tested in isolation against
+the default prefork pool. The `--pool=solo` test itself is real evidence the underlying problem is
+fork-TIMING (something about the state of an already-loaded native library at the moment `fork()` is
+called), which doesn't automatically confirm or rule out whether "import strictly after fork, inside the
+child" would also have been sufficient on its own — that combination (prefork pool + this lazy import,
+with `--pool=solo` NOT set) was not tested this round, and CLAUDE.md's own new caveat says so explicitly
+rather than implying this change alone would let prefork start working again.
+
+**Item 4 — confirmed nothing in this codebase relies on genuine task concurrency for correctness.** Checked
+directly: every `.delay()`/`.apply_async()` call site in the app (`apps/invoices/views.py`'s
+`render_and_store_invoice_pdf.delay(...)`, the 4 verification-email/password-reset `.delay()` calls in
+`apps/admin_panel`/`apps/users`) is a fire-and-forget dispatch from a Django view — none of them, and no
+task in `apps/invoices/tasks.py`/`apps/users/tasks.py`/`apps/payments/tasks.py`, ever calls `.get()` on an
+`AsyncResult`, or uses Celery's `chain()`/`chord()`/`group()` primitives that would need multiple tasks
+genuinely running in parallel to resolve correctly. `--pool=solo`'s serial (one-task-at-a-time) execution
+therefore only affects THROUGHPUT/latency under real local-dev load, never correctness — no code depends on
+tasks actually overlapping in wall-clock time. One minor, real, worth-noting-but-not-fixing throughput
+observation: `config/celery.py`'s beat schedule has one frequent entry (`notify_unread_comments`, every 15
+minutes, `crontab(minute='*/15')`) that shares an exact clock-minute with two of the daily entries
+(`fetch_exchange_rates` at 8:00, `generate_recurring_invoices` at 8:30) — under `--pool=solo`, if both fire
+in the same minute, the second waits for the first to fully finish rather than running alongside it. Every
+task here is lightweight relative to its own scheduling window, and this is local-dev-only (production
+would run standard prefork, per the caveat above) — not a real problem for actual usage patterns, so not
+changed.
+
+Verification: no test changes were needed or made for the `--pool=solo` documentation change itself (a
+deployment/runtime configuration finding, not an application code bug, per this round's own task framing).
+The one real code change (deferring the `weasyprint` import) was verified by running the full
+`apps.invoices` PDF-specific suites (`test_pdf_pipeline.py`, `test_pdf_templates.py`, `test_statement.py` —
+67 tests) plus the full `apps.invoices` suite (666 tests) — all pass, confirming the lazy import doesn't
+change behavior, only timing. `manage.py check` before/after directly confirms the import is genuinely
+deferred (WeasyPrint's own startup log noise gone from a bare check, present again the moment a real
+render runs).
+
+Docs: this entry. CLAUDE.md's "Running This Locally" section updated with the real `--pool=solo` command,
+the confirmed-ruled-out `OBJC_DISABLE_INITIALIZE_FORK_SAFETY` note, and the explicit Linux-production
+unconfirmed caveat.
