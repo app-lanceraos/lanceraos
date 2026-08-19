@@ -234,27 +234,32 @@ class SessionUtilityFunctionTests(TestCase):
 
 class FreelancerPreviewGuardTests(TestCase):
     """
-    Not yet wired to any real call site (Steps 12-14's job — see
-    DECISIONS.md) — tested directly against the function's own logic:
-    both cookies present, only the freelancer's, only the portal's, and
-    neither.
+    Wired into 5 real call sites in apps.invoices.views_portal — tested
+    directly here against the function's own logic (both cookies
+    present, only the freelancer's, only the portal's, neither, and —
+    audit fix, finding PORTAL-001 — same-owner vs. different-owner).
     """
     def setUp(self):
         self.user = User.objects.create_user(email='freelancer@example.com', password='Sup3r$ecret1')
         self.user.is_email_verified = True
         self.user.is_active = True
         self.user.save()
+        self.other_user = User.objects.create_user(email='other-freelancer@example.com', password='Sup3r$ecret1')
+        self.other_user.is_email_verified = True
+        self.other_user.is_active = True
+        self.other_user.save()
         self.client_obj = make_client(self.user)
         self.rf = RequestFactory()
 
-    def _real_freelancer_access_cookie(self):
-        """A real, valid JWT access token for self.user, minted via the real login endpoint — not a synthetic string."""
+    def _real_freelancer_access_cookie(self, user=None):
+        """A real, valid JWT access token for the given user (self.user by default), minted via the real login endpoint — not a synthetic string."""
+        user = user or self.user
         django_client = DjangoTestClient(enforce_csrf_checks=True)
         dummy = self.rf.get('/')
         token = get_token(dummy)
         django_client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
         resp = django_client.post(
-            reverse('users:login'), data=json.dumps({'login': self.user.email, 'password': 'Sup3r$ecret1'}),
+            reverse('users:login'), data=json.dumps({'login': user.email, 'password': 'Sup3r$ecret1'}),
             content_type='application/json', HTTP_X_CSRFTOKEN=token,
         )
         assert resp.status_code == 200, resp.content
@@ -267,33 +272,58 @@ class FreelancerPreviewGuardTests(TestCase):
     def test_neither_cookie_present_is_not_flagged(self):
         request = self.rf.get('/')
         request.COOKIES = {}
-        self.assertFalse(is_freelancer_previewing_portal(request))
+        self.assertFalse(is_freelancer_previewing_portal(request, owner_user_id=self.user.pk))
 
     def test_only_freelancer_session_present_is_not_flagged(self):
         access_token = self._real_freelancer_access_cookie()
         request = self.rf.get('/')
         request.COOKIES = {ACCESS_COOKIE_NAME: access_token}
-        self.assertFalse(is_freelancer_previewing_portal(request))
+        self.assertFalse(is_freelancer_previewing_portal(request, owner_user_id=self.user.pk))
 
     def test_only_portal_session_present_is_not_flagged(self):
         raw_token = self._real_portal_session_cookie()
         request = self.rf.get('/')
         request.COOKIES = {PORTAL_COOKIE_NAME: raw_token}
-        self.assertFalse(is_freelancer_previewing_portal(request))
+        self.assertFalse(is_freelancer_previewing_portal(request, owner_user_id=self.user.pk))
 
-    def test_both_cookies_present_is_flagged(self):
+    def test_both_cookies_present_and_freelancer_owns_the_client_is_flagged(self):
         access_token = self._real_freelancer_access_cookie()
         raw_token = self._real_portal_session_cookie()
         request = self.rf.get('/')
         request.COOKIES = {ACCESS_COOKIE_NAME: access_token, PORTAL_COOKIE_NAME: raw_token}
-        self.assertTrue(is_freelancer_previewing_portal(request))
+        self.assertTrue(is_freelancer_previewing_portal(request, owner_user_id=self.user.pk))
+
+    def test_both_cookies_present_but_different_owner_is_not_flagged(self):
+        """
+        Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, finding
+        PORTAL-001) — the actual live-reproduced scenario: self.other_user
+        is a real, distinct freelancer with a valid JWT session of their
+        own, who ALSO happens to be carrying a valid portal-session cookie
+        for self.user's client (self.client_obj) — e.g. a forwarded link,
+        another browser tab, or genuinely being someone else's client.
+        This must NOT be treated as self.user previewing their own
+        client's portal — it's two unrelated people's sessions coexisting
+        in one browser, and the portal session's real actions must still
+        behave as a genuine client action.
+        """
+        access_token = self._real_freelancer_access_cookie(user=self.other_user)
+        raw_token = self._real_portal_session_cookie()  # a session for self.client_obj, owned by self.user
+        request = self.rf.get('/')
+        request.COOKIES = {ACCESS_COOKIE_NAME: access_token, PORTAL_COOKIE_NAME: raw_token}
+        # Checked against the REAL owner (self.user, self.client_obj's
+        # owner) — self.other_user is authenticated but owns nothing here.
+        self.assertFalse(is_freelancer_previewing_portal(request, owner_user_id=self.user.pk))
+        # The SAME request pair correctly IS flagged when checked against
+        # the freelancer who's actually logged in — proves this isn't
+        # simply "always False now," only false for the mismatched owner.
+        self.assertTrue(is_freelancer_previewing_portal(request, owner_user_id=self.other_user.pk))
 
     def test_garbage_freelancer_cookie_alongside_a_real_portal_session_is_not_flagged(self):
         """An invalid/expired/malformed JWT must never raise — just means 'no freelancer session'."""
         raw_token = self._real_portal_session_cookie()
         request = self.rf.get('/')
         request.COOKIES = {ACCESS_COOKIE_NAME: 'not-a-real-jwt-at-all', PORTAL_COOKIE_NAME: raw_token}
-        self.assertFalse(is_freelancer_previewing_portal(request))
+        self.assertFalse(is_freelancer_previewing_portal(request, owner_user_id=self.user.pk))
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -47,6 +47,7 @@ from core.events import emit
 from core.observability import get_client_ip, get_user_agent
 
 from apps.clients.portal import is_freelancer_previewing_portal, issue_or_renew_session, resolve_session_from_request
+from apps.users.authentication import enforce_csrf_standalone
 
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
 from .email_service import fetch_invoice_pdf_bytes
@@ -127,8 +128,13 @@ def _record_invoice_view_if_appropriate(invoice, request):
     drift out of sync. Per the spec: a freelancer who clicked their own
     client's magic link without logging out of their own LanceraOS
     account first must never have that count as a real client view.
+
+    owner_user_id=invoice.user_id (audit fix, PORTAL-001) — the guard
+    only suppresses this side effect when the authenticated freelancer
+    session actually belongs to THIS invoice's own owner, not merely
+    "some freelancer is logged in somewhere."
     """
-    if is_freelancer_previewing_portal(request):
+    if is_freelancer_previewing_portal(request, owner_user_id=invoice.user_id):
         return
 
     InvoiceViewEvent.objects.create(
@@ -426,7 +432,23 @@ def portal_invoice_comments(request, pk):
     real portal link without logging out of their own account first must
     never have a message they post there misattributed as a real client
     message.
+
+    Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, finding
+    PORTAL-002): enforce_csrf_standalone(request) — this view is reached
+    with only a portal-session cookie present, never a freelancer JWT
+    cookie, so CookieJWTAuthentication.authenticate()'s own enforce_csrf
+    call never fires here (it short-circuits to None the moment there's
+    no JWT cookie at all) — this endpoint was protected only by
+    SameSite=Lax, unlike every other real state-changing endpoint in the
+    app. Matches the identical fix already applied to
+    apps/clients/views_portal.py's portal_logout/portal_logout_everywhere
+    for the exact same reason. CSRFCheck.process_view() internally no-ops
+    for safe methods, so calling this unconditionally (GET included) is
+    correct and matches enforce_csrf_standalone's own documented
+    contract — no request.method branch needed here.
     """
+    enforce_csrf_standalone(request)
+
     client = resolve_session_from_request(request)
     if client is None:
         return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -434,7 +456,7 @@ def portal_invoice_comments(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk, client=client)
 
     if request.method == 'GET':
-        if not is_freelancer_previewing_portal(request):
+        if not is_freelancer_previewing_portal(request, owner_user_id=invoice.user_id):
             # ids captured BEFORE the update, not re-derived afterward —
             # see invoice_comments' own identical comment (views.py) for
             # why (item 3 of the 16 August 2026 second verification pass).
@@ -447,7 +469,7 @@ def portal_invoice_comments(request, pk):
         comments = invoice.comments.all()
         return Response(InvoiceCommentSerializer(comments, many=True).data)
 
-    if is_freelancer_previewing_portal(request):
+    if is_freelancer_previewing_portal(request, owner_user_id=invoice.user_id):
         return Response(
             {'error': "You're previewing this portal as its own freelancer — messages can't be posted from preview mode."},
             status=status.HTTP_403_FORBIDDEN,
@@ -575,7 +597,15 @@ def portal_invoice_claims(request, pk):
     overpayment against a still-positive balance) now has its real first
     message re-surfaced under that same top-level `error` key instead of
     silently vanishing behind the generic fallback.
+
+    Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, finding
+    PORTAL-002): enforce_csrf_standalone(request), same reasoning as
+    portal_invoice_comments above — safe methods (GET) are a no-op
+    inside that call, so this is correct unconditionally for both
+    methods this view handles.
     """
+    enforce_csrf_standalone(request)
+
     result = _resolve_portal_write_access(request, pk)
     if isinstance(result, Response):
         return result
@@ -584,7 +614,7 @@ def portal_invoice_claims(request, pk):
     if request.method == 'GET':
         return Response(PaymentClaimSerializer(invoice.payment_claims.all(), many=True).data)
 
-    if is_freelancer_previewing_portal(request):
+    if is_freelancer_previewing_portal(request, owner_user_id=invoice.user_id):
         return Response(
             {'error': "You're previewing this portal as its own freelancer — payment claims can't be submitted from preview mode."},
             status=status.HTTP_403_FORBIDDEN,
@@ -628,13 +658,20 @@ def portal_invoice_acknowledge(request, pk):
     is no unacknowledge path anywhere in this app, by design — a
     permanent record, same trust posture as InvoiceComment's own
     immutability and the frozen PDF.
+
+    Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, finding
+    PORTAL-002): enforce_csrf_standalone(request), same reasoning as
+    portal_invoice_comments/portal_invoice_claims above — a POST-only
+    view, so this is unconditionally the real check every time.
     """
+    enforce_csrf_standalone(request)
+
     result = _resolve_portal_write_access(request, pk)
     if isinstance(result, Response):
         return result
     invoice, _client_name, _client_email, rate_limit_key = result
 
-    if is_freelancer_previewing_portal(request):
+    if is_freelancer_previewing_portal(request, owner_user_id=invoice.user_id):
         return Response(
             {'error': "You're previewing this portal as its own freelancer — this invoice can't be acknowledged from preview mode."},
             status=status.HTTP_403_FORBIDDEN,

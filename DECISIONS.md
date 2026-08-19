@@ -5198,4 +5198,172 @@ and the post-refresh database row both show `0.00` for `subtotal`/`tax_amount`/`
 
 Docs: this entry. CLAUDE.md status update.
 
+Date: 19 August 2026 (audit fix, second round — INV-002, missing AuditLog handlers for 7 real lifecycle events)
+Decision/Reason:
+
+Closed finding INV-002 (HIGH) of `LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`: `core.events.emit()` only
+ever writes an `AuditLog` row when a handler is registered via `@on(...)` in `apps/invoices/notifications.py`
+— `InvoiceCreated`, `InvoiceFinalised`, `InvoicePaid`, `InvoicePartiallyPaid`, `InvoiceCancelled`,
+`InvoiceRefunded`, `InvoiceMarkedBadDebt`, and `InvoiceResent` had all been emitted from `views.py` since
+their respective build steps landed, with ZERO registered handlers among them — confirmed live by the
+audit: a full real lifecycle (finalise, mark-sent, mark-paid, cancel, refund, bad-debt, several partial
+payments) produced exactly ONE `AuditLog` event type (`invoice_sent`, the one event that WAS already
+wired), despite 8+ distinct financial actions taken.
+
+Added 8 new handlers to `apps/invoices/notifications.py`, immediately after `_record_invoice_sent` —
+`_record_invoice_created`, `_record_invoice_finalised`, `_record_invoice_paid`,
+`_record_invoice_partially_paid`, `_record_invoice_cancelled`, `_record_invoice_refunded`,
+`_record_invoice_marked_bad_debt`, `_record_invoice_resent`. Each reuses `_record_invoice_sent`'s exact
+established shape — not a new convention: the same inline `User.objects.get(pk=user_id)` /
+`except User.DoesNotExist: logger.warning(...); return` block this file already repeats per handler (see
+`PaymentClaimSubmitted`/`InvoiceAcknowledged`/etc.), then `log_event(event_name, user=user,
+metadata={'invoice_id': invoice_id, ...})` — `user` alone (no `actor`) since every one of these 8 events is
+self-service, matching `AuditLog`'s own documented convention that `actor` is populated only when different
+from `user`. `InvoiceCreated` additionally captures `duplicated_from`/`from_preset` when present (both
+optional, matching the 3 real emit call sites — a bare create, a duplicate, and a preset-instantiated
+draft); `InvoicePaid`/`InvoicePartiallyPaid`/`InvoiceRefunded` capture `amount` when the emit call provides
+it (mark-paid's own `InvoicePaid` emit doesn't pass one — always the full outstanding balance, not
+separately tracked at that call site — so the parameter is optional, not required). Deliberately NOT added
+to `core.notifications.NOTIFICATION_EVENTS` (confirmed via `core.notifications.broadcast_notification`'s own
+early-return guard: an event not in that allowlist writes the `AuditLog` row but is safely a no-op for the
+real-time bell push) — these are audit-trail writes, not new bell notifications; a freelancer
+finalising/cancelling/refunding their OWN invoice isn't information they don't already have, the same
+reasoning `_record_invoice_sent`'s own docstring already gives for staying out of that allowlist.
+
+Alternatives considered: extracting the repeated `User.objects.get`/`except` block into one shared helper
+function, reused by all 9 handlers in this file (the 8 new ones plus the pre-existing `InvoiceSent`) —
+rejected for this pass specifically because the task's own instruction was "reuse that handler's exact
+shape/conventions... don't invent a new one," and this file's own established pattern (confirmed against
+`CustomSmtpFailed`/`PaymentClaimSubmitted`/etc., all written before this pass) already repeats this inline
+block per handler rather than sharing one — matching that existing convention exactly keeps this file
+internally consistent; a real, separate refactor to introduce a shared helper across ALL handlers in this
+file (not just the 8 new ones) would be a reasonable follow-up but is out of this fix's own scope.
+
+Verification: real, live reconstruction of the audit's own exact scenario — a new `apps/invoices/tests/
+test_audit_trail.py`, `AuditLogHandlersWiredTests.test_full_real_lifecycle_writes_a_real_auditlog_row_for_
+every_action` performs a real API-level create, finalise, mark-sent (the control — already worked before
+this fix), mark-paid, a separate cancel, a separate paid-then-refund, a separate bad-debt, and a separate
+partial payment (8 distinct invoices/actions, matching the audit's own reproduction), then queries
+`core.models.AuditLog` DIRECTLY (not a mock, not the notification bell) and confirms a real row exists for
+every one of the 8 previously-silent events plus the pre-existing `invoice_sent` control, each scoped by
+`metadata__invoice_id` (not just "an event of this type exists somewhere" — the WRONG invoice's row could
+otherwise satisfy a looser assertion, since several invoices in the same test share event types; this was
+caught by the test itself during development — see the empty diff-callout in this same file's `_latest_event`
+helper). Confirms the fields a real audit-log viewer needs: `user` (who), `metadata.invoice_id` (which
+invoice), `metadata.amount` where applicable (what), `created_at` (when, implicit on every row).
+`test_invoice_created_captures_duplicated_from` and `test_invoice_resent_writes_a_real_row` cover the two
+remaining real call sites not exercised by the main lifecycle test. `test_handler_does_not_crash_or_write_a_
+row_for_a_nonexistent_user_id` confirms the defensive `User.DoesNotExist` path matches `_record_invoice_
+sent`'s own established behavior (warn and return, never raise). All 4 tests pass; full `apps.invoices` suite
+(776 tests, up from 759) passes with no regressions.
+
+Docs: this entry. CLAUDE.md status update.
+
+Date: 19 August 2026 (audit fix, second round — PORTAL-001, freelancer-preview guard doesn't check ownership)
+Decision/Reason:
+
+Closed finding PORTAL-001 (HIGH) of `LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`:
+`apps.clients.portal.is_freelancer_previewing_portal(request)` only ever checked "does a valid freelancer
+JWT cookie AND a valid portal-session cookie both exist on this request" — it never compared WHO the
+authenticated freelancer was against WHO the portal session's client actually belongs to. A freelancer
+logged into their own LanceraOS account who ALSO happened to be carrying a live portal-session cookie for a
+completely UNRELATED client (their own multi-tab browsing, a forwarded link, or genuinely being someone
+else's client themselves) had every real portal action on that unrelated invoice incorrectly treated as
+"preview mode" — view-tracking suppressed (no Sent->Viewed transition, no `InvoiceViewEvent`), comment/claim/
+acknowledge POSTs hard-rejected with a 403 — even though the two sessions belonged to two different people.
+The audit identified this as a real, live-reachable browser-state combination and flagged it as plausible but
+unverified live; this fix closes it and verifies it live, against two genuinely distinct real accounts.
+
+Fixed by changing the function's signature to `is_freelancer_previewing_portal(request, owner_user_id)` —
+`owner_user_id` is now a required parameter, forcing every call site (present and future) to explicitly
+supply the id of whoever actually owns the resource being acted on. Deliberately a plain id, not an
+`Invoice`/`Client` object: `apps.clients` must never import `apps.invoices` (the established one-directional
+dependency this whole module already enforces via its own zero-import check —
+`DependencyDirectionTests.test_apps_clients_has_zero_apps_invoices_imports`, unaffected by this change since
+no new import was added), and the function only ever needs this one piece of data. The function now resolves
+the freelancer session to an actual `User` object (not just a boolean "a session exists"), and only returns
+`True` when a valid freelancer session AND a valid portal session are both present AND
+`str(freelancer_user.pk) == str(owner_user_id)`.
+
+Updated all 5 real call sites in `apps/invoices/views_portal.py` (`_record_invoice_view_if_appropriate`, the
+GET-side read-marking guard and the POST-side rejection guard in `portal_invoice_comments`, the guard in
+`portal_invoice_claims`, and the guard in `portal_invoice_acknowledge`) to pass `owner_user_id=invoice.user_id`
+— every one of the 5 already had a real `invoice` object in scope at the point of the check (confirmed by
+reading each call site directly before making this change, not assumed), so no call site needed restructuring
+to obtain the value.
+
+Alternatives considered: passing the `Invoice` or `Client` object itself into the guard function, as the
+audit's own framing suggested ("the invoice or client being acted on") — considered, but rejected in favor of
+the narrower `owner_user_id` id-only parameter, since the function's actual job is a single equality check on
+one field, and accepting a full object would either require `apps.clients.portal` to duck-type against an
+`Invoice`-shaped object (implicit, undocumented coupling) or accept two different object types across
+different call sites (`Invoice` vs. `Client`) for no real benefit over just passing the one id that's
+actually compared.
+
+Verification: `apps/clients/tests/test_portal.py`'s `FreelancerPreviewGuardTests` gained
+`test_both_cookies_present_but_different_owner_is_not_flagged` — a real second `User`
+(`self.other_user`) with a real, separately-minted JWT session, paired with a real portal session for
+`self.user`'s client, confirms `is_freelancer_previewing_portal(request, owner_user_id=self.user.pk)` is now
+`False` (previously would have been `True`), while the SAME request pair checked against
+`owner_user_id=self.other_user.pk` is correctly `True` — proving this isn't just "always False now," only
+false for the genuinely mismatched owner. `apps/invoices/tests/test_portal.py` gained a new
+`CrossAccountFreelancerPreviewGuardTests` class — the exact scenario the audit asked to be verified live, at
+the real endpoint level rather than just the standalone function: Account A (`self.user`) owns a real sent
+invoice and its client; Account B (`self.other_user`) is a completely unrelated freelancer with their own
+real login session, who ALSO carries a real portal-session cookie for Account A's client. Confirmed a real
+client view (Sent->Viewed fires, a real `InvoiceViewEvent` is logged — `test_unrelated_freelancers_session_
+does_not_suppress_a_real_client_view`), a real posted comment (`author_type='client'`, not silently dropped
+or 403'd — `test_unrelated_freelancers_session_does_not_suppress_a_real_comment`), a real submitted payment
+claim, and a real acknowledgment all behave as genuine client actions, not suppressed/rejected — plus a
+control test (`test_the_real_owner_previewing_their_own_client_is_still_correctly_suppressed`) proving the
+fix didn't regress the legitimate preview-mode case. All 6 new tests plus the existing 48 in `test_portal.py`
+pass; full `apps.invoices`/`apps.clients` suites pass with no regressions.
+
+Docs: this entry. CLAUDE.md status update.
+
+Date: 19 August 2026 (audit fix, second round — PORTAL-002, missing CSRF enforcement on 3 portal write endpoints)
+Decision/Reason:
+
+Closed finding PORTAL-002 (HIGH) of `LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`:
+`portal_invoice_comments` (POST), `portal_invoice_claims` (POST), and `portal_invoice_acknowledge` (POST) —
+all 3 in `apps/invoices/views_portal.py` — never called `enforce_csrf_standalone`, unlike
+`apps/clients/views_portal.py`'s `portal_logout`/`portal_logout_everywhere`, which already did, for the
+identical underlying reason: this app's global CSRF enforcement only ever fires inside
+`CookieJWTAuthentication.authenticate()`, which returns `None` immediately (before its own `enforce_csrf`
+call ever runs) the moment there's no freelancer JWT cookie present — exactly the normal, expected shape of
+a real portal-only request, which carries only a `ClientPortalSession` cookie, never a JWT one. These 3
+endpoints were therefore protected only by `SameSite=Lax`, a real, confirmed deviation from CLAUDE.md's own
+rule 14 ("CSRF protection is mandatory because auth uses httpOnly cookies") and from this app's own
+established sibling pattern one file over.
+
+Fixed by calling `enforce_csrf_standalone(request)` as the first line of all 3 view bodies (imported from
+`apps.users.authentication`, the exact same function `apps/clients/views_portal.py` already uses — no new
+CSRF-checking mechanism introduced). `portal_invoice_comments` and `portal_invoice_claims` both handle GET
+as well as POST on the same URL; the call is made unconditionally in both (no `request.method` branch)
+because `enforce_csrf_standalone`'s own underlying `CSRFCheck.process_view()` already no-ops for safe
+methods (GET/HEAD/OPTIONS/TRACE) — confirmed directly against `enforce_csrf_standalone`'s own docstring
+before relying on it, not assumed.
+
+Alternatives considered: none genuinely — this is a direct, minimal application of an existing, already-
+reviewed pattern to 3 endpoints that should have had it from the start; no new design decision was needed.
+
+Verification: a real, live cross-check that this doesn't merely look correct but actually rejects real
+CSRF-less requests. The existing test suites for these 3 endpoints (`test_portal.py`, `test_claims.py`,
+`test_acknowledgment.py`, `test_comments.py` — 129 tests total) already used `DjangoTestClient
+(enforce_csrf_checks=True)` and already sent a real `X-CSRFToken` header on every mutating call, so all 129
+passed completely unaffected — real, legitimate proof this fix doesn't break real traffic (mirroring exactly
+what the real frontend's shared Axios instance, `frontend/src/lib/api.js`, already does site-wide: attach
+`X-CSRFToken` from the `csrftoken` cookie on every mutating request, proactively fetching that cookie first
+via `GET /api/auth/csrf/` if it doesn't exist yet — confirmed directly in that file before relying on it).
+A new dedicated class, `apps/invoices/tests/test_portal.py`'s `PortalWriteEndpointsCSRFEnforcementTests`,
+proves the actual rejection side for the first time: `test_comment_post_without_csrf_token_is_rejected`/
+`test_claim_post_without_csrf_token_is_rejected`/`test_acknowledge_without_csrf_token_is_rejected` each
+confirm a real 403 and zero database side effect (no comment/claim row created, `client_acknowledged`
+unchanged) when the CSRF header is omitted (while a `csrftoken` cookie is still present — the actual
+attack shape this defends against: a cross-site request that can ride the cookie but never had a chance to
+read its value into a header). The paired `..._with_a_real_csrf_token_still_works` tests confirm the
+legitimate case succeeds. `test_comment_get_is_unaffected_by_csrf_enforcement` confirms the safe-method
+no-op. All 7 new tests pass; full `apps.invoices`/`apps.clients`/`apps.payments` suite (776 tests) passes
+with no regressions.
+
 Docs: this entry. CLAUDE.md status update.

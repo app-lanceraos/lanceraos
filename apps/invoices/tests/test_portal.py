@@ -630,6 +630,256 @@ class ViewTrackingGuardTests(TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════
+# Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
+# 2026, finding PORTAL-001) — the guard must check OWNERSHIP, not just
+# "does a freelancer session and a portal session both exist." Two
+# genuinely distinct real accounts: Account A (self.user) owns the
+# client/invoice under test; Account B (self.other_user) is a completely
+# unrelated freelancer who is ALSO, in this same browser, carrying a
+# valid portal-session cookie for Account A's client (the exact scenario
+# the audit identified as plausible and live-unverified — a forwarded
+# link, another tab, genuinely being someone else's client). None of
+# these actions should be suppressed/403'd; they must behave exactly
+# like an ordinary, unrelated client action.
+# ══════════════════════════════════════════════════════════════════
+
+class CrossAccountFreelancerPreviewGuardTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.rf = RequestFactory()
+        self.client = DjangoTestClient(enforce_csrf_checks=True)
+
+        self.user = User.objects.create_user(email='owner@example.com', password='Sup3r$ecret1')
+        self.user.is_email_verified = True
+        self.user.is_active = True
+        self.user.save()
+        self.portal_client = make_client(self.user)
+
+        self.other_user = User.objects.create_user(email='unrelated-freelancer@example.com', password='Sup3r$ecret1')
+        self.other_user.is_email_verified = True
+        self.other_user.is_active = True
+        self.other_user.save()
+
+    def _csrf_token(self):
+        dummy = self.rf.get('/')
+        token = get_token(dummy)
+        self.client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        return token
+
+    def _login_as(self, user):
+        csrf_token = self._csrf_token()
+        resp = self.client.post(reverse('users:login'), data=json.dumps({
+            'login': user.email, 'password': 'Sup3r$ecret1',
+        }), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token)
+        assert resp.status_code == 200, resp.content
+
+    FAKE_PDF_URL = 'https://res.cloudinary.com/demo/raw/upload/frozen.pdf'
+
+    def _sent_invoice(self):
+        invoice = make_invoice(self.user, status='sent', sent_at='2026-01-01T00:00:00Z', client=self.portal_client, pdf_url=self.FAKE_PDF_URL)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        return invoice
+
+    def _carry_unrelated_freelancer_plus_portal_session(self, portal_token):
+        """
+        Account B's real JWT cookie + a real portal session for Account
+        A's client, both present on the same test client instance — the
+        exact cross-account browser state under test.
+        """
+        self._login_as(self.other_user)
+        ClientPortalSession.create_for_client(self.portal_client, portal_token, device_name='', ip_address=None, user_agent='')
+        self.client.cookies[PORTAL_SESSION_COOKIE_NAME] = portal_token
+
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=b'%PDF-fake')
+    def test_unrelated_freelancers_session_does_not_suppress_a_real_client_view(self, mock_fetch):
+        invoice = self._sent_invoice()
+        self._carry_unrelated_freelancer_plus_portal_session('cross-account-view-tok')
+
+        resp = self.client.get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(resp.status_code, 200)
+
+        invoice.refresh_from_db()
+        # Genuinely treated as a real client view — Sent->Viewed fires,
+        # a real InvoiceViewEvent is logged. Before the fix, Account B's
+        # own unrelated freelancer session was enough to suppress this.
+        self.assertEqual(invoice.status, 'viewed')
+        self.assertEqual(InvoiceViewEvent.objects.filter(invoice=invoice).count(), 1)
+
+    def test_unrelated_freelancers_session_does_not_suppress_a_real_comment(self):
+        invoice = self._sent_invoice()
+        self._carry_unrelated_freelancer_plus_portal_session('cross-account-comment-tok')
+
+        csrf_token = self._csrf_token()
+        resp = self.client.post(
+            reverse('invoices:portal_invoice_comments', kwargs={'pk': invoice.pk}),
+            data=json.dumps({'body_text': 'a genuine question from the real client'}),
+            content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token,
+        )
+        # Before the fix: 403, "You're previewing this portal as its own
+        # freelancer" — even though Account B owns neither the invoice
+        # nor the client. Now a real, successful client comment.
+        self.assertEqual(resp.status_code, 201, resp.content)
+        comment = InvoiceComment.objects.get(invoice=invoice)
+        self.assertEqual(comment.author_type, 'client')
+        self.assertEqual(comment.body_text, 'a genuine question from the real client')
+
+    def test_unrelated_freelancers_session_does_not_suppress_a_real_claim(self):
+        invoice = self._sent_invoice()
+        self._carry_unrelated_freelancer_plus_portal_session('cross-account-claim-tok')
+
+        csrf_token = self._csrf_token()
+        resp = self.client.post(
+            reverse('invoices:portal_invoice_claims', kwargs={'pk': invoice.pk}),
+            data=json.dumps({
+                'payment_source': 'wise', 'amount_claimed': '100.00', 'currency': 'USD', 'payment_date': '2026-01-15',
+            }),
+            content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token,
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(invoice.payment_claims.count(), 1)
+
+    def test_unrelated_freelancers_session_does_not_suppress_a_real_acknowledgment(self):
+        invoice = self._sent_invoice()
+        self._carry_unrelated_freelancer_plus_portal_session('cross-account-ack-tok')
+
+        csrf_token = self._csrf_token()
+        resp = self.client.post(
+            reverse('invoices:portal_invoice_acknowledge', kwargs={'pk': invoice.pk}),
+            data=json.dumps({}), content_type='application/json', HTTP_X_CSRFTOKEN=csrf_token,
+        )
+        self.assertIn(resp.status_code, (200, 201), resp.content)
+        invoice.refresh_from_db()
+        self.assertTrue(invoice.client_acknowledged)
+
+    @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=b'%PDF-fake')
+    def test_the_real_owner_previewing_their_own_client_is_still_correctly_suppressed(self, mock_fetch):
+        """
+        Control — proves the fix didn't just make the guard always
+        return False. The SAME client/invoice, but this time the
+        freelancer session genuinely belongs to self.user (the real
+        owner) — still correctly suppressed, exactly as before this fix.
+        """
+        invoice = self._sent_invoice()
+        self._login_as(self.user)
+        ClientPortalSession.create_for_client(self.portal_client, 'genuine-owner-preview-tok', device_name='', ip_address=None, user_agent='')
+        self.client.cookies[PORTAL_SESSION_COOKIE_NAME] = 'genuine-owner-preview-tok'
+
+        resp = self.client.get(reverse('invoices:portal_invoice_view_html', kwargs={'view_token': invoice.view_token}))
+        self.assertEqual(resp.status_code, 200)
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'sent')
+        self.assertEqual(InvoiceViewEvent.objects.filter(invoice=invoice).count(), 0)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
+# 2026, finding PORTAL-002) — portal_invoice_comments (POST)/
+# portal_invoice_claims (POST)/portal_invoice_acknowledge never called
+# enforce_csrf_standalone, unlike apps/clients/views_portal.py's
+# portal_logout/portal_logout_everywhere, which already did for the
+# identical reason (CookieJWTAuthentication.authenticate()'s own
+# enforce_csrf call never fires here — there's no JWT cookie on a real
+# portal-only request for it to run against). This class proves both
+# directions: no CSRF token -> real 403, and the token the real frontend
+# already sends via its shared Axios instance (src/lib/api.js's
+# X-CSRFToken header) -> unaffected, still a real 200/201.
+# ══════════════════════════════════════════════════════════════════
+
+class PortalWriteEndpointsCSRFEnforcementTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.rf = RequestFactory()
+        self.client = DjangoTestClient(enforce_csrf_checks=True)
+        self.user = User.objects.create_user(email='csrf-owner@example.com', password='Sup3r$ecret1')
+        self.user.is_email_verified = True
+        self.user.is_active = True
+        self.user.save()
+        self.portal_client = make_client(self.user)
+
+        invoice = make_invoice(self.user, status='sent', sent_at='2026-01-01T00:00:00Z', client=self.portal_client)
+        InvoiceItem.objects.create(invoice=invoice, description='Work', quantity=Decimal('1'), unit_price=Decimal('100'))
+        self.invoice = invoice
+
+        ClientPortalSession.create_for_client(self.portal_client, 'csrf-test-portal-tok', device_name='', ip_address=None, user_agent='')
+        self.client.cookies[PORTAL_SESSION_COOKIE_NAME] = 'csrf-test-portal-tok'
+
+    def _csrf_token(self):
+        dummy = self.rf.get('/')
+        token = get_token(dummy)
+        self.client.cookies['csrftoken'] = dummy.META['CSRF_COOKIE']
+        return token
+
+    def _post(self, url, data, with_csrf):
+        headers = {}
+        if with_csrf:
+            headers['HTTP_X_CSRFTOKEN'] = self._csrf_token()
+        else:
+            # A csrftoken cookie can legitimately exist client-side (any
+            # earlier GET may have set one) without the matching header
+            # being sent — the real attack shape enforce_csrf_standalone
+            # defends against is a cross-site POST that never had a
+            # chance to read the header value at all.
+            self._csrf_token()
+        return self.client.post(url, data=json.dumps(data), content_type='application/json', **headers)
+
+    def test_comment_post_without_csrf_token_is_rejected(self):
+        resp = self._post(
+            reverse('invoices:portal_invoice_comments', kwargs={'pk': self.invoice.pk}),
+            {'body_text': 'no csrf token here'}, with_csrf=False,
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(InvoiceComment.objects.filter(invoice=self.invoice).count(), 0)
+
+    def test_comment_post_with_a_real_csrf_token_still_works(self):
+        resp = self._post(
+            reverse('invoices:portal_invoice_comments', kwargs={'pk': self.invoice.pk}),
+            {'body_text': 'a real message, real token'}, with_csrf=True,
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(InvoiceComment.objects.filter(invoice=self.invoice).count(), 1)
+
+    def test_comment_get_is_unaffected_by_csrf_enforcement(self):
+        """Safe methods are a real no-op inside enforce_csrf_standalone — GET must never 403 regardless of any token."""
+        resp = self.client.get(reverse('invoices:portal_invoice_comments', kwargs={'pk': self.invoice.pk}))
+        self.assertEqual(resp.status_code, 200)
+
+    def test_claim_post_without_csrf_token_is_rejected(self):
+        resp = self._post(
+            reverse('invoices:portal_invoice_claims', kwargs={'pk': self.invoice.pk}),
+            {'payment_source': 'wise', 'amount_claimed': '50.00', 'currency': 'USD', 'payment_date': '2026-01-15'},
+            with_csrf=False,
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.invoice.payment_claims.count(), 0)
+
+    def test_claim_post_with_a_real_csrf_token_still_works(self):
+        resp = self._post(
+            reverse('invoices:portal_invoice_claims', kwargs={'pk': self.invoice.pk}),
+            {'payment_source': 'wise', 'amount_claimed': '50.00', 'currency': 'USD', 'payment_date': '2026-01-15'},
+            with_csrf=True,
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(self.invoice.payment_claims.count(), 1)
+
+    def test_acknowledge_without_csrf_token_is_rejected(self):
+        resp = self._post(
+            reverse('invoices:portal_invoice_acknowledge', kwargs={'pk': self.invoice.pk}), {}, with_csrf=False,
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.invoice.refresh_from_db()
+        self.assertFalse(self.invoice.client_acknowledged)
+
+    def test_acknowledge_with_a_real_csrf_token_still_works(self):
+        resp = self._post(
+            reverse('invoices:portal_invoice_acknowledge', kwargs={'pk': self.invoice.pk}), {}, with_csrf=True,
+        )
+        self.assertIn(resp.status_code, (200, 201), resp.content)
+        self.invoice.refresh_from_db()
+        self.assertTrue(self.invoice.client_acknowledged)
+
+
+# ══════════════════════════════════════════════════════════════════
 # Preview-as-Client — freelancer-only, never mints a session
 # ══════════════════════════════════════════════════════════════════
 

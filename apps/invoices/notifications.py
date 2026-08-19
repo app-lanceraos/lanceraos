@@ -54,6 +54,159 @@ def _record_invoice_sent(invoice_id, user_id, via, **_extra):
     log_event('invoice_sent', user=user, metadata={'invoice_id': invoice_id, 'via': via})
 
 
+# ══════════════════════════════════════════════════════════════════
+# Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
+# 2026, finding INV-002): InvoiceCreated/InvoiceFinalised/InvoicePaid/
+# InvoicePartiallyPaid/InvoiceCancelled/InvoiceRefunded/
+# InvoiceMarkedBadDebt/InvoiceResent have all been emitted from
+# apps/invoices/views.py since their respective steps landed, with ZERO
+# registered handlers — core.events.emit() only ever writes an AuditLog
+# row if a handler is registered via @on(...), so none of these 8 real
+# lifecycle events left any forensic trail at all. Confirmed live by the
+# audit: a full lifecycle (finalise, mark-sent, mark-paid, cancel,
+# refund, bad-debt, several partial payments) produced exactly ONE
+# AuditLog event type (invoice_sent) despite 8+ distinct actions taken.
+#
+# Every handler below reuses _record_invoice_sent's exact shape above —
+# the same inline `User.objects.get`/`except DoesNotExist` pattern this
+# whole file already establishes (see PaymentClaimSubmitted etc. below),
+# the same log_event(event, user=user, metadata={...}) call, no `actor`
+# (every one of these 8 events is self-service — the freelancer acting
+# on their own invoice — so `user` alone already captures who did it,
+# matching AuditLog's own documented convention: `actor` is populated
+# only when different from `user`, i.e. an admin acting on someone
+# else's account). Deliberately NOT added to NOTIFICATION_EVENTS: these
+# are audit-trail writes, not bell notifications — a freelancer
+# finalising/cancelling/refunding their OWN invoice isn't information
+# they don't already have (the same reasoning _record_invoice_sent's own
+# docstring gives for staying out of that allowlist).
+# ══════════════════════════════════════════════════════════════════
+
+@on('InvoiceCreated')
+def _record_invoice_created(invoice_id, user_id, duplicated_from=None, from_preset=None, **_extra):
+    """
+    Covers all 3 real emit sites: a brand-new draft (invoice_create), a
+    duplicate (invoice_duplicate — duplicated_from carries the source
+    invoice's id), and a preset-instantiated draft
+    (preset_create_invoice — from_preset carries the preset's id).
+    """
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] InvoiceCreated handler: user_id=%s not found.', user_id)
+        return
+
+    metadata = {'invoice_id': invoice_id}
+    if duplicated_from is not None:
+        metadata['duplicated_from'] = duplicated_from
+    if from_preset is not None:
+        metadata['from_preset'] = from_preset
+    log_event('invoice_created', user=user, metadata=metadata)
+
+
+@on('InvoiceFinalised')
+def _record_invoice_finalised(invoice_id, user_id, **_extra):
+    """Covers both the standalone Finalise button and the combined Finalise & Send action."""
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] InvoiceFinalised handler: user_id=%s not found.', user_id)
+        return
+
+    log_event('invoice_finalised', user=user, metadata={'invoice_id': invoice_id})
+
+
+@on('InvoicePaid')
+def _record_invoice_paid(invoice_id, user_id, amount=None, **_extra):
+    """
+    Covers both invoice_mark_paid (no amount kwarg — always the full
+    outstanding balance, not separately tracked at the event-emit call
+    site) and invoice_add_payment's own paid-in-full branch (amount is
+    the payment just recorded, matching InvoicePartiallyPaid's shape
+    below exactly, since both are emitted from the same call site with
+    the same kwargs).
+    """
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] InvoicePaid handler: user_id=%s not found.', user_id)
+        return
+
+    log_event('invoice_paid', user=user, metadata={'invoice_id': invoice_id, 'amount': amount})
+
+
+@on('InvoicePartiallyPaid')
+def _record_invoice_partially_paid(invoice_id, user_id, amount=None, **_extra):
+    """Emitted only from invoice_add_payment, when the payment doesn't reach the full total."""
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] InvoicePartiallyPaid handler: user_id=%s not found.', user_id)
+        return
+
+    log_event('invoice_partially_paid', user=user, metadata={'invoice_id': invoice_id, 'amount': amount})
+
+
+@on('InvoiceCancelled')
+def _record_invoice_cancelled(invoice_id, user_id, **_extra):
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] InvoiceCancelled handler: user_id=%s not found.', user_id)
+        return
+
+    log_event('invoice_cancelled', user=user, metadata={'invoice_id': invoice_id})
+
+
+@on('InvoiceRefunded')
+def _record_invoice_refunded(invoice_id, user_id, amount=None, **_extra):
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] InvoiceRefunded handler: user_id=%s not found.', user_id)
+        return
+
+    log_event('invoice_refunded', user=user, metadata={'invoice_id': invoice_id, 'amount': amount})
+
+
+@on('InvoiceMarkedBadDebt')
+def _record_invoice_marked_bad_debt(invoice_id, user_id, **_extra):
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] InvoiceMarkedBadDebt handler: user_id=%s not found.', user_id)
+        return
+
+    log_event('invoice_marked_bad_debt', user=user, metadata={'invoice_id': invoice_id})
+
+
+@on('InvoiceResent')
+def _record_invoice_resent(invoice_id, user_id, **_extra):
+    from apps.users.models import User
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning('[INVOICES] InvoiceResent handler: user_id=%s not found.', user_id)
+        return
+
+    log_event('invoice_resent', user=user, metadata={'invoice_id': invoice_id})
+
+
 @on('CustomSmtpFailed')
 def _record_custom_smtp_failed(user_id, recipient_email, smtp_host, error_message,
                                 recipient_name=None, context_type=None, context_id=None, **_extra):

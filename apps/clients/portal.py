@@ -118,7 +118,7 @@ def clear_session_cookie(response):
     return clear_portal_session_cookie(response)
 
 
-def is_freelancer_previewing_portal(request):
+def is_freelancer_previewing_portal(request, owner_user_id):
     """
     Detects the "Preview mode" safety-net scenario per
     INVOICES_CLIENTS_TECHNICAL_SPEC.md: the SAME browser carries both a
@@ -128,16 +128,36 @@ def is_freelancer_previewing_portal(request):
     see what the portal looks like, without logging out of their own
     account first.
 
-    NOT YET WIRED TO ANY REAL CALL SITE — this is a standalone, tested
-    detector only. Its real consumers (skipping the invoice Sent->Viewed
-    transition, skipping InvoiceViewEvent logging, labeling a comment/
-    claim as "you, previewing" rather than a genuine client action) all
-    need real Invoice/InvoiceViewEvent/InvoiceComment data that doesn't
-    exist in this app — building them here would mean apps.clients
-    reaching into apps.invoices data, the exact dependency violation
-    this step's item 0 fixed in the other direction. Those call sites are
-    Steps 12-14's job, once they exist; see DECISIONS.md so this
-    function isn't mistaken for dead/forgotten code before then.
+    Wired into 5 real call sites in apps.invoices.views_portal (the
+    Sent->Viewed transition + InvoiceViewEvent logging, comment
+    read-marking, comment posting, claim submission, acknowledgment).
+
+    `owner_user_id` (required — audit fix, see below) is the id of the
+    user who actually owns whatever's being acted on (in practice,
+    always `invoice.user_id` at every real call site — apps.invoices
+    never has a bare Client-level action that doesn't ultimately resolve
+    to one specific invoice). Deliberately a plain id, not an Invoice/
+    Client object: apps.clients must never import apps.invoices (the
+    established one-directional dependency this whole module already
+    enforces — apps.invoices imports FROM apps.clients.portal, never the
+    reverse), and the function only ever needs this one piece of data to
+    do its job.
+
+    Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
+    2026, finding PORTAL-001): this function used to take only `request`
+    and return True whenever BOTH a valid freelancer session AND a valid
+    portal session were present — with no check on WHO the freelancer was
+    relative to WHO the portal session's client actually belongs to. That
+    meant a freelancer logged into their own LanceraOS account who ALSO
+    happened to be carrying a live portal-session cookie for a
+    completely UNRELATED client (their own multi-tab browsing, a
+    forwarded link, or genuinely being someone else's client themselves)
+    had every real portal action on that unrelated invoice incorrectly
+    suppressed (view-tracking skipped) or rejected (comment/claim/
+    acknowledge 403'd) — a real, live-reachable browser-state combination,
+    not a contrived edge case. Fixed by requiring the caller to supply
+    the actual owner being acted on, and only returning True when the
+    authenticated freelancer IS that owner.
 
     Reuses apps.users.authentication.CookieJWTAuthentication directly
     (the real, already-audited JWT-cookie validation apps.users itself
@@ -148,20 +168,29 @@ def is_freelancer_previewing_portal(request):
     never raises, matching every other session-resolution helper in this
     codebase.
 
-    Returns True only when BOTH a valid freelancer session AND a valid
-    portal session are present on the same request — either alone is a
-    completely ordinary, real scenario (a freelancer just using their own
-    app; a client using their own portal) and must never be flagged.
+    Returns True only when a valid freelancer session AND a valid portal
+    session are BOTH present on the same request AND that freelancer is
+    the real owner of `owner_user_id`. Any one of those three missing —
+    no freelancer session (an ordinary client using their own portal), no
+    portal session (a freelancer just using their own app), or a
+    freelancer/portal-session pairing that belongs to two DIFFERENT
+    people — must never be flagged.
     """
     from apps.users.authentication import CookieJWTAuthentication
 
-    has_freelancer_session = False
+    freelancer_user = None
     try:
         result = CookieJWTAuthentication().authenticate(request)
-        has_freelancer_session = result is not None
+        if result is not None:
+            freelancer_user = result[0]
     except Exception:
-        has_freelancer_session = False
+        freelancer_user = None
+
+    if freelancer_user is None:
+        return False
 
     has_portal_session = _get_session_from_cookie(request) is not None
+    if not has_portal_session:
+        return False
 
-    return has_freelancer_session and has_portal_session
+    return str(freelancer_user.pk) == str(owner_user_id)
