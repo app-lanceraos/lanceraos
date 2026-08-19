@@ -204,7 +204,10 @@ class PortalViewHtmlTests(PortalContentAPITestCase):
         self.assertEqual(resp['Content-Type'], 'application/pdf')
         self.assertEqual(resp.content, b'%PDF-frozen-content')
         self.assertIn('inline', resp['Content-Disposition'])
-        mock_fetch.assert_called_once_with(invoice)
+        # request_id is a real, per-request UUID (RequestLoggingMiddleware)
+        # — not predictable, so only the invoice arg itself is checked here.
+        mock_fetch.assert_called_once()
+        self.assertEqual(mock_fetch.call_args.args[0], invoice)
 
     def test_view_and_download_stay_identical_after_a_profile_edit_when_the_stored_pdf_is_actually_reachable(self):
         """
@@ -365,7 +368,10 @@ class PortalPdfDownloadTests(PortalContentAPITestCase):
         self.assertEqual(resp.content, b'%PDF-portal-download')
         self.assertIn('attachment', resp['Content-Disposition'])
         self.assertIn(invoice.invoice_number, resp['Content-Disposition'])
-        mock_fetch.assert_called_once_with(invoice)
+        # request_id is a real, per-request UUID (RequestLoggingMiddleware)
+        # — not predictable, so only the invoice arg itself is checked here.
+        mock_fetch.assert_called_once()
+        self.assertEqual(mock_fetch.call_args.args[0], invoice)
 
     @patch('apps.invoices.views_portal.fetch_invoice_pdf_bytes', return_value=None)
     def test_returns_502_when_every_fetch_render_path_fails(self, mock_fetch):

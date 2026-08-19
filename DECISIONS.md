@@ -5367,3 +5367,170 @@ no-op. All 7 new tests pass; full `apps.invoices`/`apps.clients`/`apps.payments`
 with no regressions.
 
 Docs: this entry. CLAUDE.md status update.
+
+Date: 19 August 2026 (real timing instrumentation for the PDF-fetch self-heal chain — real baseline captured)
+Decision/Reason:
+
+Prompted by a real terminal log: a portal invoice view took 0.90s end-to-end with WeasyPrint's full
+Step 1-7 render running synchronously in-request — the circuit breaker correctly skipped the doomed
+re-upload+retry, but the live-render fallback itself still ran in the request. Rather than optimize
+further on a guess, added real, structured timing instrumentation to `apps/invoices/email_service.py`'s
+`fetch_invoice_pdf_bytes` and to the two client-facing endpoints that call it
+(`apps/invoices/views_portal.py`'s `portal_invoice_view_html`/`portal_invoice_pdf_download`), so future
+slowness can be diagnosed from logs directly instead of re-profiled from scratch every time this comes up.
+
+Every real stage `fetch_invoice_pdf_bytes` can run — the initial stored-PDF Cloudinary fetch, the
+WeasyPrint render, the re-upload, the retry fetch — is timed individually with `time.perf_counter()`
+(matching `core/middleware.py`'s own `RequestLoggingMiddleware` convention exactly: perf_counter +
+integer ms, not a new style invented for this), and logged as ONE structured summary line at whichever
+exit point the call actually takes (`outcome=stored_fetch_succeeded` / `render_failed` /
+`live_render_fallback_breaker_active` / `reupload_retry_succeeded` / `live_render_fallback`), with every
+stage that didn't run logging as `None` — so the line's shape is identical and grep/filter-able
+regardless of outcome. A new optional `request_id` parameter (matching the exact
+`request_id=getattr(request, 'request_id', None)` convention `send_invoice_related_email` already
+established) lets this line be joined with the endpoint's own total-time line and with every other log
+line CLAUDE.md's Observability Rules already tag with the same request_id for that HTTP request.
+
+Both `portal_invoice_view_html` and `portal_invoice_pdf_download` now log their own `total_ms` (endpoint
+wall-clock, including invoice lookup / session-minting / view-tracking — the work OUTSIDE
+`fetch_invoice_pdf_bytes` itself) tagged with the same request_id, so a real gap between the two numbers
+would itself be a diagnostic signal (unexpected serialization/DB cost) rather than assumed away.
+
+**Confirmed directly: Download and View share the IDENTICAL synchronous self-heal path**, not two
+different code paths with potentially different bottlenecks (the task's own open question) —
+`portal_invoice_view_html` calls `_resolve_invoice_pdf_bytes_for_view` which calls
+`fetch_invoice_pdf_bytes` once `invoice.pdf_url` is set; `portal_invoice_pdf_download` calls
+`fetch_invoice_pdf_bytes` directly. Both funnel through the exact same function, same self-heal chain,
+same circuit breaker. The only difference is View's small amount of extra work (session
+minting/view-tracking) — confirmed by the real captured numbers below (View: 1793ms vs. Download:
+1704ms for the identical breaker-active case on the same invoice — an ~89ms difference, matching that
+extra work, not a second bottleneck).
+
+**REAL BASELINE, captured live against this environment's actual, confirmed-401ing Cloudinary account**
+(invoice `b0e6f33f-1fb5-462b-98ad-6d8933a0889a` / INV-2026-0011, a real stored `pdf_url` that genuinely
+401s — not a mock):
+
+| Call | outcome | cloudinary_fetch_ms | render_ms | upload_ms | retry_fetch_ms | total_ms (fetch) | endpoint total_ms |
+|---|---|---|---|---|---|---|---|
+| 1st view (breaker cold) | `live_render_fallback` | 1659 | 1245 | 2280 | 820 | 6012 | 6041 |
+| 2nd view (breaker active, same invoice) | `live_render_fallback_breaker_active` | 550 | 1224 | — | — | 1777 | 1793 |
+| download (breaker active, same invoice) | `live_render_fallback_breaker_active` | 456 | 1236 | — | — | 1695 | 1704 |
+
+Reading this honestly: on the FIRST hit for an affected invoice, the doomed Cloudinary network calls
+(`cloudinary_fetch_ms` + `upload_ms` + `retry_fetch_ms` = 1659+2280+820 = **4759ms, 79% of the 6012ms
+total**) dwarf the actual WeasyPrint render (1245ms, 21%) — confirming the task's own framing directly:
+the Cloudinary Console ACL setting is very likely the dominant cost in every one of these requests right
+now, not something further code changes alone can meaningfully improve. Once the circuit breaker is
+warm (every subsequent hit within 300s), the render (~1.2s, essentially fixed cost, unavoidable while
+the account restriction persists) and one still-required cheap-but-real fetch attempt (~500ms, the
+first, always-attempted stored-PDF check is deliberately never skipped by the breaker — see
+`fetch_invoice_pdf_bytes`'s own docstring) are what remains — matching the originally reported "0.90s"
+figure closely (this baseline's 1.7-1.8s is marginally higher, plausibly normal run-to-run network/CPU
+variance on the exact same account/network path, not a discrepancy worth chasing further).
+
+**This is a real, still-open, NON-CODE blocker, explicitly flagged so it isn't mistaken for something a
+further code change could meaningfully fix**: Ali needs to change the Cloudinary Console's raw/PDF
+delivery ACL restriction himself (Settings → Security). Once that's done, `fetch_invoice_pdf_bytes`'s
+very first branch (`if invoice.pdf_url: try: return _finish('stored_fetch_succeeded', content)`) is what
+every request will actually take — a single `requests.get()` fetch with no render, no upload, no retry
+at all — and the real before-numbers above become the "before" half of a real before/after comparison
+once that setting changes, rather than a number nobody can ever re-derive.
+
+**Byte-passthrough path verified as a genuine direct relay, not assumed** (the task's own explicit ask):
+read `_try_fetch` (`apps/invoices/email_service.py`) and the response-building code in both endpoints
+directly. `_try_fetch` is exactly `resp = requests.get(url, timeout=...); resp.raise_for_status(); return
+resp.content` — one HTTP GET, `requests`' own standard `.content` property (loads the response body once,
+no manual chunking, no intermediate file write anywhere), returned directly. On the success path (a
+reachable stored PDF — the very first branch, before any render/upload/retry logic runs at all), this is
+the ENTIRE code path. Both endpoints then wrap those bytes directly — `HttpResponse(pdf_bytes,
+content_type='application/pdf')` — Django's `HttpResponse` sets bytes content directly with no
+re-encoding, no temp file. Confirmed: this path is already a minimal, single-round-trip, no-buffering
+relay; no code change was needed or made here, only verified.
+
+Verification: `manage.py test apps.invoices` (776 tests) passes with no regressions — 2 existing tests
+(`test_serves_the_actual_frozen_pdf_inline_once_one_exists`/`test_proxies_real_bytes_with_a_real_
+download_disposition`, `test_portal.py`) needed their `mock_fetch.assert_called_once_with(invoice)`
+assertions loosened to check only the `invoice` positional arg (`request_id` is a real, non-deterministic
+per-request UUID from `RequestLoggingMiddleware`, not something a test can predict). The real baseline
+numbers above were captured live against the actual running dev server and this account's actual,
+already-confirmed-broken Cloudinary ACL restriction — not simulated.
+
+Docs: this entry.
+
+Date: 19 August 2026 (WebSocket connect-then-immediate-disconnect — re-investigated, SAME root cause confirmed, real test-coverage gap closed)
+Decision/Reason:
+
+Real log evidence prompted this: `apps/invoices/consumers.py`'s `ClientThreadConsumer` logged a real
+`CONNECT` then `DISCONNECT` within 4ms, on the comment-thread socket specifically. An earlier round
+diagnosed and fixed a race in `useWebSocket.js` (cleanup calling `ws.close()` on a still-CONNECTING
+socket, producing a real browser console error) — this log evidence looked like a possible recurrence,
+so it was re-investigated from scratch rather than assumed to be the same, already-closed issue.
+
+**Root-caused, not assumed: this is the SAME cause as before (React StrictMode's dev-only double-invoke
+of mount effects) — not a new, distinct bug, and NOT a regression of the original fix.** Traced exactly
+what StrictMode does: on mount, React synchronously runs the effect, tears it down, and runs it again.
+The FIRST effect invocation's socket keeps connecting in the background after its own (deferred, per the
+existing fix) cleanup runs — a JS variable going out of scope does not cancel an in-flight WebSocket
+handshake. By the time that socket's handshake genuinely completes (the server accepts it — Channels
+logs a real `CONNECT`), `stopped` is already `true` for that specific closure, so `onopen`'s existing
+guard closes it immediately — a real, server-visible `CONNECT` followed within milliseconds by a real
+`DISCONNECT`. The SECOND effect invocation's socket is the one that actually serves the component and
+stays open. This is exactly the "CONNECT ... DISCONNECT within 4ms" pattern in the evidence, reproduced
+deterministically (see the new test below) and confirmed harmless: no console error, the connection
+still ultimately succeeds, and — critically — **this only happens under React's development-mode
+StrictMode; a production `vite build` never double-invokes effects, so real users never see this at
+all.** Also confirmed server-side: `ClientThreadConsumer.connect`/`disconnect` use standard per-connection
+Channels group membership (keyed by `self.channel_name`, no global single-connection-per-token
+constraint) — a rapid connect/disconnect/reconnect on the same `view_token` is safe, no state corruption
+risk, no rejected second connection.
+
+**Why it surfaces "on the comment-thread socket specifically" and not the notification socket** (the
+task's own open question): both sockets go through the identical `useWebSocket` hook and are equally
+subject to StrictMode's double-invoke — the difference is mount FREQUENCY, not a different cause. The
+notification socket (`useNotificationSocket`) mounts once, at `AppShell`, for the life of a full page
+load. The comment-thread socket mounts every time `CommentThread` mounts — `InvoiceDetailPanel.jsx`
+renders it only while `activeTab === 'comments'` (unmounts on every tab switch away), and
+`ClientPortal.jsx`'s `MessagesModal` only exists while `messagesInvoice` is set (unmounts on every modal
+close) — both real, frequent, user-driven remounts. Every one of those mounts pays the same one-time
+StrictMode double-invoke cost in dev, so it's simply seen far more often on this specific consumer purely
+because it's mounted far more often, not because its own connect/disconnect logic differs in any way.
+
+**The actual, real gap found: not a code bug, but a test-coverage gap that let this go unverified.** The
+existing `useWebSocket.test.jsx` already had a StrictMode test, but its own docstring candidly (if
+incorrectly) claimed "this test env does not actually double-invoke effects under StrictMode, unlike a
+real browser dev build." That test used `renderHook` with a `<StrictMode>` wrapper. Verified directly,
+empirically, with a throwaway probe test before trusting that claim: `@testing-library/react`'s
+`renderHook` under a StrictMode wrapper invokes the mount effect exactly ONCE in this exact Vitest/jsdom
+environment — but `render()` of an actual component under the identical StrictMode wrapper invokes it
+TWICE, a real, confirmed double-invoke. The claim was simply wrong about WHY — it's not "this test
+environment," it's specifically `renderHook`'s own internal wiring that doesn't reproduce it, while
+`render()` (what every real page component in this app actually goes through, via `main.jsx`'s
+`ReactDOM.createRoot(...).render(<StrictMode><App/></StrictMode>)`) does. This is the mechanism that let
+the original fix's own correctness go real-double-invoke-untested despite looking covered.
+
+Fixed by correcting the existing test's docstring (it now accurately explains renderHook-vs-render, kept
+as a basic hook-level smoke test rather than deleted, since it still has standalone value) and adding a
+genuinely new test, `useWebSocket.test.jsx`'s `'a REAL React.StrictMode double-invoke (render(), not
+renderHook)...'`, which mounts an actual test component via `render()` under `<React.StrictMode>` and
+asserts on the REAL resulting behavior: exactly 2 sockets are created immediately (the real double-invoke,
+not 1); triggering the first (doomed) one's handshake to complete results in it being closed immediately
+via the deferred-teardown guard, with zero console errors and no spurious third (reconnect) socket
+spawned; the second (real) socket then connects normally and stays open. This is the first test in this
+codebase that actually reproduces — not just claims to guard against — the exact server-log pattern from
+the real evidence, and it passes cleanly against the CURRENT code with no changes needed to
+`useWebSocket.js` itself.
+
+Alternatives considered: changing `useWebSocket.js` to somehow suppress or coalesce the first,
+StrictMode-doomed connection attempt (e.g. delaying `connect()` by a tick to let a synchronous
+double-invoke settle first) — rejected. This would add real complexity and fragility (a race against
+React's own internal scheduling, not a stable contract) to eliminate something that is (a) dev-only, (b)
+already silent/harmless to the end user and to the server (no error, no state corruption, standard
+Channels group semantics tolerate it fine), and (c) exactly the kind of double-execution StrictMode is
+deliberately designed to surface so real bugs like the ORIGINAL one (closing a CONNECTING socket) get
+caught early — suppressing the pattern itself would work against StrictMode's own purpose for every
+future effect in this codebase, not just this one.
+
+Verification: `npx vitest run src/hooks/useWebSocket.test.jsx` — 5 tests, including the new real-
+double-invoke test, all pass. Full frontend suite: 224 tests pass (up from 220), no regressions.
+
+Docs: this entry.

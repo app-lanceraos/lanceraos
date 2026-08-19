@@ -78,6 +78,37 @@ describe('InvoiceView — shows the actual frozen PDF, never a live re-render', 
   })
 })
 
+describe('InvoiceView — tab title shows the real invoice number', () => {
+  it('reads the invoice number from the view response\'s own Content-Disposition and sets it as the tab title', async () => {
+    mock.onGet('/invoices/portal/view/tok-abc123/').reply(200, FAKE_PDF_BLOB, {
+      'content-disposition': 'inline; filename="INV-2026-0007.pdf"',
+    })
+    renderAt('tok-abc123')
+    await waitFor(() => expect(document.title).toBe('INV-2026-0007 — LanceraOS'))
+  })
+
+  it('shows the generic placeholder title while still loading, and again on error', async () => {
+    document.title = 'unrelated'
+    mock.onGet('/invoices/portal/view/tok-err/').reply(404)
+    renderAt('tok-err')
+    expect(document.title).toBe('Invoice — LanceraOS')
+    await waitFor(() => expect(screen.getByText(/invalid or no longer available/i)).toBeTruthy())
+    expect(document.title).toBe('Invoice — LanceraOS')
+  })
+
+  it('falls back to the generic title rather than showing the backend\'s own literal "invoice" placeholder filename', async () => {
+    mock.onGet('/invoices/portal/view/tok-no-number/').reply(200, FAKE_PDF_BLOB, {
+      'content-disposition': 'inline; filename="invoice.pdf"',
+    })
+    const { container } = renderAt('tok-no-number')
+    await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy())
+    // No real invoice number was ever provided, so the title never
+    // updates away from the placeholder — 'invoice' is the backend's own
+    // fallback string, not a real INV-YYYY-NNNN value worth showing.
+    expect(document.title).toBe('Invoice — LanceraOS')
+  })
+})
+
 describe('InvoiceView — "not ready yet" (503) vs a genuinely invalid link (404/other)', () => {
   it('shows a real "not ready yet" message on a 503 — never falls back to rendering something else', async () => {
     mock.onGet('/invoices/portal/view/tok-notready/').reply(503, { error: "This invoice isn't ready to view yet." })

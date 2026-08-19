@@ -19,6 +19,7 @@ call send_invoice_related_email() below, so this invoice-specific
 assembly exists exactly once, not duplicated per caller.
 """
 import logging
+import time
 
 import requests
 from django.core.cache import cache
@@ -493,7 +494,7 @@ def _try_fetch(url):
     return resp.content
 
 
-def fetch_invoice_pdf_bytes(invoice):
+def fetch_invoice_pdf_bytes(invoice, request_id=None):
     """
     Fetches the already-frozen PDF from its stored Cloudinary pdf_url —
     never re-renders it on the happy path (the freeze point is
@@ -559,11 +560,54 @@ def fetch_invoice_pdf_bytes(invoice):
     in the meantime. The breaker is per-invoice (not global) so a genuine
     fix — this specific invoice's PDF getting re-frozen some other way —
     is never masked by another invoice's still-broken state.
+
+    TIMING (real, structured instrumentation — see DECISIONS.md): every
+    real stage this function can run (the initial stored-PDF fetch, the
+    WeasyPrint render, the re-upload, the retry fetch) is timed
+    individually with time.perf_counter(), matching core/middleware.py's
+    own RequestLoggingMiddleware convention (perf_counter + integer ms),
+    and logged as ONE structured summary line at whichever exit point
+    this call actually takes — so a real slow request can be diagnosed
+    stage-by-stage straight from the logs (e.g. "the Cloudinary fetch
+    alone cost 400ms of this 900ms request" vs. "the render alone cost
+    650ms") instead of re-profiled from scratch every time this comes up.
+    Every stage not actually run in a given call logs as None, so the
+    summary line's shape stays identical across every real outcome and is
+    easy to grep/filter on `outcome=` regardless of which path was taken.
+
+    request_id (optional): when the caller has a real request in scope
+    (the portal view/download endpoints below; invoice_send/
+    invoice_resend in views.py), pass request.request_id so this line
+    joins the SAME request_id CLAUDE.md's Observability Rules already
+    put on every other log line for that request — grepping one
+    request_id then shows this function's own internal stage breakdown
+    alongside the endpoint's own total-time log (see
+    portal_invoice_view_html/portal_invoice_pdf_download). Callers with
+    no request in scope (the reminder Celery task, etc.) simply omit it —
+    this field logs as None there, same as any other stage that didn't
+    apply.
     """
+    call_started = time.perf_counter()
+    timings = {'cloudinary_fetch_ms': None, 'render_ms': None, 'upload_ms': None, 'retry_fetch_ms': None}
+
+    def _finish(outcome, result):
+        timings['total_ms'] = int((time.perf_counter() - call_started) * 1000)
+        logger.info(
+            '[INVOICES] fetch_invoice_pdf_bytes timing for invoice_id=%s request_id=%s: outcome=%s '
+            'cloudinary_fetch_ms=%s render_ms=%s upload_ms=%s retry_fetch_ms=%s total_ms=%s',
+            invoice.pk, request_id, outcome, timings['cloudinary_fetch_ms'], timings['render_ms'],
+            timings['upload_ms'], timings['retry_fetch_ms'], timings['total_ms'],
+        )
+        return result
+
     if invoice.pdf_url:
+        stage_started = time.perf_counter()
         try:
-            return _try_fetch(invoice.pdf_url)
+            content = _try_fetch(invoice.pdf_url)
+            timings['cloudinary_fetch_ms'] = int((time.perf_counter() - stage_started) * 1000)
+            return _finish('stored_fetch_succeeded', content)
         except requests.RequestException as exc:
+            timings['cloudinary_fetch_ms'] = int((time.perf_counter() - stage_started) * 1000)
             logger.warning(
                 '[INVOICES] Stored PDF fetch failed for invoice_id=%s url=%s (%s) — attempting self-heal re-upload.',
                 invoice.pk, invoice.pdf_url, exc,
@@ -574,11 +618,14 @@ def fetch_invoice_pdf_bytes(invoice):
             invoice.pk,
         )
 
+    stage_started = time.perf_counter()
     try:
         pdf_bytes = render_invoice_pdf(invoice)
     except Exception:
+        timings['render_ms'] = int((time.perf_counter() - stage_started) * 1000)
         logger.exception('[INVOICES] Self-heal render failed for invoice_id=%s — no PDF bytes available.', invoice.pk)
-        return None
+        return _finish('render_failed', None)
+    timings['render_ms'] = int((time.perf_counter() - stage_started) * 1000)
 
     breaker_key = _pdf_reupload_breaker_key(invoice)
     if cache.get(breaker_key):
@@ -587,8 +634,9 @@ def fetch_invoice_pdf_bytes(invoice):
             '(circuit breaker active, see fetch_invoice_pdf_bytes). Using the live-rendered bytes directly.',
             invoice.pk,
         )
-        return pdf_bytes
+        return _finish('live_render_fallback_breaker_active', pdf_bytes)
 
+    stage_started = time.perf_counter()
     try:
         pdf_result = upload_pdf_bytes(invoice, pdf_bytes)
         invoice.pdf_url = pdf_result['secure_url']
@@ -596,15 +644,20 @@ def fetch_invoice_pdf_bytes(invoice):
         invoice.pdf_generated_at = timezone.now()
         invoice.save(update_fields=['pdf_url', 'pdf_public_id', 'pdf_generated_at'])
     except Exception:
+        timings['upload_ms'] = int((time.perf_counter() - stage_started) * 1000)
         logger.exception('[INVOICES] Self-heal re-upload failed for invoice_id=%s.', invoice.pk)
         cache.set(breaker_key, True, timeout=PDF_REUPLOAD_BREAKER_TTL_SECONDS)
     else:
+        timings['upload_ms'] = int((time.perf_counter() - stage_started) * 1000)
+        retry_started = time.perf_counter()
         try:
             content = _try_fetch(invoice.pdf_url)
+            timings['retry_fetch_ms'] = int((time.perf_counter() - retry_started) * 1000)
             logger.info('[INVOICES] Self-heal re-upload+retry succeeded for invoice_id=%s.', invoice.pk)
             cache.delete(breaker_key)
-            return content
+            return _finish('reupload_retry_succeeded', content)
         except requests.RequestException as exc:
+            timings['retry_fetch_ms'] = int((time.perf_counter() - retry_started) * 1000)
             logger.warning(
                 '[INVOICES] Self-heal retry fetch still failing for invoice_id=%s (%s) — falling back to the bytes already rendered above.',
                 invoice.pk, exc,
@@ -612,7 +665,7 @@ def fetch_invoice_pdf_bytes(invoice):
             cache.set(breaker_key, True, timeout=PDF_REUPLOAD_BREAKER_TTL_SECONDS)
 
     logger.info('[INVOICES] Live-render fallback used for invoice_id=%s — stored pdf_url remains unreachable.', invoice.pk)
-    return pdf_bytes
+    return _finish('live_render_fallback', pdf_bytes)
 
 
 def send_invoice_related_email(invoice, subject, html_body, plain_body, *, pdf_bytes=None, request_id=None):

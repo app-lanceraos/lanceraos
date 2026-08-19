@@ -51,12 +51,19 @@ function filenameFromContentDisposition(header, fallback) {
 }
 
 export default function InvoiceView() {
-  useTitle('Invoice — LanceraOS')
   const { token } = useParams()
   // 'loading' | 'ready' | 'not_yet_available' | 'error'
   const [state, setState] = useState('loading')
   const [pdfUrl, setPdfUrl] = useState(null) // a same-origin blob: URL
+  const [invoiceNumber, setInvoiceNumber] = useState(null)
   const [downloading, setDownloading] = useState(false)
+
+  // The view response's own Content-Disposition already carries
+  // "INV-YYYY-NNNN.pdf" (portal_invoice_view_html, apps/invoices/
+  // views_portal.py) — reused here rather than a second request, so the
+  // tab title reads the real invoice number once it's known instead of
+  // the generic "Invoice — LanceraOS" placeholder.
+  useTitle(invoiceNumber ? `${invoiceNumber} — LanceraOS` : 'Invoice — LanceraOS')
 
   useEffect(() => {
     // A real AbortController, not just an ignore-the-result flag — this
@@ -70,9 +77,15 @@ export default function InvoiceView() {
     const controller = new AbortController()
     let objectUrl = null
     api.get(`/invoices/portal/view/${token}/`, { responseType: 'blob', signal: controller.signal })
-      .then(({ data }) => {
+      .then(({ data, headers }) => {
         objectUrl = URL.createObjectURL(data)
         setPdfUrl(objectUrl)
+        const filename = filenameFromContentDisposition(headers['content-disposition'], null)
+        const number = filename ? filename.replace(/\.pdf$/i, '') : null
+        // The backend's own fallback filename when an invoice somehow has
+        // no real invoice_number ('invoice.pdf', apps/invoices/views_portal.py) —
+        // not a real number worth showing in the tab title.
+        if (number && number !== 'invoice') setInvoiceNumber(number)
         setState('ready')
       })
       .catch((e) => {

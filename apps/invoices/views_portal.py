@@ -32,6 +32,7 @@ one-shared-renderer principle (never a hand-built reimplementation of
 the PDF layout) still holds for that one remaining consumer.
 """
 import logging
+import time
 
 from django.core.cache import cache
 from django.http import HttpResponse
@@ -206,7 +207,7 @@ def portal_invoice_detail(request, pk):
     return Response(PortalInvoiceDetailSerializer(invoice).data)
 
 
-def _resolve_invoice_pdf_bytes_for_view(invoice):
+def _resolve_invoice_pdf_bytes_for_view(invoice, request_id=None):
     """
     STRICTER than fetch_invoice_pdf_bytes' own contract, deliberately — a
     blank pdf_url here is treated as "genuinely not ready yet," never as
@@ -233,7 +234,7 @@ def _resolve_invoice_pdf_bytes_for_view(invoice):
     """
     if not invoice.pdf_url:
         return None
-    return fetch_invoice_pdf_bytes(invoice)
+    return fetch_invoice_pdf_bytes(invoice, request_id=request_id)
 
 
 @api_view(['GET'])
@@ -281,9 +282,19 @@ def portal_invoice_view_html(request, view_token):
     doesn't look like "this invoice was deleted" or leak which tokens
     almost matched.
     """
+    # TIMING (real, structured instrumentation — see DECISIONS.md):
+    # fetch_invoice_pdf_bytes already logs its own internal stage
+    # breakdown (Cloudinary fetch / render / upload / retry) tagged with
+    # this same request_id — this endpoint-level line captures what that
+    # one doesn't: invoice lookup, session minting, and view-tracking
+    # writes, plus the true wall-clock total a client actually waited.
+    # Grepping one request_id shows both lines together.
+    request_id = getattr(request, 'request_id', None)
+    endpoint_started = time.perf_counter()
+
     invoice = get_object_or_404(Invoice, view_token=view_token)
 
-    pdf_bytes = _resolve_invoice_pdf_bytes_for_view(invoice)
+    pdf_bytes = _resolve_invoice_pdf_bytes_for_view(invoice, request_id=request_id)
     if pdf_bytes is not None:
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'inline; filename="{invoice.invoice_number or "invoice"}.pdf"'
@@ -301,6 +312,11 @@ def portal_invoice_view_html(request, view_token):
 
     _record_invoice_view_if_appropriate(invoice, request)
 
+    logger.info(
+        '[INVOICES] portal_invoice_view_html total_ms=%s for invoice_id=%s request_id=%s (see the paired '
+        'fetch_invoice_pdf_bytes timing line above for the PDF-fetch-only breakdown).',
+        int((time.perf_counter() - endpoint_started) * 1000), invoice.pk, request_id,
+    )
     return response
 
 
@@ -326,10 +342,22 @@ def portal_invoice_pdf_download(request, view_token):
     second, parallel fetch implementation — so this download is resilient
     to the same Cloudinary ACL condition invoice_pdf's own rework fixes
     for the freelancer-facing side (see that view's own docstring).
+
+    TIMING: this endpoint has almost no work of its own beyond the
+    invoice lookup (no session minting, no view-tracking — see this
+    view's own docstring above, "read-only, side-effect-free") — its
+    total_ms should track fetch_invoice_pdf_bytes' own total_ms closely.
+    A real, material gap between the two in the logs would itself be a
+    signal worth investigating (unexpected serialization/response-
+    building cost), which is exactly why both are logged rather than
+    assumed identical.
     """
+    request_id = getattr(request, 'request_id', None)
+    endpoint_started = time.perf_counter()
+
     invoice = get_object_or_404(Invoice, view_token=view_token)
 
-    pdf_bytes = fetch_invoice_pdf_bytes(invoice)
+    pdf_bytes = fetch_invoice_pdf_bytes(invoice, request_id=request_id)
     if pdf_bytes is None:
         return Response(
             {'error': "Could not prepare this invoice's PDF right now. Please try again shortly."},
@@ -338,6 +366,11 @@ def portal_invoice_pdf_download(request, view_token):
 
     response = HttpResponse(pdf_bytes, content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="{invoice.invoice_number or "invoice"}.pdf"'
+
+    logger.info(
+        '[INVOICES] portal_invoice_pdf_download total_ms=%s for invoice_id=%s request_id=%s.',
+        int((time.perf_counter() - endpoint_started) * 1000), invoice.pk, request_id,
+    )
     return response
 
 
