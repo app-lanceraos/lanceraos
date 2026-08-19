@@ -1,0 +1,80 @@
+{% load humanize %}{% if el.type == 'logo' %}
+  {% if freelancer.logo %}<img src="{{ freelancer.logo }}" alt="" style="width:100%;height:100%;object-fit:cover;">{% endif %}
+
+{% elif el.type == 'business_info' and el.style.variant == 'sender_repeat' %}
+  <div class="dyn-label">{{ el.style.label|default:"From" }}</div>
+  <div class="dyn-partyname">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+  <div class="dyn-line">{{ freelancer.display_name }}</div>
+  {% if freelancer.address_line1 %}<div class="dyn-line">{{ freelancer.address_line1 }}</div>{% endif %}
+  <div class="dyn-line">{{ invoice.user.email }}</div>
+
+{% elif el.type == 'business_info' %}
+  {% if el.style.eyebrow %}<div class="dyn-eyebrow">{{ el.style.eyebrow }}</div>{% endif %}
+  <div class="dyn-bizname">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+  {% if el.style.show_tagline %}<div class="dyn-tagline">{% if freelancer.profession %}{{ freelancer.profession }}{% if freelancer.city %} · {% endif %}{% endif %}{{ freelancer.city }}{% if freelancer.city %}, {% endif %}{{ freelancer.country }}</div>{% endif %}
+
+{% elif el.type == 'client_info' %}
+  <div class="dyn-label">{{ el.style.label|default:"Bill to" }}</div>
+  <div class="dyn-partyname">{{ invoice.client_name|default:"No client yet" }}</div>
+  {% if invoice.client_company %}<div class="dyn-line">{{ invoice.client_company }}</div>{% endif %}
+  {% if invoice.client_address %}<div class="dyn-line">{{ invoice.client_address|linebreaksbr }}</div>{% endif %}
+  {% if invoice.client_email %}<div class="dyn-line">{{ invoice.client_email }}</div>{% endif %}
+
+{% elif el.type == 'dates' %}
+  {% if el.style.show_invoice_number %}<div class="dyn-num">{{ invoice.invoice_number|default:"DRAFT" }}</div>{% endif %}
+  <div class="dyn-daterow">Issue date <b>{{ invoice.issue_date|date:"d M Y" }}</b></div>
+  <div class="dyn-daterow">Due date <b>{% if invoice.due_date %}{{ invoice.due_date|date:"d M Y" }}{% else %}—{% endif %}</b></div>
+
+{% elif el.type == 'totals' %}
+  {% if el.variant != 'total_due_display' %}
+    {% if 'subtotal' in el.rows %}<div class="dyn-row"><span>Subtotal</span><span>{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</span></div>{% endif %}
+    {% if invoice.tax_rate and 'tax' in el.rows %}<div class="dyn-row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+    {% if invoice.discount_amount and 'discount' in el.rows %}<div class="dyn-row"><span>Discount</span><span>−{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+  {% endif %}
+  {% if el.variant == 'total_pill' %}
+    <div style="text-align:{{ el.style.align|default:'right' }};"><span class="dyn-total-pill" style="{% if el.style.pill_color %}background:{{ el.style.pill_color }};{% endif %}">{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</span></div>
+  {% elif el.variant == 'total_due_display' %}
+    <div style="text-align:{{ el.style.align|default:'right' }};">
+      <div class="dyn-total-due-lbl">Total due</div>
+      <div class="dyn-total-due-amt">{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</div>
+    </div>
+  {% else %}
+    <div class="dyn-row dyn-row-due"><span>Total due</span><span>{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</span></div>
+  {% endif %}
+  {% if invoice.client_currency_conversion %}<div class="dyn-pkr" style="text-align:{{ el.style.align|default:'right' }};">≈ {{ invoice.client_currency_conversion.symbol }}{{ invoice.client_currency_conversion.converted_total|floatformat:2|intcomma }} at rate {{ invoice.client_currency_conversion.rate }}</div>{% endif %}
+
+{% elif el.type == 'notes' %}
+  {% if invoice.notes %}
+    <div class="dyn-label">Notes</div>
+    <p>{{ invoice.notes|linebreaksbr }}</p>
+  {% endif %}
+  {% if invoice.terms %}
+    <div class="dyn-label" style="margin-top:6mm;">Terms</div>
+    <p>{{ invoice.terms|linebreaksbr }}</p>
+  {% endif %}
+
+{% elif el.type == 'signature' %}
+  {% if freelancer.signature_url %}<img class="dyn-sig-img" src="{{ freelancer.signature_url }}" alt="">{% endif %}
+  <div class="dyn-sig-line">{{ el.style.label|default:"Authorised signature" }}</div>
+
+{% elif el.type == 'payment_info' and el.variant == 'qr_and_link' %}
+  {% if qr_code_data_uri %}
+  <div class="dyn-payonline">
+    <img class="dyn-qr" src="{{ qr_code_data_uri }}" alt="">
+    <div>
+      <div class="dyn-label">{{ el.style.label|default:"Pay online" }}</div>
+      <div class="dyn-link">{{ invoice.payment_page_url }}</div>
+    </div>
+  </div>
+  {% endif %}
+
+{% elif el.type == 'payment_info' %}
+  {% if freelancer.bank_name or freelancer.payoneer_email or freelancer.jazzcash_number or freelancer.easypaisa_number %}
+    <div class="dyn-label">{{ el.style.label|default:"Payment methods" }}</div>
+    {% if freelancer.bank_name %}<div class="dyn-method"><span>Bank transfer</span><span>{{ freelancer.bank_name }} — {{ freelancer.bank_account_number }}</span></div>{% endif %}
+    {% if freelancer.payoneer_email %}<div class="dyn-method"><span>Payoneer</span><span>{{ freelancer.payoneer_email }}</span></div>{% endif %}
+    {% if freelancer.jazzcash_number %}<div class="dyn-method"><span>JazzCash</span><span>{{ freelancer.jazzcash_number }}</span></div>{% endif %}
+    {% if freelancer.easypaisa_number %}<div class="dyn-method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
+  {% endif %}
+
+{% endif %}

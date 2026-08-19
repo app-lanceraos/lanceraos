@@ -5826,3 +5826,159 @@ past, finalised through the real endpoint, then `generate_recurring_invoices()` 
 generating it, proving the whole pipeline now works end to end, not just the seed value in isolation. Full
 `apps.invoices` suite (671 tests via `--keepdb` per-module run) and the existing `FinaliseTests`/
 `test_recurring.py` suites all pass with no regressions.
+
+---
+
+Date: 19 August 2026 (design_data render path — closes PDF-001)
+Decision: Built the real renderer that reads `InvoiceDesign.design_data` and actually produces
+invoice HTML/PDF output from it — closing PDF-001 from the 19 August 2026 production audit. Prior
+to this, `build_pdf_context`/`build_portal_context`/`_select_template_name`
+(`apps/invoices/pdf_generator.py`) only ever read `invoice.design.base_template` (one of 3 fixed
+strings) to pick a static Django template; `design_data` (every element position/size/style the
+Step 8b canvas editor produces) and `color_variant` were validated, persisted, and never read by any
+real render path. Confirmed by repo-wide grep before starting: zero references to `design_data`
+anywhere under `pdf_generator.py` or `views_portal.py`.
+
+**The new renderer** (`apps/invoices/design_renderer.py` + `apps/invoices/templates/invoices/
+dynamic_design.html` + `_dynamic_element_content.html`) is a real, second render path alongside —
+not replacing — the 3 static templates:
+- **Zone 1** (`logo`/`business_info`/`client_info`/`dates`): real `position:absolute` CSS built from
+  each element's own `x`/`y`/`width`/`height` (mm) plus whatever `style` properties it carries
+  (`font`/`font_size_pt`/`color`/`align`/`border_radius_mm`), computed in Python
+  (`_zone1_element_css`) — legitimate "genuinely can't be a template variable" CSS-string assembly,
+  the same category of precomputation `build_pdf_context` already does for `qr_code_data_uri`/font
+  URIs, not a workaround for avoiding real template logic. `style.sidebar: true` (modern.html's own
+  documented compromise, see the Step 8 entry above) renders inside a real `position:fixed`, 42mm
+  sidebar container replicating `modern.html`'s own CSS technique exactly (confirmed by reading that
+  file's real `.sidebar` rule directly, not guessed) — including that it genuinely repeats on every
+  generated page, proven with a real 25-item, 2-physical-page PDF test.
+- **Zone 2** (`totals`/`notes`/`signature`/`payment_info`, plus the mandatory line-items table):
+  real document flow. `spacing_after_previous` becomes real `margin-top` CSS — never absolute
+  positioning, since this is the load-bearing overlap-safety property the whole two-zone design
+  exists for. The mandatory table reuses the exact same `{% for item in invoice.items.all %}` Django
+  template loop pattern already proven in all 3 static templates (`_prepare_zone2_rows` only
+  precomputes CSS/grouping, the actual item iteration is a real template loop against real
+  `InvoiceItem` querysets, not a Python-side reimplementation). The schema-guaranteed 0-or-2
+  `paired_side_by_side` elements render as one real two-column flex row
+  (`.dyn-pair-row`), built by grouping at the earlier element's own list position so pairing works
+  correctly even in the (currently unused in any real seed) case of non-adjacent paired indices.
+- **Content bindings** mirror the 3 static templates' own real Django template variables/
+  conditionals exactly — same `invoice.*`/`freelancer.*` fields, same omit-when-unset rules for
+  signature (`freelancer.signature_url`)/payment methods (`freelancer.bank_name or ...`)/QR
+  (`qr_code_data_uri`), same `client_currency_conversion` reuse for the converted-total line. Not a
+  second, disconnected reimplementation of what those fields mean — verified directly: a design
+  built from `PROFESSIONAL_DESIGN_DATA` with tax/discount/notes/terms/payment-methods present
+  renders byte-identical CONTENT to what `professional.html` would show for the same invoice, just
+  through the data-driven layout instead of the hardcoded one.
+- **Totals variants**, generalizing what each static template hardcodes into its own layout:
+  `style.rows` (a list like `['subtotal','tax']`) filters which breakdown rows show;
+  `style.variant` picks between the default breakdown-plus-due-line (professional's own layout),
+  `'total_pill'` (modern's rounded-pill total), and `'total_due_display'` (minimal's big standalone
+  number) — all three real, tested, not just the default path exercised.
+- **Font/asset handling is NOT duplicated a third time**: the renderer accepts whatever font-URL
+  context the caller already built (`FONT_CONTEXT` for WeasyPrint `file://` URIs via
+  `build_pdf_context`, `PORTAL_FONT_CONTEXT` for browser-fetchable `/static/` URLs via
+  `build_portal_context`) — `pdf_generator.py`'s existing font-sourcing convention is the single
+  source for both the static and dynamic paths, confirmed by real PyMuPDF font-table inspection
+  (Source Serif 4 and Space Grotesk both genuinely embed through this path, not just "no warning
+  logged" — matching this project's own established verification standard).
+
+**The item-5 condition — decided from `InvoiceDesign`'s real persisted fields, NOT `source` alone**
+(`design_renderer.design_has_real_custom_data`): a design counts as "custom enough to render
+dynamically" when its `design_data` is a structurally complete two-zone payload (`zone_1`/`zone_2`
+both present) that is NOT byte-identical to the pure, unmodified seed
+(`design_seeds.BUILTIN_DESIGNS[base_template]`) for its own `base_template`.
+
+The reason `source` alone doesn't work, discovered by reading the real code rather than assumed:
+`DesignEditor.jsx`'s own `handleSave` payload (`frontend/src/pages/design-editor/DesignEditor.jsx`)
+never includes `source` at all — only `name`/`base_template`/`color_variant`/`design_data`. Combined
+with `InvoiceDesignSerializer`'s PUT being a full (non-partial) update where `source` is optional
+(DRF's `ModelSerializer` makes a field with a model-level `default` `required=False` automatically),
+a builtin duplicate a user opens, edits, and saves through the editor stays `source='builtin'`
+**forever** — `source` alone cannot distinguish "picked and never touched" from "opened and
+genuinely edited." `design_data` itself is the only real signal:
+- `source='builtin'` via `design_duplicate`, untouched — `design_data` is
+  `get_builtin_design_data(base_template)` verbatim (confirmed directly in `_instantiate_design_
+  from_builtin`, `views.py`) — byte-identical to the seed, so the condition returns `False` and the
+  faster static template renders. Visually correct either way (the content IS the seed's content);
+  this just skips the extra rendering work for the overwhelmingly common "picked a builtin, never
+  opened the editor" case, which is every real `InvoiceDesign` row in production today.
+- `source='builtin'` via `design_duplicate`, then actually edited and saved through the editor
+  (still tagged `builtin`, per the finding above) — `design_data` now differs from the pure seed, so
+  the condition returns `True`. This is exactly the case item 5's own instructions named explicitly:
+  "a builtin design the user has actually opened and saved through the editor."
+- `source='custom'`/`'ai_seeded'` — differ from any pure seed almost by construction (a blank start,
+  a duplicated-then-modified seed, or Step 9's own scale-transform adjustment), so the condition
+  returns `True` for the overwhelming majority of real cases without needing to special-case
+  `source` at all.
+- A design with blank/malformed `design_data` (created directly via the ORM bypassing serializer
+  validation, as `test_pdf_pipeline.py`'s own pre-existing
+  `test_template_selection_honors_a_real_design_when_one_exists` does) — missing `zone_1`/`zone_2`
+  keys — returns `False`, falling back to the static template by `base_template` alone rather than
+  crashing this renderer on an incomplete payload. Confirmed this exact pre-existing test's own
+  expectation (a design with no `design_data` at all still resolves to `modern.html`, the static
+  template) continues to pass unchanged under the new condition — it's a real special case of the
+  same general rule, not something the new code had to carve out separately.
+
+Alternatives considered: gating on `source in ('custom', 'ai_seeded')` alone — rejected once the
+`handleSave`-never-sends-`source` finding above was confirmed, since it would permanently exclude
+the exact "edited a builtin duplicate" case item 5 named as the one that should count. Adding a new
+`design.is_customized`-style boolean field, set explicitly on every real edit — rejected as
+unnecessary schema growth: `design_data`'s own equality against the seed is already a complete,
+self-verifying signal with no migration needed, and a new boolean field would need the exact same
+"compare against the seed" logic somewhere to ever get set correctly in the first place, just moved
+one layer away from where it's actually checked.
+
+**Wiring**: one shared branch point, `pdf_generator._render_invoice_html(invoice, context)`, called
+by both `render_invoice_pdf` and `render_invoice_portal_html` — neither grew its own copy of the
+decision. `_select_template_name` (the 3-static-template picker) is unchanged and still the
+fallback path; nothing about its own existing behavior or tests changed.
+
+**Multi-page/overflow verified through this specific path**, not assumed from the static templates
+already proving the underlying CSS techniques work: a real 25-item design (matching
+`test_pdf_templates.py`'s own established stress-test count for the 3 static templates) renders to a
+real ≥2-physical-page PDF via WeasyPrint, with every one of the 25 real line items present in the
+extracted PDF text (PyMuPDF), and the table header genuinely repeating via `display:
+table-header-group` (the exact technique `minimal.html`/`modern.html` already prove works, applied
+here too) — exercised for both a non-sidebar (professional-based) and a sidebar (modern-based)
+custom design.
+
+**Editor preview (item 7) — confirmed NOT a duplicate renderer, left as-is.** Checked directly:
+`DesignEditor.jsx`'s "Preview" toggle calls GrapesJS's own built-in `'preview'` command (client-side,
+toggles editing chrome within the SAME live canvas) — the editor makes exactly two backend calls
+total (`GET`/`POST` `/invoices/designs/...`, confirmed by grepping every `api.get`/`api.post` call in
+`frontend/src/pages/design-editor/` and `frontend/src/lib/designEditor/`), neither of which is a
+render/preview endpoint. The canvas itself shows placeholder content (`componentTypes.js`'s own
+table view literally renders "Sample line item N" / "$100.00" strings, confirmed directly), not real
+invoice data — there is no specific invoice in scope while editing a design, only the design itself.
+Routing this live, draggable, selectable component tree through the new server-side Django/WeasyPrint
+renderer would defeat the entire live-editing interaction model (GrapesJS needs real DOM components
+you can click/drag/resize, not a static rendered HTML blob) for no real benefit, since the two tools
+solve genuinely different problems: one is an editing aid showing plausible layout with placeholder
+content, the other is the real output for a real invoice. Confirmed structurally different concerns,
+not consolidated — exactly the "if the editor's preview already correctly uses something equivalent,
+confirm and leave it, don't duplicate" case this pass's own instructions anticipated.
+
+**`color_variant` remains unused** by both the static templates and this new renderer — a
+pre-existing gap from Step 8/8b, not introduced or closed by this pass. Flagged in DATABASE.md's
+`invoice_designs` entry rather than silently left undocumented; a real product decision (what would
+recoloring even mean generically across 3 structurally different base templates) that's out of this
+pass's own scope.
+
+Verified: 29 new tests (`apps/invoices/tests/test_design_renderer.py`) — the item-5 condition both
+directions (including the builtin-edited-through-the-editor case and the blank/malformed-data
+fallback), real content binding through genuinely modified fixtures (moved element position, changed
+style color, filtered totals rows, a real paired two-column row, real client-currency-conversion
+reuse, the 3 real omit-when-unset rules), the sidebar compromise (fixed positioning, 42mm width,
+sidebar-flagged logo/business_info/QR all rendering inside it, main content correctly offset), the
+multi-page stress test through this path specifically (25 items, ≥2 real physical pages, header
+repeat, zero items not raising), real font embedding via PyMuPDF (Source Serif 4, Space Grotesk), and
+zero regression to the 3 static templates (no design at all, an untouched builtin, and all 3 real
+seeds confirmed to still resolve to the static path). Full `apps.invoices` suite: 700 tests passing
+(up from 671 before this pass), including `test_designs.py`/`test_pdf_pipeline.py`/
+`test_pdf_templates.py`/`test_portal.py`/`test_statement.py` re-run explicitly for regressions with
+none found — `manage.py check` clean.
+
+Docs: this entry; DATABASE.md's `invoice_designs` entry gained a "design_data render path" section
+pointing here; CLAUDE.md's Module 2 status table updated to reflect the design editor as now
+genuinely affecting real invoice output, not just built-and-validated in isolation.

@@ -51,6 +51,8 @@ from django.utils import timezone
 
 from core.money import Money
 
+from .design_renderer import render_dynamic_design_html, should_render_dynamic_design
+
 logger = logging.getLogger(__name__)
 
 FONTS_DIR = Path(__file__).resolve().parent / 'static' / 'invoices' / 'fonts'
@@ -211,9 +213,24 @@ def render_invoice_pdf(invoice):
     """
     from weasyprint import HTML
 
-    template_name = _select_template_name(invoice)
-    html_string = render_to_string(template_name, build_pdf_context(invoice))
+    html_string = _render_invoice_html(invoice, build_pdf_context(invoice))
     return HTML(string=html_string).write_pdf()
+
+
+def _render_invoice_html(invoice, context):
+    """
+    The one real branch point between the 3 static templates and the
+    design_data-driven renderer (apps/invoices/design_renderer.py) —
+    shared by both render_invoice_pdf and render_invoice_portal_html so
+    neither grows its own copy of this decision. See
+    design_renderer.should_render_dynamic_design's own docstring for the
+    exact condition and why it's based on design_data itself rather than
+    InvoiceDesign.source.
+    """
+    if should_render_dynamic_design(invoice):
+        return render_dynamic_design_html(invoice, invoice.design, context)
+    template_name = _select_template_name(invoice)
+    return render_to_string(template_name, context)
 
 
 def build_portal_context(invoice):
@@ -257,8 +274,7 @@ def render_invoice_portal_html(invoice):
     there ignores html/body box styling like this entirely, so this
     can't affect the PDF/frozen-artifact output at all).
     """
-    template_name = _select_template_name(invoice)
-    html = render_to_string(template_name, build_portal_context(invoice))
+    html = _render_invoice_html(invoice, build_portal_context(invoice))
     return html.replace('</head>', PORTAL_WRAPPER_STYLE + '</head>', 1)
 
 

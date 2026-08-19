@@ -1125,6 +1125,20 @@ name?}` creates one for the requesting user with `source='builtin'` and a deep c
 template's seed `design_data`. See DECISIONS.md for why this is the right mechanism instead of
 pre-creating rows per user or making `user` nullable.
 
+### `design_data` render path — closes PDF-001 (19 August 2026)
+
+Until this pass, `design_data` and `color_variant` were validated, saved, and then **never read by
+any real render path** — `build_pdf_context`/`build_portal_context`/`_select_template_name`
+(`apps/invoices/pdf_generator.py`) only ever looked at `invoice.design.base_template` (one of the 3
+fixed strings) to pick a static template. A saved design had zero effect on a real invoice's PDF or
+portal page. A real, second renderer now exists and is wired in — see DECISIONS.md's 19 August 2026
+"design_data render path" entry for the full design, the dynamic-vs-static condition, and why it's
+based on `design_data` itself rather than `InvoiceDesign.source`.
+
+`color_variant` remains genuinely unused by any render path (both the 3 static templates and the
+new dynamic renderer ignore it entirely) — a pre-existing gap, not introduced or closed by this
+pass; flagged here rather than silently left undocumented.
+
 ---
 
 ## `invoice_presets` / `invoice_preset_items` (`InvoicePreset` / `InvoicePresetItem`, in `apps.invoices`)
