@@ -617,66 +617,75 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
 
         {/* ── Reminders toggle — docked bottom-right, directly above the
             footer, never scrolling with the rest of the Details tab
-            content (moved out of DetailsTab's own flow this round). Its
-            own flex item outside the scrollable middle region above, so
-            it stays put regardless of scroll position. ── */}
+            content (position kept from the previous round). Real size
+            fix this round: the label was full-size text and the button
+            used .fos-btn's own un-shrunk 10px/20px default padding,
+            together adding up to a disconnected-looking oversized box —
+            shrunk to a real compact pill sized to its actual content
+            ("Reminders" as a small secondary label + a small On button),
+            matching the footer's own FOOTER_BTN_STYLE density. ── */}
         {showRemindersToggle && (
-          <div style={{ flexShrink: 0, padding: '0 24px 12px', display: 'flex', justifyContent: 'flex-end' }}>
-            <div style={{ padding: '8px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)' }}>Reminders</p>
-              <button onClick={handleToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.75rem' }}>
-                <Bell size={13} /> On
+          <div style={{ flexShrink: 0, padding: '0 24px 8px', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ padding: '4px 4px 4px 10px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>Reminders</span>
+              <button onClick={handleToggleReminders} disabled={busy} className="fos-btn fos-btn-ghost" style={{ fontSize: '0.68rem', padding: '3px 8px', gap: 3 }}>
+                <Bell size={10} /> On
               </button>
             </div>
           </div>
         )}
 
         {/* ── Fixed footer — a real primary/secondary pair per status, plus
-            "More" for everything else. Sized compactly (smaller padding/
-            font than .fos-btn's own defaults) so the longest realistic
-            combination — e.g. "Send Reminder 4" + "Mark as Sent" + "More" —
-            still fits one line at normal desktop width without going
-            icon-only. ── */}
-        <div style={{ flexShrink: 0, padding: '10px 16px', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            "More" for everything else. Desktop uses FOOTER_BTN_STYLE, a
+            moderate step down from .fos-btn's own 10px/20px/0.88rem
+            defaults (not a further, cramped shrink — round 2's own
+            0.74rem/7px12px overcorrected and looked too small next to
+            the rest of the panel). idp-footer-btn/idp-footer-btn-group
+            carry a SEPARATE, real mobile-specific shrink at <=480px (see
+            the <style> block below) — round 2's "fits one line" claim
+            was never actually checked at real mobile width and, in fact,
+            still wrapped there; this round fixes both ends for real,
+            independently. ── */}
+        <div style={{ flexShrink: 0, padding: '12px 16px', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {isDraft ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              <button onClick={handleFinalise} disabled={busy} className="fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
+            <div className="idp-footer-btn-group" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <button onClick={handleFinalise} disabled={busy} className="idp-footer-btn fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
                 {busyKey === 'finalise' ? <span className="fos-spinner" /> : <CheckCircle2 size={13} />} Finalise
               </button>
-              <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="fos-btn fos-btn-accent" style={FOOTER_BTN_STYLE}>
+              <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="idp-footer-btn fos-btn fos-btn-accent" style={FOOTER_BTN_STYLE}>
                 <Send size={13} /> Mark as Sent
               </button>
-              <button onClick={() => setModal({ kind: 'delete' })} disabled={busy} className="fos-btn fos-btn-ghost" style={{ ...FOOTER_BTN_STYLE, color: 'var(--status-red-text)' }}>
+              <button onClick={() => setModal({ kind: 'delete' })} disabled={busy} className="idp-footer-btn fos-btn fos-btn-ghost" style={{ ...FOOTER_BTN_STYLE, color: 'var(--status-red-text)' }}>
                 <Trash2 size={13} /> Delete
               </button>
             </div>
           ) : (
             <>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <div className="idp-footer-btn-group" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {invoice.status === 'created' && (
                   <>
-                    <button onClick={() => setModal({ kind: 'send' })} disabled={busy} className="fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
+                    <button onClick={() => setModal({ kind: 'send' })} disabled={busy} className="idp-footer-btn fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
                       <Mail size={13} /> Send
                     </button>
-                    <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
+                    <button onClick={() => setModal({ kind: 'mark_sent' })} disabled={busy} className="idp-footer-btn fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
                       <Send size={13} /> Mark as Sent
                     </button>
                   </>
                 )}
                 {ACTIVE_STATUSES.includes(invoice.status) && (
                   <>
-                    <button onClick={() => setModal({ kind: 'add_payment' })} disabled={busy} className="fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
+                    <button onClick={() => setModal({ kind: 'add_payment' })} disabled={busy} className="idp-footer-btn fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
                       <Wallet size={13} /> Add Payment
                     </button>
                     {isOverdue && !remindersExhausted ? (
-                      <button onClick={() => setModal({ kind: 'send_reminder' })} disabled={busy} className="fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
+                      <button onClick={() => setModal({ kind: 'send_reminder' })} disabled={busy} className="idp-footer-btn fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
                         <Bell size={13} /> Send Reminder {nextReminderNumber}
                       </button>
                     ) : (
                       // View Invoice is already reachable from the header —
                       // redundant as a footer secondary action. Duplicate
                       // takes its place here (see footerShowsDuplicate).
-                      <button onClick={handleDuplicate} disabled={busy} className="fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
+                      <button onClick={handleDuplicate} disabled={busy} className="idp-footer-btn fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
                         <Copy size={13} /> Duplicate
                       </button>
                     )}
@@ -684,10 +693,10 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                 )}
                 {isTerminal && (
                   <>
-                    <button onClick={openDownload} disabled={busy} className="fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
+                    <button onClick={openDownload} disabled={busy} className="idp-footer-btn fos-btn fos-btn-primary" style={FOOTER_BTN_STYLE}>
                       <Download size={13} /> Download Invoice
                     </button>
-                    <button onClick={handleDuplicate} disabled={busy} className="fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
+                    <button onClick={handleDuplicate} disabled={busy} className="idp-footer-btn fos-btn fos-btn-ghost" style={FOOTER_BTN_STYLE}>
                       <Copy size={13} /> Duplicate
                     </button>
                   </>
@@ -696,7 +705,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
               {moreMenuItems.length > 0 && (
                 <DropdownMenu
                   trigger="More" showChevron placement="top"
-                  triggerClassName="fos-btn fos-btn-ghost"
+                  triggerClassName="idp-footer-btn fos-btn fos-btn-ghost"
                   triggerStyle={FOOTER_BTN_STYLE}
                   items={moreMenuItems}
                 />
@@ -782,7 +791,16 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
            next to it) to free the room the number/countdown need.
            Tabs: Details/Timeline/Claims/Comments used to need horizontal
            scrolling to all be visible at 375px — real padding/font shrink
-           here instead, so all 4 fit on one line with no scrolling. */
+           here instead, so all 4 fit on one line with no scrolling.
+           Footer (round 3): a REAL, separate mobile-specific shrink —
+           round 2's single FOOTER_BTN_STYLE object was applied at every
+           width via inline style, which can't respond to a media query
+           at all, so the "fits one line at 375px" claim was never
+           actually true there; verified this round with a real
+           screenshot at 375px against the longest real per-status
+           combinations (not the hypothetical "Send Reminder 4" + "Mark
+           as Sent" combo, which never co-occurs in the real status
+           matrix). */
         @media (max-width: 480px) {
           .idp-invoice-number { font-size: 0.98rem !important; white-space: nowrap; }
           .idp-due-line { font-size: 0.72rem !important; white-space: nowrap; }
@@ -790,6 +808,9 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
           .idp-header-view-invoice .idp-view-invoice-label { display: none; }
           .idp-tab-btn { padding: 8px 6px !important; font-size: 0.68rem !important; gap: 4px !important; }
           .idp-tab-btn svg { width: 11px !important; height: 11px !important; }
+          .idp-footer-btn { padding: 6px 10px !important; font-size: 0.68rem !important; gap: 4px !important; }
+          .idp-footer-btn svg { width: 12px !important; height: 12px !important; }
+          .idp-footer-btn-group { gap: 5px !important; }
         }
       `}</style>
     </>
@@ -803,26 +824,42 @@ const panelStyle = {
   animation: 'panel-slide-in 0.2s cubic-bezier(0.22,1,0.36,1)',
   display: 'flex', flexDirection: 'column', overflow: 'hidden',
 }
-// Compact footer button sizing (below .fos-btn's own 10px/20px/0.88rem
-// defaults) — real, reported bug: the un-shrunk defaults couldn't fit
-// primary + secondary + "More" on one line at normal desktop width for
-// longer label combinations. Every footer button uses this, never
-// icon-only, so the shrink stays purely a size change.
-const FOOTER_BTN_STYLE = { fontSize: '0.74rem', padding: '7px 12px', gap: 6 }
+// Desktop footer button sizing — a moderate step down from .fos-btn's own
+// 10px/20px/0.88rem defaults (real primary+secondary+More combinations
+// fit fine at this size; a further, cramped shrink read as too small next
+// to the rest of the panel — round 3's own fix, see DECISIONS.md). Real
+// mobile-specific sizing lives in the .idp-footer-btn CSS class instead
+// (this JS object is desktop's baseline only — inline styles can't
+// respond to a media query, which is exactly why round 2's one-size
+// approach couldn't actually fit 375px without either being globally too
+// small or still wrapping).
+const FOOTER_BTN_STYLE = { fontSize: '0.82rem', padding: '8px 16px', gap: 7 }
 
 // ── RemindersOffBanner ───────────────────────────────────────────
 // Exactly one of {this banner, the docked toggle above the footer} ever
 // renders — never both, never neither except a terminal/draft/created
 // invoice (nothing left to remind about, or reminders not yet relevant).
+// Real compact redesign (round 3): the previous version's own FosAlert
+// wrapper was already at this app's normal compact alert density
+// (.fos-alert's real 12px/16px padding, 0.875rem font, 16px icon) — the
+// actual bulk came from the "Turn on reminders" button underneath it,
+// which used .fos-btn's full, un-shrunk 10px/20px default padding and
+// sat inside a flexWrap:'wrap' row, so it routinely wrapped onto its own
+// full-width line. Fixed by shrinking the button to a real small inline
+// pill (own compact padding/font, matching FOOTER_BTN_STYLE's own
+// density) and keeping the row on one line — icon + short text + a small
+// button, not a stacked block.
 function RemindersOffBanner({ invoice, busy, onTurnOn }) {
   if (!ACTIVE_STATUSES.includes(invoice.status)) return null
   if (invoice.reminders_enabled) return null
   return (
-    <FosAlert type="warning" style={{ marginBottom: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><BellOff size={14} /> Reminders are turned off for this invoice.</span>
-        <button onClick={onTurnOn} disabled={busy} className="fos-btn fos-btn-accent" style={{ fontSize: '0.74rem', flexShrink: 0 }}>
-          <Bell size={13} /> Turn on reminders
+    <FosAlert type="warning" style={{ marginBottom: 16, alignItems: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, minWidth: 0 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <BellOff size={13} style={{ flexShrink: 0 }} /> Reminders are off
+        </span>
+        <button onClick={onTurnOn} disabled={busy} className="fos-btn fos-btn-accent" style={{ fontSize: '0.7rem', padding: '4px 10px', gap: 4, flexShrink: 0 }}>
+          <Bell size={11} /> Turn on
         </button>
       </div>
     </FosAlert>

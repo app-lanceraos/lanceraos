@@ -4899,3 +4899,113 @@ width, not by an actual rendered screenshot. Flagged here rather than claimed as
 Docs: this entry. CLAUDE.md status update.
 
 Docs: this entry. CLAUDE.md status update (Module 2 build notes + Section 8's env var list).
+
+---
+
+Date: 18 August 2026 (sixth pass, same day — PDF re-upload circuit breaker + InvoiceDetailPanel/AppShell
+bug-hardening round 3, real screenshot-verified this time)
+Decision/Reason:
+
+**PDF re-upload circuit breaker** (`apps/invoices/email_service.py`): real terminal evidence showed every
+view/download of an invoice affected by this account's confirmed Cloudinary ACL restriction paying for a
+full WeasyPrint render PLUS a doomed re-upload (`upload_pdf_bytes`) PLUS a doomed retry fetch — both of the
+latter guaranteed to fail the exact same way every time, since they hit the same account-level policy the
+original fetch already hit. Added a short-lived, per-invoice cache breaker
+(`_pdf_reupload_breaker_key`/`PDF_REUPLOAD_BREAKER_TTL_SECONDS = 300`, `django.core.cache.cache`, this
+project's own established `cache.get`/`cache.set` convention — see `apps/invoices/views.py`'s rate-limit
+helpers for the same pattern): once a re-upload+retry attempt fails for an invoice, the next
+`fetch_invoice_pdf_bytes` call for that SAME invoice within 5 minutes skips straight from the render to the
+live-render fallback, never calling `upload_pdf_bytes` or retrying the fetch. Deliberately per-invoice, not
+global — one invoice's known-broken state must never mask another's, and a genuine fix (this invoice's PDF
+getting re-frozen some other way) is picked back up the moment the breaker expires. The very first,
+cheap stored-`pdf_url` fetch attempt is NOT gated by the breaker — it's fast, and skipping it would mean a
+real fix to the Cloudinary Console setting wouldn't be detected until the breaker's own TTL expired, which
+is worse than just re-trying a fast, cheap GET every time. This does NOT fix the underlying Cloudinary
+account-level ACL restriction — that is still a real, separate, non-code fix Ali needs to make in the
+Cloudinary Console (see this file's own earlier entry on the restriction itself); it only stops re-paying
+the same already-known-doomed network cost on every request in the meantime.
+
+**RemindersOffBanner compact redesign** (`InvoiceDetailPanel.jsx`): the previous round's own `FosAlert`
+wrapper was already at this app's normal compact alert density (`.fos-alert`'s real 12px/16px padding,
+0.875rem font, 16px icon — confirmed directly, not assumed) — the actual bulk came from the "Turn on
+reminders" button underneath it, which used `.fos-btn`'s full, un-shrunk 10px/20px default padding inside a
+`flexWrap:'wrap'` row, so it routinely wrapped onto its own full-width line under the text. Fixed by
+shrinking the button to a real small inline pill (own compact padding/font) and dropping the row to
+`flexWrap` off entirely — icon + short text ("Reminders are off") + a small "Turn on" button, one line.
+
+**Reminders-on toggle** — the previous round's fix (docked bottom-right above the footer) kept its
+positioning, but the box itself was still oversized: the "Reminders" label was full body-text size and the
+"On" button again used `.fos-btn`'s own un-shrunk default padding. Shrunk to a real compact pill: a small
+secondary-color label + a real small button (own explicit padding/font/icon-size override), proportionate
+to its actual content instead of a large disconnected box.
+
+**Footer — real desktop/mobile split, this time actually verified at 375px with a real screenshot.** The
+previous round's single `FOOTER_BTN_STYLE` object was applied via inline `style`, which cannot respond to a
+CSS media query at all — so it was necessarily one size for every viewport, and that one size either looked
+cramped at desktop (the reported overcorrection) or still wrapped at real mobile width (the reported,
+never-actually-checked regression). Fixed with two real, separate values: `FOOTER_BTN_STYLE` (a JS object,
+desktop's baseline — 0.82rem/8px 16px/gap 7, a moderate step down from `.fos-btn`'s own 0.88rem/10px
+20px, not the previous round's cramped 0.74rem/7px 12px) applied inline as before, PLUS a genuinely
+separate `.idp-footer-btn`/`.idp-footer-btn-group` CSS class with a real `@media (max-width: 480px)`
+`!important` override (0.68rem/6px 10px/gap 4, 12px icons) — the same "CSS class + media query" mechanism
+this file already uses for `.idp-tab-btn`/`.idp-invoice-number`, just not yet applied to the footer last
+round. Verified with real Playwright screenshots (see Verification below) at 375px against every REAL
+per-status combination — created (Send + Mark as Sent + More), active-overdue-with-reminders (Add Payment +
+Send Reminder N + More), active-not-overdue (Add Payment + Duplicate + More), terminal (Download Invoice +
+Duplicate + More), and draft (Finalise + Mark as Sent + Delete) — all fit one line with no wrapping, and
+desktop (1280/1920) now reads as comfortably legible rather than cramped.
+
+**Header "More actions" icon reverted**: the previous round's swap to lucide-react's `SlidersHorizontal`
+(a sliders/controls icon) was confirmed directly NOT what was wanted — reverted to `MoreVertical` (a real
+vertical three-dot ellipsis), matching the actual request. Same `AppShell.jsx` call site
+(`usePageHeaderActions`'s mobile fold-in menu trigger), same menu/behavior underneath — a visual-only
+revert, `MoreHorizontal` (the icon before either of the last two rounds) was never restored, since that
+was never the ask either.
+
+**Mobile header spacing** (`AppShell.jsx`, real measured reductions, not "a bit tighter"): the logo-to-title
+gap was the logo wrapper's own right padding (8px) plus the title container's left padding (18px) = 26px
+combined — reduced to 4px + 10px = 14px, mobile-only (`isMobile ? '0 20px 0 10px' : '0 20px 0 18px'` on
+the title container; the logo wrapper's own padding changed from `'0 8px 0 14px'` to `'0 4px 0 14px'`
+directly, since that block only ever renders on mobile). The icon-button row's own flex `gap` dropped from
+6px to 4px on mobile (desktop unchanged). Each mobile-only icon button's own box also shrunk, not just the
+gap between them, since the un-shrunk 38-40px boxes around 18-20px icons were most of the visible "excess"
+space: the notification bell 38px/20px icon -> 34px/18px icon (mobile only, desktop unchanged), the
+hamburger 40px/22px icon -> 36px/20px icon (mobile-only block already), the page-actions 3-dot trigger
+38px -> 34px (mobile-only block already).
+
+**Desktop logo/wordmark, moderately larger**: checked the real, actual current values directly in
+`AppShell.jsx` first (not assumed) — `LogoSVG size={32}` (in a 32x32 wrapper) and
+`WordmarkSVG width={107} height={16}`. Increased ~1.19x to `LogoSVG size={38}` (38x38 wrapper) and
+`WordmarkSVG width={128} height={19}` — noticeably larger without crowding the 60px-tall desktop header
+(38px logo still leaves 11px of vertical breathing room on each side) or the sidebar's own layout. The
+wordmark's own `overflow:hidden` wrapper (`maxWidth`/`height`) was bumped from 160/20 to 190/22 to match, so
+the larger mark isn't clipped when the sidebar is expanded. Scoped to the DESKTOP header instance only — the
+mobile sidebar drawer's own separate `LogoSVG`/`WordmarkSVG` instance (a different call site, shown when the
+mobile nav drawer opens) was left untouched, since item 7 named "desktop" specifically and touching an
+unrelated instance would have been unrequested scope creep.
+
+Verification: a real Playwright + Chromium session (already cached locally from an earlier round;
+`npx playwright install chromium` confirmed it was present) logging into the real running dev servers
+(`screenshot-demo@example.com`, a seeded demo account with 7 real invoices spanning
+draft/created/active-overdue-with-reminders/active-overdue-reminders-off/terminal statuses — one invoice's
+`reminder_count` was bumped to 3 via the Django shell specifically to exercise "Send Reminder 4", the
+longest realistic reminder label) — real screenshots captured at 375/768/1280/1920, light AND dark, for
+both the AppShell header (all 4 breakpoints x 2 themes) and the InvoiceDetailPanel across its 5 representative
+statuses (375/1280 x 2 themes for all 5; 768/1920 x 2 themes for the 3 reminders/terminal-relevant statuses).
+Every footer combination fits one line with no wrapping at every breakpoint checked, both alert/toggle
+redesigns read as genuinely compact in both themes, the header icon is a real vertical three-dot, mobile
+header spacing is visibly tighter, and the desktop logo/wordmark is visibly larger without crowding — this
+is the same claim the PREVIOUS round made without actually being able to check it, and this round's
+screenshots are the direct correction of that gap. Backend: `PdfReuploadCircuitBreakerTests` (4 new tests
+in `apps/invoices/tests/test_send.py`) passing, including a real, measured before/after timing test
+(mocked-but-realistic 0.05s-per-network-call latency, since this sandboxed environment cannot reach the
+real, confirmed-broken Cloudinary account directly) showing a genuine 65-66% speed-up on the second call
+for the same invoice (~0.17s -> ~0.06s) from skipping the doomed upload+retry round trip; full
+`test_send.py` (47 tests), `test_pdf_pipeline.py` (29 tests), `test_portal.py` (43 tests), and
+`test_views.py` (183 tests) all pass individually (run separately per this project's own documented
+single-process WeasyPrint/GC segfault caveat). Frontend: all 215 existing tests still pass (2 assertions
+in `InvoiceDetailPanel.test.jsx` updated for the RemindersOffBanner's new, shorter copy — "Reminders are
+off"/"Turn on" instead of "Reminders are turned off for this invoice."/"Turn on reminders"), production
+`vite build` clean.
+
+Docs: this entry. CLAUDE.md status update.

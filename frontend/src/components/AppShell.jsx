@@ -31,7 +31,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import ReactDOM from 'react-dom'
 import {
   Bell, CheckCircle2, CheckCheck, CheckSquare, Clock, CreditCard, DollarSign,
-  FileText, HelpCircle, LayoutGrid, LogOut, Mail, SlidersHorizontal, RefreshCw,
+  FileText, HelpCircle, LayoutGrid, LogOut, Mail, MoreVertical, RefreshCw,
   Receipt, Settings as SettingsIcon, Square, Trash2, TrendingUp, User as UserIcon,
   Users, Wallet, AlertTriangle, Eye,
 } from 'lucide-react'
@@ -613,18 +613,24 @@ export default function AppShell({ children }) {
           alignItems: 'center', gap: 10,
           height: '100%', padding: '0 16px', flexShrink: 0,
         }}>
+          {/* Desktop logo/wordmark — moderately larger this round (round 3):
+              logo 32px -> 38px, wordmark 107x16 -> 128x19 (~1.19x, same
+              aspect ratio). maxWidth/height on the wordmark's own
+              overflow:hidden wrapper bumped to match (160->190, 20->22)
+              so the larger mark isn't clipped when the sidebar is
+              expanded. */}
           <Link to="/profile" style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <div style={{ width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <LogoSVG size={32} />
+            <div style={{ width: 38, height: 38, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <LogoSVG size={38} />
             </div>
             <div style={{
               display: 'flex', alignItems: 'center',
-              height: 20, overflow: 'hidden',
+              height: 22, overflow: 'hidden',
               opacity: collapsed ? 0 : 1,
-              maxWidth: collapsed ? 0 : 160,
+              maxWidth: collapsed ? 0 : 190,
               transition: 'opacity var(--t), max-width var(--t)',
             }}>
-              <WordmarkSVG width={107} height={16} />
+              <WordmarkSVG width={128} height={19} />
             </div>
           </Link>
           <button
@@ -649,15 +655,20 @@ export default function AppShell({ children }) {
           </button>
         </div>
 
+        {/* Mobile logo-to-title gap: real, measured reduction (round 3) —
+            was 8px (this wrapper's own right padding) + 18px (the title
+            container's left padding below) = 26px combined. Now 4px + 10px
+            = 14px, mobile only; desktop's own spacing (a completely
+            separate left-side block, not this logo) is untouched. */}
         {isMobile && (
           <Link to="/profile">
-            <div style={{ display: 'flex', alignItems: 'center', padding: '0 8px 0 14px', height: '100%', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', padding: '0 4px 0 14px', height: '100%', flexShrink: 0 }}>
               <LogoSVG size={30} />
             </div>
           </Link>
         )}
 
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px 0 18px', minWidth: 0 }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: isMobile ? '0 20px 0 10px' : '0 20px 0 18px', minWidth: 0 }}>
           <span style={{
             fontSize: 22, fontWeight: 400, letterSpacing: '-0.04em',
             color: 'var(--header-title)', whiteSpace: 'nowrap',
@@ -666,7 +677,12 @@ export default function AppShell({ children }) {
           }}>
             {pageTitle}
           </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {/* Icon-button row gap: real, measured reduction (round 3) — was
+              6px for both widths; mobile alone drops to 4px, and each
+              mobile-only icon button's own box shrinks too (see below) —
+              the un-shrunk 38-40px boxes around 18-20px icons were most of
+              the visible "excess" space, not just the flex gap value. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 6, flexShrink: 0 }}>
             {/* Page-specific desktop actions (e.g. Invoices' Analytics/More/
                 New Invoice) — registered by the mounted page via
                 usePageHeaderActions, rendered here between the title and
@@ -681,24 +697,27 @@ export default function AppShell({ children }) {
                 action, which stays on the FAB, never duplicated here). */}
             {isMobile && pageHeaderActions.mobileItems.length > 0 && (
               <DropdownMenu
-                trigger={<SlidersHorizontal size={20} strokeWidth={1.6} />}
+                trigger={<MoreVertical size={20} strokeWidth={1.6} />}
                 triggerLabel="More actions"
                 items={pageHeaderActions.mobileItems}
                 bareTrigger
                 triggerStyle={{
-                  width: 38, height: 38, borderRadius: '50%', color: 'var(--header-icon)',
+                  width: 34, height: 34, borderRadius: '50%', color: 'var(--header-icon)',
                 }}
               />
             )}
 
-            {/* Notification bell */}
+            {/* Notification bell — 38px/20px desktop, real, measured
+                shrink to 34px/18px mobile (round 3): a smaller box tight
+                around the icon reads as intentional, not just a bare gap
+                reduction. */}
             <div ref={notifRef}>
               <button
                 data-tooltip="Notifications"
                 aria-label="Notifications"
                 onClick={() => (showNotifPanel ? setShowNotifPanel(false) : openNotifPanel())}
                 style={{
-                  position: 'relative', width: 38, height: 38,
+                  position: 'relative', width: isMobile ? 34 : 38, height: isMobile ? 34 : 38,
                   border: 'none', borderRadius: '50%', background: 'transparent',
                   cursor: 'pointer', display: 'flex', alignItems: 'center',
                   justifyContent: 'center', color: 'var(--header-icon)',
@@ -708,7 +727,7 @@ export default function AppShell({ children }) {
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--header-icon)' }}
               >
                 <Bell
-                  size={20} strokeWidth={1.6}
+                  size={isMobile ? 18 : 20} strokeWidth={1.6}
                   style={{ animation: bellPulse ? 'bell-ping 0.5s ease' : 'none', transformOrigin: 'center' }}
                 />
                 {unreadCount > 0 && (
@@ -726,7 +745,7 @@ export default function AppShell({ children }) {
                 onClick={toggleSidebar}
                 aria-label="Open menu"
                 style={{
-                  display: 'flex', width: 40, height: 40, border: 'none', background: 'transparent',
+                  display: 'flex', width: 36, height: 36, border: 'none', background: 'transparent',
                   cursor: 'pointer', alignItems: 'center', justifyContent: 'center',
                   borderRadius: 8, color: 'var(--header-icon)',
                   transition: 'background var(--fast), color var(--fast)',
@@ -734,7 +753,7 @@ export default function AppShell({ children }) {
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-hover)'; e.currentTarget.style.color = 'var(--nav-active)' }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--header-icon)' }}
               >
-                <svg viewBox="0 0 24 24" width="22" height="22">
+                <svg viewBox="0 0 24 24" width="20" height="20">
                   <rect x="3" y="5" width="18" height="2" rx="1" fill="currentColor" style={{ transformOrigin: 'center', transition: 'transform 0.34s cubic-bezier(0.65,0,0.35,1), opacity 0.2s ease', transform: mobileOpen ? 'translateY(7px) rotate(45deg)' : 'none' }} />
                   <rect x="3" y="11" width="18" height="2" rx="1" fill="currentColor" style={{ transformOrigin: 'center', transition: 'transform 0.34s cubic-bezier(0.65,0,0.35,1), opacity 0.2s ease', opacity: mobileOpen ? 0 : 1, transform: mobileOpen ? 'scaleX(0.4)' : 'none' }} />
                   <rect x="3" y="17" width="18" height="2" rx="1" fill="currentColor" style={{ transformOrigin: 'center', transition: 'transform 0.34s cubic-bezier(0.65,0,0.35,1), opacity 0.2s ease', transform: mobileOpen ? 'translateY(-7px) rotate(-45deg)' : 'none' }} />

@@ -21,6 +21,7 @@ assembly exists exactly once, not duplicated per caller.
 import logging
 
 import requests
+from django.core.cache import cache
 from django.utils import timezone
 
 from core.email import pdf_bytes_to_attachment, sender_display_name, send_client_facing_email
@@ -32,6 +33,21 @@ from .models import CURRENCY_SYMBOLS
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_SECONDS = 15
+
+# Self-heal circuit breaker (see fetch_invoice_pdf_bytes) — how long a
+# confirmed re-upload+retry-fetch failure for one invoice is trusted to
+# still be failing. 5 minutes: long enough that a burst of views/downloads
+# of the same affected invoice (the real, observed pattern — someone
+# opening an invoice repeatedly, or the reminder task + a manual view
+# landing close together) only pays the doomed network round-trip once,
+# short enough that a real fix (Cloudinary Console ACL change, or this
+# specific invoice's PDF getting re-frozen some other way) is picked back
+# up quickly rather than being stuck skipping it for hours.
+PDF_REUPLOAD_BREAKER_TTL_SECONDS = 300
+
+
+def _pdf_reupload_breaker_key(invoice):
+    return f'invoice_pdf_reupload_broken_{invoice.pk}'
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -527,6 +543,22 @@ def fetch_invoice_pdf_bytes(invoice):
     fall back to the freshly-rendered bytes) rather than failing fast.
     Correctness never depends on the background task's timing, only
     which of these two paths ends up doing the render.
+
+    Circuit breaker (real, measured fix — see DECISIONS.md): for this
+    account's confirmed Cloudinary ACL restriction, step 1's upload
+    succeeds but the retry fetch right after it always 401s the same way
+    the original fetch did — so every single view/download of an affected
+    invoice was paying for a real upload network round-trip PLUS a retry
+    fetch that were both certain to accomplish nothing, on top of the
+    render. If a re-upload+retry attempt for THIS invoice failed within
+    the last PDF_REUPLOAD_BREAKER_TTL_SECONDS, skip straight from the
+    render to the live-render fallback — no upload call, no retry fetch.
+    This does not fix the underlying account-level setting (still a real,
+    separate, non-code fix in the Cloudinary Console) — it only stops
+    re-paying the same already-known-doomed network cost on every request
+    in the meantime. The breaker is per-invoice (not global) so a genuine
+    fix — this specific invoice's PDF getting re-frozen some other way —
+    is never masked by another invoice's still-broken state.
     """
     if invoice.pdf_url:
         try:
@@ -548,6 +580,15 @@ def fetch_invoice_pdf_bytes(invoice):
         logger.exception('[INVOICES] Self-heal render failed for invoice_id=%s — no PDF bytes available.', invoice.pk)
         return None
 
+    breaker_key = _pdf_reupload_breaker_key(invoice)
+    if cache.get(breaker_key):
+        logger.info(
+            '[INVOICES] Skipping self-heal re-upload+retry for invoice_id=%s — a recent attempt already failed '
+            '(circuit breaker active, see fetch_invoice_pdf_bytes). Using the live-rendered bytes directly.',
+            invoice.pk,
+        )
+        return pdf_bytes
+
     try:
         pdf_result = upload_pdf_bytes(invoice, pdf_bytes)
         invoice.pdf_url = pdf_result['secure_url']
@@ -556,16 +597,19 @@ def fetch_invoice_pdf_bytes(invoice):
         invoice.save(update_fields=['pdf_url', 'pdf_public_id', 'pdf_generated_at'])
     except Exception:
         logger.exception('[INVOICES] Self-heal re-upload failed for invoice_id=%s.', invoice.pk)
+        cache.set(breaker_key, True, timeout=PDF_REUPLOAD_BREAKER_TTL_SECONDS)
     else:
         try:
             content = _try_fetch(invoice.pdf_url)
             logger.info('[INVOICES] Self-heal re-upload+retry succeeded for invoice_id=%s.', invoice.pk)
+            cache.delete(breaker_key)
             return content
         except requests.RequestException as exc:
             logger.warning(
                 '[INVOICES] Self-heal retry fetch still failing for invoice_id=%s (%s) — falling back to the bytes already rendered above.',
                 invoice.pk, exc,
             )
+            cache.set(breaker_key, True, timeout=PDF_REUPLOAD_BREAKER_TTL_SECONDS)
 
     logger.info('[INVOICES] Live-render fallback used for invoice_id=%s — stored pdf_url remains unreachable.', invoice.pk)
     return pdf_bytes

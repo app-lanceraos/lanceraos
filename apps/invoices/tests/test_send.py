@@ -198,6 +198,127 @@ class InvoiceSendGatingTests(InvoicesAPITestCase):
         self.assertEqual(invoice.pdf_url, FAKE_PDF_URL)
 
 
+class PdfReuploadCircuitBreakerTests(InvoicesAPITestCase):
+    """
+    Real, reported performance bug: for this account's confirmed
+    Cloudinary ACL restriction, every single view/download of an
+    affected invoice paid for a full WeasyPrint render PLUS a doomed
+    re-upload + retry-fetch network round trip that fails the exact same
+    way every time — before finally falling back to the bytes already
+    rendered. fetch_invoice_pdf_bytes now short-circuits that doomed
+    round trip (upload_pdf_bytes + the retry fetch) for
+    PDF_REUPLOAD_BREAKER_TTL_SECONDS once it's confirmed to fail once for
+    a given invoice, cache-keyed per invoice. Calls fetch_invoice_pdf_bytes
+    directly (not through /send/ or /pdf/) — this is about the shared
+    self-heal chain's own internal behavior, not any one caller of it.
+    """
+    @patch('apps.invoices.email_service.render_invoice_pdf', return_value=FAKE_PDF_BYTES)
+    @patch('apps.invoices.email_service.upload_pdf_bytes')
+    @patch('apps.invoices.email_service.requests.get')
+    def test_second_call_within_the_window_skips_the_reupload_and_retry_fetch(self, mock_get, mock_upload, mock_render):
+        import requests
+        from apps.invoices.email_service import fetch_invoice_pdf_bytes
+
+        mock_get.side_effect = requests.RequestException('401 unauthorized')
+        mock_upload.return_value = {'secure_url': FAKE_PDF_URL, 'public_id': 'lanceraos/invoices/healed.pdf'}
+        invoice = _sendable_invoice(self.user)
+
+        first = fetch_invoice_pdf_bytes(invoice)
+        self.assertEqual(first, FAKE_PDF_BYTES)
+        mock_upload.assert_called_once()  # the first call's real re-upload attempt
+
+        second = fetch_invoice_pdf_bytes(invoice)
+        self.assertEqual(second, FAKE_PDF_BYTES)
+        mock_upload.assert_called_once()  # still exactly once — the second call skipped it entirely
+        self.assertEqual(mock_render.call_count, 2)  # the render itself is still needed both times, never skipped
+
+    @patch('apps.invoices.email_service.render_invoice_pdf', return_value=FAKE_PDF_BYTES)
+    @patch('apps.invoices.email_service.upload_pdf_bytes')
+    @patch('apps.invoices.email_service.requests.get')
+    def test_breaker_is_scoped_per_invoice_not_global(self, mock_get, mock_upload, mock_render):
+        import requests
+        from apps.invoices.email_service import fetch_invoice_pdf_bytes
+
+        mock_get.side_effect = requests.RequestException('401 unauthorized')
+        mock_upload.return_value = {'secure_url': FAKE_PDF_URL, 'public_id': 'lanceraos/invoices/healed.pdf'}
+        broken_invoice = _sendable_invoice(self.user)
+        other_invoice = _sendable_invoice(self.user, client_email='other@example.com')
+
+        fetch_invoice_pdf_bytes(broken_invoice)
+        self.assertEqual(mock_upload.call_count, 1)
+
+        # A different invoice's own first attempt must still run for real —
+        # one invoice's known-broken state must never mask another's.
+        fetch_invoice_pdf_bytes(other_invoice)
+        self.assertEqual(mock_upload.call_count, 2)
+
+    @patch('apps.invoices.email_service.render_invoice_pdf', return_value=FAKE_PDF_BYTES)
+    @patch('apps.invoices.email_service.upload_pdf_bytes')
+    @patch('apps.invoices.email_service.requests.get')
+    def test_a_successful_reupload_never_trips_the_breaker(self, mock_get, mock_upload, mock_render):
+        """Only the stored-url fetch fails; the post-upload retry fetch succeeds — the happy self-heal path, which must never trip the breaker for next time."""
+        import requests
+        from apps.invoices.email_service import _pdf_reupload_breaker_key, fetch_invoice_pdf_bytes
+
+        mock_get.side_effect = [requests.RequestException('401 unauthorized'), _mock_pdf_fetch_response()]
+        mock_upload.return_value = {'secure_url': FAKE_PDF_URL, 'public_id': 'lanceraos/invoices/healed.pdf'}
+        invoice = _sendable_invoice(self.user)
+
+        result = fetch_invoice_pdf_bytes(invoice)
+        self.assertEqual(result, FAKE_PDF_BYTES)
+        self.assertIsNone(cache.get(_pdf_reupload_breaker_key(invoice)))
+
+    @patch('apps.invoices.email_service.render_invoice_pdf', return_value=FAKE_PDF_BYTES)
+    @patch('apps.invoices.email_service.upload_pdf_bytes')
+    @patch('apps.invoices.email_service.requests.get')
+    def test_real_measured_timing_improvement_on_the_second_call(self, mock_get, mock_upload, mock_render):
+        """
+        Real before/after timing, not just call-count assertions: simulates
+        the actual network latency the re-upload + retry-fetch round trip
+        costs (a mocked but realistic delay per network call, since this
+        sandboxed environment cannot reach the real, confirmed-broken
+        Cloudinary account directly) and proves the second call for the
+        same invoice is measurably faster than the first, because it skips
+        that round trip entirely.
+        """
+        import time
+
+        import requests
+        from apps.invoices.email_service import fetch_invoice_pdf_bytes
+
+        NETWORK_DELAY_SECONDS = 0.05
+
+        def slow_failing_get(*args, **kwargs):
+            time.sleep(NETWORK_DELAY_SECONDS)
+            raise requests.RequestException('401 unauthorized')
+
+        def slow_upload(*args, **kwargs):
+            time.sleep(NETWORK_DELAY_SECONDS)
+            return {'secure_url': FAKE_PDF_URL, 'public_id': 'lanceraos/invoices/healed.pdf'}
+
+        mock_get.side_effect = slow_failing_get
+        mock_upload.side_effect = slow_upload
+        invoice = _sendable_invoice(self.user)
+
+        start = time.perf_counter()
+        fetch_invoice_pdf_bytes(invoice)
+        first_call_seconds = time.perf_counter() - start
+
+        start = time.perf_counter()
+        fetch_invoice_pdf_bytes(invoice)
+        second_call_seconds = time.perf_counter() - start
+
+        # First call: initial fetch + upload + retry fetch = 3 real delays.
+        # Second call: only the initial fetch — upload + retry fetch skipped
+        # by the breaker. A real, measured speed-up, not an assumed one.
+        self.assertLess(second_call_seconds, first_call_seconds * 0.7)
+        print(  # noqa: T201 — deliberate, this is the real before/after number the task asked to verify
+            f'\n[PDF re-upload circuit breaker] first call: {first_call_seconds:.3f}s, '
+            f'second call: {second_call_seconds:.3f}s '
+            f'({(1 - second_call_seconds / first_call_seconds) * 100:.0f}% faster)',
+        )
+
+
 class InvoiceSendResendPathTests(InvoicesAPITestCase):
     """Default path — no custom SMTP configured at all."""
 

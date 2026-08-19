@@ -196,15 +196,15 @@ describe('InvoiceDetailPanel — reminders banner-vs-toggle exclusivity', () => 
   it('reminders off, active status: shows the top banner with Turn on reminders, no toggle in Details', async () => {
     renderPanel({ status: 'sent', reminders_enabled: false })
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
-    expect(screen.getByText(/reminders are turned off/i)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /turn on reminders/i })).toBeTruthy()
+    expect(screen.getByText(/reminders are off/i)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^turn on$/i })).toBeTruthy()
     expect(screen.queryByText('Reminders')).toBeNull()
   })
 
   it('reminders on, active status: no banner, a plain toggle in Details tab instead', async () => {
     renderPanel({ status: 'sent', reminders_enabled: true })
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
-    expect(screen.queryByText(/reminders are turned off/i)).toBeNull()
+    expect(screen.queryByText(/reminders are off/i)).toBeNull()
     expect(screen.getByText('Reminders')).toBeTruthy()
     expect(screen.getByRole('button', { name: /^on$/i })).toBeTruthy()
   })
@@ -212,14 +212,14 @@ describe('InvoiceDetailPanel — reminders banner-vs-toggle exclusivity', () => 
   it('terminal status: neither banner nor toggle, regardless of reminders_enabled', async () => {
     renderPanel({ status: 'paid', reminders_enabled: false, amount_paid: '500.00', outstanding_amount: '0.00' })
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
-    expect(screen.queryByText(/reminders are turned off/i)).toBeNull()
+    expect(screen.queryByText(/reminders are off/i)).toBeNull()
     expect(screen.queryByText('Reminders')).toBeNull()
   })
 
   it('draft/created status: neither banner nor toggle', async () => {
     renderPanel({ status: 'created', reminders_enabled: false })
     await waitFor(() => expect(screen.getByText('INV-2026-0001')).toBeTruthy())
-    expect(screen.queryByText(/reminders are turned off/i)).toBeNull()
+    expect(screen.queryByText(/reminders are off/i)).toBeNull()
   })
 })
 
