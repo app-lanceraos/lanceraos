@@ -104,6 +104,15 @@ export default function DesignGallery() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Merges a just-set-default design into state — the shared bookkeeping
+  // handleSetDefault/handleUseTemplate/handleAiSeedUpload all need after a
+  // real POST /designs/{id}/set-default/ call (whichever design comes
+  // back with is_default:true wins, every other design's own is_default
+  // flips false locally to match, without a second fetch).
+  function applyDefaultInState(defaultedDesign) {
+    setDesigns((prev) => prev.map((d) => (d.id === defaultedDesign.id ? defaultedDesign : { ...d, is_default: false })))
+  }
+
   async function handleUseTemplate(baseTemplate, colorVariant) {
     setBusyTemplate(baseTemplate)
     setError('')
@@ -113,6 +122,16 @@ export default function DesignGallery() {
       })
       setDesigns((prev) => [data, ...prev])
       setJustCreated(data)
+      // "Use this template" is a real call-to-action, not just "add this to
+      // a pile of designs" — it immediately becomes the active design new
+      // invoices use, matching what the button's own name promises. Real,
+      // confirmed SEV1 finding this closes: previously nothing ever made a
+      // newly-duplicated design the one anything actually used (see
+      // DECISIONS.md's 19 August 2026 "design assignment gap" entry) — a
+      // saved design existed but had zero effect on any real invoice.
+      const { data: defaulted } = await api.post(`/invoices/designs/${data.id}/set-default/`)
+      applyDefaultInState(defaulted)
+      setJustCreated(defaulted)
     } catch {
       setError('Could not create a design from that template. Please try again.')
     } finally {
@@ -134,7 +153,22 @@ export default function DesignGallery() {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       setDesigns((prev) => [data, ...prev])
-      setJustCreated(data)
+      // Same immediate-activation treatment as handleUseTemplate above —
+      // an AI-seeded design is just as much a real, direct "use this" pick
+      // as a ready-made template, not a second-class candidate that sits
+      // unused until a separate manual step.
+      let created = data
+      try {
+        const { data: defaulted } = await api.post(`/invoices/designs/${data.id}/set-default/`)
+        applyDefaultInState(defaulted)
+        created = defaulted
+      } catch {
+        // Non-fatal — the design itself was created successfully (the
+        // banner below still offers Customize/Done); only the auto-default
+        // convenience step failed, silently falling back to the pre-
+        // existing manual "Set as default" star the user can still click.
+      }
+      setJustCreated(created)
     } catch (err) {
       // Deliberately stays on this same page — Path 1's templates and the
       // "Blank design" button above remain immediately visible/clickable,
@@ -155,10 +189,23 @@ export default function DesignGallery() {
     navigate(`/invoices/designs/${design.id}/edit`)
   }
 
+  // Real, visible "which design is active" state — a genuine gap until
+  // this pass (SEV1 report, 19 August 2026): there was previously no way
+  // to see, anywhere in this gallery, which design (if any) new invoices
+  // would actually use. `is_default` is now a real, meaningful signal
+  // (apps.invoices.views.invoice_create/_finalise_invoice both read it,
+  // see DECISIONS.md) rather than a write-only field nothing ever
+  // consulted — this banner reflects that same real backend behavior
+  // directly, not a separate, potentially-drifting frontend guess.
+  const activeDesign = designs.find((d) => d.is_default)
+  const activeColorLabel = activeDesign
+    ? (COLOR_VARIANTS[activeDesign.base_template] || []).find((v) => v.key === (activeDesign.color_variant || 'default'))?.label
+    : null
+
   async function handleSetDefault(design) {
     try {
       const { data } = await api.post(`/invoices/designs/${design.id}/set-default/`)
-      setDesigns((prev) => prev.map((d) => (d.id === data.id ? data : { ...d, is_default: false })))
+      applyDefaultInState(data)
     } catch {
       setError('Could not set that design as default.')
     }
@@ -186,6 +233,26 @@ export default function DesignGallery() {
         <button onClick={handleStartBlank} className="fos-btn fos-btn-accent" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <Plus size={15} /> Blank design
         </button>
+      </div>
+
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '10px 14px',
+        background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+        fontSize: '0.85rem', color: 'var(--text-secondary)',
+      }}>
+        <Star size={15} style={{ color: activeDesign ? 'var(--accent)' : 'var(--text-tertiary)', flexShrink: 0 }} fill={activeDesign ? 'var(--accent)' : 'none'} />
+        {activeDesign ? (
+          <span>
+            <strong style={{ color: 'var(--text-primary)' }}>Currently active for new invoices:</strong>{' '}
+            {activeDesign.name} ({BASE_TEMPLATE_LABELS[activeDesign.base_template] || activeDesign.base_template}
+            {activeColorLabel ? ` — ${activeColorLabel}` : ''})
+          </span>
+        ) : (
+          <span>
+            <strong style={{ color: 'var(--text-primary)' }}>Currently active for new invoices:</strong>{' '}
+            Professional (default) — no design has been set as your default yet.
+          </span>
+        )}
       </div>
 
       {error && <FosAlert type="error" onDismiss={() => setError('')} style={{ marginBottom: 16 }}>{error}</FosAlert>}

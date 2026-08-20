@@ -267,6 +267,7 @@ class InvoiceListSerializer(serializers.ModelSerializer):
         model = Invoice
         fields = [
             'id', 'invoice_number', 'status', 'sent_via_platform', 'view_token', 'portal_view_url',
+            'design',
             'client', 'client_name', 'client_email', 'client_company', 'client_address', 'client_phone',
             'currency', 'subtotal', 'tax_rate', 'tax_amount', 'discount_amount', 'total', 'amount_paid',
             'refunded_amount',

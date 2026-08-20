@@ -5982,3 +5982,171 @@ none found — `manage.py check` clean.
 Docs: this entry; DATABASE.md's `invoice_designs` entry gained a "design_data render path" section
 pointing here; CLAUDE.md's Module 2 status table updated to reflect the design editor as now
 genuinely affecting real invoice output, not just built-and-validated in isolation.
+
+---
+
+Date: 19 August 2026 (SEV1 — the design-to-invoice assignment gap)
+Decision: A real, direct SEV1 report — "NOTHING in the design editor actually works" — was investigated
+from scratch, with zero trust in any prior claim (including this same project's own Step 8b
+"browser-verified" claims and the just-landed PDF-001 renderer work), entirely via live evidence: a real
+Chromium browser driven with Playwright (no project run-skill existed for this app; adapted the `run`
+skill's own documented Playwright fallback, launching against the real `python manage.py runserver`/
+`npm run dev` dev servers), real Network-tab-equivalent request/response capture, and direct queries
+against the real database — not unit tests, not code-reading assumptions.
+
+**Verdict, stated plainly per this investigation's own explicit instruction**: Step 8b's original claims
+were CORRECT, not false — proven live, twice (a position drag and a style-panel color change), each
+followed by a real `PUT`, a real fresh page reload, and the change genuinely present both times. The
+PDF-001 renderer's own claims were also correct — proven live, rendering the exact dragged coordinates
+and the exact style-panel color from a real edited design. **Neither was ever the actual problem, and
+neither regressed.** The real, single root cause is a third, distinct, OLDER gap that predates both:
+`Invoice.design` (the FK PDF-001's renderer reads) was **never assigned by any code path in the
+application, anywhere, ever** — not `invoice_create`, not autosave, not `_finalise_invoice`, not
+`_duplicate_invoice_core`. `InvoiceSerializer.Meta.fields` doesn't even include `design` — confirmed
+directly, not assumed. `InvoiceDesign.is_default` (the gallery's own "Set as default" star,
+`design_set_default`, built back in Step 8) was write-only: a real endpoint that really persisted the
+flag, and a real value nothing, anywhere, ever read back. Confirmed against real production data before
+any fix: 82 real invoices, **0** with `design_id` set; 13 real `InvoiceDesign` rows (several genuinely
+`is_default=False` by construction, since nothing had ever set one `True` either), 0 referenced by any
+invoice. PDF-001's own renderer was a real, working bridge to a wire that was never connected on the
+other end — every real invoice's `_select_template_name`/`should_render_dynamic_design` check
+necessarily saw `design_id=None` and fell through to the static `professional.html` default, regardless
+of anything any user ever picked, dragged, recolored, or marked default. This is a materially different,
+and more severe, framing than CLAUDE.md's own pre-existing flag ("no per-invoice design-picker field in
+the wizard yet") had captured — that flag was accurate about the ABSENCE of a manual override control,
+but didn't capture that even the already-built "default design" mechanism (`is_default`, a real field, a
+real endpoint, a real UI star) was equally disconnected from every invoice, making the entire design
+system's real-world effect zero regardless of which of its 3 build steps (schema/Step 8, editor/Step 8b,
+render path/PDF-001) a user's confusion traced back to.
+
+**Live investigation method** (since no `chromium-cli` or project run-skill existed for this app — the
+`run` skill's own documented fallback was followed instead: Playwright's `chromium` module, resolved via
+its `npx` cache path since it isn't a `frontend/` dependency, launched headless with `--no-sandbox`
+against the real dev servers):
+1. **Item 1 — "Use this template"**: logged in as a real seeded test account, opened `/invoices/designs`,
+   selected Minimal + the non-default "Slate" swatch, clicked "Use this template." Real captured network
+   traffic: `POST /api/invoices/designs/duplicate/` with body `{"base_template":"minimal","color_variant":
+   "slate"}` (correct — not stale/hardcoded), a real `201` with a genuine new `InvoiceDesign` row
+   (`design_data` byte-identical to `MINIMAL_DESIGN_DATA`, as expected for an untouched pick) —
+   `"is_default":false`. Confirmed directly (grep across `views.py`/`serializers.py`): nothing, anywhere,
+   ever associates this new row with anything else. This is the real root cause, confirmed at the network
+   layer before ever reading a line of backend code to explain it.
+2. **Item 2 — no visible active-design indicator**: confirmed directly, a real screenshot of the gallery
+   after "Use this template" succeeds shows the new design under "Your designs" with zero indication
+   anywhere that it is (or isn't) the one anything will actually use. Also confirmed directly (grep across
+   `NewInvoiceWizard.jsx`/`InvoiceFormFields.jsx`): zero references to the design system anywhere in the
+   invoice creation flow — no per-invoice picker exists, matching CLAUDE.md's own prior flag exactly, now
+   independently re-confirmed rather than taken on faith.
+3. **Item 3 — canvas drag persistence**: opened the real canvas editor for the just-created design,
+   selected the Logo element (GrapesJS's own real toolbar — select-parent/move/delete icons — appeared,
+   confirmed via real DOM inspection, not assumed), dragged it via the real "move" toolbar handle (GrapesJS
+   requires this specific handle for an absolute-mode component's drag — a direct body-drag does not
+   initiate one, confirmed by first trying the naive approach and observing no movement). The visible
+   bounding box genuinely moved (`x:406→660, y:172→403` in real screen pixels). Clicked Save; the real
+   captured `PUT .../designs/{id}/` body contained the real new mm coordinates (`x:85.2, y:81.23`,
+   converted from the drag), and the `200` response echoed the same values back with a real updated
+   `updated_at`. **Then, critically, the page was closed and a completely fresh page load of the same
+   editor URL was driven** (not a soft in-app navigation) — the Logo element rendered at the exact same
+   dragged position, byte-for-byte matching the post-drag bounding box. Repeated for a style-panel color
+   change (`business_info`'s `color` field): the React-controlled `<input type="color">` needed the
+   standard native-value-setter bypass to simulate programmatically (a plain `.value =` assignment doesn't
+   fire React's own `onChange` — confirmed by first trying the naive approach and getting a false negative,
+   then fixing the harness itself before concluding anything) — once done correctly, the same
+   save→reload→still-present result held for the color too.
+4. **The render path, proven correct end to end for a real, brand-new invoice**: rather than trust any of
+   the above in isolation, manually assigned the just-edited (dragged + recolored) design to a real
+   invoice via the ORM directly and rendered it through the exact PDF-001 pipeline
+   (`render_invoice_portal_html`) — the output HTML contained `left:85.2mm`/`top:81.23mm` verbatim.
+
+**The fix — closing the actual gap**, not touching anything in Step 8b or PDF-001 (both confirmed
+already correct):
+- `apps/invoices/views.py`'s `invoice_create` now looks up `InvoiceDesign.objects.filter(user=request.
+  user, is_default=True).first()` and assigns it as a `serializer.save()` kwarg (the identical pattern
+  already used for `user` on the same line) — `design` stays deliberately absent from
+  `InvoiceSerializer.Meta.fields` itself, so a client still cannot pass an arbitrary design id through the
+  general create/update path; only the server's own default lookup may set it. Assigned at CREATE time,
+  not finalise — so a draft's own live PDF preview and its eventual finalised/frozen PDF always agree,
+  never a design that visibly swaps out from under the user the moment they click Finalise.
+- `_finalise_invoice` gained a defensive backfill: if `invoice.design_id` is still `None` at finalise
+  time, look up the user's current default design then too. Real, necessary, not speculative — every one
+  of the 32 real draft invoices in the database as of this fix predates `invoice_create`'s own new
+  assignment logic, and would otherwise stay `design_id=None` forever even after their owner sets a real
+  default going forward. Never overrides an already-assigned design (checked first).
+- `_duplicate_invoice_core` now includes `design=original.design` in its copied-defaults dict, alongside
+  every other field a duplicate already inherits (currency/notes/terms/etc.) — previously silently
+  "worked" only by coincidence, since `original.design` was always `None` anyway before this fix.
+  `generate_recurring_invoices`' own explicit `design=root.design` override (Step 16's established "read
+  live from the root" design decision) still wins unconditionally, unaffected — `defaults.update
+  (overrides)` in `_duplicate_invoice_core` already makes an explicit kwarg override the new default,
+  confirmed with a real regression test reconstructing the exact scenario (a stale personal default design
+  set AFTER a recurring root's own design, proving the child still gets the root's design, never the
+  stale default).
+- `InvoiceListSerializer` gained a real `design` field (the FK id) — previously absent entirely, meaning
+  even an authenticated frontend request for an invoice's own detail had no way to see which design (if
+  any) it used. Cheap, safe (read-only via DRF's default FK handling), and closes the exact same
+  "no visible indication" theme item 2 named, one level down from the gallery.
+- `DesignGallery.jsx`: "Use this template" (`handleUseTemplate`) and the AI-seed upload
+  (`handleAiSeedUpload`) now chain a real `POST .../set-default/` immediately after a successful create —
+  matching the verification bar's own literal wording ("confirm the gallery visibly shows it as active"
+  right after picking it, with no separate manual step described) and the plain meaning of a button
+  labeled "Use this template." The pre-existing, separate manual "Set as default" star on `SavedDesignCard`
+  is untouched — still useful for switching between several already-created designs later.
+  `handleStartBlank`/`DesignEditor.jsx`'s own save flow are deliberately UNCHANGED — a user experimenting
+  with a blank/custom design via "Customize" shouldn't have their invoices' whole look silently swapped
+  out from under them without an explicit choice; only the two gallery-level "pick something ready-made
+  and immediately use it" actions get the immediate-activation treatment.
+- A new, real, visible "Currently active for new invoices: [Name] ([Template] — [Color])" banner in
+  `DesignGallery.jsx`, reading the real `is_default` design directly (no separate frontend-only state to
+  drift from the backend) — including an honest "Professional (default) — no design has been set as your
+  default yet" state when nothing is marked default, so the banner never goes silent, per item 2's own
+  explicit requirement to always show what's actually active.
+
+**Deliberately NOT built, named rather than silently worked around** (per item 2's own explicit framing):
+a per-invoice design OVERRIDE picker inside `NewInvoiceWizard.jsx`/`InvoiceFormFields.jsx` — confirmed,
+directly, still does not exist anywhere in that flow. This is a real, separate, larger frontend feature
+(a new field, its own UI, its own interaction with the now-real default-design mechanism) intentionally
+out of this pass's scope, matching CLAUDE.md's own established convention of flagging deliberate
+exclusions rather than scope-creeping an urgent bug-fix pass into unplanned feature work.
+
+**A second, related, still-open gap surfaced but NOT fixed this pass, flagged explicitly**:
+`InvoiceDesign.color_variant` remains completely inert — confirmed directly at the network layer
+(the real "Slate" pick above produced `design_data` byte-identical to the base "Sage" seed; no color
+transform applied anywhere) in addition to PDF-001's own prior finding that no render path ever reads it
+either. The SEV1 report's own opening line ("any color theme... has no real effect") is therefore
+literally, separately true for a reason beyond the design-assignment gap this pass closes — picking a
+different color swatch in the gallery has zero visual effect even once its design is genuinely the active
+one. Real recoloring (walking a base template's `design_data` and substituting each `COLOR_VARIANTS`
+entry's `primary`/`secondary` hex values into the right style keys, per base template) is a real,
+non-trivial content-design decision deliberately not rushed into this same pass — flagged here explicitly
+rather than silently left unaddressed a second time.
+
+Alternatives considered: assigning the default design at FINALISE time only (not create) — rejected,
+since a draft's live preview (reachable at `GET .../pdf/` for any `draft`/`created` invoice) would then
+show a different design than the eventual frozen PDF, a real, foreseeable, jarring inconsistency this
+project's own established principles (one shared renderer, no drift between preview and final) already
+argue against. Auto-defaulting `handleStartBlank`'s custom-editor save flow too, for full consistency
+across all 3 gallery paths — rejected, since a user opening a blank canvas to experiment is a
+fundamentally different intent than clicking "Use this template," and silently repointing every future
+invoice at an in-progress, possibly-unfinished custom design the moment they hit Save would be a real,
+unwanted surprise with no real precedent asking for it.
+
+Tests: `apps/invoices/tests/test_design_assignment.py` (10 new tests) — `invoice_create` assigns the
+real default design, leaves it null with no default set, never picks up another user's default, and
+silently ignores a client-supplied `design` id in the request body; `_finalise_invoice` backfills a
+pre-existing design-less draft, never overrides an already-assigned design, and stays null when no
+default exists either; `_duplicate_invoice_core` carries a design forward (and stays null when the
+original had none); a real regression test proving `generate_recurring_invoices`' own root-design-read-
+live behavior still wins over the new default-assignment logic. Full `apps.invoices` suite: 710 passing
+(up from 700); full frontend suite: 224 passing, no regressions; `vite build` clean. Live-verified beyond
+the automated suite, exactly per this investigation's own required verification bar: real browser,
+real login, real "Use this template" click, real gallery banner shown correct, real canvas drag AND real
+color change each independently surviving a genuine fresh page reload, a real invoice created through the
+actual `POST /api/invoices/` endpoint (not a test fixture) automatically picking up the real edited
+default design, and its real rendered PDF containing the client's real name alongside the exact dragged
+coordinates — the full chain, proven, not assumed.
+
+Docs: this entry; DATABASE.md's `invoice_designs`/`invoices` entries updated to reflect `design` as a
+now-genuinely-assigned field, not a permanently-null one; CLAUDE.md's Module 2 status updated to state
+plainly that the design system's real-world effect was zero before this pass, for every one of its 3
+build steps combined, and is now real for the two paths (ready-made template pick, AI-seed) that assign
+a default automatically — a manual per-invoice override remains unbuilt, named above.

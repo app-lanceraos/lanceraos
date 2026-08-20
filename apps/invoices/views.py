@@ -359,6 +359,21 @@ def invoice_create(request):
     Creates a new draft invoice. invoice_number is deliberately left
     unassigned (None) — see Invoice.invoice_number's field comment;
     invoice_finalise() is what assigns the real number.
+
+    `design` is deliberately NOT one of InvoiceSerializer's own fields (a
+    client can't just pass an arbitrary design id in the request body —
+    only the system's own default-design lookup may assign it), so it's
+    set here as an extra serializer.save() kwarg, the same pattern already
+    used for `user` on the line below. This is the real, previously-
+    missing connection between "a user marked a design as their default"
+    (InvoiceDesign.is_default, set via .../set-default/) and any actual
+    invoice — before this fix, is_default was write-only: nothing, ever,
+    anywhere, read it back. Assigned at CREATE time (not finalise) so a
+    draft's live PDF preview and its eventual finalised/frozen PDF always
+    agree — never a design that visibly changes out from under the user
+    the moment they click Finalise. See DECISIONS.md's 19 August 2026
+    "design assignment gap" entry for the full investigation (a real,
+    live-browser-verified SEV1 report) this closes.
     """
     if _check_moderate_rate_limit('create', request.user):
         return _too_many_requests('Too many invoices created recently. Please try again later.')
@@ -367,7 +382,8 @@ def invoice_create(request):
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    invoice = serializer.save(user=request.user)
+    default_design = InvoiceDesign.objects.filter(user=request.user, is_default=True).first()
+    invoice = serializer.save(user=request.user, design=default_design)
     emit('InvoiceCreated', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
     logger.info('[INVOICES] Created draft invoice %s for user %s.', invoice.pk, request.user.pk)
     return Response(InvoiceListSerializer(invoice).data, status=status.HTTP_201_CREATED)
@@ -617,6 +633,15 @@ def _finalise_invoice(invoice, force_reminders_off=True):
     invoice.finalised_at = timezone.now()
     if force_reminders_off:
         invoice.reminders_enabled = False
+
+    # Defensive fallback for a draft created before invoice_create started
+    # assigning the user's default design (see that view's own docstring) —
+    # every draft in the database as of this fix predates it, so without
+    # this, all of them would stay design_id=None forever even after the
+    # user has since marked a real design as default. Only applies when
+    # nothing has assigned one already (never overrides a real choice).
+    if invoice.design_id is None:
+        invoice.design = InvoiceDesign.objects.filter(user=invoice.user, is_default=True).first()
 
     # A recurring root's next_recurring_date was never being set anywhere
     # (Step 16 only ever advances it once a value already exists) — every
@@ -1261,6 +1286,7 @@ def _duplicate_invoice_core(original, **overrides):
         is_recurring=original.is_recurring, recurring_interval_days=original.recurring_interval_days,
         recurring_auto_send=original.recurring_auto_send,
         is_one_time_client=original.is_one_time_client,
+        design=original.design,
     )
     defaults.update(overrides)
 

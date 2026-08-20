@@ -761,7 +761,11 @@ aging-report/exchange-rate/presets). Step 7b built the real `GET .../pdf/` rende
 **Schema** (grouped by purpose): `id` (UUID PK), `user` (FK, `CASCADE`), `client` (FK →
 `clients.Client`, `SET_NULL`, nullable), `invoice_number` (see uniqueness note below), `status`
 (9 choices — see below), `sent_via_platform`, `design` (FK → `InvoiceDesign`, `SET_NULL`,
-nullable), `view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
+nullable — genuinely populated as of 19 August 2026; see this table's own `invoice_designs`
+entry below and DECISIONS.md's "SEV1 — the design-to-invoice assignment gap" entry. Before that
+fix this column was `NULL` on literally every real invoice, always, regardless of any
+`InvoiceDesign` a user created/edited/marked default — nothing, anywhere, ever wrote to it),
+`view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
 `client_address`/`client_phone` (immutable snapshot at creation), `currency` (CharField(3), no
 `choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`,
 `rate_to_usd_at_issue` (Decimal(10,6), nullable), `exchange_rate_snapshot` (FK →
@@ -1037,6 +1041,12 @@ the 3 built templates — see DECISIONS.md's Step 8 entry.
 `InvoiceTemplate.save()` — same pattern, applied to this new model, verified directly with a test
 creating two defaults for the same user and confirming the first is unset.
 
+**`is_default` was write-only from Step 8 until 19 August 2026** — a real, correctly-enforced
+field that nothing, anywhere, ever read back. `apps.invoices.views.invoice_create` now looks it
+up and assigns the matching design to a new invoice's own `design` FK (with `_finalise_invoice`
+backfilling it for any pre-existing draft that predates this fix) — see DECISIONS.md's "SEV1 —
+the design-to-invoice assignment gap" entry for the full, live-browser-verified investigation.
+
 **`source='ai_seeded'` is real as of Step 9** (`apps/invoices/ai_design.py`,
 `POST /api/invoices/designs/ai-seed/`) — previously just a model-level choice with nothing writing
 it. `color_variant` gets `'ai_extracted'` on this path specifically (a literal string, not one of
@@ -1138,6 +1148,12 @@ based on `design_data` itself rather than `InvoiceDesign.source`.
 `color_variant` remains genuinely unused by any render path (both the 3 static templates and the
 new dynamic renderer ignore it entirely) — a pre-existing gap, not introduced or closed by this
 pass; flagged here rather than silently left undocumented.
+
+**Same-day follow-up (SEV1 fix)**: this renderer was itself proven correct, live, the moment it
+was built — the real, separate reason it had zero effect on any actual invoice was that
+`Invoice.design` was never assigned by anything in the first place (see this table's own
+`invoices` entry above and DECISIONS.md's "SEV1 — the design-to-invoice assignment gap" entry).
+Both gaps are now closed; `color_variant` remains the one still-open, explicitly flagged item.
 
 ---
 
