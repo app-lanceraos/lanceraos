@@ -32,6 +32,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.views.decorators.clickjacking import xframe_options_exempt
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -49,6 +50,7 @@ from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTE
 
 from .ai_design import seed_design_data_from_image
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
+from .design_preview import render_builtin_template_preview_html, render_design_preview_html
 from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
 from .email_service import (
     build_formal_notice_email, build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email,
@@ -57,7 +59,7 @@ from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceItem, InvoicePartialPayment,
     InvoicePreset, InvoicePresetItem, InvoiceReminder, PaymentClaim,
 )
-from .pdf_generator import render_invoice_pdf
+from .pdf_generator import TEMPLATE_MAP, render_invoice_pdf
 from .tasks import REMINDER_SCHEDULE, _advance_recurring_date, _send_reminder, render_and_store_invoice_pdf
 from .serializers import (
     DueDateOnlySerializer, InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer,
@@ -2403,6 +2405,56 @@ def design_set_default(request, pk):
     design.save()  # InvoiceDesign.save()'s own override unsets every other default for this user
     logger.info('[INVOICES] Set design %s as default for user %s.', design.pk, request.user.pk)
     return Response(InvoiceDesignSerializer(design).data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@xframe_options_exempt
+def design_builtin_preview(request):
+    """
+    Path 1's own gallery card preview (SEV1 follow-up, 20 August 2026,
+    item 1) — a real, non-WeasyPrint HTML render of one of the 3 static
+    templates, real sample data, the requesting user's own real logo/
+    profile, and the requested color_variant. `?base_template=`
+    (required) + `?color_variant=` (optional, blank/unrecognized falls
+    back to that template's own 'default' — see resolve_design_colors)
+    are query params, not JSON body, since DesignGallery.jsx embeds this
+    directly as an <iframe src="...">, not an XHR call — the browser's
+    own navigation carries the same-site auth cookie automatically (see
+    DECISIONS.md), no fetch/blob plumbing needed.
+
+    @xframe_options_exempt — same real, necessary exemption
+    invoice_preview_as_client already needed (see that view's own
+    docstring/DECISIONS.md): Django's clickjacking protection blocks
+    ANY page from being framed by default, in DEBUG and production
+    alike, and this view's entire purpose is to be framed.
+    IsAuthenticated still fully gates who can reach it at all.
+    """
+    base_template = request.query_params.get('base_template')
+    if base_template not in TEMPLATE_MAP:
+        return Response({'base_template': f'Must be one of {sorted(TEMPLATE_MAP)}.'}, status=status.HTTP_400_BAD_REQUEST)
+    color_variant = request.query_params.get('color_variant', '') or ''
+
+    html = render_builtin_template_preview_html(request.user, base_template, color_variant)
+    return HttpResponse(html, content_type='text/html')
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@xframe_options_exempt
+def design_preview(request, pk):
+    """
+    'Your designs' own gallery card preview — same real-render principle
+    as design_builtin_preview above, but for an already-saved,
+    real-owned InvoiceDesign (real sample data, but the design's ACTUAL
+    design_data, routed through the exact same render_html_for_design
+    branch a real invoice with this design assigned would use — a
+    custom/edited design's card genuinely reflects the dynamic renderer,
+    not just base_template+color).
+    """
+    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
+    html = render_design_preview_html(request.user, design)
+    return HttpResponse(html, content_type='text/html')
 
 
 @api_view(['POST'])

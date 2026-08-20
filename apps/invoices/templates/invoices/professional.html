@@ -57,7 +57,7 @@
     top: 0; left: 0;
     width: 3mm;
     height: 100%;
-    background: #a8813c;
+    background: {{ design_primary_color }};
   }
   .spine::after {
     content: '';
@@ -73,7 +73,7 @@
     font-size: 7.5pt;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: #a8813c;
+    color: {{ design_primary_color }};
     margin: 0 0 3mm;
   }
 
@@ -93,7 +93,7 @@
     font-family: 'Source Serif 4', Georgia, serif;
     font-size: 21pt;
     font-weight: 600;
-    color: #1a2b42;
+    color: {{ design_secondary_color }};
     margin: 0 0 2mm;
     letter-spacing: -0.01em;
   }
@@ -109,7 +109,7 @@
   .meta .num {
     font-size: 12pt;
     font-weight: 600;
-    color: #1a2b42;
+    color: {{ design_secondary_color }};
     margin-bottom: 2mm;
   }
   .meta .row {
@@ -124,7 +124,7 @@
 
   hr.rule {
     border: none;
-    border-top: 0.4mm solid #1a2b42;
+    border-top: 0.4mm solid {{ design_secondary_color }};
     margin: 0 0 8mm;
   }
 
@@ -139,13 +139,13 @@
     font-size: 7.5pt;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: #a8813c;
+    color: {{ design_primary_color }};
     margin-bottom: 2.5mm;
   }
   .party .name {
     font-size: 11pt;
     font-weight: 600;
-    color: #1a2b42;
+    color: {{ design_secondary_color }};
     margin-bottom: 1mm;
   }
   .party .line { color: #55524a; font-size: 9pt; }
@@ -163,7 +163,7 @@
     color: #7a7568;
     text-align: left;
     padding: 0 0 3mm;
-    border-bottom: 0.5mm solid #a8813c;
+    border-bottom: 0.5mm solid {{ design_primary_color }};
   }
   table.items thead th.num { text-align: right; }
   table.items tbody td {
@@ -192,13 +192,13 @@
     padding: 1.6mm 0;
   }
   .totals .row.due {
-    border-top: 0.4mm solid #1a2b42;
+    border-top: 0.4mm solid {{ design_secondary_color }};
     margin-top: 2mm;
     padding-top: 3mm;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 13pt;
     font-weight: 600;
-    color: #1a2b42;
+    color: {{ design_secondary_color }};
   }
   .totals .row.due span:first-child {
     font-family: 'IBM Plex Sans', sans-serif;
@@ -206,7 +206,7 @@
     letter-spacing: 0.1em;
     text-transform: uppercase;
     font-weight: 600;
-    color: #a8813c;
+    color: {{ design_primary_color }};
     align-self: center;
   }
   .totals .pkr {
@@ -228,7 +228,7 @@
     font-size: 7.5pt;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: #a8813c;
+    color: {{ design_primary_color }};
     margin-bottom: 2.5mm;
   }
   .notes-block p { font-size: 8.5pt; color: #55524a; margin: 0 0 3mm; }
@@ -257,7 +257,7 @@
   .sign-block { width: 55mm; text-align: right; }
   .sign-block img.sig { height: 14mm; margin-bottom: 1mm; }
   .sign-block .line {
-    border-top: 0.3mm solid #1a2b42;
+    border-top: 0.3mm solid {{ design_secondary_color }};
     padding-top: 2.5mm;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 7.5pt;
@@ -276,7 +276,7 @@
     font-size: 7.5pt;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: #a8813c;
+    color: {{ design_primary_color }};
     margin-bottom: 1.5mm;
   }
   .pay-online .link {

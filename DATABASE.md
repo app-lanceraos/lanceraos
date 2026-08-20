@@ -764,7 +764,14 @@ aging-report/exchange-rate/presets). Step 7b built the real `GET .../pdf/` rende
 nullable — genuinely populated as of 19 August 2026; see this table's own `invoice_designs`
 entry below and DECISIONS.md's "SEV1 — the design-to-invoice assignment gap" entry. Before that
 fix this column was `NULL` on literally every real invoice, always, regardless of any
-`InvoiceDesign` a user created/edited/marked default — nothing, anywhere, ever wrote to it),
+`InvoiceDesign` a user created/edited/marked default — nothing, anywhere, ever wrote to it.
+**Important nuance, 20 August 2026**: this column itself is only ever persisted by
+`invoice_create`/`_finalise_invoice` — a still-`draft` invoice with `design_id=NULL` that predates
+a default design being set will still show that current default in its own LIVE preview
+(`pdf_generator._effective_design`'s read-time fallback, draft-status only, never persisted here)
+without this column ever actually changing. Query this column directly to know what's frozen;
+query a draft's live render to know what it currently PREVIEWS as — the two can legitimately
+differ for an un-finalised draft),
 `view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
 `client_address`/`client_phone` (immutable snapshot at creation), `currency` (CharField(3), no
 `choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`,
@@ -1149,11 +1156,25 @@ based on `design_data` itself rather than `InvoiceDesign.source`.
 new dynamic renderer ignore it entirely) — a pre-existing gap, not introduced or closed by this
 pass; flagged here rather than silently left undocumented.
 
-**Same-day follow-up (SEV1 fix)**: this renderer was itself proven correct, live, the moment it
-was built — the real, separate reason it had zero effect on any actual invoice was that
+**19 August 2026 follow-up (SEV1 fix)**: this renderer was itself proven correct, live, the moment
+it was built — the real, separate reason it had zero effect on any actual invoice was that
 `Invoice.design` was never assigned by anything in the first place (see this table's own
 `invoices` entry above and DECISIONS.md's "SEV1 — the design-to-invoice assignment gap" entry).
-Both gaps are now closed; `color_variant` remains the one still-open, explicitly flagged item.
+
+**20 August 2026 follow-up (color_variant wiring + gallery preview fix)**: `color_variant` is no
+longer inert — `apps/invoices/design_seeds.COLOR_VARIANTS` + `resolve_design_colors` are the real
+source of truth, wired into `build_pdf_context` as `design_primary_color`/`design_secondary_color`
+template variables, consumed identically by all 3 static templates AND the dynamic renderer. Each
+template's own pre-existing hardcoded brand-accent hex values were verified to be byte-identical to
+that template's own `COLOR_VARIANTS` `'default'` entry, so this was a real, contained variable
+substitution, not a CSS-custom-property retrofit. The gallery's own preview cards
+(`DesignGallery.jsx`) now render via a real backend HTML endpoint
+(`apps/invoices/design_preview.py`, `GET /api/invoices/designs/preview/` +
+`GET /api/invoices/designs/<pk>/preview/`) reusing the exact same `render_html_for_design` a real
+invoice uses, embedded via a scaled `<iframe>` — replacing the old `DesignCanvasPreview.jsx`
+client-side approximation (deleted). See DECISIONS.md's 20 August 2026 "SEV1 — gallery previews +
+color_variant wiring" entry for the full investigation, including a real, separate draft-live-
+default-fallback fix (`pdf_generator._effective_design`) this same pass surfaced and closed.
 
 ---
 

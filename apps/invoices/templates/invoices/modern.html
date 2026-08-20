@@ -44,7 +44,7 @@
     position: fixed;
     top: 0; left: 0; bottom: 0;
     width: 42mm;
-    background: #2d2a6e;
+    background: {{ design_primary_color }};
     color: #ffffff;
     padding: 14mm 6mm 12mm;
     display: flex;
@@ -62,7 +62,7 @@
   .sidebar .pay-block .lbl {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 7pt; letter-spacing: 0.16em; text-transform: uppercase;
-    color: #d4e157; margin-bottom: 2.5mm;
+    color: {{ design_secondary_color }}; margin-bottom: 2.5mm;
   }
   .sidebar .pay-block img.qr { width: 26mm; height: 26mm; background: #fff; padding: 2mm; border-radius: 2mm; }
   .sidebar .pay-block .link {
@@ -81,7 +81,7 @@
     text-transform: uppercase; color: #7c78a8; margin-bottom: 2mm;
   }
   .masthead .num {
-    font-family: 'Space Grotesk', sans-serif; font-size: 22pt; font-weight: 700; color: #2d2a6e;
+    font-family: 'Space Grotesk', sans-serif; font-size: 22pt; font-weight: 700; color: {{ design_primary_color }};
   }
   .masthead .dates { text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 8.5pt; color: #6b6885; }
   .masthead .dates .row { margin-top: 1.5mm; white-space: nowrap; }
@@ -101,7 +101,7 @@
   table.items { width: 100%; border-collapse: collapse; margin-bottom: 2mm; }
   table.items thead { display: table-header-group; }
   table.items thead th {
-    background: #2d2a6e; color: #fff;
+    background: {{ design_primary_color }}; color: #fff;
     font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; letter-spacing: 0.12em;
     text-transform: uppercase; text-align: left; padding: 3.5mm 3mm;
   }
@@ -118,7 +118,7 @@
   .totals { width: 62mm; }
   .totals .row { display: flex; justify-content: space-between; font-size: 9pt; color: #4b4860; padding: 1.4mm 3mm; }
   .total-pill {
-    display: inline-block; background: #d4e157; color: #16151c;
+    display: inline-block; background: {{ design_secondary_color }}; color: #16151c;
     border-radius: 3mm; padding: 3mm 5mm; margin-top: 2mm;
     font-family: 'Space Grotesk', sans-serif; font-size: 16pt; font-weight: 700;
   }
@@ -144,7 +144,7 @@
   .sign-block { width: 60mm; margin-left: auto; margin-top: 16mm; text-align: right; }
   .sign-block img.sig { height: 15mm; margin-bottom: -2mm; }
   .sign-block .line {
-    border-top: 0.3mm solid #2d2a6e; padding-top: 2.5mm;
+    border-top: 0.3mm solid {{ design_primary_color }}; padding-top: 2.5mm;
     font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt;
     letter-spacing: 0.12em; text-transform: uppercase; color: #a8a5b8;
   }

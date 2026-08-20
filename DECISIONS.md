@@ -6150,3 +6150,153 @@ now-genuinely-assigned field, not a permanently-null one; CLAUDE.md's Module 2 s
 plainly that the design system's real-world effect was zero before this pass, for every one of its 3
 build steps combined, and is now real for the two paths (ready-made template pick, AI-seed) that assign
 a default automatically — a manual per-invoice override remains unbuilt, named above.
+
+---
+
+Date: 20 August 2026 (SEV1 — gallery previews + color_variant wiring)
+Decision: A real, direct SEV1 report — a screenshot showing all 3 gallery template cards rendering
+the exact same generic thumbnail, not reflecting the real template or the selected color swatch —
+was investigated and fixed as 3 real, distinct items: item 0 (verify base_template selection itself
+works for a brand-new invoice, before assuming a third bug), item 1 (gallery preview cards), item 2
+(color_variant completely inert everywhere).
+
+**Item 0 — verified, both directions, with concrete real-account evidence.** Base_template selection
+for a genuinely NEW invoice already worked correctly (confirmed by the prior round's own DB check and
+re-confirmed here). The real, separate, previously-undetected finding this investigation surfaced: a
+DRAFT invoice created BEFORE any design existed (or before one was marked default) stayed on the bare
+hardcoded Professional colors in its own live preview even AFTER a default was set, because the prior
+round's backfill only ever ran at `_finalise_invoice` — a draft's own live `GET .../pdf/` render (the
+one status that genuinely re-renders on every request, confirmed directly against `invoice_pdf`,
+views.py — everything past draft fetches the frozen stored PDF instead) never consulted the current
+default at all. Fixed with `pdf_generator._effective_design(invoice)`: falls back LIVE to the user's
+current default design when `invoice.design_id` is `None` AND `invoice.status == 'draft'` — never past
+draft, where the frozen-PDF guarantee must hold absolutely. A pure read-time fallback; never persists
+anything — `invoice.design_id` itself only ever gets set by `invoice_create`/`_finalise_invoice`
+(unchanged from the prior round).
+
+Real evidence, checked directly against Ali's own `admin@lanceraos.com` account before writing anything
+further: his one real default design ("Professional (copy)", burgundy) was created TODAY, 20 August
+2026, 14:51 — every one of his 31 real invoices predates it. His ONE remaining draft (created 19 August
+23:46) will now show his current default (burgundy Professional) the next time he opens its live
+preview — genuinely fixed by this pass. Every one of his OTHER 29 invoices (`created`/`sent`/`paid`/
+`viewed`/etc., finalised between 15-19 August, all with `design_id=None`) is **permanently frozen at
+plain default Professional colors, by design, and will never retroactively pick up any design he
+marks default from now on** — this is the frozen-PDF guarantee working exactly as intended, not a bug,
+and no amount of "set as default" clicking will ever change what these specific historical invoices
+show. Stated here plainly, with the real data, so Ali can tell which of his own test invoices are
+"supposed to look old" (all 29 of them) vs. genuinely broken (none, as of this pass) without having to
+guess.
+
+**Item 1 — gallery preview cards, real bug, fixed with a real backend render (approach (a)).**
+`DesignCanvasPreview.jsx` (the old component) read real `design_data` positions but never received
+`color_variant` at all — confirmed directly in the code before ever looking at the screenshot: neither
+`BuiltinTemplateCard` nor its call site ever passed the selected swatch down to the preview component.
+Combined with every element rendering as a near-identical low-opacity gray box with small text
+(`background: rgba(0,0,0,0.03)`), the 3 cards read as visually interchangeable even before considering
+color — matching the screenshot's own complaint precisely.
+
+Fixed with the real, honest approach the task's own item 1 named as preferred: a genuine backend HTML
+render of the actual template (one of the 3 static ones, or design_renderer.py's dynamic path for a
+saved custom design), real sample invoice data, the requesting user's own real logo/business profile,
+and the real resolved color — the exact same `pdf_generator.render_html_for_design` function a real
+client invoice uses, never a second, approximate reimplementation. New module
+`apps/invoices/design_preview.py`: `build_preview_context` builds a plain in-memory sample "invoice"
+(a `SimpleNamespace` + a duck-typed `_ItemsManager` exposing just `.all()` — no database row is ever
+created, so a gallery preview can never accumulate throwaway rows needing cleanup) with the same
+Callahan & Reyes LLP / Homepage redesign sample content `DesignCanvasPreview.jsx` already used, so the
+visual identity of "what a preview shows" didn't change, just its fidelity. Two new endpoints
+(`GET /api/invoices/designs/preview/?base_template=&color_variant=` for Path 1's ready-made cards,
+`GET /api/invoices/designs/<pk>/preview/` for "Your designs" cards — both `@xframe_options_exempt`,
+the same real, necessary exemption `invoice_preview_as_client` already established, since Django's
+clickjacking protection blocks ANY page from being framed by default, DEBUG and production alike, and
+these two views' entire purpose is to be framed) return real HTML — no PDF/WeasyPrint involved at all,
+keeping this fast enough to feel live on every swatch click. `DesignLivePreview.jsx` (frontend) embeds
+this directly via a plain `<iframe src="...">`, scaled down with a CSS `transform`, `key={src}` forcing
+a real remount on every swatch change so React never shows stale content. The iframe `src` points
+straight at the backend host (`api.defaults.baseURL`) rather than going through a fetch/blob — verified
+this carries the httpOnly auth cookie correctly because `localhost:5173`/`localhost:8000` (and
+`app.lanceraos.com`/`api.lanceraos.com` in production) are same-SITE for cookie purposes even though
+cross-origin for CORS purposes (only the registrable domain matters for `SameSite`, not the port/
+subdomain) — the same reason every other `api.*` call in this app already works cross-port without any
+special handling. `DesignCanvasPreview.jsx` deleted outright once nothing referenced it any longer
+(STANDARDS.md's own dead-code convention), not kept around for fidelity.
+
+**Item 2 — color_variant, real root cause found and fixed.** Confirmed directly (not assumed) which of
+the two offered mechanisms applied: all 3 static templates (`professional.html`/`minimal.html`/
+`modern.html`) use **hardcoded hex values throughout, NOT CSS custom properties** — grepped every real
+occurrence before writing a single line of the fix. A genuinely useful discovery this same grep
+surfaced: each template's own hardcoded brand-accent hex values are **already byte-identical** to that
+template's own `'default'` `COLOR_VARIANTS` entry (professional's `#a8813c`/`#1a2b42` = Amber & Navy;
+minimal's `#6b8570`/`#171614` = Sage; modern's `#2d2a6e`/`#d4e157` = Indigo & Lime) — meaning the color
+system's own seed data was always secretly calibrated to match the templates' real appearance, just
+never wired together. Fixed as a real, contained change given that discovery: every exact occurrence of
+each template's 2 brand-accent hex values (never the neutral grays/whites/blacks used for ordinary body
+text — `COLOR_VARIANTS` only ever defines 2 colors per variant, so only those 2 colors' own real CSS
+occurrences were touched) replaced with `{{ design_primary_color }}`/`{{ design_secondary_color }}`
+Django template variables — a real, contained fix, not the broader CSS-custom-property retrofit the
+task flagged as the alternative if templates had used hardcoded colors (they did, but the exact-match
+discovery meant a straight variable substitution was sufficient without restructuring the CSS itself).
+`dynamic_design.html` (the PDF-001 dynamic renderer) had the SAME two hex values hardcoded as its own
+generic default accent — plus a real, separate pre-existing inconsistency this pass also caught and
+fixed along the way: its sidebar-specific rules (`.dyn-sidebar`/`.dyn-total-pill`) were hardcoded to
+MODERN's own indigo/lime regardless of which base_template a dynamic-rendered design actually started
+from, while the rest of the template used PROFESSIONAL's amber/navy — both now correctly parametrized
+to the same two context variables, so a dynamic-rendered design's sidebar and body always agree with
+each other and with the design's own real base_template+color_variant.
+
+New source of truth: `apps/invoices/design_seeds.COLOR_VARIANTS` (a real, server-side Python mirror of
+`frontend/src/lib/designEditor/builtinDesigns.js`'s own `COLOR_VARIANTS` — same accepted duplication
+tradeoff that file's own comment already documents for `BUILTIN_DESIGN_DATA`, extended here for the
+same reason) + `resolve_design_colors(base_template, color_variant)` (falls back to that
+base_template's own `'default'` entry for a blank/unrecognized `color_variant`, and to `professional`
+`'default'` for a completely unknown `base_template` — never raises). Wired into
+`pdf_generator.build_pdf_context` via a new `_effective_design`/`_design_colors_for` pair (shared with
+item 0's own draft-live-fallback logic — one resolution, reused consistently by template selection AND
+color selection, so a draft's preview can never show one template's layout paired with a different
+template's colors), so BOTH the static-template path and the dynamic `design_renderer.py` path resolve
+colors identically, from the exact same call.
+
+`render_dynamic_design_html`'s signature dropped its own unused `invoice` parameter (STANDARDS.md's
+dead-code convention) as part of this refactor — it never actually referenced `invoice` in its body,
+only `design`, which is what let `design_preview.py`'s saved-design preview reuse the SAME function
+with no real Invoice in scope at all.
+
+Verify live, real, end to end (the actual bar this round set, not a passing unit test alone): all 9
+real (base_template, color_variant) combinations — screenshots of the gallery showing all 3 cards with
+genuinely distinct layouts (confirmed: Professional's amber ledger spine, Minimal's clean sans-serif
+big-total block, Modern's dark sidebar+QR — visually unmistakable from each other, unlike the reported
+screenshot), a live swatch click on all 3 cards updating their previews with zero page reload (2nd
+screenshot, same session, burgundy/clay/plum all visibly different from the first screenshot's
+defaults), "Use this template" on Modern+Plum correctly showing "Currently active for new invoices:
+Modern (copy) (Modern — Plum & Mint)" with the real color LABEL now populated too (previously
+impossible, since nothing resolved a label from a stored `color_variant` at all), and a genuinely new
+invoice created through the real `POST /api/invoices/` endpoint (not a test fixture) — its real rendered
+PDF, screenshotted directly, shows the exact plum sidebar + mint total pill the gallery card promised,
+with real client data ("Final Verification Client") — the full chain, proven, not assumed.
+
+Tests: `apps/invoices/tests/test_design_color_and_preview.py` (20 new tests) — all 9 real color
+combinations resolve to 9 genuinely distinct primaries and render that exact hex in real output (both
+the static AND dynamic render paths), blank/unrecognized `color_variant`/unknown `base_template`
+fallbacks never crash, `build_pdf_context`'s defaults match the pre-existing hardcoded values exactly
+(zero regression proof), the draft-live-default-fallback (a pre-existing design-less draft picks up a
+default set afterward; never applies past draft; never applies to another user's default), item 0's own
+brand-new-invoice-through-the-real-API verification, both preview endpoints (real HTML for every
+combination, 400 on an unknown base_template, 401 unauthenticated, uses the real requesting user's own
+profile, 404 for another user's saved design, routes a genuinely edited design through the dynamic
+renderer, never blocked by clickjacking protection). Full `apps.invoices` suite: 730 passing (up from
+710); full frontend suite: 224 passing (`DesignCanvasPreview.jsx` deleted, no test file existed for it);
+`vite build` clean.
+
+Alternatives considered: a CSS-custom-property retrofit of the 3 templates (the task's own explicitly
+offered alternative for "hardcoded colors throughout") — not needed once the exact-hex-match discovery
+confirmed a straight Django-template-variable substitution was sufficient and fully contained, without
+touching the templates' broader CSS structure. Pre-generating static preview images per template×color
+combination at build/seed time (the task's own offered option (b) for item 1) — rejected in favor of
+option (a): a real backend render is provably always correct (it's the exact same code path a real
+invoice uses, so it can never drift the way a separately-maintained set of static images could the
+moment either a template's CSS or `COLOR_VARIANTS`' own hex values change), and this project's own
+render pipeline is already fast enough (plain Django template rendering, no WeasyPrint) for a live,
+per-click preview.
+
+Docs: this entry; DATABASE.md's `invoice_designs`/`invoices` entries updated with the real
+`color_variant` wiring and the draft-live-fallback; CLAUDE.md's Module 2 status updated.

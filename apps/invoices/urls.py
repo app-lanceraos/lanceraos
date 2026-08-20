@@ -38,8 +38,10 @@ urlpatterns = [
 
     path('designs/', views.design_list, name='design_list'),
     path('designs/duplicate/', views.design_duplicate, name='design_duplicate'),
+    path('designs/preview/', views.design_builtin_preview, name='design_builtin_preview'),
     path('designs/<uuid:pk>/', views.design_detail, name='design_detail'),
     path('designs/<uuid:pk>/set-default/', views.design_set_default, name='design_set_default'),
+    path('designs/<uuid:pk>/preview/', views.design_preview, name='design_preview'),
 
     path('<uuid:pk>/', views.invoice_detail, name='invoice_detail'),
     path('<uuid:pk>/pdf/', views.invoice_pdf, name='invoice_pdf'),

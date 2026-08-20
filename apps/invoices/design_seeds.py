@@ -142,3 +142,60 @@ BUILTIN_DESIGNS = {
 def get_builtin_design_data(base_template):
     """Deep copy — callers (design_duplicate) get an independent dict, never a shared reference."""
     return copy.deepcopy(BUILTIN_DESIGNS[base_template])
+
+
+# ══════════════════════════════════════════════════════════════════
+# COLOR_VARIANTS — a real, server-side mirror of frontend/src/lib/
+# designEditor/builtinDesigns.js's own COLOR_VARIANTS constant (same
+# keys, same hex values). That file's own comment already documents the
+# accepted duplication tradeoff for BUILTIN_DESIGN_DATA ("no `list
+# builtins` backend endpoint... this duplication is a real tradeoff,
+# flagged rather than hidden") — this is the same tradeoff for the same
+# reason, extended to color metadata. The frontend copy drives the
+# gallery's own swatch buttons (label/hex circle); THIS copy is the
+# real source of truth for server-side rendering (both the 3 static
+# templates and the dynamic design_renderer path) — see
+# resolve_design_colors below and DECISIONS.md's 20 August 2026
+# "color_variant wiring" entry for the full reasoning, including why
+# these exact hex values were chosen: each base_template's own 'default'
+# entry is deliberately IDENTICAL to that template's real, pre-existing
+# hardcoded CSS colors (verified directly against professional.html/
+# minimal.html/modern.html's own source) — a design with no explicit
+# color_variant, or 'default', renders byte-identical to how every real
+# invoice already looked before this pass, zero regression.
+# ══════════════════════════════════════════════════════════════════
+COLOR_VARIANTS = {
+    'professional': [
+        {'key': 'default', 'label': 'Amber & Navy', 'primary': '#a8813c', 'secondary': '#1a2b42'},
+        {'key': 'forest', 'label': 'Forest', 'primary': '#4a7c59', 'secondary': '#1f2e1a'},
+        {'key': 'burgundy', 'label': 'Burgundy', 'primary': '#8c3a4d', 'secondary': '#2a1a20'},
+    ],
+    'minimal': [
+        {'key': 'default', 'label': 'Sage', 'primary': '#6b8570', 'secondary': '#171614'},
+        {'key': 'slate', 'label': 'Slate', 'primary': '#5b6b78', 'secondary': '#171614'},
+        {'key': 'clay', 'label': 'Clay', 'primary': '#a8663c', 'secondary': '#171614'},
+    ],
+    'modern': [
+        {'key': 'default', 'label': 'Indigo & Lime', 'primary': '#2d2a6e', 'secondary': '#d4e157'},
+        {'key': 'midnight', 'label': 'Midnight & Gold', 'primary': '#1a1a2e', 'secondary': '#e8b84b'},
+        {'key': 'plum', 'label': 'Plum & Mint', 'primary': '#4a2d5e', 'secondary': '#8fd9c4'},
+    ],
+}
+
+
+def resolve_design_colors(base_template, color_variant):
+    """
+    (primary_hex, secondary_hex) for a given base_template + color_variant
+    — the single real place this mapping is decided, used identically by
+    the 3 static templates and the dynamic_design.html renderer (both
+    read `design_primary_color`/`design_secondary_color` from the same
+    context-building code, pdf_generator.build_pdf_context). Falls back
+    to that base_template's own 'default' entry for a blank/unrecognized
+    color_variant (never raises — a real, standing InvoiceDesign row
+    with a stale/mistyped color_variant must still render, not 500), and
+    to 'professional' 'default' for a completely unknown base_template
+    (defensive — _select_template_name already falls back the same way).
+    """
+    variants = COLOR_VARIANTS.get(base_template) or COLOR_VARIANTS['professional']
+    match = next((v for v in variants if v['key'] == color_variant), None) or variants[0]
+    return match['primary'], match['secondary']

@@ -83,7 +83,18 @@ class PdfTemplateRenderTests(TestCase):
         self.user = make_freelancer()
 
     def render_all(self, invoice):
-        return {t: render_to_string(t, {'invoice': invoice, 'freelancer': self.user.profile}) for t in TEMPLATES}
+        # design_primary_color/design_secondary_color (20 August 2026 —
+        # color_variant wiring) are real template variables every one of
+        # the 3 templates' own CSS now references — build_pdf_context is
+        # what normally supplies them for a real render; this test predates
+        # that (and deliberately still bypasses WeasyPrint per this file's
+        # own docstring), so it supplies literal placeholder values here
+        # instead, matching a plain default render (never blank/invalid CSS).
+        context = {
+            'invoice': invoice, 'freelancer': self.user.profile,
+            'design_primary_color': '#a8813c', 'design_secondary_color': '#1a2b42',
+        }
+        return {t: render_to_string(t, context) for t in TEMPLATES}
 
     def test_renders_with_few_items(self):
         invoice = make_invoice_with_items(self.user, n_items=2)

@@ -29,7 +29,7 @@
   body {
     margin: 0;
     font-family: 'IBM Plex Sans', sans-serif;
-    color: #171614;
+    color: {{ design_secondary_color }};
     background: #fdfdfb;
     font-size: 9.5pt;
     line-height: 1.55;
@@ -40,7 +40,7 @@
     font-size: 7.5pt;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: #6b8570;
+    color: {{ design_primary_color }};
     margin: 0 0 3mm;
   }
 
@@ -67,18 +67,18 @@
     font-size: 8.5pt;
     color: #78756c;
   }
-  .meta .num { font-size: 10pt; font-weight: 600; color: #171614; margin-bottom: 2mm; }
+  .meta .num { font-size: 10pt; font-weight: 600; color: {{ design_secondary_color }}; margin-bottom: 2mm; }
   .meta .row { white-space: nowrap; margin-top: 1mm; }
-  .meta .row b { color: #171614; font-weight: 400; margin-left: 3mm; }
+  .meta .row b { color: {{ design_secondary_color }}; font-weight: 400; margin-left: 3mm; }
 
-  hr.rule { border: none; border-top: 0.3mm solid #171614; margin: 0 0 8mm; }
+  hr.rule { border: none; border-top: 0.3mm solid {{ design_secondary_color }}; margin: 0 0 8mm; }
 
   .parties { display: flex; justify-content: space-between; margin-bottom: 10mm; }
   .party { width: 46%; }
   .party .label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 7.5pt; letter-spacing: 0.18em; text-transform: uppercase;
-    color: #6b8570; margin-bottom: 2.5mm;
+    color: {{ design_primary_color }}; margin-bottom: 2.5mm;
   }
   .party .name { font-size: 11pt; font-weight: 600; margin-bottom: 1mm; }
   .party .line { color: #4b4941; font-size: 9pt; }
@@ -90,7 +90,7 @@
     font-size: 7.5pt; letter-spacing: 0.14em; text-transform: uppercase;
     color: #78756c; text-align: left;
     padding: 0 0 3.5mm;
-    border-bottom: 0.4mm solid #171614;
+    border-bottom: 0.4mm solid {{ design_secondary_color }};
   }
   table.items thead th.num { text-align: right; }
   table.items tbody td {
@@ -109,11 +109,11 @@
   .total-due-block .lbl {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 8pt; letter-spacing: 0.16em; text-transform: uppercase;
-    color: #6b8570; margin-bottom: 1mm;
+    color: {{ design_primary_color }}; margin-bottom: 1mm;
   }
   .total-due-block .amt {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 34pt; font-weight: 600; color: #171614; line-height: 1;
+    font-size: 34pt; font-weight: 600; color: {{ design_secondary_color }}; line-height: 1;
   }
   .total-due-block .pkr { font-size: 7.5pt; color: #a3a099; margin-top: 2mm; }
 
@@ -122,7 +122,7 @@
   .notes-block .label, .pay-block .label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 7.5pt; letter-spacing: 0.18em; text-transform: uppercase;
-    color: #6b8570; margin-bottom: 2.5mm;
+    color: {{ design_primary_color }}; margin-bottom: 2.5mm;
   }
   .notes-block p { font-size: 8.5pt; color: #4b4941; margin: 0 0 3mm; }
 
@@ -140,14 +140,14 @@
   .pay-online img.qr { width: 18mm; height: 18mm; }
   .pay-online .label {
     font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; letter-spacing: 0.14em;
-    text-transform: uppercase; color: #6b8570; margin-bottom: 1.5mm;
+    text-transform: uppercase; color: {{ design_primary_color }}; margin-bottom: 1.5mm;
   }
   .pay-online .link { font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; color: #4b4941; white-space: nowrap; }
 
   .sign-block { width: 55mm; text-align: right; }
   .sign-block img.sig { height: 15mm; margin-bottom: -2mm; }
   .sign-block .line {
-    border-top: 0.3mm solid #171614; padding-top: 2.5mm;
+    border-top: 0.3mm solid {{ design_secondary_color }}; padding-top: 2.5mm;
     font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt;
     letter-spacing: 0.12em; text-transform: uppercase; color: #a3a099;
   }

@@ -13,19 +13,18 @@ import { Copy, LayoutTemplate, Plus, Sparkles, Star, Trash2 } from 'lucide-react
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
-import useAuthStore from '@/store/authStore'
 import FosAlert from '@/components/FosAlert'
-import DesignCanvasPreview from '@/components/design-editor/DesignCanvasPreview'
+import DesignLivePreview from '@/components/design-editor/DesignLivePreview'
 import { BASE_TEMPLATE_LABELS, BUILTIN_DESIGN_DATA, COLOR_VARIANTS } from '@/lib/designEditor/builtinDesigns'
 import { BLANK_DESIGN_DATA } from '@/lib/designEditor/constants'
 
-function BuiltinTemplateCard({ baseTemplate, logoUrl, onUse, busy }) {
+function BuiltinTemplateCard({ baseTemplate, onUse, busy }) {
   const [variant, setVariant] = useState(COLOR_VARIANTS[baseTemplate][0].key)
 
   return (
     <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-        <DesignCanvasPreview designData={BUILTIN_DESIGN_DATA[baseTemplate]} logoUrl={logoUrl} />
+        <DesignLivePreview baseTemplate={baseTemplate} colorVariant={variant} />
       </div>
       <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: 8 }}>
         {BASE_TEMPLATE_LABELS[baseTemplate]}
@@ -56,11 +55,11 @@ function BuiltinTemplateCard({ baseTemplate, logoUrl, onUse, busy }) {
   )
 }
 
-function SavedDesignCard({ design, onEdit, onSetDefault, onDelete, logoUrl }) {
+function SavedDesignCard({ design, onEdit, onSetDefault, onDelete }) {
   return (
     <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-        <DesignCanvasPreview designData={design.design_data} logoUrl={logoUrl} />
+        <DesignLivePreview designId={design.id} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
         <span style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)' }}>{design.name}</span>
@@ -87,8 +86,6 @@ function SavedDesignCard({ design, onEdit, onSetDefault, onDelete, logoUrl }) {
 export default function DesignGallery() {
   useTitle('Manage Designs — LanceraOS')
   const navigate = useNavigate()
-  const user = useAuthStore((s) => s.user)
-  const logoUrl = user?.profile_logo || null
 
   const [designs, setDesigns] = useState([])
   const [loading, setLoading] = useState(true)
@@ -280,7 +277,6 @@ export default function DesignGallery() {
           <BuiltinTemplateCard
             key={baseTemplate}
             baseTemplate={baseTemplate}
-            logoUrl={logoUrl}
             onUse={handleUseTemplate}
             busy={busyTemplate === baseTemplate}
           />
@@ -334,7 +330,6 @@ export default function DesignGallery() {
             <SavedDesignCard
               key={design.id}
               design={design}
-              logoUrl={logoUrl}
               onEdit={handleEdit}
               onSetDefault={handleSetDefault}
               onDelete={handleDelete}

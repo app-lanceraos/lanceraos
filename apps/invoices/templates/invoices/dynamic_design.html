@@ -44,7 +44,7 @@
     position: fixed;
     top: 0; left: 0; bottom: 0;
     width: {{ sidebar_width_mm }}mm;
-    background: #2d2a6e;
+    background: {{ design_primary_color }};
     color: #ffffff;
     padding: 14mm 6mm 12mm;
     display: flex;
@@ -67,7 +67,7 @@
     font-size: 7.5pt;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: #a8813c;
+    color: {{ design_primary_color }};
     margin-bottom: 2mm;
   }
   .dyn-bizname { font-size: 18pt; font-weight: 600; margin: 0 0 1mm; }
@@ -78,7 +78,7 @@
     font-size: 7.5pt;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: #a8813c;
+    color: {{ design_primary_color }};
     margin-bottom: 2.5mm;
   }
   .dyn-partyname { font-size: 11pt; font-weight: 600; margin-bottom: 1mm; }
@@ -109,18 +109,18 @@
 
   .dyn-row { display: flex; justify-content: space-between; font-size: 9pt; color: #55524a; padding: 1.4mm 0; }
   .dyn-row-due {
-    border-top: 0.4mm solid #1a2b42;
+    border-top: 0.4mm solid {{ design_secondary_color }};
     margin-top: 2mm;
     padding-top: 3mm;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 13pt;
     font-weight: 600;
-    color: #1a2b42;
+    color: {{ design_secondary_color }};
   }
   .dyn-pkr { font-size: 7.5pt; color: #a09a89; margin-top: 1mm; }
   .dyn-total-pill {
     display: inline-block;
-    background: #d4e157;
+    background: {{ design_secondary_color }};
     color: #16151c;
     border-radius: 3mm;
     padding: 3mm 5mm;
@@ -133,7 +133,7 @@
     font-size: 8pt;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: #a8813c;
+    color: {{ design_primary_color }};
     margin-bottom: 1mm;
   }
   .dyn-total-due-amt { font-family: 'IBM Plex Mono', monospace; font-size: 30pt; font-weight: 600; }
@@ -157,7 +157,7 @@
 
   .dyn-sig-img { height: 14mm; margin-bottom: 1mm; }
   .dyn-sig-line {
-    border-top: 0.3mm solid #1a2b42;
+    border-top: 0.3mm solid {{ design_secondary_color }};
     padding-top: 2.5mm;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 7.5pt;
@@ -169,7 +169,7 @@
   .dyn-pair-row { display: flex; gap: 10mm; align-items: flex-end; }
   .dyn-pair-row > div { flex: 1; }
 
-  .dyn-sidebar .dyn-label, .dyn-sidebar .dyn-eyebrow { color: #d4e157; }
+  .dyn-sidebar .dyn-label, .dyn-sidebar .dyn-eyebrow { color: {{ design_secondary_color }}; }
   .dyn-sidebar .dyn-line, .dyn-sidebar .dyn-tagline { color: #c3c0e0; }
   .dyn-sidebar .dyn-link { color: #c3c0e0; }
 </style>

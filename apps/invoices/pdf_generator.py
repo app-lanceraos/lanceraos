@@ -51,7 +51,8 @@ from django.utils import timezone
 
 from core.money import Money
 
-from .design_renderer import render_dynamic_design_html, should_render_dynamic_design
+from .design_renderer import design_has_real_custom_data, render_dynamic_design_html
+from .design_seeds import resolve_design_colors
 
 logger = logging.getLogger(__name__)
 
@@ -143,9 +144,52 @@ TEMPLATE_MAP = {
 
 
 def _select_template_name(invoice):
-    if invoice.design_id and invoice.design.base_template in TEMPLATE_MAP:
-        return TEMPLATE_MAP[invoice.design.base_template]
+    """Kept as a real, still-tested public name (test_pdf_pipeline.py calls it directly) — now a thin wrapper over the design-parametrized version every real render path actually uses."""
+    return _template_name_for_design(_effective_design(invoice))
+
+
+def _template_name_for_design(design):
+    if design and design.base_template in TEMPLATE_MAP:
+        return TEMPLATE_MAP[design.base_template]
     return TEMPLATE_MAP[DEFAULT_TEMPLATE]
+
+
+def _effective_design(invoice):
+    """
+    Which InvoiceDesign should actually drive this invoice's render.
+    Real, persisted assignment wins when one exists (invoice.design,
+    set by invoice_create/_finalise_invoice — see DECISIONS.md's 19
+    August 2026 "SEV1 — the design-to-invoice assignment gap" entry).
+
+    For a still-editable DRAFT with none yet — predates any default
+    design existing at all, or predates one being SET as default after
+    this draft was created — falls back LIVE to the user's CURRENT
+    default design, so a draft's own live preview (the only case that
+    genuinely re-renders on every GET; see invoice_pdf, views.py) never
+    shows stale output while a user is actively experimenting with
+    designs. Never applies past draft — a finalised invoice's design is
+    frozen exactly as finalise resolved it, forever, per the same
+    frozen-PDF guarantee that already governs everything else about a
+    finalised invoice; this function must never quietly change what a
+    real, already-sent invoice renders as.
+
+    A pure read-time fallback — never mutates invoice.design itself.
+    The real, permanent assignment still only ever happens via
+    invoice_create/_finalise_invoice.
+    """
+    if invoice.design_id:
+        return invoice.design
+    if invoice.status == 'draft':
+        from .models import InvoiceDesign
+        return InvoiceDesign.objects.filter(user=invoice.user, is_default=True).first()
+    return None
+
+
+def _design_colors_for(design):
+    """(primary_hex, secondary_hex) for whichever design (possibly None) will actually render — resolve_design_colors' own base_template/color_variant fallback handles a None design by resolving DEFAULT_TEMPLATE's own 'default' entry, matching _template_name_for_design's identical fallback."""
+    base_template = design.base_template if design else DEFAULT_TEMPLATE
+    color_variant = design.color_variant if design else ''
+    return resolve_design_colors(base_template, color_variant)
 
 
 def _generate_qr_data_uri(url):
@@ -186,13 +230,31 @@ def build_pdf_context(invoice):
     properties (Step 7a/7b, apps/invoices/models.py) — no separate
     pre-formatting happens here beyond what genuinely can't be a template
     variable (the QR image itself; the font file locations).
+
+    `design_primary_color`/`design_secondary_color` (20 August 2026 —
+    closes the "color_variant is completely inert" finding) are resolved
+    from `_effective_design(invoice)` — the SAME design resolution the
+    actual template-selection branch (_render_invoice_html) uses, so a
+    draft's live color preview and its live template-selection agree
+    with each other, always. Every one of the 3 static templates' own
+    brand-accent hex values (verified directly against each file's real
+    CSS) were chosen to be byte-identical to that template's own
+    'default' COLOR_VARIANTS entry — so an invoice with no explicit
+    design, or a design with color_variant='' /'default', renders these
+    two variables to the exact same hex values that were already
+    hardcoded, zero visual regression for every invoice that predates
+    this pass.
     """
     freelancer = invoice.user.profile
+    design = _effective_design(invoice)
+    primary_color, secondary_color = _design_colors_for(design)
     return {
         'invoice': invoice,
         'freelancer': freelancer,
         'qr_code_data_uri': _generate_qr_data_uri(invoice.payment_page_url),
         'signature_url': freelancer.signature_url or None,
+        'design_primary_color': primary_color,
+        'design_secondary_color': secondary_color,
         **FONT_CONTEXT,
     }
 
@@ -222,15 +284,29 @@ def _render_invoice_html(invoice, context):
     The one real branch point between the 3 static templates and the
     design_data-driven renderer (apps/invoices/design_renderer.py) —
     shared by both render_invoice_pdf and render_invoice_portal_html so
-    neither grows its own copy of this decision. See
-    design_renderer.should_render_dynamic_design's own docstring for the
-    exact condition and why it's based on design_data itself rather than
-    InvoiceDesign.source.
+    neither grows its own copy of this decision. Routes through
+    _effective_design(invoice) (not invoice.design directly) so a
+    still-editable draft's live preview picks up the user's current
+    default design even before that assignment is ever persisted — see
+    that function's own docstring. render_html_for_design is the same
+    design-parametrized entry point a gallery preview render (no real
+    Invoice in scope at all) also uses — see apps/invoices/
+    design_preview.py.
     """
-    if should_render_dynamic_design(invoice):
-        return render_dynamic_design_html(invoice, invoice.design, context)
-    template_name = _select_template_name(invoice)
-    return render_to_string(template_name, context)
+    return render_html_for_design(_effective_design(invoice), context)
+
+
+def render_html_for_design(design, context):
+    """
+    design_has_real_custom_data's own docstring has the exact condition
+    for when a design's design_data is "real" enough to render dynamically
+    vs. falling back to one of the 3 static templates by base_template
+    alone — same rule, whether `design` came from a real invoice or a
+    gallery preview request.
+    """
+    if design is not None and design_has_real_custom_data(design):
+        return render_dynamic_design_html(design, context)
+    return render_to_string(_template_name_for_design(design), context)
 
 
 def build_portal_context(invoice):

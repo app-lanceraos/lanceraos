@@ -246,13 +246,18 @@ def _prepare_zone2_sidebar_elements(zone_2_elements):
     return sidebar
 
 
-def render_dynamic_design_html(invoice, design, base_context):
+def render_dynamic_design_html(design, base_context):
     """
     `base_context` is exactly what build_pdf_context/build_portal_context
+    (or, for a gallery preview render, design_preview.build_preview_context)
     already produce (invoice/freelancer/qr_code_data_uri/signature_url/
-    font variables) — this function only adds the preprocessed zone
+    font/color variables) — this function only adds the preprocessed zone
     structures design_data needs, never re-derives anything base_context
-    already has.
+    already has. Deliberately takes `design` alone, not `invoice` — an
+    earlier version accepted both but never actually used the `invoice`
+    parameter (dead per STANDARDS.md's own convention), and dropping it
+    is what lets a gallery preview call this identically with no real
+    Invoice in scope at all.
     """
     design_data = design.design_data
     zone_1 = design_data.get('zone_1') or {}
