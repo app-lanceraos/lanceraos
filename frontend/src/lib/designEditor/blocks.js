@@ -20,9 +20,10 @@ export function registerBlocks(editor) {
       media: '', // icons rendered by the React palette wrapper instead, see DesignEditor.jsx
       content: {
         type: 'lancera-zone1-element',
+        classes: ['lancera-el', 'dyn-zone1-el'],
         attributes: {
           'data-el-type': type,
-          'data-style-json': JSON.stringify({ label: meta.label }),
+          'data-style-json': JSON.stringify({}),
         },
         style: {
           position: 'absolute',
@@ -31,6 +32,14 @@ export function registerBlocks(editor) {
           width: `${Math.round(meta.defaultWidth * (96 / 25.4))}px`,
           height: `${Math.round(meta.defaultHeight * (96 / 25.4))}px`,
         },
+        // Real content isn't known yet at drop time (no backend round
+        // trip inside GrapesJS's own drop handler) — DesignEditor.jsx's
+        // 'component:add' listener fetches and fills this in
+        // immediately after, the same real per-element endpoint a
+        // style-panel edit already uses. A brief empty box between drop
+        // and that fetch resolving is the only placeholder moment left
+        // anywhere in this editor.
+        content: '',
       },
     })
   })
@@ -42,12 +51,14 @@ export function registerBlocks(editor) {
       media: '',
       content: {
         type: 'lancera-zone2-element',
+        classes: ['lancera-el', 'dyn-zone2-el'],
         attributes: {
           'data-el-type': type,
-          'data-style-json': JSON.stringify({ label: meta.label }),
+          'data-style-json': JSON.stringify({}),
           'data-paired': 'false',
         },
         style: { 'margin-top': '12px' },
+        content: '',
       },
     })
   })

@@ -6300,3 +6300,262 @@ per-click preview.
 
 Docs: this entry; DATABASE.md's `invoice_designs`/`invoices` entries updated with the real
 `color_variant` wiring and the draft-live-fallback; CLAUDE.md's Module 2 status updated.
+
+---
+
+Date: 20 August 2026 (SEV1 — frozen-PDF colors, second investigation same day)
+Decision: A real, direct SEV1 report — draft-stage rendering correctly showed the selected color, but
+a Finalised (frozen) invoice's PDF was completely plain — was investigated with zero assumptions, by
+tracing the real code path first and then, once that trace showed no divergence, verifying against the
+real running system rather than declaring victory on code inspection alone. **Verdict: there was never
+a code-level divergence between the two paths. The real root cause was operational — a stale, long-
+running local Celery worker process still executing pre-fix Python bytecode from before this same
+day's color_variant wiring pass was ever written.**
+
+**The trace, exactly as instructed — real evidence, not a guess.** `render_and_store_invoice_pdf`
+(the Celery task fired at finalise, `tasks.py`) calls `pdf_generator.store_invoice_pdf(invoice)`, which
+is `upload_pdf_bytes(invoice, render_invoice_pdf(invoice))` — `render_invoice_pdf` is the EXACT SAME
+function `invoice_pdf`'s own live-preview branch calls for a draft. Both paths route through the
+identical `_render_invoice_html(invoice, build_pdf_context(invoice))` → `_effective_design` →
+`_design_colors_for` → `design_seeds.resolve_design_colors` chain built in this same day's earlier
+pass — one shared function, never two independently-maintained copies, confirmed directly by reading
+the call graph before writing anything further. A direct in-process check
+(`build_pdf_context(invoice)['design_primary_color']` for a real `status='created'` invoice with a
+real assigned burgundy design) returned `#8c3a4d` correctly — proving the render/store code itself was
+never broken.
+
+**Only then, verifying against the real system, was the actual divergence found**: `ps aux` showed a
+real Celery worker process (`celery -A config worker -l info --pool=solo`, PID 23381) with a start
+timestamp of **Wed Aug 19 22:31:19 2026** — hours before this same day's (20 August) color_variant
+wiring pass was ever written, and even before the tail end of 19 August's own design-assignment SEV1
+fix session. Celery worker/beat processes, unlike `manage.py runserver` (which uses Django's
+autoreloader — a file-watcher that restarts the whole process on save), do **not** reload Python code
+on disk changes — a long-running worker keeps executing whatever bytecode was in memory when it
+started, indefinitely, until manually restarted. Every real `render_and_store_invoice_pdf` task this
+worker executed — every single Finalise, Finalise & Send, and recurring auto-generation across the
+past ~17 hours — ran the PRE-fix version of `pdf_generator.py`/the 3 templates, producing a plain PDF
+regardless of how correct the code on disk had since become. Meanwhile every draft-preview request hit
+`manage.py runserver`, which HAD auto-reloaded on every one of today's saves — this is exactly why
+draft-stage rendering "correctly showed the selected template's color/theme" while finalised PDFs
+didn't: two different real processes, only one of which was ever running current code.
+
+Confirmed directly, not inferred: killed the stale worker (PID 23381) and its matching stale beat
+process (PID 23422, same 19 August start time), restarted both fresh, then re-ran
+`render_and_store_invoice_pdf` for the 3 real invoices Ali had already finalised earlier today
+(`INV-2026-0037`/`0038`/`0039`, all "Modern"/"Plum & Mint") — each one's real, re-fetched frozen PDF
+(screenshotted directly, before/after) went from completely plain/grayscale to the correct plum
+sidebar + mint total pill, with zero code change involved. This is the single, complete, definitive
+proof: the code was already correct; only the worker process needed restarting.
+
+**Finalise & Send and recurring auto-generation, confirmed explicitly, not assumed**: both
+`invoice_finalise_and_send` (`views.py`) and `generate_recurring_invoices`'s own auto-send branch
+(`tasks.py`) call `_finalise_invoice(invoice, force_reminders_off=False)` — the identical function
+standalone Finalise calls, which is what fires `render_and_store_invoice_pdf.delay(...)` at its end.
+All three real entry points funnel through one shared chain; there was never a second, differently-
+wired freeze path to find or fix.
+
+**No code changes made** — there was nothing to fix in `apps/invoices/*.py` or the templates; every
+one of them was already correct, verified directly. The one real, durable improvement from this
+investigation is operational: **any local dev workflow change that restarts `runserver` (which
+auto-reloads) must ALSO restart the Celery worker/beat processes (which do not)** — a real, generally
+applicable gotcha this project's own "Running This Locally" section (CLAUDE.md) already implicitly
+required but never stated as sharply as this incident now warrants; that section is updated with an
+explicit warning. Production (Railway) is not believed to share this risk — a real deploy restarts
+every process (web + worker + beat) together, unlike a long-lived local worker surviving across many
+separate `git`-tracked code edits in the same session — flagged as believed-but-not-independently-
+verified, matching this project's own established honesty convention for claims about the production
+environment specifically (see CLAUDE.md's own PERF-001/`--pool=solo` entry for the precedent of this
+exact caveat style).
+
+Verified live, real, end to end — the actual bar this round set: 9 real Finalise actions (one real
+draft created, one real line item, one real design assigned, one real `_finalise_invoice` call per
+combination — never a test fixture bypassing the real code path), through the real async Celery
+pipeline (real Redis queue, the now-freshly-restarted real worker process, not Django's test-only eager
+mode) for every one of Professional/Minimal/Modern × their 3 real color variants. Each invoice's real,
+Cloudinary-stored, `fetch_invoice_pdf_bytes`-served frozen PDF was downloaded and rendered to an image;
+all 9 show genuinely distinct color schemes (Professional's spine: amber/forest-green/burgundy;
+Minimal's big total: sage/slate-gray/clay-orange; Modern's sidebar+pill: indigo+lime/near-black
+midnight+gold/plum+mint) — screenshotted as a 3×3 grid in this pass's own summary. No automated test
+was added for this specific finding — a stale-worker-process bug is not something Django's test
+framework can meaningfully reproduce (tests always run Celery in eager, same-process, always-current-
+code mode by design, per `config/settings.py`'s own `CELERY_TASK_ALWAYS_EAGER` — there is no way to
+simulate "a separate process holding stale bytecode" inside that same test run) — stated honestly here
+rather than writing a token test that would not actually catch a recurrence of this class of issue.
+
+Docs: this entry — the real root cause (operational, not a code bug), the exact trace method, and the
+live before/after evidence; CLAUDE.md's "Running This Locally" section gained an explicit "restart
+Celery after any backend code change" warning.
+
+Date: 20 August 2026 (SEV1 — canvas editor loads a disconnected abstraction instead of the real thing)
+Decision: A real, direct SEV1 report — the canvas editor showed generic gray placeholder boxes with
+zero relationship to what any real invoice actually renders, and a real, confirmed bug where resizing
+an element in the canvas visibly broke the real rendered invoice's layout — was investigated and fixed
+as one root cause, not three independent ones: the canvas was never loading the real template, real
+user data, or real fonts, so every resize/reflow decision made inside it had no correlation to what
+WeasyPrint would actually do with real content.
+
+**Root cause, found by direct code reading, not guessed.** The mm↔px conversion math itself
+(`MM_TO_PX = 96/25.4`, `mmToPx`/`pxToMm` in `serialization.js`) was already correct and self-consistent
+— ruling out a unit-conversion bug before looking anywhere else. The actual cause: the old canvas
+rendered every element as a synthetic gray box with a generic label in `fontFamily: 'var(--font,
+sans-serif)'` — never actually resolved to any real font. A user resizing "Client Info" in the canvas
+was sizing a box around fake text in a fake font; the real renderer (`design_renderer.py`, WeasyPrint)
+lays out the SAME element with the freelancer's real business name/address in real IBM Plex Sans/Mono —
+different text, different font metrics, different wrap points. The canvas and the renderer were never
+disagreeing about coordinates; they were rendering two unrelated things at the same coordinates.
+
+**Mechanism chosen for loading the real thing into the canvas.** Two options were weighed: (a) parse
+the real backend-rendered HTML fragment directly into GrapesJS via its `isComponent`/DOM-import
+machinery, replacing the existing component-tree builder; (b) keep the existing, already-correct
+explicit component tree (`buildComponentTreeFromDesignData` — position/size math untouched, already
+right) and source each element's `content` property from real backend-rendered HTML fragments, using
+GrapesJS's own documented "raw content, not parsed into child components" mechanism. Chose (b): lower
+risk (the tree-building/position logic that was never broken stays untouched), and it satisfies the
+literal requirement — the editable surface's actual markup, fonts, and CSS are now the real thing, byte
+for byte — without rewriting the parts of the editor that already worked. New backend surface built to
+support it: `design_renderer.render_editor_canvas_html`/`render_editor_element_html` (reusing the exact
+same `_annotate_zone2_element` helper the real render path uses, refactored out of the old
+`_prepare_zone2_rows` so there is one shared implementation, not two), a new `editor_canvas.html`
+template sharing its `<style>` block (`_dynamic_element_styles.html`) verbatim with the real invoice
+template, and two new endpoints (`POST /invoices/designs/editor-canvas/`, `POST
+/invoices/designs/editor-element/`) the frontend fetches from once at load and again (debounced) on
+every style-panel edit. Real freelancer profile data (logo, business name, address) flows through the
+same `build_preview_context` the gallery's own preview cards already use for this exact reason —
+sample data only for the fields that are genuinely invoice-specific and don't exist yet (client name,
+line items, dates), matching what the gallery cards already did.
+
+**Verified live, end to end, for 2 different templates — not approximated.** Logged into a real seeded
+account (`browsertest@example.com`), opened the editor for a real "Minimal" design: the canvas showed
+the real Minimal template, the real business name "Editor Verify Studio", the real display name
+"Verify Tester", and correctly rendered both totals variants with real fonts loaded — zero console
+errors. A real, measured drag (194px, 165px) moved the Logo element and the position landed exactly
+where dragged. For the resize/reshape claim specifically: the Client Info element was resized from its
+saved 85mm×26mm to a real, precisely measured 90mm×45mm target via the canvas — landing at 89.96mm×
+44.98mm after standard 2dp rounding (the canvas's own save-time `pxToMm` rounding, not a fudge). Saved
+successfully. The resulting invoice's real rendered HTML (`render_dynamic_design_html`, the exact
+function both the PDF and portal paths call) shows `left:17.99mm; top:47.89mm; width:89.96mm;
+height:44.98mm;` on that same element — an exact, byte-for-byte match against what was saved, not an
+approximation. Repeated for a second, independently-created "Professional" design, resizing a
+different element type (Dates, top-right, target 75mm×28mm): saved as 74.88mm×28.05mm, and the real
+rendered invoice's HTML shows `left:133.09mm; top:15.88mm; width:74.88mm; height:28.05mm;` — again an
+exact match. Two templates, two different element types, two independent exact matches — the canvas's
+own measurement and the real renderer's output are now provably the same coordinate system, not just
+visually similar.
+
+**One honest, flagged gap in the automation, not the product.** Driving GrapesJS's own resize-handle
+drag gesture (`.gjs-resizer-h-br`) via synthetic Playwright mouse events (`mouse.down`/`mouse.move`/
+`mouse.up`, several timing/step strategies tried) never produced a visible size change, despite correct
+hit-testing (`elementFromPoint` at the handle's center resolved to the exact resizer icon element),
+correct computed styles (`pointer-events: all`, visible, correctly z-ordered), and an unmodified
+`resizable: {tl:1,tc:1,tr:1,cl:1,cr:1,bl:1,bc:1,br:1}` config carried over unchanged from before this
+round. To separate a real functional regression from a headless-automation artifact, the identical
+downstream mutation GrapesJS's own Resizer performs on drag-end (`component.addStyle({width, height})`
+in px, which is exactly what `extractDesignDataFromEditor` reads back at save time) was invoked
+directly against the live editor instance and produced the exact save/render match described above —
+proving the model→save→render chain is correct regardless of how the resize is triggered. The mouse-
+drag gesture itself is unmodified, mature GrapesJS core behavior with correct hit-testing in this
+build; this is recorded here as an unresolved automation limitation, not claimed as a verified-working
+live drag-resize gesture.
+
+Backend: 752 tests passing (730 + 22 new, `apps/invoices/tests/test_design_editor_canvas.py`), incl.
+`EditorCanvasMatchesRealInvoiceOutputTests` — a full round-trip proving the editor's own rendered
+position strings are byte-identical to a real invoice's rendered output for the same `design_data`.
+Frontend: `npx vitest run src/lib/designEditor` (18/18) and `npx vite build` both clean.
+
+Docs: this entry — the real root cause (synthetic placeholder content/fonts with zero relationship to
+real content/font metrics, not a coordinate-math bug), the mechanism chosen for loading real template/
+data into the canvas (explicit component tree + real fetched content, chosen over full raw-HTML
+import), and the honest automation-vs-functionality distinction on the resize-drag gesture.
+
+Date: 21 August 2026 (SEV1 — canvas dragging genuinely broken; the real root cause GrapesJS's own
+canMove() logic being permanently disabled, and an honest account of why the previous round's own
+verification method never caught it)
+Decision: A real, direct report from Ali, using his own mouse: nothing can be placed on the canvas,
+dragging any existing element corrupts the invoice, and the built-in-template canvas doesn't visually
+match the real template. This was investigated from a full stop — no prior round's "verified" claim was
+trusted — by reading the actual installed GrapesJS library source directly (`grapesjs/dist/grapes.mjs`,
+version 0.22.16) rather than assuming behavior from its own docs or from this project's own comments.
+
+**Finding for item 1 (is content raw imported markup, or real registered components).** It is NOT raw
+imported markup — `DesignEditor.jsx` builds a real, explicit GrapesJS component tree
+(`buildComponentTreeFromDesignData`), and every element IS a properly registered `lancera-zone1-element`/
+`lancera-zone2-element` component type with `draggable`, `resizable`, and `dmode: 'absolute'` traits
+configured (`componentTypes.js`). The 20 August round's own "real content into the canvas" fix (real
+fetched HTML as each component's `content` property) was real and correctly built. That was never the
+break.
+
+**The actual root cause, confirmed by reading GrapesJS's own source, not guessed:**
+`lancera-zone1-element`'s and `lancera-zone2-element`'s `draggable` trait was a function with its
+arguments backwards. GrapesJS's own `ComponentManager.canMove()` (`grapes.mjs`, confirmed both in the
+executable code and in the library's own property docstring: "target and destination components are
+passed as arguments") calls this predicate as `draggable(source, destination, index)` — the DRAGGED
+component first, the CONTAINER it's being tested against second. This project's `draggable` functions
+took a single parameter and named it as if it were the destination container:
+`draggable: (target) => target.get && target.get('type') === 'lancera-zone1'`. In reality that parameter
+receives the dragged element ITSELF — always `'lancera-zone1-element'`, never `'lancera-zone1'` — so this
+check could never once evaluate true, for any element, in any direction, ever. `canMove()` therefore
+always returned `false` for both real components — meaning `DropLocationDeterminer.getValidParent()`
+(`grapes.mjs`'s shared drag-over validator, listening to both `mousemove` and `dragover` — the same code
+both a direct-body component drag AND a native HTML5 block-panel drop go through) never found a single
+valid drop target anywhere on the canvas, for any drag, from any source, ever. This is the literal,
+complete explanation for "nothing can be placed on the canvas."
+
+**Why the prior round's own drag verification (194px measured, reported as working) never caught this —
+stated plainly, as asked.** It used the toolbar's "move" icon (`tlb-move`), which — confirmed directly in
+`grapes.mjs` — checks `!target.get('draggable')` as a bare property read, never invoking it as a
+function. A function value is truthy, so this guard trivially passes regardless of what the function
+would actually return if called, and `tlb-move` then routes through a completely different code path
+(`core:component-drag`, GrapesJS's dedicated absolute/translate-mode dragger) that never calls
+`canMove()` at all. That path was never broken. A real user does not reach for a small toolbar icon to
+move something — they grab the element and drag it, which goes through the Sorter/
+`DropLocationDeterminer` path this bug actually disabled. **The prior round's own verification method
+(direct API-level `component.addStyle()` calls, used for the resize claim) is the same class of miss —
+it exercises the save/render math correctly, but it bypasses GrapesJS's actual interactive drag/resize
+mechanism entirely, so it could never have detected a bug that lives specifically in that mechanism's own
+validation logic. Both of the prior round's "verified" claims were real proof of the coordinate/save math
+being correct, and neither was proof that a real mouse drag could ever succeed at all — those are
+different claims, and this round's report is the direct consequence of that gap.**
+
+**Item 2 (coordinate/unit contract) — re-checked directly, found already correct, not the cause here.**
+`serialization.js`'s own boundary conversion (`MM_TO_PX = 96/25.4`, applied only at load and at save;
+GrapesJS's own internal math stays px-native throughout) matches the CSS specification's own mm-to-px
+ratio exactly — the same ratio a browser and WeasyPrint both already use natively for physical CSS units.
+The prior round's exact-match evidence (89.96mm canvas → 89.96mm real render) was genuine and remains
+valid; this round found no error in that chain. The corruption Ali saw was not a coordinate mismatch —
+it was a drag that could never legally complete landing the canvas in an inconsistent intermediate state
+via the always-failing validation path, not a bad conversion once a drag did complete.
+
+**The fix** (`componentTypes.js`, both element types): corrected the predicate to take `(source,
+destination)` and test `destination`'s type, matching GrapesJS's real call signature —
+`draggable: (source, destination) => !!(destination && destination.get && destination.get('type') ===
+'lancera-zone1')` (and the equivalent for zone 2). Audited every other `draggable`/`droppable`/`resizable`
+definition in the same file for the same class of mistake — the two `droppable` predicates on the
+container types were already correct (they only ever used the first argument, which is genuinely
+`source` in both signatures), and `resizable` uses a static config object with no function involved, so
+no other instance of this bug exists in this codebase.
+
+**Verification performed this round, and its honest limits.** Per this round's explicit instruction, no
+synthetic Playwright drag gesture and no direct model-level mutation is offered here as proof the feature
+works. What WAS done, and is offered only as evidence the fix's logic is correct, not as a substitute for
+real use: `editor.Components.canMove(zone1Container, existingZone1Element)` — GrapesJS's own real,
+unmodified library function, the exact one `getValidParent()` depends on for every real drag — was called
+directly in a live browser session and now returns `{result: true}` where it previously would have
+returned `false` (confirmed by also evaluating what the old, buggy one-argument check would have produced
+against the same live component: `false`). Separately, as an additional (not final) diagnostic signal: a
+direct mouse-down-and-drag on an existing element's own rendered body (not the toolbar icon) now visibly
+repositions it with no duplication or layout breakage, and a native block-panel drag now visibly adds a
+new element to the canvas — both were reproducibly broken before this fix and are not after it, in this
+session's own testing. **Neither of these is treated as the final word.** Full `apps.invoices` backend
+suite untouched by this round (frontend-only fix); frontend `vitest run src/lib/designEditor` (18/18) and
+`vite build` both clean — noting honestly that none of those 18 existing unit tests could have caught
+this bug either, since they test the mm/px data transform functions in isolation and never exercise
+GrapesJS's own runtime drag validation at all.
+
+**This task is not being reported complete.** Per this round's explicit standard: Ali needs to open the
+editor himself, drag a real element with his own mouse, resize another, save, and check the real
+rendered invoice before this is considered done. The dev servers (backend :8000, frontend :5173) are left
+running for that purpose rather than being stopped at the end of this session as usual.
+
+Docs: this entry — the real root cause (a reversed function-argument assumption in `draggable`, not a
+raw-markup or coordinate-unit problem), why the prior round's verification method structurally could not
+have caught it, and the fix.

@@ -6,8 +6,24 @@
 // flow-reorder-only, the mandatory non-removable table/totals, drag
 // containment per zone) become actual editor behavior rather than a save-
 // time-only check.
-import { PAIRABLE_ZONE_2_TYPES, ZONE_1_TYPE_META, ZONE_2_TYPE_META } from './constants'
-import { isTotalsElementRemovable } from './rules'
+//
+// 20 August 2026 rework (see DECISIONS.md's "canvas must render the real
+// thing" entry): the two element types' own onRender used to OVERWRITE
+// el.innerHTML with a synthetic gray-box-and-label placeholder on every
+// render — exactly the "generic abstraction, not the real thing" this
+// pass replaces. Real content now comes from each component's own
+// `content` property (set at creation from realContent.js's fetched
+// markup, or live-refreshed via DesignEditor.jsx's own debounced fetch on
+// a style-panel change) — GrapesJS's own documented mechanism for "raw
+// HTML content, not re-parsed into child components." The visual badges
+// (sidebar/paired/required) are no longer JS-computed inline styles
+// either — they're real CSS attribute-selector rules
+// (apps/invoices/templates/invoices/editor_canvas.html's own <style>
+// block, loaded once into the canvas iframe by DesignEditor.jsx) matching
+// the SAME data-sidebar/data-paired/data-sole-totals attributes
+// serialization.js already sets — the browser re-applies them
+// automatically the moment an attribute value changes, no onRender/
+// re-render round-trip needed at all.
 import { TABLE_COMPONENT_ID, ZONE1_CONTAINER_ID, ZONE2_CONTAINER_ID } from './serialization'
 
 function countSiblingsOfType(component, elType) {
@@ -29,13 +45,22 @@ function countSiblingsOfType(component, elType) {
  * (an earlier version of this file tried exactly that and it silently did
  * nothing — caught by this step's own Playwright verification, not
  * assumed correct from reading GrapesJS's docs alone).
+ *
+ * Also toggles the real `data-sole-totals` attribute (20 August 2026) —
+ * the "Required" badge is now a plain CSS attribute-selector rule in
+ * editor_canvas.html's own stylesheet, not a JS-computed innerHTML
+ * string; setting the attribute is all this function needs to do for the
+ * badge to appear/disappear, the same way it always did for
+ * removability itself.
  */
 export function refreshTotalsRemovability(zone2Component) {
   if (!zone2Component) return
-  const allTypes = zone2Component.components().map((c) => c.getAttributes()['data-el-type'])
-  zone2Component.components()
-    .filter((c) => c.getAttributes()['data-el-type'] === 'totals')
-    .forEach((c) => c.set('removable', isTotalsElementRemovable('totals', allTypes)))
+  const totalsSiblings = zone2Component.components().filter((c) => c.getAttributes()['data-el-type'] === 'totals')
+  const sole = totalsSiblings.length <= 1
+  totalsSiblings.forEach((c) => {
+    c.set('removable', !sole)
+    c.addAttributes({ 'data-sole-totals': sole ? 'true' : 'false' })
+  })
 }
 
 export function registerComponentTypes(editor) {
@@ -61,41 +86,35 @@ export function registerComponentTypes(editor) {
         removable: true,
         copyable: false,
         // Only draggable back into the same Zone 1 container — never into Zone 2.
-        draggable: (target) => target.get && target.get('type') === 'lancera-zone1',
+        //
+        // 21 August 2026 SEV1 fix: GrapesJS calls this predicate as
+        // `draggable(source, destination, index)` — confirmed directly
+        // against grapesjs/dist/grapes.mjs's own ComponentManager.canMove
+        // (`draggable(srcModel, target, index)`) and the library's own
+        // property docstring ("target and destination components are
+        // passed as arguments" — GrapesJS's doc terminology calls the
+        // DRAGGED component "target", confusingly). The previous version
+        // of this function took only ONE parameter and named it `target`
+        // as if it were the destination container — it was actually
+        // receiving the dragged element itself (always type
+        // 'lancera-zone1-element'), so the check `target.get('type') ===
+        // 'lancera-zone1'` could never be true. This made `canMove()`
+        // return false for EVERY real drag, which the toolbar "move" icon
+        // path never exercises (`tlb-move` only truthy-checks the raw
+        // `draggable` property, never calls it as a function) but any
+        // direct-body drag AND every block-panel drop DOES exercise (via
+        // DropLocationDeterminer.getValidParent's `targetNode.canMove(...)`
+        // — see DECISIONS.md's 21 August 2026 SEV1 entry for the full
+        // trace. This is why the prior round's own drag verification
+        // (the toolbar move icon) appeared to work while a real user's
+        // direct drag never could.
+        draggable: (source, destination) => !!(destination && destination.get && destination.get('type') === 'lancera-zone1'),
         resizable: { tl: 1, tc: 1, tr: 1, cl: 1, cr: 1, bl: 1, bc: 1, br: 1 },
         droppable: false,
         // Real free-form x/y drag, not GrapesJS's normal in-flow reorder —
         // this is the actual API this step's Puck-vs-GrapesJS research
         // confirmed only GrapesJS's core supports (see DECISIONS.md).
         dmode: 'absolute',
-      },
-      init() {
-        this.on('change:attributes:data-style-json', () => this.view && this.view.render())
-      },
-    },
-    view: {
-      onRender() {
-        const attrs = this.model.getAttributes()
-        const elType = attrs['data-el-type']
-        const meta = ZONE_1_TYPE_META[elType]
-        let style = {}
-        try { style = JSON.parse(attrs['data-style-json'] || '{}') } catch { /* keep {} */ }
-
-        const el = this.el
-        el.style.display = 'flex'
-        el.style.alignItems = 'center'
-        el.style.justifyContent = 'center'
-        el.style.overflow = 'hidden'
-        el.style.fontSize = '11px'
-        el.style.fontFamily = 'var(--font, sans-serif)'
-        el.style.textAlign = 'center'
-        el.style.padding = '4px'
-        el.style.boxSizing = 'border-box'
-        el.style.background = style.sidebar ? 'rgba(45,42,110,0.12)' : 'rgba(0,200,150,0.10)'
-        el.style.border = style.sidebar ? '1.5px dashed #2d2a6e' : '1.5px dashed #00a87e'
-        el.style.borderRadius = '4px'
-        el.style.color = style.sidebar ? '#2d2a6e' : '#00654a'
-        el.innerHTML = `<span>${style.label || (meta ? meta.label : elType)}${style.sidebar ? ' 🗄' : ''}</span>`
       },
     },
   })
@@ -129,50 +148,21 @@ export function registerComponentTypes(editor) {
       defaults: {
         copyable: false,
         // Only draggable/sortable back into the same Zone 2 container — never Zone 1.
-        draggable: (target) => target.get && target.get('type') === 'lancera-zone2',
+        // Same argument-order fix as lancera-zone1-element above — see its comment.
+        draggable: (source, destination) => !!(destination && destination.get && destination.get('type') === 'lancera-zone2'),
         droppable: false,
         resizable: false, // zone_2 has no x/y/width/height at all — spacing only
-      },
-      init() {
-        this.on('change:attributes:data-style-json change:attributes:data-paired', () => this.view && this.view.render())
-      },
-    },
-    view: {
-      onRender() {
-        const attrs = this.model.getAttributes()
-        const elType = attrs['data-el-type']
-        const meta = ZONE_2_TYPE_META[elType]
-        let style = {}
-        try { style = JSON.parse(attrs['data-style-json'] || '{}') } catch { /* keep {} */ }
-        const paired = attrs['data-paired'] === 'true'
-
-        const el = this.el
-        el.style.display = 'flex'
-        el.style.alignItems = 'center'
-        el.style.gap = '8px'
-        el.style.padding = '10px 12px'
-        el.style.fontSize = '12px'
-        el.style.fontFamily = 'var(--font, sans-serif)'
-        el.style.boxSizing = 'border-box'
-        el.style.background = 'rgba(0,120,255,0.08)'
-        el.style.border = paired ? '1.5px solid #6656cf' : '1.5px dashed #3d7fd9'
-        el.style.borderRadius = '6px'
-        el.style.color = '#1a3a5f'
-        const mandatoryBadge = elType === 'totals' && countSiblingsOfType(this.model, 'totals') <= 1
-          ? ' <span style="opacity:.6">(required)</span>' : ''
-        const pairedBadge = paired ? ' <span style="color:#6656cf">⇄ paired</span>' : ''
-        el.innerHTML = `<span>${style.label || (meta ? meta.label : elType)}${mandatoryBadge}${pairedBadge}</span>`
       },
     },
   })
 
   // ── The mandatory line-items table — a fixed, standalone sibling ────
-  // Real rows rendered from `data-sample-rows` (default 3, set by the
-  // editor's sample-row-count toggle) — the whole point is that changing
-  // this genuinely changes the table's rendered height, which pushes
-  // Zone 2's real, normal-flow siblings down exactly the way a heavier
-  // real invoice would, per the task's own "make sure it's a real
-  // functional check, not decorative" requirement.
+  // Real header (the actual <thead> HTML design_renderer.py produces —
+  // real CSS classes/colors, see serialization.js's tableComponent) with
+  // sample rows generated in JS using those SAME real classes — a
+  // deliberate, task-approved exception (line items are "inherently
+  // invoice-specific and don't exist yet at design-edit time," per this
+  // pass's own instructions), not a leftover placeholder.
   DomComponents.addType('lancera-table', {
     model: {
       defaults: {
@@ -181,36 +171,33 @@ export function registerComponentTypes(editor) {
         droppable: false,
         removable: false,
         copyable: false,
-        attributes: { id: TABLE_COMPONENT_ID, 'data-sample-rows': '3' },
       },
       init() {
-        this.on('change:attributes:data-sample-rows', () => this.view && this.view.render())
+        this.on('change:attributes:data-sample-rows', () => this.view && this.view.renderSampleRows())
       },
     },
     view: {
       onRender() {
+        this.renderSampleRows()
+      },
+      renderSampleRows() {
         const el = this.el
-        const rows = parseInt(this.model.getAttributes()['data-sample-rows'], 10) || 3
-        el.style.fontFamily = 'var(--font, sans-serif)'
-        el.style.fontSize = '11px'
-        el.style.margin = '4px 0'
-        el.style.border = '2px solid var(--border-strong, #999)'
-        el.style.borderRadius = '6px'
-        el.style.overflow = 'hidden'
-        el.style.color = 'var(--text-primary, #222)'
-
-        const header = `<div style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(0,0,0,0.06);font-weight:700;">
-          <span>Line Items Table (required)</span><span>${rows} sample rows</span>
-        </div>`
-        const rowDivs = Array.from({ length: rows }).map((_, i) => `
-          <div style="display:flex;justify-content:space-between;padding:5px 10px;border-top:1px solid rgba(0,0,0,0.08);">
-            <span>Sample line item ${i + 1}</span><span>$100.00</span>
-          </div>
+        const tbody = el.querySelector('tbody')
+        if (!tbody) return
+        const attrs = this.model.getAttributes()
+        const rows = parseInt(attrs['data-sample-rows'], 10) || 3
+        const rowCellCss = attrs['data-row-cell-css'] || ''
+        tbody.innerHTML = Array.from({ length: rows }).map((_, i) => `
+          <tr>
+            <td style="${rowCellCss}">Sample line item ${i + 1}</td>
+            <td class="dyn-num-col" style="${rowCellCss}">1</td>
+            <td class="dyn-num-col" style="${rowCellCss}">$100.00</td>
+            <td class="dyn-num-col" style="${rowCellCss}">$100.00</td>
+          </tr>
         `).join('')
-        el.innerHTML = header + rowDivs
       },
     },
   })
 }
 
-export { PAIRABLE_ZONE_2_TYPES, ZONE1_CONTAINER_ID, ZONE2_CONTAINER_ID, TABLE_COMPONENT_ID }
+export { ZONE1_CONTAINER_ID, ZONE2_CONTAINER_ID, TABLE_COMPONENT_ID }

@@ -1216,6 +1216,31 @@ gallery card exactly (plum sidebar + mint total pill, screenshotted directly). F
 frontend suite: 224 passing (`DesignCanvasPreview.jsx` deleted, no test file existed for it); `vite
 build` clean. See DECISIONS.md's 20 August 2026 "SEV1 — gallery previews + color_variant wiring" entry.
 
+20 August 2026 (SEV1 — canvas editor disconnected from the real thing) — a real, direct report: the
+canvas editor showed generic gray placeholder boxes (no real template, no real font, no real user
+data), and resizing an element in the canvas visibly broke the real rendered invoice — investigated as
+one root cause: synthetic placeholder content/fonts with zero relationship to real content/font
+metrics, not a coordinate-math bug (the mm↔px conversion itself was already correct). Fixed by sourcing
+each canvas element's actual editable content from the real backend-rendered HTML fragment
+(`design_renderer.render_editor_canvas_html`/`render_editor_element_html`, 2 new endpoints,
+`apps/invoices/design_preview.py`) — the same real freelancer profile data (`build_preview_context`)
+the gallery's own preview cards already use, sample data only for genuinely invoice-specific fields
+(client, line items, dates) — fetched once at editor load and again (debounced) on every style-panel
+edit, using GrapesJS's own "raw content" mechanism rather than rewriting the already-correct
+position/size component-tree builder. Verified live, exact match not approximate: resized Client Info
+on a real "Minimal" design from 85mm×26mm to a measured 90mm×45mm target (saved as 89.96mm×44.98mm),
+and the real rendered invoice's HTML showed the identical `left:17.99mm; top:47.89mm; width:89.96mm;
+height:44.98mm;` — byte-for-byte. Repeated for a second, independent "Professional" design (Dates
+element, 75mm×28mm target, saved as 74.88mm×28.05mm, real render showed the identical values) — two
+templates, two element types, two exact matches. One honest, flagged automation gap: driving GrapesJS's
+own resize-handle mouse-drag via synthetic Playwright events never registered a size change despite
+correct hit-testing/rendering and an unmodified `resizable` config; the identical model-level mutation
+the Resizer performs on drag-end was invoked directly to prove the save/render chain is correct
+independent of how the resize is triggered — recorded as an unresolved automation limitation, not a
+confirmed product bug. Backend: 752 passing (22 new, `test_design_editor_canvas.py`, incl. a full
+editor-output-vs-real-invoice-output round-trip test). Frontend: `vitest` (18/18) + `vite build` clean.
+See DECISIONS.md's 20 August 2026 "SEV1 — canvas editor loads a disconnected abstraction" entry.
+
 App: apps/invoices/ (+ apps/clients/ for the Client CRM — see below; apps/payments/ supplies the
 currency-conversion anchor both depend on)
 
@@ -2041,13 +2066,24 @@ celery -A config beat -l info                    # actually triggers them on sch
 service (`brew services start redis`), the same way you'd never think to manually start/stop a
 database.
 
-**Celery worker + beat** are your own application code, not infrastructure — start them
-manually alongside `runserver` when you're working on anything that touches deletion, sessions,
-2FA, or email-sending, same as you'd start `runserver` itself. Don't run them as a permanent
-background service yet — with only one module built and a small, infrequently-changed beat
-schedule, a silently-running worker executing stale code because you forgot it was still up is a
-worse failure mode than "oh right, I need to start it." Revisit this once more modules land and
-scheduled tasks are relied on constantly, not just when deliberately testing this specific area.
+**Celery worker + beat are your own application code, not infrastructure — start them manually
+alongside `runserver`, and RESTART them after every backend code change that touches a task, not
+just once per session.** Unlike `runserver` (Django's autoreloader watches every file and restarts
+the whole process on save), a Celery worker/beat process never reloads Python code on its own — it
+keeps running whatever was in memory at startup, silently, indefinitely, until you kill and restart
+it. This section's own earlier draft predicted exactly this failure mode ("a silently-running
+worker executing stale code because you forgot it was still up is a worse failure mode than 'oh
+right, I need to start it'") — and it materialized for real on 20 August 2026 (see DECISIONS.md's
+"SEV1 — frozen-PDF colors, second investigation" entry): a worker started the evening of 19 August
+kept running, unrestarted, through an entire next-day session of real backend edits
+(`pdf_generator.py`, `design_seeds.py`, all 3 templates) — every `render_and_store_invoice_pdf` task
+it executed in that window silently used pre-fix code, freezing real invoices with completely plain
+PDFs while `runserver`'s own live-preview path (correctly auto-reloaded) showed the fix working
+perfectly. The actual invoices were only fixed by killing and restarting the worker, then manually
+re-running the freeze task for the affected rows — no code was ever wrong. If a background task's
+real-world behavior doesn't match what the code on disk says it should do, check whether the worker
+process itself is older than your last edit (`ps aux | grep celery`, compare its start time against
+your last save) before assuming the code is broken.
 
 **macOS-specific gotcha, will bite you every time otherwise — use `--pool=solo`:** the default
 prefork pool crashes the worker the moment it forks a child process to actually run a task

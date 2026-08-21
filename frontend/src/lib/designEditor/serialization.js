@@ -29,13 +29,19 @@ function parsePx(value, fallback = 0) {
 
 // ── design_data -> GrapesJS component-definition tree (load) ──────────────
 
-function zone1ElementComponent(element) {
+function zone1ElementComponent(element, content) {
   const { type, x, y, width, height, style = {} } = element
   return {
     type: 'lancera-zone1-element',
+    // Real CSS class names (editor_canvas.html's own .lancera-el/.dyn-zone1-el
+    // rules — the default thin outline plus the sidebar-badge attribute
+    // selector, both loaded once into the canvas iframe head, see
+    // DesignEditor.jsx) — never a JS-computed inline style for these.
+    classes: ['lancera-el', 'dyn-zone1-el'],
     attributes: {
       'data-el-type': type,
       'data-style-json': JSON.stringify(style),
+      ...(style.sidebar ? { 'data-sidebar': 'true' } : {}),
     },
     style: {
       position: 'absolute',
@@ -44,30 +50,63 @@ function zone1ElementComponent(element) {
       width: `${mmToPx(width)}px`,
       height: `${mmToPx(height)}px`,
     },
+    // Real rendered HTML (apps/invoices/design_renderer.py's own
+    // per-element content, see realContent.js) — GrapesJS's own
+    // documented "raw content, not parsed into child components"
+    // mechanism. Falls back to an empty string only when no real
+    // content was fetched (e.g. a brand-new element just dropped from
+    // the palette, before its first content fetch resolves).
+    content: content || '',
   }
 }
 
-function zone2ElementComponent(element) {
+function zone2ElementComponent(element, content) {
   const { type, spacing_after_previous = 0, style = {}, paired_side_by_side = false } = element
   return {
     type: 'lancera-zone2-element',
+    classes: ['lancera-el', 'dyn-zone2-el'],
     attributes: {
       'data-el-type': type,
       'data-style-json': JSON.stringify(style),
       'data-paired': paired_side_by_side ? 'true' : 'false',
+      ...(style.sidebar ? { 'data-sidebar': 'true' } : {}),
     },
     style: {
       'margin-top': `${mmToPx(spacing_after_previous)}px`,
     },
+    content: content || '',
   }
 }
 
-function tableComponent(table) {
+// Mirrors apps/invoices/design_renderer.py's own _table_style_css exactly
+// (the only table-level style property that function computes is
+// font-family, from table.style.font) — read directly off design_data
+// here rather than re-parsed out of the fetched real HTML's own style
+// attribute, since design_data already has it and this is simpler/more
+// robust than a CSS-string parser for one property.
+function tableStyleObject(tableStyle) {
+  return tableStyle?.font ? { 'font-family': `'${tableStyle.font}'` } : {}
+}
+
+function tableComponent(table, realContent) {
   const style = (table && table.style) || {}
   return {
     type: 'lancera-table',
+    tagName: 'table',
     id: TABLE_COMPONENT_ID,
-    attributes: { 'data-style-json': JSON.stringify(style) },
+    classes: ['dyn-items'], // the real class name design_renderer.py's own <table class="dyn-items"> uses
+    style: tableStyleObject(style),
+    attributes: {
+      'data-style-json': JSON.stringify(style),
+      'data-sample-rows': '3',
+      'data-row-cell-css': realContent ? realContent.tableRowCellCss : '',
+    },
+    // Real <thead> markup (design_renderer.py's own real header cell
+    // colors/borders/font) plus an empty <tbody> for the sample-row
+    // generator (componentTypes.js) to populate — sample line items are
+    // the one deliberate, task-approved placeholder exception (real line
+    // items don't exist yet at design-edit time).
+    content: `${realContent ? realContent.tableHeadHtml : '<thead></thead>'}<tbody></tbody>`,
   }
 }
 
@@ -79,11 +118,22 @@ function tableComponent(table) {
  * table always starts zone_2" is true by construction (it isn't in the
  * sortable list at all) rather than something a drag-reorder edge case
  * could ever leapfrog past.
+ *
+ * `realContent` (20 August 2026 — see realContent.js) is
+ * fetchRealCanvasContent's own return shape — each zone1/zone2 element's
+ * `content` comes from there, indexed by array position, matching
+ * design_data's own element order exactly. Optional (falls back to blank
+ * content) so this function still works for the brief window before the
+ * first real fetch resolves, or in any test that doesn't need real markup.
  */
-export function buildComponentTreeFromDesignData(designData) {
-  const zone1Elements = (designData?.zone_1?.elements || []).map(zone1ElementComponent)
-  const zone2Elements = (designData?.zone_2?.elements || []).map(zone2ElementComponent)
-  const table = tableComponent(designData?.zone_2?.table)
+export function buildComponentTreeFromDesignData(designData, realContent) {
+  const zone1Elements = (designData?.zone_1?.elements || []).map(
+    (el, i) => zone1ElementComponent(el, realContent?.zone1Content?.[i]),
+  )
+  const zone2Elements = (designData?.zone_2?.elements || []).map(
+    (el, i) => zone2ElementComponent(el, realContent?.zone2Content?.[i]),
+  )
+  const table = tableComponent(designData?.zone_2?.table, realContent)
 
   return [
     {

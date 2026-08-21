@@ -40,6 +40,8 @@ already built via build_pdf_context/build_portal_context, exactly like
 the 3 static templates do — @font-face declarations here reference the
 same {{ font_* }} variable names.
 """
+import json
+
 from django.template.loader import render_to_string
 
 from .design_seeds import BUILTIN_DESIGNS
@@ -194,6 +196,26 @@ def _row_cell_css(table_style):
     return f"border-bottom:0.25mm solid {color};" if color else ''
 
 
+def _annotate_zone2_element(element):
+    """
+    Computes css/rows/variant onto a zone_2 element in place — the one
+    real place this happens, shared by _prepare_zone2_rows (the real
+    render path, below) and prepare_editor_zone2_elements (the canvas
+    editor's own per-element, unpaired-and-indexed variant, 20 August
+    2026 — see DECISIONS.md). Returns the same dict for convenient
+    chaining.
+    """
+    style = element.get('style') or {}
+    element['style'] = style
+    element['css'] = _zone2_element_css(element)
+    if element.get('type') == 'totals':
+        element['rows'] = style.get('rows') or DEFAULT_TOTALS_ROWS
+        element['variant'] = style.get('variant', '')
+    if element.get('type') == 'payment_info':
+        element['variant'] = style.get('variant', 'bank_methods')
+    return element
+
+
 def _prepare_zone2_rows(zone_2_elements):
     """
     Groups zone_2 elements into render rows — a plain single-element row
@@ -203,17 +225,7 @@ def _prepare_zone2_rows(zone_2_elements):
     (modern.html's qr_and_link payment_info) entirely — those render
     inside the sidebar container instead, never in this flow.
     """
-    flow_elements = [e for e in zone_2_elements if not (e.get('style') or {}).get('sidebar')]
-
-    for element in flow_elements:
-        style = element.get('style') or {}
-        element['style'] = style
-        element['css'] = _zone2_element_css(element)
-        if element.get('type') == 'totals':
-            element['rows'] = style.get('rows') or DEFAULT_TOTALS_ROWS
-            element['variant'] = style.get('variant', '')
-        if element.get('type') == 'payment_info':
-            element['variant'] = style.get('variant', 'bank_methods')
+    flow_elements = [_annotate_zone2_element(e) for e in zone_2_elements if not (e.get('style') or {}).get('sidebar')]
 
     paired_idx = [i for i, e in enumerate(flow_elements) if e.get('paired_side_by_side')]
 
@@ -244,6 +256,113 @@ def _prepare_zone2_sidebar_elements(zone_2_elements):
             prepped['variant'] = style.get('variant', 'bank_methods')
         sidebar.append(prepped)
     return sidebar
+
+
+EDITOR_TEMPLATE_NAME = 'invoices/editor_canvas.html'
+
+
+def prepare_editor_zone1_elements(zone_1):
+    """
+    20 August 2026 — Step 8b canvas rework (see DECISIONS.md's "canvas
+    must render the real thing" entry). Every zone_1 element, ALWAYS
+    absolutely positioned — unlike the real render path above, the
+    editor canvas never splits sidebar-flagged elements into a simulated
+    fixed sidebar container (Step 8b's own established scope: sidebar
+    treatment is a visual badge/border in the editor, never a physical
+    reflow — see DECISIONS.md's original Step 8b entry). Indexed so the
+    frontend can map each real rendered div back to its own
+    design_data.zone_1.elements[i] one-to-one — the same index the
+    existing serialization.js save path already expects to find at that
+    position in the array.
+    """
+    elements = []
+    for i, raw in enumerate(zone_1.get('elements', [])):
+        style = raw.get('style') or {}
+        elements.append({
+            **raw, 'style': style, 'index': i, 'css': _zone1_element_css(raw, absolute=True),
+            'style_json': json.dumps(style),
+        })
+    return elements
+
+
+def prepare_editor_zone2_elements(zone_2_elements):
+    """
+    Every zone_2 element, individually — unlike _prepare_zone2_rows above,
+    NEVER grouped into a combined paired row (Step 8b's own established
+    scope: pairing shows as a badge/metadata in the editor, never a real
+    side-by-side reflow) and NEVER excluding sidebar-flagged elements
+    (the editor's own zone_2 list has always included them uniformly —
+    confirmed directly against serialization.js's extractZone2Element,
+    which has no sidebar special-case at all). Indexed, same convention
+    as prepare_editor_zone1_elements above.
+    """
+    elements = []
+    for i, raw in enumerate(zone_2_elements):
+        annotated = _annotate_zone2_element({**raw})
+        annotated['index'] = i
+        annotated['style_json'] = json.dumps(annotated['style'])
+        elements.append(annotated)
+    return elements
+
+
+def render_editor_canvas_html(design_data, base_context, sample_rows=3):
+    """
+    The canvas editor's own real render — same real per-element content
+    (`_dynamic_element_content.html`, unchanged) and same real CSS
+    (`_dynamic_element_styles.html`, shared with render_dynamic_design_html
+    below) as a real invoice, but laid out for live, indexed editing
+    rather than final print output: every element individually, always
+    absolutely/flow positioned per its own zone (never split into a
+    sidebar container or combined into a paired row — see the two prepare_*
+    functions above for the full reasoning). `base_context` is whatever
+    apps.invoices.design_preview.build_preview_context already built
+    (real freelancer profile, sample invoice content, resolved colors,
+    portal font URLs) — this function only adds the indexed zone
+    structures, exactly mirroring render_dynamic_design_html's own shape.
+    """
+    zone_1 = design_data.get('zone_1') or {}
+    zone_2 = design_data.get('zone_2') or {}
+
+    zone1_elements = prepare_editor_zone1_elements(zone_1)
+    zone2_elements = prepare_editor_zone2_elements(zone_2.get('elements', []))
+    table_style = (zone_2.get('table') or {}).get('style') or {}
+
+    context = {
+        **base_context,
+        'zone1_elements': zone1_elements,
+        'zone1_content_height_mm': _zone1_content_height_mm(zone1_elements),
+        'zone2_elements': zone2_elements,
+        'table_css': _table_style_css(table_style),
+        'thead_cell_css': _thead_cell_css(table_style),
+        'row_cell_css': _row_cell_css(table_style),
+        'table_style_json': json.dumps(table_style),
+        'sample_rows': sample_rows,
+        'sample_rows_range': range(1, sample_rows + 1),
+        # The editor never simulates the fixed sidebar (see
+        # prepare_editor_zone1_elements' own docstring) — has_sidebar
+        # stays False unconditionally so _dynamic_element_styles.html's
+        # shared .dyn-main rule never applies the sidebar margin-left.
+        'has_sidebar': False,
+    }
+    return render_to_string(EDITOR_TEMPLATE_NAME, context)
+
+
+def render_editor_element_html(el_type, style, base_context):
+    """
+    Re-renders ONE real element's own content fragment — used for the
+    canvas's live style-panel-driven refresh (a font/color/label/variant
+    change) without re-rendering the whole canvas or losing every other
+    element's current live position. Reuses the exact same
+    `_dynamic_element_content.html` partial every other real render path
+    uses — the fragment this returns is byte-identical to what a real
+    invoice using this exact (type, style) combination would show.
+    """
+    zone_2_types = {'totals', 'notes', 'signature', 'payment_info'}
+    el = {'type': el_type, 'style': style or {}}
+    if el_type in zone_2_types:
+        el = _annotate_zone2_element(el)
+    context = {**base_context, 'el': el}
+    return render_to_string('invoices/_dynamic_element_content.html', context)
 
 
 def render_dynamic_design_html(design, base_context):

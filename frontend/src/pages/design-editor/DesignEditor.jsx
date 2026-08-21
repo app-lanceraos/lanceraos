@@ -17,6 +17,20 @@
 // supports real per-component `dmode:'absolute'` drag and `resizable`
 // handles, confirmed directly against this project's actual installed
 // version's source, not assumed from docs alone).
+//
+// 20 August 2026 rework (see DECISIONS.md's "canvas must render the real
+// thing" entry) — a real, direct SEV1 report: the canvas used to be a
+// disconnected abstract representation (generic gray boxes/labels, system
+// fallback fonts, sample data unrelated to the real freelancer) that
+// didn't match what actually gets rendered, causing resize/reflow
+// decisions made in the canvas to visibly break the real invoice output.
+// The canvas now loads the ACTUAL rendered markup for the design being
+// edited (apps/invoices/design_renderer.py's own real per-element output,
+// via the new /invoices/designs/editor-canvas/ endpoint — real freelancer
+// profile, real fonts, real resolved colors, sample-but-realistic
+// invoice-specific content) as each element's real `content`, and
+// refreshes it live (debounced, /invoices/designs/editor-element/) on
+// every style-panel change — see realContent.js for the full mechanism.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import GjsEditor, { Canvas } from '@grapesjs/react'
@@ -29,12 +43,15 @@ import FosAlert from '@/components/FosAlert'
 import { registerBlocks } from '@/lib/designEditor/blocks'
 import { refreshTotalsRemovability, registerComponentTypes } from '@/lib/designEditor/componentTypes'
 import { BLANK_DESIGN_DATA, MM_TO_PX, PAGE_WIDTH_MM, PX_TO_MM } from '@/lib/designEditor/constants'
+import { fetchRealCanvasContent, fetchRealElementContent } from '@/lib/designEditor/realContent'
 import {
   buildComponentTreeFromDesignData, extractDesignDataFromEditor,
   TABLE_COMPONENT_ID, ZONE2_CONTAINER_ID,
 } from '@/lib/designEditor/serialization'
 import EditorTopBar from './EditorTopBar'
 import ElementSettingsPanel from './ElementSettingsPanel'
+
+const CONTENT_REFRESH_DEBOUNCE_MS = 400
 
 function parsePx(value) {
   const n = parseFloat(String(value || '0').replace('px', ''))
@@ -59,7 +76,9 @@ export default function DesignEditor() {
 
   const [editor, setEditor] = useState(null)
   const [design, setDesign] = useState(null)
+  const [realContent, setRealContent] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [contentError, setContentError] = useState(false)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState([])
   const [selected, setSelected] = useState(null)
@@ -70,7 +89,9 @@ export default function DesignEditor() {
 
   const blocksPanelRef = useRef(null)
   const loadedRef = useRef(false)
+  const refreshTimerRef = useRef(null)
 
+  // ── Step 1: load the design's own metadata (unchanged) ──────────────
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -88,12 +109,40 @@ export default function DesignEditor() {
         }
         if (!cancelled) setDesign(seed)
       }
-      if (!cancelled) setLoading(false)
     }
     load()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+
+  // ── Step 2: fetch the REAL rendered markup for that design — real
+  // freelancer profile, real fonts, real resolved color, sample-but-
+  // realistic invoice content. Runs independently of GrapesJS's own
+  // init (doesn't need `editor` to exist yet) so both can proceed in
+  // parallel; the tree-building effect below waits for both. ─────────
+  useEffect(() => {
+    if (!design) return
+    let cancelled = false
+    async function loadRealContent() {
+      try {
+        const content = await fetchRealCanvasContent(design.design_data, design.base_template, design.color_variant, sampleRows)
+        if (!cancelled) { setRealContent(content); setContentError(false) }
+      } catch {
+        if (!cancelled) setContentError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    loadRealContent()
+    return () => { cancelled = true }
+    // Deliberately only on `design` itself loading, not `sampleRows` —
+    // the sample-row COUNT is a pure client-side regeneration
+    // (componentTypes.js's renderSampleRows, real CSS classes already
+    // loaded) once the table's real header/classes are fetched once;
+    // re-fetching the whole canvas over a row-count change would be
+    // real, unnecessary backend load for content that doesn't change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [design])
 
   const updateSelectedFromEditor = useCallback((ed) => {
     const comp = ed.getSelected()
@@ -122,6 +171,23 @@ export default function DesignEditor() {
     }
   }, [])
 
+  // Fetches real content for one component and applies it directly to
+  // the live DOM node (plus keeping the model's own `content` in sync,
+  // in case GrapesJS ever re-renders this view from the model later —
+  // e.g. undo/redo). Shared by the debounced style-panel refresh and the
+  // immediate fetch for a freshly-dropped palette block.
+  const refreshComponentContent = useCallback(async (comp, elType, style) => {
+    if (!design) return
+    try {
+      const html = await fetchRealElementContent(elType, style, design.base_template, design.color_variant)
+      comp.set('content', html)
+      const domEl = comp.getEl && comp.getEl()
+      if (domEl) domEl.innerHTML = html
+    } catch {
+      // Non-fatal — the canvas keeps showing whatever content it already had.
+    }
+  }, [design])
+
   const onEditorInit = useCallback((ed) => {
     setEditor(ed)
     registerComponentTypes(ed)
@@ -147,12 +213,39 @@ export default function DesignEditor() {
       refreshTotalsRemovability(zone2)
     }
     ed.on('component:add component:remove', refreshTotals)
-  }, [updateSelectedFromEditor])
 
+    // A freshly-dropped palette block (blocks.js) has no real content
+    // yet — fetch it immediately, the same real per-element endpoint a
+    // style-panel edit already uses. Guarded on `data-style-json`
+    // presence rather than a one-shot flag, since this needs to fire
+    // exactly once per genuinely new element, not on every 'component:add'
+    // (which also fires for the initial tree load itself).
+    ed.on('component:add', (comp) => {
+      const type = comp.get('type')
+      if (type !== 'lancera-zone1-element' && type !== 'lancera-zone2-element') return
+      if (comp.get('content')) return // already has real content — not a fresh drop
+      const attrs = comp.getAttributes()
+      let style = {}
+      try { style = JSON.parse(attrs['data-style-json'] || '{}') } catch { /* keep {} */ }
+      refreshComponentContent(comp, attrs['data-el-type'], style)
+    })
+  }, [updateSelectedFromEditor, refreshComponentContent])
+
+  // ── Step 3: once BOTH GrapesJS and the real content are ready, inject
+  // the real CSS (fonts + design-specific rules) into the canvas iframe's
+  // own <head>, then build the component tree with real content. ─────
   useEffect(() => {
-    if (editor && design && !loadedRef.current) {
+    if (editor && design && realContent && !loadedRef.current) {
       loadedRef.current = true
-      const tree = buildComponentTreeFromDesignData(design.design_data)
+
+      const canvasDoc = editor.Canvas.getDocument()
+      if (canvasDoc) {
+        const styleEl = canvasDoc.createElement('style')
+        styleEl.textContent = realContent.cssText
+        canvasDoc.head.appendChild(styleEl)
+      }
+
+      const tree = buildComponentTreeFromDesignData(design.design_data, realContent)
       editor.setComponents(tree)
       // Belt-and-suspenders: the zone2 container's own 'add' listener
       // should already do this as the initial tree is constructed, but an
@@ -163,7 +256,7 @@ export default function DesignEditor() {
       setCanUndo(false)
       setCanRedo(false)
     }
-  }, [editor, design])
+  }, [editor, design, realContent])
 
   useEffect(() => {
     if (editor && blocksPanelRef.current) {
@@ -179,6 +272,15 @@ export default function DesignEditor() {
     if (!comp) return
     comp.addAttributes({ 'data-style-json': JSON.stringify(newStyle) })
     updateSelectedFromEditor(editor)
+
+    // Debounced real-content refresh — a color-picker drag or fast
+    // typing in a text field fires this many times a second; only the
+    // LAST value in a burst is worth a real backend round trip.
+    const elType = comp.getAttributes()['data-el-type']
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+    refreshTimerRef.current = setTimeout(() => {
+      refreshComponentContent(comp, elType, newStyle)
+    }, CONTENT_REFRESH_DEBOUNCE_MS)
   }
 
   function handleChangeSpacing(mm) {
@@ -275,6 +377,15 @@ export default function DesignEditor() {
         onSave={handleSave}
         saving={saving}
       />
+
+      {contentError && (
+        <div style={{ padding: '10px 16px 0' }}>
+          <FosAlert type="error" onDismiss={() => setContentError(false)}>
+            Could not load the real preview for this design — the canvas below is showing its last known
+            state. Reload the page to try again before making further changes.
+          </FosAlert>
+        </div>
+      )}
 
       {errors.length > 0 && (
         <div style={{ padding: '10px 16px 0' }}>

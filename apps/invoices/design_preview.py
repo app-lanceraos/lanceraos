@@ -30,6 +30,8 @@ from types import SimpleNamespace
 
 from django.template.loader import render_to_string
 
+from .design_renderer import render_editor_canvas_html as _render_editor_canvas_html
+from .design_renderer import render_editor_element_html as _render_editor_element_html
 from .design_seeds import resolve_design_colors
 from .pdf_generator import DEFAULT_TEMPLATE, PORTAL_FONT_CONTEXT, TEMPLATE_MAP, _generate_qr_data_uri, render_html_for_design
 
@@ -96,3 +98,38 @@ def render_design_preview_html(user, design):
     """A real, saved InvoiceDesign's own preview ('Your designs') — routes through the exact same render_html_for_design branch a real invoice with this design assigned would use, so a custom/edited design's card genuinely matches what a client will see, dynamic renderer included."""
     context = build_preview_context(user, design.base_template, design.color_variant)
     return render_html_for_design(design, context)
+
+
+def render_editor_canvas_html(user, design_data, base_template, color_variant, sample_rows=3):
+    """
+    20 August 2026 — Step 8b canvas rework (see DECISIONS.md). The canvas
+    editor's own initial-load render: real content, real fonts, real
+    resolved color, ALWAYS via design_renderer's per-element, indexed
+    layout (design_renderer.render_editor_canvas_html) — unlike the
+    gallery preview functions above, this is never routed through the 3
+    static templates, even for an untouched builtin pick, since only the
+    per-element-positioned dynamic path has a DOM structure that maps
+    one-to-one onto design_data's own element list at all (the 3 static
+    templates are hand-built markup with no such mapping — there's
+    nothing in professional.html for a canvas drag to correspond to).
+    """
+    context = build_preview_context(user, base_template, color_variant)
+    return _render_editor_canvas_html(design_data, context, sample_rows=sample_rows)
+
+
+def render_editor_element_html(user, base_template, color_variant, el_type, style):
+    """
+    The canvas's live per-element content refresh (a style-panel font/
+    color/label/variant change) — re-renders just that one element's real
+    content fragment via the exact same _dynamic_element_content.html
+    partial every other real render path uses, so the canvas never shows
+    anything a real invoice with this exact (type, style) wouldn't.
+    `base_template`/`color_variant` only matter here insofar as
+    _dynamic_element_content.html's own CSS classes (already loaded once
+    into the canvas iframe's <head> at initial load) reference
+    design_primary_color/design_secondary_color — this function doesn't
+    need to re-supply them itself, only the invoice/freelancer/qr context
+    the content fragment's own bindings read.
+    """
+    context = build_preview_context(user, base_template, color_variant)
+    return _render_editor_element_html(el_type, style, context)

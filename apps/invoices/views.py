@@ -50,7 +50,11 @@ from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTE
 
 from .ai_design import seed_design_data_from_image
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
-from .design_preview import render_builtin_template_preview_html, render_design_preview_html
+from .design_preview import (
+    render_builtin_template_preview_html, render_design_preview_html,
+    render_editor_canvas_html, render_editor_element_html,
+)
+from .design_schema import ZONE_1_TYPES, ZONE_2_TYPES, validate_design_data_schema
 from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
 from .email_service import (
     build_formal_notice_email, build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email,
@@ -2455,6 +2459,85 @@ def design_preview(request, pk):
     design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
     html = render_design_preview_html(request.user, design)
     return HttpResponse(html, content_type='text/html')
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def design_editor_canvas(request):
+    """
+    Step 8b canvas rework, 20 August 2026 (see DECISIONS.md's "canvas must
+    render the real thing" entry) — the editor's OWN initial-load render.
+    Called exactly once when DesignEditor.jsx opens, with whatever
+    design_data it's starting from (a saved design's own, a builtin seed,
+    or the blank starting point — all three already schema-valid by
+    construction, but validated here anyway as a real defensive measure
+    against a malformed payload reaching design_renderer.py and 500ing
+    partway through, not just trusted). base_template/color_variant are
+    passed separately from design_data (mirroring how DesignEditor.jsx's
+    own `design` state already keeps them as sibling fields) purely to
+    resolve the real color pair — see design_seeds.resolve_design_colors.
+
+    POST, not GET, since design_data is a real nested JSON object — a
+    query-string GET would be impractical for the same reason
+    design_duplicate/design_create already use a POST body over query
+    params for structured input.
+    """
+    if _check_moderate_rate_limit('design_editor_canvas', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    design_data = request.data.get('design_data')
+    base_template = request.data.get('base_template')
+    color_variant = request.data.get('color_variant', '') or ''
+    sample_rows = request.data.get('sample_rows', 3)
+
+    if not isinstance(design_data, dict):
+        return Response({'design_data': 'design_data must be an object.'}, status=status.HTTP_400_BAD_REQUEST)
+    schema_errors = validate_design_data_schema(design_data)
+    if schema_errors:
+        return Response({'design_data': schema_errors}, status=status.HTTP_400_BAD_REQUEST)
+    if base_template not in TEMPLATE_MAP:
+        return Response({'base_template': f'Must be one of {sorted(TEMPLATE_MAP)}.'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        sample_rows = max(1, min(20, int(sample_rows)))
+    except (TypeError, ValueError):
+        sample_rows = 3
+
+    html = render_editor_canvas_html(request.user, design_data, base_template, color_variant, sample_rows=sample_rows)
+    return HttpResponse(html, content_type='text/html')
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def design_editor_element(request):
+    """
+    The canvas's live per-element content refresh — called from
+    ElementSettingsPanel.jsx's own style-panel changes (font/color/label/
+    variant/etc.), debounced on the frontend so a color-picker drag or
+    fast typing doesn't hammer this per keystroke. Returns just the one
+    element's real inner content fragment (never the whole canvas) so the
+    live positions of every OTHER element on the canvas are left
+    untouched. `zone` picks whether `style.rows`/`style.variant`
+    (totals) and payment_info's own variant default get computed — same
+    real annotation _prepare_zone2_rows itself uses, not a second copy.
+    """
+    if _check_moderate_rate_limit('design_editor_element', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    el_type = request.data.get('el_type')
+    style = request.data.get('style')
+    base_template = request.data.get('base_template')
+    color_variant = request.data.get('color_variant', '') or ''
+
+    valid_types = set(ZONE_1_TYPES) | set(ZONE_2_TYPES)
+    if el_type not in valid_types:
+        return Response({'el_type': f'Must be one of {sorted(valid_types)}.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not isinstance(style, dict):
+        return Response({'style': 'style must be an object.'}, status=status.HTTP_400_BAD_REQUEST)
+    if base_template not in TEMPLATE_MAP:
+        return Response({'base_template': f'Must be one of {sorted(TEMPLATE_MAP)}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    html = render_editor_element_html(request.user, base_template, color_variant, el_type, style)
+    return Response({'html': html})
 
 
 @api_view(['POST'])
