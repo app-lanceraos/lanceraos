@@ -16,8 +16,9 @@ from apps.invoices.ai_design import (
     LAYOUT_SCALE_BY_DENSITY, apply_ai_adjustments, classify_design_image,
     compress_image, seed_design_data_from_image,
 )
-from apps.invoices.legacy_design_schema import validate_design_data_schema
-from apps.invoices.design_seeds import BUILTIN_DESIGNS
+from apps.invoices.design_schema import validate_design_data_schema_by_version
+from apps.invoices.design_templates import BUILTIN_DESIGNS
+from apps.invoices.design_renderer import build_render_context, render_design_html
 from apps.invoices.models import InvoiceDesign
 from apps.invoices.tests.test_views import InvoicesAPITestCase
 
@@ -154,13 +155,26 @@ class ClassifyDesignImageTests(SimpleTestCase):
 # ══════════════════════════════════════════════════════════════════
 
 class ApplyAiAdjustmentsOverlapSafetyTests(SimpleTestCase):
+    """
+    Phase 5.1 fix — this whole class used to exercise the RETIRED zone_1/
+    zone_2 shape (apps.invoices.design_seeds.BUILTIN_DESIGNS +
+    legacy_design_schema.validate_design_data_schema), silently proving
+    the overlap-safety guarantee for code apply_ai_adjustments no longer
+    runs at all. Rewritten against the real production header/flow shape
+    (apps.invoices.design_templates.BUILTIN_DESIGNS +
+    design_schema.validate_design_data_schema_by_version) — the exact
+    source/validator ai_design.py now actually uses, confirmed directly
+    against views.py's design_duplicate and serializers.py's
+    InvoiceDesignSerializer.validate_design_data respectively.
+    """
+
     def test_all_three_seeds_stay_overlap_free_at_every_density_including_the_extreme(self):
         """
         The real proof: apply every discrete density (including 'spacious',
         the largest scale-up) to all 3 real builtin seeds and confirm
-        validate_design_data_schema reports zero errors for each — not
-        just that *a* validator call happens, but that it genuinely finds
-        nothing wrong.
+        validate_design_data_schema_by_version reports zero errors for
+        each — not just that *a* validator call happens, but that it
+        genuinely finds nothing wrong.
         """
         for base_template, seed in BUILTIN_DESIGNS.items():
             for density in LAYOUT_SCALE_BY_DENSITY:
@@ -169,37 +183,37 @@ class ApplyAiAdjustmentsOverlapSafetyTests(SimpleTestCase):
                     'secondary_color': '#abcdef', 'layout_density': density,
                 }
                 adjusted = apply_ai_adjustments(seed, classify)
-                errors = validate_design_data_schema(adjusted)
+                errors = validate_design_data_schema_by_version(adjusted)
                 self.assertEqual(errors, [], f'{base_template}/{density}: {errors}')
 
     def test_uniform_scale_preserves_relative_non_overlap_by_construction(self):
         """
         The actual mathematical property this relies on, exercised directly
         rather than only inferred from "the validator happened to pass":
-        two elements with a real gap between them at scale=1 still have a
-        real (scaled) gap at any positive uniform scale — construct a
-        deliberately tight-but-non-overlapping pair and confirm scaling
+        two header elements with a real gap between them at scale=1 still
+        have a real (scaled) gap at any positive uniform scale — construct
+        a deliberately tight-but-non-overlapping pair and confirm scaling
         both together by 1.5x (well beyond the real 0.92-1.08 range this
-        module actually uses) still doesn't overlap them.
+        module actually uses) still doesn't overlap them. Everything else
+        (page/flow, including the mandatory table+grand-total) is a real,
+        untouched deep copy of the professional seed, so this stays a
+        fully schema-valid document throughout — the test isolates the
+        overlap property specifically, not "is this otherwise a
+        structurally complete design" (already covered by the test above).
         """
-        design_data = {
-            'zone_1': {'elements': [
-                {'type': 'logo', 'x': 10, 'y': 10, 'width': 20, 'height': 20, 'style': {}},
-                {'type': 'dates', 'x': 31, 'y': 10, 'width': 20, 'height': 20, 'style': {}},  # 1mm real gap
-            ]},
-            'zone_2': {'table': {'style': {}}, 'elements': [{'type': 'totals', 'spacing_after_previous': 0, 'style': {}}]},
-        }
-        classify = {'base_template': 'professional', 'layout_density': 'balanced'}
-        # Directly exercise the same scale-from-origin transform at an extreme factor.
         import copy
-        data = copy.deepcopy(design_data)
+        data = copy.deepcopy(BUILTIN_DESIGNS['professional'])
+        data['header']['elements'] = [
+            {'kind': 'generic', 'type': 'text', 'x': 10, 'y': 10, 'width': 20, 'height': 20, 'style': {}, 'overrides': {}, 'binding': None},
+            {'kind': 'generic', 'type': 'text', 'x': 31, 'y': 10, 'width': 20, 'height': 20, 'style': {}, 'overrides': {}, 'binding': None},  # 1mm real gap
+        ]
         scale = 1.5
-        for el in data['zone_1']['elements']:
+        for el in data['header']['elements']:
             el['x'] *= scale
             el['y'] *= scale
             el['width'] *= scale
             el['height'] *= scale
-        errors = validate_design_data_schema(data)
+        errors = validate_design_data_schema_by_version(data)
         self.assertEqual(errors, [])
 
     def test_a_naive_independent_nudge_WOULD_overlap_illustrating_why_uniform_scale_is_used(self):
@@ -209,28 +223,38 @@ class ApplyAiAdjustmentsOverlapSafetyTests(SimpleTestCase):
         position independently, the approach deliberately NOT used) creates,
         which is exactly why apply_ai_adjustments never does this.
         """
-        design_data = {
-            'zone_1': {'elements': [
-                {'type': 'logo', 'x': 10, 'y': 10, 'width': 20, 'height': 20, 'style': {}},
-                {'type': 'dates', 'x': 31, 'y': 10, 'width': 20, 'height': 20, 'style': {}},
-            ]},
-            'zone_2': {'table': {'style': {}}, 'elements': [{'type': 'totals', 'spacing_after_previous': 0, 'style': {}}]},
-        }
         import copy
-        naive = copy.deepcopy(design_data)
-        naive['zone_1']['elements'][1]['x'] -= 15  # an independent "make it more compact" nudge
-        errors = validate_design_data_schema(naive)
+        data = copy.deepcopy(BUILTIN_DESIGNS['professional'])
+        data['header']['elements'] = [
+            {'kind': 'generic', 'type': 'text', 'x': 10, 'y': 10, 'width': 20, 'height': 20, 'style': {}, 'overrides': {}, 'binding': None},
+            {'kind': 'generic', 'type': 'text', 'x': 31, 'y': 10, 'width': 20, 'height': 20, 'style': {}, 'overrides': {}, 'binding': None},
+        ]
+        data['header']['elements'][1]['x'] -= 15  # an independent "make it more compact" nudge
+        errors = validate_design_data_schema_by_version(data)
         self.assertTrue(errors, 'Expected the naive independent nudge to actually produce an overlap.')
         self.assertTrue(any('overlap' in e for e in errors))
 
     def test_colors_are_applied_to_real_present_style_keys(self):
+        """
+        The table element (flow.elements, type == 'table') gets the real
+        color-slot keys per TABLE_COLOR_SLOTS; every header text element
+        bound to business.name gets style.color — Modern repeats
+        business.name in both its main content ("From") and its sidebar,
+        so this checks both are colored, not just one.
+        """
         classify = {
             'base_template': 'modern', 'primary_color': '#111111', 'secondary_color': '#222222',
             'layout_density': 'balanced',
         }
         adjusted = apply_ai_adjustments(BUILTIN_DESIGNS['modern'], classify)
-        self.assertEqual(adjusted['zone_2']['table']['style']['header_bg'], '#111111')
-        self.assertEqual(adjusted['zone_2']['table']['style']['header_color'], '#222222')
+        table_el = next(el for el in adjusted['flow']['elements'] if el['type'] == 'table')
+        self.assertEqual(table_el['style']['header_bg'], '#111111')
+        self.assertEqual(table_el['style']['header_color'], '#222222')
+
+        business_name_elements = [el for el in adjusted['header']['elements'] if el.get('binding') == 'business.name']
+        self.assertGreaterEqual(len(business_name_elements), 2, 'Modern repeats business.name in both main content and sidebar.')
+        for el in business_name_elements:
+            self.assertEqual(el['style']['color'], '#222222')
 
     def test_original_seed_dict_is_never_mutated(self):
         """get_builtin_design_data's own deepcopy discipline must hold through this function too."""
@@ -246,8 +270,25 @@ class ApplyAiAdjustmentsOverlapSafetyTests(SimpleTestCase):
         adjusted = apply_ai_adjustments(BUILTIN_DESIGNS['minimal'], {
             'base_template': 'minimal', 'layout_density': 'not-a-real-value',
         })
-        for original, scaled in zip(BUILTIN_DESIGNS['minimal']['zone_1']['elements'], adjusted['zone_1']['elements']):
+        for original, scaled in zip(BUILTIN_DESIGNS['minimal']['header']['elements'], adjusted['header']['elements']):
             self.assertEqual(original['x'], scaled['x'])
+
+    def test_sidebar_header_elements_are_never_scaled(self):
+        """
+        Modern's own sidebar-flagged header elements (logo/business.name/
+        city/country) live in a separate, fixed-width coordinate space
+        with no comparable "density" concept — layout_density must never
+        touch them, only the main-content header elements.
+        """
+        adjusted = apply_ai_adjustments(BUILTIN_DESIGNS['modern'], {
+            'base_template': 'modern', 'layout_density': 'spacious',
+        })
+        original_sidebar = [el for el in BUILTIN_DESIGNS['modern']['header']['elements'] if (el.get('style') or {}).get('sidebar')]
+        adjusted_sidebar = [el for el in adjusted['header']['elements'] if (el.get('style') or {}).get('sidebar')]
+        self.assertTrue(original_sidebar, 'Modern is expected to have real sidebar-flagged header elements.')
+        for original, scaled in zip(original_sidebar, adjusted_sidebar):
+            self.assertEqual(original['x'], scaled['x'])
+            self.assertEqual(original['width'], scaled['width'])
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -263,12 +304,57 @@ class SeedDesignDataFromImageTests(SimpleTestCase):
         })
         base_template, design_data = seed_design_data_from_image(make_test_image_bytes())
         self.assertEqual(base_template, 'professional')
-        self.assertEqual(validate_design_data_schema(design_data), [])
+        self.assertEqual(validate_design_data_schema_by_version(design_data), [])
 
     @mock.patch('apps.invoices.ai_design.call_groq', return_value='not valid json')
     def test_classify_failure_propagates_as_value_error(self, mock_call_groq):
         with self.assertRaises(ValueError):
             seed_design_data_from_image(make_test_image_bytes())
+
+
+class SeedDesignDataFromImageRealRenderTests(TestCase):
+    """
+    Item 3(c) — the specific gap the Phase 5.1 fix closes: structural
+    validation passing is NOT enough proof this pipeline produces a real,
+    production-shape design. This asserts the actual schema_version
+    discriminator AND drives the result through the real production
+    renderer (design_renderer.render_design_html) — the same canonical
+    path every other production design (a template pick, a blank design,
+    an edited-and-saved design) renders through. Before the Phase 5.1 fix,
+    this exact test would have failed at the schema_version assertion
+    alone (the old pipeline produced a legacy-shape payload with no
+    schema_version key at all).
+    """
+
+    def setUp(self):
+        from apps.users.models import User
+        self.user = User.objects.create_user(email='ai-seed-render@example.com', password='Sup3r$ecret1')
+        self.user.profile.logo = (
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+        )
+        self.user.profile.city = 'Lahore'
+        self.user.profile.address_line1 = '221B Business Ave'
+        self.user.profile.save()
+
+    @mock.patch('apps.invoices.ai_design.call_groq')
+    def test_ai_seeded_design_carries_v2_schema_version_and_renders_via_the_production_renderer(self, mock_call_groq):
+        mock_call_groq.return_value = json.dumps({
+            'base_template': 'modern', 'primary_color': '#1a2b3c', 'secondary_color': '#a8813c',
+            'layout_density': 'compact',
+        })
+        base_template, design_data = seed_design_data_from_image(make_test_image_bytes())
+
+        self.assertEqual(base_template, 'modern')
+        self.assertEqual(design_data.get('schema_version'), 2, 'AI-seeded design_data must be production-shape, not the retired legacy shape.')
+
+        context = build_render_context(self.user, base_template, '')
+        html = render_design_html(design_data, context)
+        self.assertIn('<html', html)
+        # The real, adjusted color made it all the way through to rendered
+        # output — proof this isn't just schema-valid on paper but actually
+        # renders the AI-adjusted content, through the one real renderer
+        # every other design (template pick, blank, hand-edited) also uses.
+        self.assertIn('#a8813c', html)
 
 
 # ══════════════════════════════════════════════════════════════════

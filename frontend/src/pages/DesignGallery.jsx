@@ -152,10 +152,14 @@ export default function DesignGallery() {
     }
   }
 
-  // The blank starting mode, as a real, immediately-usable "Create
-  // design" action — the same real create-then-set-default treatment
-  // "Use this template" gets above, for a consistent gallery experience.
-  // The blank design_data itself comes from the same production
+  // The blank starting mode — deliberately NOT the same create-then-
+  // set-default/"ready to use as-is" treatment "Use this template" and
+  // the AI-seed upload get above. A blank design has zero header content
+  // (get_blank_design_data returns header.elements: []) — no logo,
+  // business info, client info, or dates — so it is never "ready to
+  // use" and must never be silently activated as the account's default.
+  // Straight to the editor instead, where there's actually something to
+  // build. The blank design_data itself comes from the same production
   // template.get_blank_design_data (?blank=true) the editor's own
   // "Start blank" button calls directly — no separate client-side copy.
   async function handleStartBlank() {
@@ -167,7 +171,7 @@ export default function DesignGallery() {
         name: 'Untitled design', base_template: 'professional', color_variant: '', design_data: designData,
       })
       setDesigns((prev) => [data, ...prev])
-      setJustCreated(data)
+      navigate(`/invoices/designs/${data.id}/edit`)
     } catch {
       setError('Could not start a blank design. Please try again.')
     } finally {

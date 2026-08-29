@@ -20,6 +20,57 @@ export const PX_TO_MM = 25.4 / 96
 export const mmToPx = (mm) => Math.round((mm || 0) * MM_TO_PX)
 export const pxToMm = (px) => Math.round(((px || 0) * PX_TO_MM) * 100) / 100 // 2dp, matches design_schema.py's own numbers
 
+// Mirrors legacy_design_schema.py's own OVERLAP_EPSILON_MM — design_schema.py's
+// _validate_page_bounds reuses that exact same tolerance for its own x>=0/
+// y>=0/x+width<=boundW checks (a real element placed exactly edge-to-edge
+// with the page's own edge can pick up a razor-thin apparent overflow purely
+// from the canvas's own mm<->px<->mm round-trip; the same tolerance that
+// already absorbs this for sibling-to-sibling edges absorbs it here too).
+// This clamp MUST use the identical tolerance, not a stricter one — a client
+// that clamps at a tighter bound than the backend actually enforces would
+// disagree with it in the other direction, visibly repositioning an element
+// the backend was always going to accept unchanged (confirmed live: the
+// production table seed's own default width is already 0.1mm over its
+// content area for exactly this reason, and the backend accepts it as-is).
+export const OVERLAP_EPSILON_MM = 0.3
+
+// Phase 5.1 client-side bounds clamp — the ONE shared clamp implementation
+// every real interaction path (drag-commit, keyboard nudge, and resize)
+// calls, in mm, so it stays a single pure/testable rule rather than three
+// independently-drifting copies. Mirrors design_schema.py's own
+// _validate_page_bounds exactly, epsilon tolerance included: x >= -epsilon,
+// y >= -epsilon, x + width <= boundWMm + epsilon — no bottom-edge
+// (y + height) ceiling, matching the backend's own deliberate
+// non-enforcement of one (content may legitimately flow onto a second page
+// — see that function's own docstring). `boundWMm` is always the CALLER's
+// own already-server-resolved page.content_width_mm/page.sidebar.width_mm
+// (design_canvas.py's build_canvas_document resolves the real margin
+// fallback chain once, server-side) — never a constant re-hardcoded here,
+// so a custom-margin or sidebar-flagged design is bounded correctly with no
+// extra logic.
+//
+// `mode: 'position'` (drag/nudge — DesignEditor.jsx) only ever moves x/y
+// to stay in bounds, never touches width/height, since neither
+// interaction resizes anything. `mode: 'resize'` (componentTypes.js's
+// resizableConfig) only ever shrinks width to fit — never repositions x
+// to compensate, since _validate_page_bounds itself doesn't care which
+// edge is the "anchor", only that both bounds hold afterward; a resize
+// handle simply stops at the page edge rather than silently relocating
+// the element.
+export function clampToBoundsMm({ x, y, width, height }, boundWMm, mode = 'position') {
+  if (boundWMm == null) return { x, y, width, height }
+  const minCoord = -OVERLAP_EPSILON_MM
+  const maxRight = boundWMm + OVERLAP_EPSILON_MM
+  const clampedY = Math.max(minCoord, y)
+  if (mode === 'resize') {
+    const clampedX = Math.max(minCoord, x)
+    const clampedWidth = Math.min(width, Math.max(0, maxRight - clampedX))
+    return { x: clampedX, y: clampedY, width: clampedWidth, height }
+  }
+  const clampedX = Math.max(minCoord, Math.min(x, maxRight - width))
+  return { x: clampedX, y: clampedY, width, height }
+}
+
 // Phase 4B.2: header/flow no longer carry different positioning
 // semantics (see design_schema.py's own docstring) — every element
 // type below (semantic, generic, and the one structural type) is now

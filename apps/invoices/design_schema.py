@@ -534,9 +534,16 @@ def _validate_required_elements(all_valid_elements, errors):
 def validate_design_data_schema_v2(data):
     """
     Structural validator for the v2 canonical shape — the direct v2
-    analog of apps/invoices/design_schema.py's validate_design_data_schema.
-    Returns a list of specific, human-readable violation messages (empty
-    if valid); never raises. NOT called by anything live in this phase.
+    analog of apps/invoices/legacy_design_schema.py's
+    validate_design_data_schema. Returns a list of specific, human-readable
+    violation messages (empty if valid); never raises. Stale-docstring
+    correction (Phase 5.1 — confirmed directly against
+    apps/invoices/serializers.py's InvoiceDesignSerializer.validate_design_data,
+    not assumed): this IS called live, on every real save — dispatched to
+    by validate_design_data_schema_by_version below, which the serializer
+    calls directly. The claim that used to be here ("NOT called by
+    anything live in this phase") described an earlier Phase 0 state and
+    was no longer true as of the production cutover.
     """
     errors = []
 
@@ -575,14 +582,24 @@ def validate_design_data_schema_v2(data):
 def validate_design_data_schema_by_version(design_data):
     """
     Dispatches to the correct structural validator based on the payload's
-    own declared (or implicit) schema_version. This is the function
-    design_migration.py and the read-only audit command use to decide
-    "is this even valid input" before doing anything else — it is NOT
-    used by InvoiceDesignSerializer, which continues to call
-    apps.invoices.design_schema.validate_design_data_schema directly and
-    unconditionally, exactly as it always has (every real design saved
-    today is legacy-shape, and Phase 0 does not change what "valid" means
-    for a live save).
+    own declared (or implicit) schema_version — legacy_design_schema.py's
+    validate_design_data_schema for a legacy-shape payload (schema_version
+    absent or 1), validate_design_data_schema_v2 above for a real
+    schema_version: 2 payload. design_migration.py and the read-only audit
+    command both use this to decide "is this even valid input" before doing
+    anything else.
+
+    Stale-docstring correction (Phase 5.1 — confirmed directly against
+    apps/invoices/serializers.py's InvoiceDesignSerializer.validate_design_data,
+    not assumed from this docstring's own prior claim): this function IS
+    what the serializer calls, for every real save, both legacy- and
+    v2-shaped alike — see that method's own docstring, which already
+    correctly describes this. The claim that used to be here ("NOT used by
+    InvoiceDesignSerializer... every real design saved today is
+    legacy-shape") described an earlier Phase 0 state and was no longer
+    true as of the production cutover; apps/invoices/ai_design.py's own
+    Phase 5.1 fix is a direct example of code that had trusted this exact
+    stale claim.
     """
     try:
         version = get_schema_version(design_data)

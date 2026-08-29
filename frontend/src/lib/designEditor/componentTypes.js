@@ -26,10 +26,29 @@
 // benefited from — the same commit/resync fixes header elements already
 // had. Unifying the type removes that second, differently-behaved code
 // path entirely rather than patching it a second time.
+import { clampToBoundsMm, mmToPx } from './constants'
+
 const ELEMENT_DROP_TARGET_TYPES = ['lancera-v2-elements', 'lancera-v2-sidebar-elements']
 const ELEMENT_COMPONENT_TYPES = ['lancera-v2-element', 'lancera-v2-table']
 
-export function registerComponentTypes(editor) {
+// Phase 5.1 client-side bounds clamp — mirrors design_schema.py's
+// _validate_page_bounds exactly (x >= 0, y >= 0, x + width <= the real
+// content/sidebar width), so a resize can never leave the canvas in a
+// state the backend will reject at save time. `getElementBoundWidthMm`
+// is passed in from DesignEditor.jsx rather than imported directly (it
+// needs live access to the currently-loaded canvasDoc's own real,
+// already-server-resolved page.content_width_mm/page.sidebar.width_mm —
+// the exact same values design_schema.py's own margin fallback chain
+// produces, never a second, independently-hardcoded copy of those
+// margins here). Deliberately only ever shrinks width to fit (never
+// repositions `l` to compensate) — a resize handle capping at the page
+// edge is the same behavior as design_schema.py's own bound (it doesn't
+// care which edge is the "anchor", only that both x>=0 and
+// x+width<=bound hold afterward). No bottom-edge (y+height) ceiling,
+// matching the backend's own deliberate non-enforcement of one (content
+// may legitimately flow onto a second page — see design_schema.py's own
+// docstring on this).
+export function registerComponentTypes(editor, getElementBoundWidthMm) {
   const { DomComponents } = editor
 
   // ── The optional, real, full-height sidebar column ───────────────────
@@ -137,14 +156,27 @@ export function registerComponentTypes(editor) {
     return {
       tl: 1, tc: 1, tr: 1, cl: 1, cr: 1, bl: 1, bc: 1, br: 1, silentFrames: true,
       updateTarget: (el, rect, options) => {
-        el.style.left = `${rect.l}px`
-        el.style.top = `${rect.t}px`
-        el.style.width = `${rect.w}px`
-        el.style.height = `${rect.h}px`
         const comp = editor.getSelected()
+        let { l, t, w, h } = rect
+        if (comp && getElementBoundWidthMm) {
+          const boundWMm = getElementBoundWidthMm(comp)
+          // clampToBoundsMm is unit-agnostic (pure ratio/comparison math)
+          // despite its name — passing the bound converted to px once and
+          // the live rect as-is (already px, GrapesJS's own Resizer unit)
+          // avoids round-tripping every intermediate drag frame through
+          // mm and back, unlike the drag-commit/nudge call sites below,
+          // which already work in mm natively.
+          const boundWPx = boundWMm == null ? null : mmToPx(boundWMm)
+          const clamped = clampToBoundsMm({ x: l, y: t, width: w, height: h }, boundWPx, 'resize')
+          l = clamped.x; t = clamped.y; w = clamped.width; h = clamped.height
+        }
+        el.style.left = `${l}px`
+        el.style.top = `${t}px`
+        el.style.width = `${w}px`
+        el.style.height = `${h}px`
         if (comp && comp.getEl && comp.getEl() === el) {
           comp.addStyle(
-            { left: `${rect.l}px`, top: `${rect.t}px`, width: `${rect.w}px`, height: `${rect.h}px` },
+            { left: `${l}px`, top: `${t}px`, width: `${w}px`, height: `${h}px` },
             { avoidStore: !options.store },
           )
           // Phase 4B.1 real fix (found via live model/DOM inspection, not

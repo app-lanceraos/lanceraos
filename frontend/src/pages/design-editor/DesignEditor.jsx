@@ -26,7 +26,7 @@ import useTitle from '@/hooks/useTitle'
 import FosAlert from '@/components/FosAlert'
 import { fetchBlankDesignData, fetchBuiltinDesignData, fetchDesignTemplates, fetchCanvasDocument, fetchElementContent, fetchDesignValidation } from '@/lib/designEditor/canvasApi'
 import { registerComponentTypes } from '@/lib/designEditor/componentTypes'
-import { BINDING_OPTIONS, ELEMENTS_CONTAINER_ID, GENERIC_TYPE_DEFAULTS, SIDEBAR_ELEMENTS_ID, mmToPx, pxToMm } from '@/lib/designEditor/constants'
+import { BINDING_OPTIONS, ELEMENTS_CONTAINER_ID, GENERIC_TYPE_DEFAULTS, SIDEBAR_ELEMENTS_ID, clampToBoundsMm, mmToPx, pxToMm } from '@/lib/designEditor/constants'
 import { computeAlignedPositions, computeDistributedPositions } from '@/lib/designEditor/alignment'
 import {
   buildNewElementEntry, buildV2ComponentTree, computeNewElementPlacement, extractV2DesignDataFromEditor,
@@ -132,8 +132,24 @@ export default function DesignEditor() {
   const [overflowScan, setOverflowScan] = useState({ count: 0, elements: [] })
 
   const loadedDesignRef = useRef(null)
+  // Phase 5.1 client-side bounds clamp — the mouseup (drag-commit) and
+  // keydown (nudge) listeners below are registered ONCE, inside
+  // onEditorInit's `ed.on('load', ...)`, and never re-registered when
+  // canvasDoc later changes (loading a different design, "Reload from
+  // serialized", etc.) — a plain closure over `canvasDoc` there would go
+  // stale the moment a different design loads. This ref is kept in sync
+  // on every render instead, so getElementBoundWidthMm below (and the
+  // same ref-read passed into registerComponentTypes for the resize
+  // clamp) always sees the CURRENTLY loaded page's real bounds.
+  const canvasDocRef = useRef(null)
+  useEffect(() => { canvasDocRef.current = canvasDoc }, [canvasDoc])
 
   useEffect(() => {
+    // Phase 5.1 — `builtins` only ever feeds the dev-only template/variant
+    // pickers below (gated behind import.meta.env.DEV); skip the fetch
+    // entirely in production rather than spending a real API call on data
+    // nothing renders.
+    if (!import.meta.env.DEV) return
     fetchDesignTemplates().then(setBuiltins).catch(() => setError('Could not load the builtin inventory.'))
   }, [])
 
@@ -462,9 +478,42 @@ export default function DesignEditor() {
     setLastEditAt(Date.now())
   }, [])
 
+  // Phase 5.1 client-side bounds clamp — the real content/sidebar bound
+  // width for whatever component is being dragged/resized/nudged, in mm.
+  // Reads canvasDocRef (never the `canvasDoc` state directly — see that
+  // ref's own declaration comment on why) so this always reflects
+  // whichever design is CURRENTLY loaded, no matter when the caller
+  // holding a reference to this function was created. `page.content_width_mm`/
+  // `page.sidebar.width_mm` are already server-resolved by design_canvas.py's
+  // build_canvas_document using the exact same margin fallback chain
+  // design_schema.py's own _validate_page_bounds validates against — so
+  // there are no margin constants to duplicate here at all, only the
+  // sidebar-membership check (does this component live under the sidebar
+  // elements container?) that _validate_page_bounds makes from the
+  // element's own `style.sidebar` flag in design_data.
+  function getElementBoundWidthMm(comp) {
+    const doc = canvasDocRef.current
+    if (!doc?.page) return null
+    const parent = comp && comp.parent && comp.parent()
+    const isSidebar = !!(parent && parent.getId && parent.getId() === SIDEBAR_ELEMENTS_ID)
+    return isSidebar ? (doc.page.sidebar?.width_mm ?? 0) : doc.page.content_width_mm
+  }
+
+  // Shared by the drag-commit (mouseup) and keyboard-nudge handlers below
+  // — both only ever reposition an element (x/y), never resize it, so
+  // this thin wrapper always calls the shared clampToBoundsMm (constants.js)
+  // with mode: 'position' (only x/y move; width/height pass through
+  // untouched — the resize handles' own clamp, in componentTypes.js's
+  // resizableConfig, is the one place width/height themselves get shrunk
+  // to fit, via the same shared function's 'resize' mode).
+  function clampXYMm(leftMm, topMm, widthMm, boundWMm) {
+    const { x, y } = clampToBoundsMm({ x: leftMm, y: topMm, width: widthMm, height: 0 }, boundWMm, 'position')
+    return { leftMm: x, topMm: y }
+  }
+
   const onEditorInit = useCallback((ed) => {
     setEditor(ed)
-    registerComponentTypes(ed)
+    registerComponentTypes(ed, getElementBoundWidthMm)
     // A real, live GrapesJS editor reference on `window` — genuinely
     // useful for direct console-level debugging and for any future
     // Playwright coverage that needs to inspect internal editor state
@@ -617,6 +666,23 @@ export default function DesignEditor() {
           if (node.hasAttribute && node.hasAttribute('data-el-type') && node.id) {
             const comp = ed.getWrapper().find(`#${node.id}`)[0]
             if (comp && ed.getSelected() !== comp) ed.select(comp)
+            // Phase 5.1 client-side bounds clamp — a plain drag only
+            // ever repositions (x/y), never resizes, so only x/y are
+            // clamped here (mirrors design_schema.py's
+            // _validate_page_bounds; see clampXYMm's own comment).
+            // Reads whatever GrapesJS's own Sorter already committed to
+            // this component's style by the time mouseup fires.
+            if (comp) {
+              const boundWMm = getElementBoundWidthMm(comp)
+              const style = comp.getStyle() || {}
+              const widthMm = pxToMm(parseFloat(style.width) || 0)
+              const leftMm = pxToMm(parseFloat(style.left) || 0)
+              const topMm = pxToMm(parseFloat(style.top) || 0)
+              const clamped = clampXYMm(leftMm, topMm, widthMm, boundWMm)
+              if (clamped.leftMm !== leftMm || clamped.topMm !== topMm) {
+                comp.addStyle({ left: `${mmToPx(clamped.leftMm)}px`, top: `${mmToPx(clamped.topMm)}px` })
+              }
+            }
             // Phase 4B.1: the same real model/view desync componentTypes.js's
             // resize updateTarget now fixes (see that file's own comment)
             // also happens after a plain DRAG, confirmed directly — and a
@@ -663,8 +729,14 @@ export default function DesignEditor() {
         if (!delta) return
         e.preventDefault()
         const style = comp.getStyle() || {}
-        const leftMm = pxToMm(parseFloat(style.left) || 0) + delta[0] * KEYBOARD_NUDGE_MM
-        const topMm = pxToMm(parseFloat(style.top) || 0) + delta[1] * KEYBOARD_NUDGE_MM
+        const widthMm = pxToMm(parseFloat(style.width) || 0)
+        const rawLeftMm = pxToMm(parseFloat(style.left) || 0) + delta[0] * KEYBOARD_NUDGE_MM
+        const rawTopMm = pxToMm(parseFloat(style.top) || 0) + delta[1] * KEYBOARD_NUDGE_MM
+        // Phase 5.1 client-side bounds clamp — same rule as the
+        // drag-commit clamp above (mirrors design_schema.py's
+        // _validate_page_bounds); a nudge only ever repositions, so only
+        // x/y are clamped, never width/height.
+        const { leftMm, topMm } = clampXYMm(rawLeftMm, rawTopMm, widthMm, getElementBoundWidthMm(comp))
         comp.addStyle({ left: `${mmToPx(leftMm)}px`, top: `${mmToPx(topMm)}px` })
         readSelection(ed)
       })
@@ -1112,23 +1184,42 @@ export default function DesignEditor() {
           </>
         )}
 
-        <select value={template} onChange={(e) => { setTemplate(e.target.value); setVariant('') }} data-testid="v2-template-select">
-          {builtins.templates.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select value={variant} onChange={(e) => setVariant(e.target.value)} data-testid="v2-variant-select">
-          <option value="">default</option>
-          {(builtins.variants[template] || []).filter((v) => v !== 'default').map((v) => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
-        <button className="fos-btn fos-btn-accent" onClick={handleLoadBuiltin} disabled={loading} data-testid="v2-load-btn">
-          {loading ? 'Loading…' : 'Load'}
-        </button>
-        <button className="fos-btn fos-btn-ghost" onClick={handleLoadBlank} disabled={loading} data-testid="v2-load-blank-btn">
-          Start blank
-        </button>
+        {/* Phase 5.1 — dev-only sandbox controls, gated out of the
+            production build entirely (import.meta.env.DEV, not a runtime
+            flag any real request could flip). Only ever meaningful when
+            `id === 'new'` (a brand-new, never-saved design) — confirmed
+            directly, by a repo-wide grep, that no real product navigation
+            anywhere ever links to /invoices/designs/new/edit; every real
+            creation path (DesignGallery.jsx's "Use this template"/"Blank
+            design"/AI-seed upload) creates a real InvoiceDesign row FIRST
+            and always navigates to that real id's own /edit route. Left
+            ungated, these controls were a real, live hazard, not just
+            clutter: they rendered unconditionally even while editing an
+            already-saved real design, and handleLoadBuiltin/handleLoadBlank
+            both call loadIntoCanvas() with no confirmation and no dirty-
+            state guard at all — a stray click on "Load" while editing a
+            real design would have silently discarded it, no warning. */}
+        {import.meta.env.DEV && (
+          <>
+            <select value={template} onChange={(e) => { setTemplate(e.target.value); setVariant('') }} data-testid="v2-template-select">
+              {builtins.templates.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <select value={variant} onChange={(e) => setVariant(e.target.value)} data-testid="v2-variant-select">
+              <option value="">default</option>
+              {(builtins.variants[template] || []).filter((v) => v !== 'default').map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+            <button className="fos-btn fos-btn-accent" onClick={handleLoadBuiltin} disabled={loading} data-testid="v2-load-btn">
+              {loading ? 'Loading…' : 'Load'}
+            </button>
+            <button className="fos-btn fos-btn-ghost" onClick={handleLoadBlank} disabled={loading} data-testid="v2-load-blank-btn">
+              Start blank
+            </button>
 
-        <div style={{ width: 1, height: 24, background: 'var(--border-default)' }} />
+            <div style={{ width: 1, height: 24, background: 'var(--border-default)' }} />
+          </>
+        )}
 
         <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>Zoom</span>
         {ZOOM_LEVELS.map((z) => (
@@ -1544,17 +1635,28 @@ export default function DesignEditor() {
             </div>
           )}
 
-          <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 6 }}>Activity</div>
-          <div data-testid="v2-log" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {log.map((line, i) => <div key={i}>{line}</div>)}
-          </div>
-          {canvasDoc && (
-            <div style={{ marginTop: 12, fontSize: '0.72rem', color: 'var(--text-secondary)' }} data-testid="v2-page-meta">
-              <div>Page: {canvasDoc.page.width_mm}×{canvasDoc.page.height_mm}mm</div>
-              <div>Margins: {canvasDoc.page.margin_top_mm}/{canvasDoc.page.margin_right_mm}/{canvasDoc.page.margin_bottom_mm}/{canvasDoc.page.margin_left_mm}mm</div>
-              <div>Sidebar: {canvasDoc.page.sidebar ? `${canvasDoc.page.sidebar.width_mm}mm` : 'none'}</div>
-              <div>Zoom (viewport only): {Math.round(zoom * 100)}% — document unchanged</div>
-            </div>
+          {/* Phase 5.1 — dev-only diagnostic panels, gated out of the
+              production build. The Activity log's own messages ("8 header
+              + 5 flow element(s)", version numbers, etc.) and the raw
+              page/margin/sidebar/zoom readout below are internal
+              verification aids from this editor's own build-out, not
+              something a real freelancer designing an invoice needs to
+              see or would understand. */}
+          {import.meta.env.DEV && (
+            <>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 6 }}>Activity</div>
+              <div data-testid="v2-log" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {log.map((line, i) => <div key={i}>{line}</div>)}
+              </div>
+              {canvasDoc && (
+                <div style={{ marginTop: 12, fontSize: '0.72rem', color: 'var(--text-secondary)' }} data-testid="v2-page-meta">
+                  <div>Page: {canvasDoc.page.width_mm}×{canvasDoc.page.height_mm}mm</div>
+                  <div>Margins: {canvasDoc.page.margin_top_mm}/{canvasDoc.page.margin_right_mm}/{canvasDoc.page.margin_bottom_mm}/{canvasDoc.page.margin_left_mm}mm</div>
+                  <div>Sidebar: {canvasDoc.page.sidebar ? `${canvasDoc.page.sidebar.width_mm}mm` : 'none'}</div>
+                  <div>Zoom (viewport only): {Math.round(zoom * 100)}% — document unchanged</div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
