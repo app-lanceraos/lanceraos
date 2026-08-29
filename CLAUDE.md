@@ -369,13 +369,20 @@ lanceraos/                          <- Django project root
 │   │                                  InvoicePresetItem) + serializers.py/views.py/urls.py
 │   │                                  (CRUD + lifecycle endpoints, incl. real GET .../pdf/ —
 │   │                                  only /send/ excluded, see Module 2) + pdf_generator.py
-│   │                                  (WeasyPrint render pipeline) + design_schema.py/
-│   │                                  design_seeds.py (InvoiceDesign's validated design_data
-│   │                                  contract + the 3 builtin templates decomposed into it) +
+│   │                                  (WeasyPrint render pipeline) + the LanceraOS Template
+│   │                                  Builder — design_schema.py/design_renderer.py/
+│   │                                  design_templates.py/design_canvas.py (the live, production
+│   │                                  design_data contract/canonical renderer/builtin seeds/canvas
+│   │                                  adapter) + views_design_editor.py (editor support endpoints)
+│   │                                  + design_migration.py (legacy->production converter) +
+│   │                                  legacy_design_schema.py/legacy_design_renderer.py/
+│   │                                  design_seeds.py (the retired zone_1/zone_2 system, kept
+│   │                                  read-only for pre-existing data — see Module 2's own Template
+│   │                                  Builder section and DECISIONS.md's 29 August 2026 production
+│   │                                  cutover entry) +
 │   │                                  ai_design.py (Step 9 — classify-only AI design seeding via
 │   │                                  core.ai.call_groq) + signature_tool.py (Step 9 — classical
 │   │                                  Pillow background removal, not AI).
-│   │                                  Email delivery/client portal — NOT YET BUILT.
 │   ├── clients/                    <- Client CRM — BUILT. Client/ClientNote/ClientTag,
 │   │                                  scoring.py (reliability-score formula, pure/testable
 │   │                                  independent of Invoice — see DECISIONS.md)
@@ -1600,61 +1607,79 @@ Key API endpoints — apps/invoices/ (deliberately NOT built — excluded, not s
   field at all yet (confirmed directly), so there's genuinely nowhere for it to plug into today —
   flagged in DECISIONS.md's Step 8b entry rather than added as unplanned scope.
 
-**Design system (`InvoiceDesign.design_data`) — backend contract, editor, real render path, real
-design-to-invoice assignment, real color_variant wiring, AND real gallery previews all built (Steps
-8/8b, render path + assignment fix 19 August 2026, color/preview fix 20 August 2026)**: a saved design
-now genuinely affects real invoice PDF/portal output end to end, with the actually-selected color, and
-the gallery correctly shows what a client will actually see before a user ever picks anything — a
-saved design's `design_data` is actually rendered (`apps/invoices/design_renderer.py`, closed audit
-finding PDF-001), a real invoice actually gets that design assigned in the first place
-(`invoice_create`/`_finalise_invoice` reading the user's real default design), `color_variant` actually
-affects real output (`design_seeds.resolve_design_colors`, wired into both render paths), and the
-gallery's own preview cards are a real backend render of that exact same output
-(`apps/invoices/design_preview.py`), not a client-side approximation — closing 3 separate real,
-live-browser-verified SEV1 reports across 2 days; see this module's own three 19-20 August 2026
-entries above and DECISIONS.md for the full design of each. Each fix exposed the next: the render path
-alone had zero real-world effect until invoices actually got designs assigned; a design being assigned
-still showed no color until `color_variant` itself was wired in; none of it was visible in the gallery
-until the preview cards stopped rendering a generic approximation. The backend contract itself is a
-documented two-zone JSON schema
-(`apps/invoices/design_schema.py`) — `zone_1` (logo/business_info/
-client_info/dates, absolutely positioned, save-time overlap-checked) above the line-items table, and
-`zone_2` (the mandatory table + totals block, plus notes/signature/payment_info as a
-spacing-relative flow that can never overlap something that might grow) — validated at save time
-with specific, per-violation error messages, not a generic rejection. The 3 built templates are
-decomposed into real seed `design_data` (`apps/invoices/design_seeds.py`) — Python constants, not
-database rows (`InvoiceDesign.user` is a required FK, so there's no ownerless "builtin" row) —
-materialized into a real, owned `InvoiceDesign` row via `design_duplicate` the moment a user picks
-one.
+**LanceraOS Template Builder (`InvoiceDesign.design_data`) — the one production visual design
+system (production cutover 29 August 2026, superseding this section's own earlier Steps 8/8b/9
+narrative below)**: a full design tool — free-form drag/resize for every element including the
+mandatory line-items table, a real style/property panel, a Layers panel (reorder/lock/hide),
+multi-select + alignment + snap-to-grid, undo/redo, non-destructive version history, and two
+first-class starting modes (a genuinely blank canvas, or a fully-editable builtin) — reached
+through exactly one route (`/invoices/designs/:id/edit`,
+`frontend/src/pages/design-editor/DesignEditor.jsx`), linked from `DesignGallery.jsx`'s own
+Create/Edit actions. There is no separate "try the new editor" concept and no dev-only sandbox
+route anywhere in the product — this IS the editor a real user reaches for every design task. See
+`LANCERAOS_TEMPLATE_BUILDER_ARCHITECTURE.md` (project root) for the full architecture and
+DECISIONS.md's 29 August 2026 "Production cutover" entry for the full before/after of what this
+replaced.
 
-A real, working drag-and-drop canvas editor (`frontend/src/pages/design-editor/DesignEditor.jsx`,
-full-screen and shell-less like `/account/deletion-review`, reached via "Manage Designs" in
-`Invoices.jsx`'s header -> `DesignGallery.jsx`) is built on top of GrapesJS core (evaluated against
-Puck and rejected — Puck's own docs confirm a slot/zone-only model with no absolute-positioning
-support at all, a hard blocker for Zone 1's real coordinate requirement; GrapesJS's core, free,
-BSD-3 API genuinely supports `dmode:'absolute'` drag + `resizable` handles, confirmed directly
-against its installed source). Real free-form drag/resize in Zone 1, flow-reorder-only in Zone 2,
-the mandatory table/totals block genuinely non-removable in the UI (not just backend-enforced —
-and a real bug in the first implementation of this was caught and fixed by this step's own browser
-testing, see DECISIONS.md), a pairing toggle restricted to signature/payment_info, a style panel
-writing into each element's free-form `style` dict, undo/redo, a Preview toggle, and a
-3/8/20-sample-row toggle that genuinely reflows Zone 2 are all real and browser-verified. One
-confirmed, deliberate gap: no client-side Zone 1 overlap prevention — only the backend catches that
-today, demonstrated directly (dragging one element onto another and saving surfaces
-`design_schema.py`'s exact real error message in the editor).
+**The `design_data` contract has two generations**, distinguished by an explicit top-level
+`schema_version` key (`apps/invoices/design_schema.py`'s `get_schema_version`) — absence of the key
+means the original, now-retired shape. The **production shape** (`schema_version: 2`) is what every
+save path produces from the cutover forward: `header`/`flow` (renamed from the original `zone_1`/
+`zone_2`), every element — the mandatory table included — carrying the identical
+`{kind, type, x, y, width, height, style, overrides}` shape and independently draggable/resizable,
+validated with a uniform overlap check across the full combined element set rather than a
+zone-specific structural guarantee. The **original shape** (`apps/invoices/legacy_design_schema.py`,
+no `schema_version` key) is retired — no code path creates it anymore — but deliberately kept,
+alongside `apps/invoices/legacy_design_renderer.py`, purely so a pre-existing row that still holds
+it remains readable/renderable/deletable. `apps/invoices/design_migration.py`'s `migrate_v1_to_v2`
+is the one deterministic converter between the two: run on-demand, in memory, the instant a user
+opens a legacy-shaped design in the editor (persisted only on an explicit save — never a forced
+background rewrite), and available as a one-time, dry-run-by-default bulk pass via
+`python manage.py migrate_invoice_designs_to_production_schema [--apply]`. A design the mapper can't
+safely convert (one already-known, documented edge case) is left completely untouched in its
+original shape, safely usable, never corrupted — a real user hitting this is guided to duplicate a
+ready-made template and rebuild instead of losing the design. See DATABASE.md's `invoice_designs`
+entry for the full schema, validation rules, and migration mechanics.
 
-Path 3 (AI-seeded designs, Step 9, `apps/invoices/ai_design.py`) is also built and reached from the
-same gallery: upload a reference image, one real Groq vision call (`GROQ_MODEL_VISION`, via the now-
-real `core/ai.py`) classifies it against the same 3 base templates + a couple of real extracted
-colors + a coarse layout-density choice — deliberately CLASSIFY-only, never full HTML generation
-(a separate real POC explored that and was rejected for this system specifically; see DECISIONS.md
-for the full reasoning). The resulting `design_data` is produced by adjusting one of
-`design_seeds.py`'s own seeds — provably overlap-safe by construction (a uniform scale transform,
-not independent per-element nudges) — then re-validated against the exact same schema validator
-before the row is ever saved. Verified live against the real Groq API, not just mocked: a real bug
-(the vision model's own `<think>` reasoning was exhausting the token budget before ever reaching the
-JSON answer) was found and fixed this way. Full detail in DATABASE.md's `invoice_designs` section
-and DECISIONS.md's Step 8/8b/9 entries.
+**Rendering is one canonical path per generation**, dispatched purely on which shape a design's
+`design_data` actually holds (`pdf_generator.render_html_for_design`) — never on `InvoiceDesign.source`
+or any other proxy, and never a product-visible "if V2 then" branch. A production-shape design
+renders through `apps/invoices/design_renderer.py` (the canonical renderer — the same one PDF,
+portal, and preview-as-client output all go through); a legacy-shape design falls through to
+`legacy_design_renderer.py` if genuinely customized, or one of the 3 static templates
+(`professional.html`/`minimal.html`/`modern.html`) otherwise. The canvas editor
+(`apps/invoices/design_canvas.py`) is an adapter, not a second renderer — it reuses the canonical
+renderer's own geometry/CSS-resolution functions directly, so what the editor shows and what a real
+invoice renders as can never independently drift. `color_variant` is real and wired on both render
+paths (`design_seeds.COLOR_VARIANTS`/`design_templates.COLOR_VARIANTS` + `resolve_design_colors`).
+The gallery's own preview cards (`DesignGallery.jsx`) render via a real backend HTML endpoint
+(`apps/invoices/design_preview.py`) reusing this exact same dispatcher — never a client-side
+approximation.
+
+**Version history**: every real save creates an immutable `InvoiceDesignVersion` snapshot (skipped
+when content is unchanged); `GET .../designs/<pk>/versions/` lists them, `POST .../versions/<id>/
+restore/` copies one back onto the live design and saves — which itself creates a new version, so
+history only ever grows and there is no destructive rollback. See DATABASE.md's own
+`invoice_design_versions` entry.
+
+**Seeds**: `apps/invoices/design_templates.py`'s `BUILTIN_DESIGNS` (production shape) is what
+`design_duplicate` and the editor's "start blank" mode actually use to create every new
+`InvoiceDesign` row today — both produce `schema_version: 2` from the moment of creation.
+`apps/invoices/design_seeds.py`'s own `BUILTIN_DESIGNS` (the retired shape) is kept only as the
+historical source `migrate_v1_to_v2` maps from and as the golden-reference comparison input for
+render-fidelity tests.
+
+Path 3 (AI-seeded designs, `apps/invoices/ai_design.py`) is unchanged in mechanism — upload a
+reference image, one real Groq vision call (`GROQ_MODEL_VISION`, via `core/ai.py`) classifies it
+against the 3 base templates plus extracted colors and a layout-density choice, deliberately
+CLASSIFY-only, never full HTML generation — but its output is now adjusted from a production-shape
+seed and re-validated against the production schema validator before the row is ever saved.
+
+Full detail — including the pre-cutover Steps 8/8b/9 build history, the render-path/design-
+assignment/color-wiring SEV1 fixes, and the full editor feature build order — lives in
+`LANCERAOS_TEMPLATE_BUILDER_ARCHITECTURE.md` and DECISIONS.md's own dated entries (19-29 August
+2026); DATABASE.md's `invoice_designs`/`invoice_design_versions` entries are the authoritative
+schema reference.
 
 ---
 

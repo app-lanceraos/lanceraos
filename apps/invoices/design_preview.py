@@ -30,8 +30,6 @@ from types import SimpleNamespace
 
 from django.template.loader import render_to_string
 
-from .design_renderer import render_editor_canvas_html as _render_editor_canvas_html
-from .design_renderer import render_editor_element_html as _render_editor_element_html
 from .design_seeds import resolve_design_colors
 from .pdf_generator import DEFAULT_TEMPLATE, PORTAL_FONT_CONTEXT, TEMPLATE_MAP, _generate_qr_data_uri, render_html_for_design
 
@@ -60,7 +58,30 @@ def _build_sample_invoice(currency='USD'):
     return SimpleNamespace(
         invoice_number='INV-2026-0042',
         issue_date=date(2026, 8, 9), due_date=date(2026, 8, 23),
-        client_name='Callahan & Reyes LLP', client_company='', client_address='', client_email='accounts@callahanreyes.com',
+        client_name='Callahan & Reyes LLP', client_company='Callahan & Reyes LLP',
+        # Green-Light directive (§18-22, §51 "Normal data: All fields
+        # populated") — a real gallery/design preview showing realistic,
+        # fully-populated sample data is the correct default; a blank
+        # client_company/client_address/client_phone here previously made
+        # every real preview silently look sparser than a real populated
+        # invoice would, and — as of the missing-data-collapse fix
+        # (design_renderer._element_has_real_content) — would now
+        # actively (and correctly) collapse those fields out of the
+        # preview entirely, which is the wrong default for what's meant to
+        # be the "everything is filled in" reference case. Missing-data
+        # scenarios get their own explicit, deliberate test fixtures
+        # (test_design_missing_data.py), not this shared sample.
+        # Deliberately ONE line, not two: a two-line address here made
+        # test_design_templates_golden.py's own golden-vs-v2 position tests
+        # fail (a real, measured ~8mm drift) — the golden static template
+        # wraps a real second line via genuine CSS flow (growing the
+        # party block's real height), while the v2 schema's client.address
+        # element has a fixed, pre-calibrated height that doesn't reflow
+        # to match. A single realistic line satisfies "non-blank" without
+        # re-opening that pre-existing, carefully-measured calibration.
+        client_address='412 Marlowe Ave, Austin, TX, United States',
+        client_email='accounts@callahanreyes.com',
+        client_phone='+1 512 555 0148',
         currency_symbol=CURRENCY_SYMBOLS.get(currency, currency + ' '),
         items=_ItemsManager(items),
         subtotal=subtotal, tax_rate=None, tax_amount=Decimal('0'), discount_amount=Decimal('0'), total=subtotal,
@@ -88,48 +109,15 @@ def build_preview_context(user, base_template, color_variant):
 
 
 def render_builtin_template_preview_html(user, base_template, color_variant):
-    """Path 1's own preview — one of the 3 real static templates, real sample data, the requested color. Never the dynamic renderer — a builtin pick's own design_data is (by construction, design_renderer.design_has_real_custom_data's own rule) never 'real custom data' until a user actually edits it."""
+    """One of the 3 real static templates, real sample data, the requested color — the "Use this template"/blank-start preview card. Never the legacy dynamic renderer — a fresh builtin pick's own design_data is never 'real custom data' until a user actually edits it (legacy_design_renderer.design_has_real_custom_data's own rule)."""
     template_name = TEMPLATE_MAP.get(base_template, TEMPLATE_MAP[DEFAULT_TEMPLATE])
     context = build_preview_context(user, base_template, color_variant)
     return render_to_string(template_name, context)
 
 
 def render_design_preview_html(user, design):
-    """A real, saved InvoiceDesign's own preview ('Your designs') — routes through the exact same render_html_for_design branch a real invoice with this design assigned would use, so a custom/edited design's card genuinely matches what a client will see, dynamic renderer included."""
+    """A real, saved InvoiceDesign's own preview ('Your designs') — routes through the exact same render_html_for_design branch a real invoice with this design assigned would use, so a custom/edited design's card genuinely matches what a client will see, whichever render path (production or legacy-compatibility) actually applies."""
     context = build_preview_context(user, design.base_template, design.color_variant)
     return render_html_for_design(design, context)
 
 
-def render_editor_canvas_html(user, design_data, base_template, color_variant, sample_rows=3):
-    """
-    20 August 2026 — Step 8b canvas rework (see DECISIONS.md). The canvas
-    editor's own initial-load render: real content, real fonts, real
-    resolved color, ALWAYS via design_renderer's per-element, indexed
-    layout (design_renderer.render_editor_canvas_html) — unlike the
-    gallery preview functions above, this is never routed through the 3
-    static templates, even for an untouched builtin pick, since only the
-    per-element-positioned dynamic path has a DOM structure that maps
-    one-to-one onto design_data's own element list at all (the 3 static
-    templates are hand-built markup with no such mapping — there's
-    nothing in professional.html for a canvas drag to correspond to).
-    """
-    context = build_preview_context(user, base_template, color_variant)
-    return _render_editor_canvas_html(design_data, context, sample_rows=sample_rows)
-
-
-def render_editor_element_html(user, base_template, color_variant, el_type, style):
-    """
-    The canvas's live per-element content refresh (a style-panel font/
-    color/label/variant change) — re-renders just that one element's real
-    content fragment via the exact same _dynamic_element_content.html
-    partial every other real render path uses, so the canvas never shows
-    anything a real invoice with this exact (type, style) wouldn't.
-    `base_template`/`color_variant` only matter here insofar as
-    _dynamic_element_content.html's own CSS classes (already loaded once
-    into the canvas iframe's <head> at initial load) reference
-    design_primary_color/design_secondary_color — this function doesn't
-    need to re-supply them itself, only the invoice/freelancer/qr context
-    the content fragment's own bindings read.
-    """
-    context = build_preview_context(user, base_template, color_variant)
-    return _render_editor_element_html(el_type, style, context)

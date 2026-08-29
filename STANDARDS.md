@@ -73,6 +73,26 @@ actual view logic never called them) and the DRF `DEFAULT_THROTTLE_RATES` scoped
 Config or code that looks load-bearing but isn't actively misleads whoever reads it next — treat
 discovering it as a signal to delete it, not preserve it.
 
+## A parallel implementation's naming gets promoted the moment it becomes the only one
+
+A generation-suffixed name (`_v2`, a "Phase N" module docstring, an "isolated"/"experimental"
+qualifier) is fine WHILE two implementations genuinely coexist — it's how a reader tells them
+apart. The moment one is retired and the other becomes the sole production path, that suffix stops
+describing reality and starts actively misleading whoever reads it next, exactly like dead code
+above. Rename the promoted implementation to the plain, un-suffixed name (freeing that name by
+first renaming the retired implementation to an explicit `legacy_*`/`_legacy` name, so nothing is
+ever briefly unnamed), and rewrite any module docstring that described the promoted code as
+"isolated"/"not wired into any real path" — an accurate description when written, actively false
+once the cutover happens. A version discriminator on the DATA itself (e.g. `InvoiceDesign
+.design_data`'s `schema_version` key) is a different thing and can stay indefinitely — it's what
+lets genuinely old, un-migrated records remain readable, not a naming convention for parallel code.
+Found and fixed during the LanceraOS Template Builder's production cutover (see DECISIONS.md's
+29 August 2026 entry): five backend modules (`design_renderer_v2.py`, `design_schema_v2.py`,
+`design_seeds_v2.py`, `design_canvas_v2.py`, `views_design_v2.py`) and their frontend counterparts
+(`design-editor-v2/`, `designEditorV2/`, `DesignEditorV2.jsx`) were promoted to their plain names,
+and half a dozen module docstrings that still said "Phase 1/2/3, isolated, non-production" were
+rewritten to state current reality.
+
 ## Testing discipline for this project
 
 Every file that touches the database, an external service, or security-sensitive logic gets exercised

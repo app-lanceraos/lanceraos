@@ -785,7 +785,17 @@ differ for an un-finalised draft),
 on success, triggers an auto-pause at 3), `escalation_required`/`escalation_dismissed`,
 `is_one_time_client`, `pre_payment_status`, `client_acknowledged`/`client_acknowledged_at`,
 `formal_notice_sent_at` (new, Step 17 — same migration; one-shot timestamp, same pattern as
-`finalised_at`/`sent_at`, never blocks a deliberate second send), `created_at`/`updated_at`.
+`finalised_at`/`sent_at`, never blocks a deliberate second send), `rendered_design_snapshot`
+(JSONField, nullable, default `None` — a real, self-contained copy of `{base_template,
+color_variant, design_data}` captured once, at the same moment `invoice.design` becomes final for
+this invoice's remaining lifecycle (`_finalise_invoice`, `apps/invoices/views.py`) and the PDF
+itself gets frozen. This is what makes the frozen-PDF guarantee survive a LATER edit or deletion of
+`invoice.design` itself — `pdf_generator._effective_design` reads this snapshot in preference to
+the live `InvoiceDesign` row for any non-draft invoice that has one, falling through to the live
+row only when it's still `null` (an invoice finalised before this field was wired up — see
+DECISIONS.md's Master Blueprint cutover entry for the historical TB-007 gap this closed: the
+column existed since the Template Builder's own foundation step but nothing ever wrote to it until
+that pass)), `created_at`/`updated_at`.
 
 **`status` choices** (exactly 9, no `overdue`): `draft`, `created`, `sent`, `viewed`,
 `partially_paid`, `paid`, `cancelled`, `refunded`, `bad_debt`. `days_overdue` stays a pure
@@ -1025,13 +1035,13 @@ reason). Both require `confirm: true`, matching every other endpoint in this app
 
 ## `invoice_designs` (`InvoiceDesign`, in `apps.invoices`)
 
-New — no v1 equivalent (v1's PDF generation was reportlab code, not user-editable data). The
-visual PDF/portal template system. Referred to elsewhere in this repo as "decisions doc Section
+New — no v1-of-LanceraOS equivalent (the original PDF generation was reportlab code, not
+user-editable data). The visual PDF/portal template system, now on its second, production
+`design_data` schema — see "Two schema generations" below for the full history and how the
+older shape is still supported. Referred to elsewhere in this repo as "decisions doc Section
 9/10" — **that literal numbered section doesn't exist anywhere in this repo** (checked
 `INVOICES_CLIENTS_TECHNICAL_SPEC.md`, `DECISIONS.md`, `INVOICES_MODULE_KICKOFF.md`, `DESIGN.md`
-directly; none contain a "Section 9" or "Section 10" heading). Step 8 is what actually defines the
-`design_data` contract below, from the task's own schema description plus the real structure of
-the 3 built templates — see DECISIONS.md's Step 8 entry.
+directly; none contain a "Section 9" or "Section 10" heading).
 
 **Schema**: `id`, `user` (FK, `CASCADE`), `name`, `base_template` (`professional`/`minimal`/
 `modern`), `source` (`builtin`/`custom`/`ai_seeded` — model default `builtin`, overridden to
@@ -1064,117 +1074,141 @@ validated by the exact same `validate_design_data_schema` before the row is ever
 DECISIONS.md's Step 9 entry for the full classify-vs-generate reasoning and the overlap-safety
 argument behind how `design_data` gets adjusted.
 
-### `design_data` — the real JSON contract (Step 8, `apps/invoices/design_schema.py`)
+### Two schema generations — production cutover (29 August 2026)
 
-Validated at save time by `InvoiceDesignSerializer.validate_design_data` (`apps/invoices/
-serializers.py`) — a payload violating any rule below is rejected with a specific, per-violation
-error message, not a generic "invalid design." Shared, documented structure both this step's
-validation and Step 8b's canvas editor build against — not an implicit shape either side has to
-infer.
+`design_data` has held two structurally different shapes over this table's history. Both are
+still valid contents for the same JSONField; which one a given row holds is detected at read time
+by `design_schema.get_schema_version()` — an explicit top-level `"schema_version": 2` key means
+the current production shape, and its total absence (every row created before this cutover) means
+the original, now-retired shape. There is no third state and no partial/in-between shape.
+
+**The production shape (schema_version 2, `apps/invoices/design_schema.py`)** — live and the only
+shape any save path produces from this cutover onward:
 
 ```
 {
-  "zone_1": {
+  "schema_version": 2,
+  "page": { "size": "A4", "width_mm": ..., "height_mm": ..., "margin_*_mm": ..., "sidebar": <bool> },
+  "header": {
     "elements": [
       {
-        "type": "logo" | "business_info" | "client_info" | "dates",
-        "x": <mm, number>, "y": <mm, number>,
-        "width": <mm, number > 0>, "height": <mm, number > 0>,
-        "style": { ...free-form... }
+        "kind": "semantic" | "generic",
+        "type": "logo" | "business_info" | "client_info" | "dates" | "text" | "image" | "rectangle" | "divider" | "container",
+        "x": <mm>, "y": <mm>, "width": <mm > 0>, "height": <mm > 0>,
+        "style": { ...free-form... }, "overrides": { ...free-form, structurally required... },
+        "binding": <one of SUPPORTED_BINDINGS, optional, generic "text" only>,
+        "layout_mode": "pinned" | "flow" (optional, default "pinned"),
+        "locked": <bool, optional>, "hidden": <bool, optional>
       },
       ...
     ]
   },
-  "zone_2": {
-    "table": { "style": { ...free-form... } },
+  "flow": {
     "elements": [
-      {
-        "type": "totals" | "notes" | "signature" | "payment_info",
-        "spacing_after_previous": <mm, number >= 0>,
-        "style": { ...free-form... },
-        "paired_side_by_side": <bool, optional>
-      },
+      { "kind": "structural", "type": "table", "x": ..., "y": ..., "width": ..., "height": ..., "style": {...}, "overrides": {} },
+      { "kind": "semantic" | "generic", "type": "totals" | "notes" | "signature" | "payment_info" | "qr_code" | "online_payment_link" | ..., "x": ..., "y": ..., ... },
       ...
     ]
   }
 }
 ```
 
-**Two-zone model**: `zone_1` sits above the line-items table and is absolutely positioned (valid
-because Zone 1's total height is always known ahead of render time). `zone_2` is the table and
-everything after it — the table has a start position but deliberately no fixed height (the number
-of line items isn't knowable in advance), so every element after it is a spacing-relative flow,
-`{type, spacing_after_previous, style}`, never independent `x`/`y` — an element can never overlap
-something that might grow, by construction.
+Every element in either list — `header` or `flow`, the mandatory `table` included — carries the
+identical real `x`/`y`/`width`/`height` shape and is independently draggable/resizable; `header`
+vs `flow` is purely organizational (roughly "identity fields" vs "body fields"), not a
+positioning-behavior difference. This replaces the original shape's structural guarantee (giving
+the table/totals/etc. no independent coordinates at all, only spacing) with a **validated overlap
+check** (`design_schema.validate_design_data_schema_v2`) applied uniformly to every element,
+`header` and `flow` alike — real free-form positioning, including moving the mandatory table
+itself, is possible as a direct consequence.
 
-**Validation rules, each with its own specific error message** (see `design_schema.py`'s
-`validate_design_data_schema`, a pure function returning a list of violation strings — empty means
-valid):
-- `zone_1` and `zone_2` are both required top-level keys.
-- Every `zone_1` element needs all of `type`/`x`/`y`/`width`/`height`/`style`; `type` must be one of
-  the 4 listed above; `width`/`height` must be numbers `> 0`; `style` must be an object.
-- `zone_2.table` is **structurally mandatory** — a payload omitting it is rejected outright (this is
-  what makes the line-items table non-deletable at the schema level, not just a UI convention).
-- `zone_2.elements` must contain **at least one `type: "totals"` element** — the totals block is
-  mandatory the same way.
-- **Zone 1 overlap check**: simple axis-aligned rectangle collision, pairwise across every `zone_1`
-  element — any two bounding boxes that intersect are rejected, naming both colliding elements by
-  index and type. `zone_2` elements are structurally incapable of overlapping (no independent
-  coordinates at all), so this check only ever runs within `zone_1`.
-- **Pairing rule**: `paired_side_by_side: true` may be set on zero or exactly two `zone_2` elements.
-  If set on exactly one, or three or more, that's rejected. If set on exactly two, both must have
-  `type` in `{signature, payment_info}` — the only fixed-height, non-reflowing types in the zone_2
-  vocabulary; pairing e.g. `notes` (which can grow) is rejected by name.
+Validation rules enforced at save time (`InvoiceDesignSerializer.validate_design_data` ->
+`validate_design_data_schema_by_version`, dispatching on `get_schema_version`): `schema_version`
+must be exactly `2`; every element needs all of `kind`/`type`/`x`/`y`/`width`/`height`/`style`/
+`overrides`; `width`/`height` must be numbers `> 0`; exactly one `kind:"structural", type:"table"`
+element must exist across `header`+`flow` combined (the line-items table, non-deletable at the
+schema level); at least one `type:"totals"` element must exist; every pairwise element overlap
+(within `header`, within `flow`, and across the two) is rejected by index and type. `overrides` is
+a real, additive style-cascade layer on top of `style` (theme -> template defaults -> `style` ->
+`overrides`), structurally required but typically empty. `layout_mode:"flow"` (optional, default
+`"pinned"`) opts an element into real content-driven growth at render time instead of a fixed box
+that silently overflows.
 
-**Seed data** (`apps/invoices/design_seeds.py`, `BUILTIN_DESIGNS`): real `design_data` JSON for all
-3 built templates, decomposed from their actual HTML/CSS (`apps/invoices/templates/invoices/
-{professional,minimal,modern}.html`) — honest starting positions/spacing a user could meaningfully
-edit in Step 8b's canvas, deliberately not pixel-perfect reproductions. All 3 pass
-`validate_design_data_schema` with zero errors (dogfooded directly in
-`apps/invoices/tests/test_designs.py`, not just trusted by construction).
+**The original shape (no `schema_version` key, `apps/invoices/legacy_design_schema.py`)** —
+RETIRED, produced by no code path anymore, kept only so a pre-existing row that still holds it
+remains readable/renderable/deletable: a `zone_1` (absolutely-positioned header elements) /
+`zone_2` (the table plus a spacing-relative flow of `totals`/`notes`/`signature`/`payment_info`,
+no independent coordinates) split. Full historical shape and validation rules are preserved in
+that module's own docstring, not repeated here.
+
+**Migrating a legacy row to the production shape** (`apps/invoices/design_migration.py`'s
+`migrate_v1_to_v2`, a pure, deterministic function — never edits the database itself): happens two
+ways. (1) On-demand, in memory, the moment a user opens a legacy-shaped design in the editor
+(`views_design_editor.design_canvas_document`) — persisted only if they explicitly save; never
+forces a migration a user didn't ask for. (2) As a one-time, explicit, dry-run-by-default bulk
+pass: `python manage.py migrate_invoice_designs_to_production_schema [--apply]`. A row the mapper
+can't safely convert (see `_clamp_width`'s own documented edge case — an element already at or past
+its clamp boundary — for the one known, deliberately-unfixed case) is left completely untouched in
+its original shape; nothing is ever partially migrated or silently corrupted.
+
+**Seed data**: `apps/invoices/design_templates.py`'s `BUILTIN_DESIGNS` (production shape) is what
+`design_duplicate` (`apps/invoices/views.py`) and the editor's "start blank" mode
+(`get_blank_design_data`) actually use to create every new InvoiceDesign row today — both produce
+schema_version 2 from the moment of creation. `apps/invoices/design_seeds.py`'s own
+`BUILTIN_DESIGNS` (the retired shape, validated by `legacy_design_schema.py`) is kept only as the
+documented historical source `migrate_v1_to_v2` maps FROM, and as the golden-reference input the
+render-fidelity tests (`test_design_templates_golden.py`) compare against.
 
 These are Python dicts, not database rows — `InvoiceDesign.user` is a required FK with no
-`null=True` (verified directly against the model before assuming otherwise), so there's no
-"ownerless" row a `builtin` design could live as ahead of a real user picking one.
-`design_duplicate` (`apps/invoices/views.py`) is what turns a seed into a real, owned
-`InvoiceDesign` row — `POST /api/invoices/designs/duplicate/` with `{base_template, color_variant?,
-name?}` creates one for the requesting user with `source='builtin'` and a deep copy of that
-template's seed `design_data`. See DECISIONS.md for why this is the right mechanism instead of
-pre-creating rows per user or making `user` nullable.
+`null=True`, so there's no "ownerless" row a builtin design could live as ahead of a real user
+picking one.
 
-### `design_data` render path — closes PDF-001 (19 August 2026)
+### Render path — one canonical renderer per schema generation
 
-Until this pass, `design_data` and `color_variant` were validated, saved, and then **never read by
-any real render path** — `build_pdf_context`/`build_portal_context`/`_select_template_name`
-(`apps/invoices/pdf_generator.py`) only ever looked at `invoice.design.base_template` (one of the 3
-fixed strings) to pick a static template. A saved design had zero effect on a real invoice's PDF or
-portal page. A real, second renderer now exists and is wired in — see DECISIONS.md's 19 August 2026
-"design_data render path" entry for the full design, the dynamic-vs-static condition, and why it's
-based on `design_data` itself rather than `InvoiceDesign.source`.
+`pdf_generator.render_html_for_design` (the one real dispatcher every PDF/portal/preview-as-client
+call goes through) branches only on which schema a design's `design_data` actually holds — never on
+`InvoiceDesign.source` or any other proxy: schema_version 2 always renders through
+`design_renderer.py` (the canonical production renderer); a legacy-shaped design renders through
+`legacy_design_renderer.py` if it has genuinely been customized, or one of the 3 static Django
+templates (`professional.html`/`minimal.html`/`modern.html`) otherwise. There is no third,
+disconnected rendering implementation anywhere — the canvas editor (`design_canvas.py`) reuses the
+exact same geometry/CSS-resolution functions `design_renderer.py` itself calls, and the gallery's
+preview cards (`design_preview.py`) render through this identical dispatcher, not an approximation.
 
-`color_variant` remains genuinely unused by any render path (both the 3 static templates and the
-new dynamic renderer ignore it entirely) — a pre-existing gap, not introduced or closed by this
-pass; flagged here rather than silently left undocumented.
+`color_variant` is real and wired on both render paths (`design_seeds.COLOR_VARIANTS`/
+`design_templates.COLOR_VARIANTS` + `resolve_design_colors`, surfaced as
+`design_primary_color`/`design_secondary_color` template variables) — see DECISIONS.md's 20 August
+2026 and 29 August 2026 entries for the fix history and the production cutover respectively.
 
-**19 August 2026 follow-up (SEV1 fix)**: this renderer was itself proven correct, live, the moment
-it was built — the real, separate reason it had zero effect on any actual invoice was that
-`Invoice.design` was never assigned by anything in the first place (see this table's own
-`invoices` entry above and DECISIONS.md's "SEV1 — the design-to-invoice assignment gap" entry).
+---
 
-**20 August 2026 follow-up (color_variant wiring + gallery preview fix)**: `color_variant` is no
-longer inert — `apps/invoices/design_seeds.COLOR_VARIANTS` + `resolve_design_colors` are the real
-source of truth, wired into `build_pdf_context` as `design_primary_color`/`design_secondary_color`
-template variables, consumed identically by all 3 static templates AND the dynamic renderer. Each
-template's own pre-existing hardcoded brand-accent hex values were verified to be byte-identical to
-that template's own `COLOR_VARIANTS` `'default'` entry, so this was a real, contained variable
-substitution, not a CSS-custom-property retrofit. The gallery's own preview cards
-(`DesignGallery.jsx`) now render via a real backend HTML endpoint
-(`apps/invoices/design_preview.py`, `GET /api/invoices/designs/preview/` +
-`GET /api/invoices/designs/<pk>/preview/`) reusing the exact same `render_html_for_design` a real
-invoice uses, embedded via a scaled `<iframe>` — replacing the old `DesignCanvasPreview.jsx`
-client-side approximation (deleted). See DECISIONS.md's 20 August 2026 "SEV1 — gallery previews +
-color_variant wiring" entry for the full investigation, including a real, separate draft-live-
-default-fallback fix (`pdf_generator._effective_design`) this same pass surfaced and closed.
+## `invoice_design_versions` (`InvoiceDesignVersion`, in `apps.invoices`)
+
+Purely additive version history for `InvoiceDesign.design_data` — every real save creates a new,
+immutable snapshot (`InvoiceDesign._create_version_if_content_changed`, skipped when the saved
+content is byte-identical to the latest existing version). `GET .../designs/<pk>/versions/` lists
+them (lightweight, no `design_data`); `POST .../versions/<id>/restore/` copies that version's
+`design_data` back onto the live design and saves — which itself creates a brand-new version for
+the restored content, so "undo the rollback" is just restoring the version immediately before it.
+History only ever grows; there is no destructive rollback.
+
+1. **Mutable?** No — write-once, append-only; a version snapshot is never edited after creation.
+2. **Soft deleted?** No — hard delete only, and only ever as a `CASCADE` from its parent
+   `InvoiceDesign` being deleted.
+3. **Audit trail?** No dedicated `AuditLog` event — consistent with `InvoiceDesign` itself, whose
+   own docstring already treats a design edit as not security/finance-relevant.
+4. **Indexed?** `(design, version_number)` together — "list this design's versions in order" and
+   "find version N" are the only two access patterns needed.
+5. **Encrypted?** No — same content class as `InvoiceDesign.design_data`, which isn't encrypted
+   either.
+6. **Cascade behavior?** `CASCADE` from `InvoiceDesign` — a version snapshot has no independent
+   meaning once its parent design is gone (unlike `Invoice.rendered_design_snapshot`, a COPY living
+   on the `Invoice` itself specifically so it survives independently of the design's own lifecycle
+   — this table is deliberately not that; it's per-design history, not per-invoice provenance).
+
+**Schema**: `id` (UUID PK), `design` (FK -> `InvoiceDesign`, `CASCADE`, `related_name='versions'`),
+`version_number` (positive int, unique together with `design`), `design_data` (JSONField, a full
+immutable snapshot), `created_at`.
 
 ---
 

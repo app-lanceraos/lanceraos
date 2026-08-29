@@ -1,0 +1,21 @@
+{% load humanize %}{% comment %}
+  Phase 4B — one line-item row, driven by the same `table_columns` list
+  the head partial uses. `row` is either a real InvoiceItem (canonical
+  renderer, real invoice.items.all()) or a lightweight sample-item object
+  with the same 4 attributes (design_canvas_v2.py's own editor-canvas
+  preview rows) — this partial doesn't care which, same "one real
+  computation, reused" principle as resolve_table_columns itself.
+{% endcomment %}
+<tr>
+  {% for col in table_columns %}
+    {% if col.key == 'description' %}
+      <td style="{{ row_cell_css }}">{{ row.description }}</td>
+    {% elif col.key == 'quantity' %}
+      <td class="v2-num-col" style="{{ row_cell_css }}">{{ row.quantity|floatformat:"-2" }}</td>
+    {% elif col.key == 'unit_price' %}
+      <td class="v2-num-col" style="{{ row_cell_css }}">{{ currency_symbol }}{{ row.unit_price|floatformat:2|intcomma }}</td>
+    {% elif col.key == 'total' %}
+      <td class="v2-num-col" style="{{ row_cell_css }}">{{ currency_symbol }}{{ row.total|floatformat:2|intcomma }}</td>
+    {% endif %}
+  {% endfor %}
+</tr>

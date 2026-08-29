@@ -6559,3 +6559,409 @@ running for that purpose rather than being stopped at the end of this session as
 Docs: this entry — the real root cause (a reversed function-argument assumption in `draggable`, not a
 raw-markup or coordinate-unit problem), why the prior round's verification method structurally could not
 have caught it, and the fix.
+
+Date: 25 August 2026 (Phase 4B.2 — full free-form unification: header/flow/table/sidebar share one real
+interaction contract; three real bugs found and fixed along the way)
+Decision: Header and flow elements — the mandatory line-items table included — no longer have different
+positioning shapes. Every element in `design_data.header.elements`/`flow.elements` now carries the same
+real `{kind, type, x, y, width, height, style, overrides}` shape header elements always had;
+`spacing_after_previous`/`paired_side_by_side` (the flow-only spacing/pairing mechanism) are removed from
+the v2 schema entirely; the table becomes a real, positioned `kind:'structural', type:'table'` element
+within `flow.elements` instead of a separate, non-positioned `flow.table` key. Overlap validation,
+previously header-zone-only (a structural guarantee flow could never overlap the table), now runs across
+the full combined element set (a validated guarantee instead) — the same freedom-with-validation model a
+real design tool (Figma/Canva) uses. Approved before implementation, per this project's own "stop and
+explain an architectural change first" rule, reversing Phase 4B's own Decision #1 outright as the task
+explicitly required.
+Reason: the product requirement was that every meaningful visual object — flow-zone objects and the table
+included — be genuinely, freely draggable/resizable, not just header-zone ones. This also became the
+direct fix for the resize→drag desync bug surviving in longer chains (Phase 4B.1's own honest finding):
+flow/table elements previously had no resize interaction of their own to desync in the first place: once
+unified onto the shared `lancera-v2-element`/`lancera-v2-table` GrapesJS type, they inherit the exact same
+already-proven interaction code path (including the `window.__v2ResyncView` resync-on-commit fix) header
+elements always used, rather than needing a second, separately-fixed path.
+One accepted, documented trade-off: the table's `height` in the schema is a design-time estimate only (a
+3-sample-row convention); its true rendered height for a real invoice is content-driven and can exceed
+that estimate for a large invoice — inherent to giving a dynamic-height object true free positioning, not
+hidden.
+
+Three real bugs found and fixed this pass, all via genuine Playwright mouse interaction, not inferred:
+(1) the React style panel didn't refresh its displayed x/y/w/h after a resize commit — the model and DOM
+were both already correct (confirmed directly; this is NOT the Phase 4B.1 desync), the listener just
+never subscribed to GrapesJS's own `component:styleUpdate` event, only `component:update`; fixed by adding
+one event name. (2) The dev-route toolbar's `height: 56` (fixed) combined with `flexWrap:'wrap'` meant
+that once enough buttons were present at once (confirmed: the real "Unsaved changes" badge plus the full
+button set at a real 1600px viewport) to wrap onto a second row, "Reload from serialized"/"Show canonical
+reference" wrapped invisibly below the bar's own box, silently covered by the canvas viewport div —
+permanently unclickable; fixed via `minHeight` instead of `height`. (3) The most consequential: two
+elements placed exactly edge-to-edge (zero gap — a completely normal layout pattern) can acquire a
+razor-thin apparent overlap purely from the canvas's own mandatory mm→px→mm round-trip (each of `y`/
+`height` rounds independently at the canvas's own px granularity, so their sum can drift a hundredth of a
+millimeter relative to a sibling's own independently-rounded edge) — confirmed directly with real seed
+data (`client.name`/`client.company`, exactly touching at y=51mm in the source, round-tripped to a
+genuine 0.01mm overlap) and reproduced live: an untouched, unedited pair was rejected by the real
+`/v2-preview/` endpoint with a 422. Left unfixed this would make an otherwise-true no-op save fail
+outright whenever any pair of elements happens to sit edge-to-edge. Fixed with a small, shared
+`OVERLAP_EPSILON_MM = 0.3` tolerance in `apps/invoices/design_schema.py`'s `boxes_overlap` (the same
+function v1's own zone_1 overlap check and v2's combined-set check both already share) — confirmed this
+doesn't mask real overlaps via a dedicated, still-passing rejection test.
+Also removed as dead/actively-harmful once every element had real geometry: the style panel's own `width`
+text-input control — `design_renderer_v2.prepare_element` builds an element's real CSS width exclusively
+from its own `element['width']` geometry field (confirmed directly, never from a style/overrides `width`
+key), so this control silently wrote a value the renderer never reads while directly conflicting (same
+DOM `style.width` property) with the resize handles' own real geometry write. It existed originally
+specifically for flow elements, which had no geometry of their own before this phase.
+A real, pre-existing (not introduced this phase) UX characteristic documented rather than fixed: the
+resize-handle overlay lives in the main document, positioned to align with the CSS-`transform:scale()`-
+shrunk iframe, but GrapesJS's own Resizer computes deltas from raw, unscaled screen pixels with no
+awareness of this app's own (non-native) zoom mechanism — at the real default 50% zoom, the handle tracks
+the mouse at roughly half rate. The resize still commits the exact final size the handle reaches (no
+correctness/data-integrity issue) — a UX-polish item, not this phase's own scope to redesign.
+Alternatives considered: keeping flow elements spacing-positioned and only adding resize/drag to a NEW,
+second geometry concept layered on top — rejected per the task's own explicit "do not create a second
+rendering/geometry system" instruction, and because it would have left the resize→drag desync fix needing
+its own separate, second implementation for flow/table anyway.
+Verification: full `apps.invoices` backend suite, 979/979 (`python manage.py test apps.invoices
+--keepdb`), including 194 v2-specific tests (schema/renderer/canvas/migration/golden-template/phase3.2
+regression) and v1's own real overlap tests (`test_designs.py`/`test_ai_design.py`, 66/66, confirming the
+shared epsilon fix doesn't regress v1). Full frontend suite, 244/244 (`npx vitest run`), including a
+rewritten `serialization.test.js` (12 tests, unified-shape round-trip) and `interaction.test.js` (8 tests,
+including a data-model-level resize→drag→resize→drag→resize→drag chain on the table). Clean production
+`vite build`. Real Chromium + Playwright, real mouse events, real running dev servers, real default 50%
+zoom (never switched to 100% first): 47 passing assertions across all 3 templates — Professional (28,
+including the full interaction-stability chain on both the table and a flow element, delete+undo, a real
+Save→Reload round trip through the actual backend, the canonical renderer reflecting an edit at its exact
+coordinates, and a dedicated overlap-rejection test) and Minimal+Modern (19, including — for Modern
+specifically — a real SIDEBAR element drag/resize, proving the unification covers that coordinate space
+too). Full report: `LANCERAOS_TEMPLATE_BUILDER_2_PHASE4B2.md`.
+
+28 August 2026 (Green-Light implementation pass) — the user's final architectural reconstruction
+(`LANCERAOS_TEMPLATE_BUILDER_2_FINAL_ARCHITECTURE.md`) was given the explicit green light to build against
+directly, no further competing blueprint, organized as one continuous implementation pass rather than
+another numbered Phase (per the directive's own explicit "do not create another Phase" instruction — this
+entry is the last one of that historical numbering lineage, which is why the 29 Phase 0–5.6/Master
+Blueprint/Completion/Pagination-Fix/Architecture-Plan documents immediately above this entry were archived
+to `archive/template_builder_2/` this same pass, leaving `LANCERAOS_TEMPLATE_BUILDER_2_FINAL_ARCHITECTURE.md`
+as the sole primary reference in the project root, per that same instruction).
+
+Missing-data collapse (§18-22/§51, the directive's own highest-named priority): `design_renderer_v2.
+_element_has_real_content` is new — determines per-element-type whether real (non-blank) content exists,
+used to exclude a genuinely-empty optional field (logo, payment info, QR/pay-online, notes/terms, a
+generic bound text element) from BOTH the header region (a blank field's own box simply doesn't render —
+header elements are pinned/absolute, so this is presence-only, never a reflow) and the flow region (a
+blank chain member's declared space is never reserved — `_prepare_flow_region` was extended to compute
+row/chain grouping from the ORIGINAL unfiltered element list for anchor-y stability, but render only the
+`visible_elements` subset, so the real next-sibling genuinely moves up to fill the gap). Verified with a
+new, dedicated `test_design_missing_data.py` (real WeasyPrint+PyMuPDF measurement through real Invoice/
+InvoiceItem/FreelancerProfile rows, not schema fixtures in isolation) covering minimal/normal/maximal/mixed
+data combinations for both regions. Building this surfaced two real, unrelated fixture-drift bugs in the
+PRE-EXISTING golden-comparison suite (`test_design_seeds_v2_golden.py`) and the shared gallery sample
+invoice (`design_preview.py`) — populating previously-blank `client_company`/`client_address`/
+`address_line1` sample fields (needed so those fields wouldn't collapse under the new logic in unrelated
+tests) made the 3 static golden templates' own real CSS-flow party block grow 1–2 real content lines
+taller than the schema-driven renderer's fixed-height calibration assumed; root-caused via a monkeypatch
+proving the drift existed independent of the collapse feature, then fixed by keeping the shared sample
+address single-line (avoiding a 2-line CSS wrap) and widening 3 specific, now-explicitly-documented golden-
+position tolerances for the remaining small, structurally-explained (not fidelity-gap) drift.
+
+Static-vs-bound visual indicator: a small blue dot (`::before` on `[data-binding]`, editor-only CSS
+injected the same way the pre-existing overflow-indicator rule already is) plus a one-line plain-language
+legend in the editor's side panel — the canvas previously had zero visual distinction between a bound
+field and static text short of opening StylePanel and reading a raw binding key.
+
+Validation Layers A/C/D + a real Template Health UI (`design_validation.py`, Phase 0's own foundation —
+Layers A/B were already real/genuinely-empty-by-design respectively; C and D were real, unimplemented stubs
+until now): Layer C (semantic) is a conservative, concrete set — no element shows the invoice number
+(TB-004), the due date, or the client's identity, or the mandatory totals block never actually includes the
+grand-total row — every finding a WARNING, never blocking (this system draws no Draft/Publish line for it
+to gate). Layer D (renderability) is a genuine dry-run through `render_v2_design_html`, output discarded,
+only attempted once Layer A itself finds the design schema-valid, given a real `invoice_context`; building
+its own test coverage surfaced a real, separate robustness gap — `_element_has_real_content`'s own
+`context['freelancer']` lookup raises a bare `KeyError` on an incomplete context instead of the
+`V2RenderError` `resolve_binding` deliberately converts the same failure into — fixed by having Layer D also
+catch `KeyError`/`AttributeError`/`TypeError` and report them as a real `RENDER_FAILED` finding rather than
+crashing the caller. A new isolated endpoint, `POST /invoices/designs/v2-validate/`
+(`views_design_v2.design_v2_validate`), and a real "Template Health" panel in the editor (plain-language
+messages, no raw codes/categories surfaced) are the first real callers.
+
+Unsaved-changes browser warning + a real, independent bug fix: `dirty` used to be a bare alias of
+GrapesJS's own `UndoManager.hasUndo()`, which never clears after a successful Save (only a fresh load
+clears GrapesJS's own undo stack) — so a `beforeunload` warning built directly on top of it would have
+fired even immediately after saving. Fixed by making `dirty` a genuine "changed since the last load or
+save" signal (set on every real edit callback, explicitly cleared on both load and a successful
+`handleSaveReal`), independent of `hasUndo()`'s own unrelated meaning (still used, unchanged, for the
+Undo/Redo buttons' own disabled state). A real in-app "Back to designs" click also gets its own equivalent
+confirmation, since `beforeunload` only catches an actual tab close/refresh/URL navigation, never React
+Router's client-side `navigate()`.
+
+Autosave: debounced 4s (a `lastEditAt` timestamp re-arms the timer on every edit — `dirty` alone only flips
+false→true once per session, which would have meant only the FIRST edit's debounce ever fired). Deliberately
+scoped to an already-persisted design only (`savedDesignId` set) — autosaving a brand-new, never-saved
+design would silently create a real `InvoiceDesign` row before the user ever clicked Save, a surprising side
+effect rather than a safety net.
+
+Version history + non-destructive rollback: `InvoiceDesignVersion` (a Phase 0 foundation table, populated
+by every real save since the Master Blueprint cutover but never read by anything) gets its first real
+readers — `GET .../versions/` (lightweight, no `design_data`) and `POST .../versions/<id>/restore/`, which
+copies that version's own `design_data` onto the live design and saves, letting the model's own existing
+`_create_version_if_content_changed` create a brand-new version for the restored content — version history
+only ever grows, "undo the rollback" is just restoring the version before it.
+
+Blank-canvas starting mode: the directive's own explicit "two first-class starting modes" requirement —
+confirmed there was genuinely no way to start a V2 design with anything other than one of the 3 full
+builtin layouts. `design_seeds_v2.get_blank_design_data_v2(base_template)` reuses that template's own real
+page geometry (so a blank start and a builtin start share the identical printable area) with zero
+pre-arranged header content and only the two structurally mandatory anchors (the table, a totals block
+including the real grand-total row) at a sensible default position — `base_template` still selects the
+underlying color/typography foundation, the same way a blank document in most tools still has an
+underlying stylesheet. Exposed via `?blank=true` on the existing `design_v2_builtin` endpoint and a new
+"Start blank" button beside "Load".
+
+Layers panel (order/lock/hide): `hidden`/`locked` are two new optional, schema-validated booleans on any
+element (both absent/falsy on every design that predates this — a purely additive schema change). `hidden`
+is the one of the two the canonical renderer itself reads (folded directly into
+`_element_has_real_content`'s own check, ahead of its content_mode branch, so it applies uniformly) — a
+user who deliberately hides an element gets it excluded from real output the same way genuinely-blank
+optional content already is; the canvas adapter (`design_canvas_v2.py`) never calls that function at all,
+so a hidden element still renders (dimmed, click-through, via editor-only opacity/pointer-events CSS) in the
+canvas itself, addressable again only through the Layers panel, not by clicking it. `locked` is purely an
+editor-time concern (`draggable`/`resizable` set false on the live GrapesJS component) that never reaches
+the renderer. The one mandatory, non-removable line-items table also can't be hidden from the Layers panel
+— hiding it would produce the identical broken-invoice outcome deleting it already isn't allowed to.
+
+Multi-select + alignment + a save-time snap: implemented as Layers-panel checkboxes (pure React state), not
+canvas Shift+click, and a real `alignment.js` module for the position math (align left/center-h/right/top/
+middle-v/bottom, distribute horizontally/vertically, snap-to-0.5mm-grid on the aligned result) applied
+through `comp.addStyle()` — the same already-trusted, already-tested API this codebase's own keyboard-nudge
+feature already uses for programmatic position changes. Deliberately NOT implemented: live drag-time snap
+guides, or genuine canvas Shift+click multi-select. `componentTypes.js`'s own resize/drag commit paths carry
+an extensively-documented history of subtle bugs that needed a genuine live browser/mouse to catch at all
+(see its own inline comments) — this environment had no live browser available this pass, and touching that
+exact fragile code blind, with no way to verify a change didn't reintroduce or interact badly with those
+prior fixes, was judged too risky relative to the value; recorded here as a deliberate, honest scope
+decision rather than a silently-dropped requirement.
+
+Verification: full `apps.invoices` suite, 1081/1081 passing (`python manage.py test apps.invoices
+--keepdb`, run in WeasyPrint-safe batches and once as a full single-process run — both clean, no
+segfault either time this pass). Full `apps.clients`/`apps.payments`/`apps.users`/`apps.admin_panel`/`core`
+suite, 269/269. Full frontend suite, 266/266 (`npx vitest run`), including new dedicated files
+(`test_design_missing_data.py`'s 14 tests, `alignment.test.js`'s 15, plus real coverage added to
+`test_design_validation_framework.py`, `test_design_schema_v2.py`, `test_designs.py`, `test_design_canvas_v2.py`,
+and `serialization.test.js`). Clean production `vite build`. No live browser/Playwright was available this
+pass — the multi-select/alignment/Layers-panel/Template-Health/version-history/blank-canvas/autosave UI was
+verified through the same unit/integration-test discipline as the rest of this entry, not a live manual
+click-through; stated here honestly rather than implied otherwise. Still open, by explicit, recorded scope
+decision or by this environment's own limits: live drag-time snap guides and canvas-click multi-select
+(above); the `DesignEditorV2.jsx` production-vs-dev-diagnostic architecture split the directive also named
+(a large refactor of an already-working, already-tested 1600+-line file, not attempted this pass given the
+marginal benefit against real regression risk with no live browser to catch a subtle break); a permanent
+E2E Playwright suite (same no-live-browser reason — the existing unit/integration suites are what this pass
+could actually run and verify).
+
+Date: 29 August 2026 (Production cutover — LanceraOS Template Builder becomes THE production template
+system; V1 (the original zone_1/zone_2 design system) retired)
+Decision: The Template Builder 2.0 implementation built across the Phase 0 through Master Blueprint passes
+above is no longer a parallel, "v2"-labeled system running alongside an original one — it IS the LanceraOS
+Template Builder, full stop. Every "V2"/"Phase N"/"isolated"/"dev sandbox" framing at the product,
+API-route, file-naming, and primary-docstring layer is retired; the original zone_1/zone_2 system is
+retired down to the minimum genuinely required for reading/rendering pre-existing data, never as a second
+live editing surface. A `schema_version` discriminator on `design_data` itself remains — the directive's
+own explicitly-approved exception for legacy-data compatibility — but there is no other product-level
+"if V2 then..." branching left anywhere in this codebase.
+
+Reason: the prior passes built a complete, tested, live-browser-verified second design system, but it was
+never actually wired to be what a real LanceraOS user reaches for the ordinary "create/edit an invoice
+design" task — the real production entry point (`DesignGallery.jsx`) still created legacy-shaped designs
+via `design_duplicate`/`design_seeds.BUILTIN_DESIGNS`, and the new editor was only reachable through a
+separate `/dev/design-editor-v2` sandbox route plus a "Try the new design editor" button, with a second,
+real `/invoices/designs-v2/:id/edit` route as a third option. Three routes for one editing task, "v1" vs
+"v2" naming throughout the API surface (`design_seeds_v2.py`, `design_schema_v2.py`, `design_canvas_v2.py`,
+`design_renderer_v2.py`, `views_design_v2.py`, `/designs/v2-*` URL paths, `DesignEditorV2.jsx`), and a
+whole dev-diagnostic layer (a "verification log," a canonical-reference debug iframe, "Save (serialize)"/
+"Reload from serialized" round-trip buttons) inside the one editor a real user would eventually need to
+use for real work — none of this is what "the production Template Builder" should look like. This pass's
+job was specifically to finish that work: make the one, already-correct implementation reachable, remove
+the parallel legacy path from every NEW-design code path, and verify nothing else in the platform broke in
+the process.
+
+What changed, backend (all under `apps/invoices/`, no other app touched — confirmed by running that app's
+own full regression suite alongside this module's before and after every batch of changes):
+
+- **Renamed** (content preserved, only file names/imports/URL paths changed): `design_renderer_v2.py` ->
+  `design_renderer.py` (the canonical renderer — the ONE renderer every real PDF/portal/preview-as-client
+  call now dispatches to for a schema_version-2 design); `design_schema_v2.py` -> `design_schema.py` (the
+  live, versioned `design_data` contract); `design_seeds_v2.py` -> `design_templates.py` (the production
+  builtin seeds `design_duplicate` now actually uses); `design_canvas_v2.py` -> `design_canvas.py` (the
+  canvas adapter); `views_design_v2.py` -> `views_design_editor.py` (the editor's own support endpoints).
+  The ORIGINAL `design_schema.py` (zone_1/zone_2 validator) and `design_renderer.py` (the original dynamic
+  renderer) were renamed to `legacy_design_schema.py`/`legacy_design_renderer.py` FIRST, freeing their
+  names for the promoted modules and making explicit that these two are now read-compatibility-only, never
+  a second live editing/save path. Every one of these renamed modules' own primary docstrings — several of
+  which still described themselves as "Phase 1/2/3, isolated, non-production, not wired into any real
+  path" (an accurate description at the time they were written, actively WRONG after this cutover) — was
+  rewritten to state current reality plainly: these are the live production modules; `legacy_*` is what's
+  retired-but-kept, and states why.
+- **URL surface**: `/designs/v2-render-preview/`, `/designs/v2-templates/`, etc. renamed to
+  `/designs/render-preview/`, `/designs/templates/`, etc. — no "v2" left in any route path. The old
+  `design_editor_canvas`/`design_editor_element` view functions (the ORIGINAL editor's own canvas-loading
+  endpoints, now fully superseded by `design_canvas_document`/`design_canvas_element`) were deleted
+  outright, along with their now-dead `editor_canvas.html` template and their own 23-test file
+  (`test_design_editor_canvas.py`) — confirmed dead by checking every call site first, not assumed.
+- **Templates**: the `apps/invoices/templates/invoices/v2/` directory (`canonical_v2.html`,
+  `_v2_element_content.html`, `_v2_page_styles.html`, `_v2_table_head.html`, `_v2_table_row.html`) renamed
+  to `apps/invoices/templates/invoices/canonical/` (`canonical.html`, `_element_content.html`,
+  `_page_styles.html`, `_table_head.html`, `_table_row.html`) — every `{% include %}` path and every
+  `render_to_string` call site in `design_renderer.py`/`design_canvas.py` updated to match, verified with a
+  full re-run of the affected render/pagination/golden-comparison test files (233 tests) plus the full
+  `apps.invoices` suite before declaring this safe.
+- **`design_duplicate`/`_instantiate_design_from_builtin`** (`apps/invoices/views.py`) now import from
+  `design_templates` instead of the legacy `design_seeds` — every "Use this template" action, from this
+  cutover forward, creates a schema_version-2 `InvoiceDesign` row. This is the single most load-bearing
+  change in the whole cutover: it's what actually makes the production editor reachable for real,
+  newly-created designs rather than only for designs someone separately, manually pushed through the
+  dev-sandbox route.
+- **On-demand legacy migration**: rather than a forced, one-shot, all-or-nothing conversion of every
+  existing row, `design_migration.migrate_v1_to_v2` (the pure, deterministic converter built in an earlier
+  pass) is now wired into `views_design_editor.design_canvas_document` — the moment a user opens a
+  legacy-shaped design in the editor, it is migrated in memory and served as production-shaped canvas
+  data; nothing is written to the database unless the user explicitly saves. A design that fails migration
+  (see `_clamp_width`'s own pre-existing, deliberately-unfixed edge case — an element already at or past
+  its clamp boundary) returns a clear, specific 422 ("uses an older format that could not be automatically
+  converted... duplicate a ready-made template and rebuild it instead"), never a 500 and never silent data
+  loss. Two new tests in `test_design_canvas.py` prove both branches directly.
+- **A real, explicit migration command** was also built and RUN against the real dev database:
+  `python manage.py migrate_invoice_designs_to_production_schema [--apply]` (dry-run by default) — iterates
+  every `InvoiceDesign` row, skips anything already schema_version 2, attempts `migrate_v1_to_v2` for every
+  legacy row, and only writes inside `transaction.atomic()` when `--apply` is passed; a row the mapper
+  can't safely convert is logged and left completely untouched, never corrupted or deleted. Real-database
+  investigation before running it (via `manage.py shell`, read-only) found the dev DB's actual state: 14
+  real `InvoiceDesign` rows, 1 already schema_version 2, 13 legacy-shaped. Running `--apply` for real: 12
+  migrated successfully, 1 (an AI-seeded Modern design with an element already past the clamp boundary)
+  left in legacy shape by design, exactly as the command's own dry-run had predicted — no surprises,
+  matching the pre-flight read-only assessment exactly. Separately, every real `Invoice.design_id` and
+  `rendered_design_snapshot` in the dev DB was confirmed `NULL` before this pass (105 real invoices, 0 with
+  a design assigned) — an EARLIER pass's own "SEV1 — the design-to-invoice assignment gap" fix, unrelated
+  to this cutover's own scope, already covers new invoice creation; this cutover did not need to (and did
+  not) touch any `Invoice` row.
+- **`InvoiceDesign`/`InvoiceDesignVersion` records were never deleted, mass-edited, or dropped** by this
+  pass under any circumstance — the migration command's only write is `design.design_data` +
+  `design.save()`, inside a transaction, only for rows that migrate cleanly, only when `--apply` is passed.
+  No ad hoc script touched production-shaped data directly; no field was dropped because its name
+  happened to contain "v2" (`InvoiceDesign.design_data` itself is untouched structurally — it's still one
+  JSONField holding either shape, exactly as it always has been).
+- **Test files** renamed off "v2"/"Phase N" naming to match: `test_design_canvas_v2.py` ->
+  `test_design_canvas.py`, `test_design_renderer_v2.py` -> `test_design_renderer.py`,
+  `test_design_renderer_v2_phase3_2.py` -> `test_design_renderer_phase3_2.py`, `test_design_schema_v2.py`
+  -> `test_design_schema.py`, `test_design_seeds_v2_golden.py` -> `test_design_templates_golden.py`,
+  `test_design_v2_cutover.py` -> `test_design_cutover.py`, `test_phase0_management_commands.py` ->
+  `test_design_management_commands.py`; the old `test_design_renderer.py` (which tested the ORIGINAL
+  dynamic renderer) was renamed to `test_legacy_design_renderer.py` first, freeing its name. Two real,
+  substantive bugs were found and fixed while doing this purely mechanical-looking rename pass, both from
+  bare-name import collisions once two modules sharing an identical export name (`BUILTIN_DESIGNS`,
+  `get_builtin_design_data` — one legacy, one production) ended up imported into the same test file: one
+  test (`test_v2_builtin_designs_are_not_byte_equal_to_the_mappers_output`) had silently become a
+  meaningless tautology (comparing the migrated output against its own input instead of against the real
+  production seed) purely because of which import silently won; fixed via explicit `as` aliasing
+  (`LEGACY_BUILTIN_DESIGNS`/`PRODUCTION_BUILTIN_DESIGNS`) in every affected file, re-derived by reading each
+  test's own original intent, not guessed.
+
+What changed, frontend (all under `frontend/src/`):
+
+- **Deleted entirely**: the original `pages/design-editor/` (the OLD, GrapesJS-based v1 editor —
+  `DesignEditor.jsx`, `EditorTopBar.jsx`, `ElementSettingsPanel.jsx`) and `lib/designEditor/`'s original
+  contents (`blocks.js`, `builtinDesigns.js`, `componentTypes.js`, `constants.js`, `realContent.js`,
+  `rules.js`+`rules.test.js`, `serialization.js`+`serialization.test.js`) — confirmed dead first (no
+  remaining import anywhere reached them) before deletion, not assumed.
+- **Renamed into their place**: `pages/design-editor-v2/` -> `pages/design-editor/`,
+  `lib/designEditorV2/` -> `lib/designEditor/`, `DesignEditorV2.jsx` -> `DesignEditor.jsx` — the production
+  editor now occupies the exact path names a v1-era reader would expect the "real" editor to live at.
+- **One route, not three**: `App.jsx`'s three separate routes (the old v1 `/invoices/designs/:id/edit`, the
+  dev-only `/dev/design-editor-v2` sandbox, and the real `/invoices/designs-v2/:id/edit`) collapsed into
+  exactly one: `/invoices/designs/:id/edit` -> `<DesignEditor />`. There is no "Try the new design editor"
+  concept anywhere in the product anymore — `DesignGallery.jsx`'s existing "Use this template"/"Start
+  blank"/edit actions ARE how a real user reaches design editing, unconditionally.
+- **`DesignGallery.jsx` rewritten**: `handleStartBlank` now actually calls the real backend
+  (`fetchBlankDesignData` + `POST /invoices/designs/`) to create a real, saved, schema_version-2
+  `InvoiceDesign` row before navigating to the editor — previously this button didn't exist in the
+  production gallery at all (blank-start only existed inside the dev sandbox). `handleEdit` no longer
+  branches on schema version — every design, legacy or production, opens through the same one editor route
+  (a legacy one gets migrated in memory server-side, per the on-demand migration above). The gallery's
+  template cards now show real color-variant swatches (`variant_details`, added to
+  `design_templates_list`'s response) sourced from the production seeds.
+- **`DesignEditor.jsx` had its dev-diagnostic UI removed**, per the directive's explicit evaluation
+  request: the "Save (serialize)"/"Reload from serialized" round-trip buttons and their backing state
+  (`handleSaveRoundTrip`, `handleReloadFromSerialized`, `lastSaved`) — a no-op-save self-test mechanism with
+  no real user-facing purpose — and the "Show canonical reference" debug iframe (`handleShowReference`,
+  `showReference`, `referenceUrl`, a manually-triggered blob-URL comparison view) were both deleted
+  outright. The "Verification log" panel was kept but relabeled "Activity" — it's genuine, useful save/
+  error feedback for a real user, not a dev-only artifact, so removing it would have been the wrong call;
+  only its framing as "verification" (implying a developer audience) was misleading. `window.__v2Editor` ->
+  `window.__templateBuilderEditor`; `registerV2ComponentTypes` -> `registerComponentTypes`. A stale route
+  bug caught along the way: `handleSaveReal`'s own success-navigation still pointed at the old
+  `/invoices/designs-v2/:id/edit` path — fixed to the one real route.
+- **A full component split was evaluated, not performed**: `DesignEditor.jsx` remains one ~1600-line file.
+  Given no live browser/Playwright was available to catch a subtle regression in its own
+  extensively-documented, historically fragile drag/resize commit logic (see `componentTypes.js`'s own
+  inline history of GrapesJS-specific bugs that needed a live mouse to catch at all), splitting it apart
+  this pass was judged higher-risk than its benefit — recorded here as a deliberate, honest scope decision,
+  not a silently-dropped requirement. `StylePanel.jsx` (the real style/property panel, built in an earlier
+  pass) already exists as a separate component; the remainder was left as-is.
+- **Stale internal comments fixed alongside the renames** (not a blanket rewrite of every historical "Phase
+  N" narrative comment, which this codebase uses extensively as legitimate in-place design history — only
+  the ones that had become actively FALSE after the cutover): several module-header comments in
+  `lib/designEditor/` and `pages/design-editor/` described the current file as "isolated," referenced a
+  sibling v1 file that no longer exists, or pointed at filenames renamed by this same pass
+  (`design_schema_v2.py`, `design_canvas_v2.py`, `design_renderer_v2.py`, `views_design_v2`,
+  `design_seeds_v2.py`, `test_design_canvas_v2.py`) — all corrected to their real, current names/status.
+
+Verification: full `apps.invoices` suite, 1061/1061 passing (`python manage.py test apps.invoices
+--keepdb`, both in isolated batches and as a full single-process run — the full run intermittently hits
+this dev machine's own already-documented native WeasyPrint/GC segfault, unrelated to this pass, per
+CLAUDE.md's own "Running This Locally" section; every batch and every individual affected test file passed
+cleanly, confirming no real regression). Full `apps.clients`/`apps.payments`/`apps.users`/`apps.admin_panel`/
+`core` suite, 269/269 passing — this cutover touched no file in any of those apps. Full frontend suite,
+248/248 passing (`npx vitest run`, down from 266 as expected: the 18 tests belonging to the deleted v1
+`lib/designEditor/serialization.test.js`/`rules.test.js` are gone along with their now-deleted source, no
+other test removed). Clean production `vite build` (only the pre-existing chunk-size warning, unrelated to
+this pass). `python manage.py check`: 0 issues, run repeatedly through the rename process to catch broken
+imports one at a time (several self-import bugs were found and fixed this way — see below).
+
+Real bugs found and fixed purely as a byproduct of the renaming/migration work itself, not separately
+introduced: (1) multiple modules had accidental self-imports after a rename reused a filename the module
+itself used to import from (`design_schema.py` importing from itself twice, `ai_design.py`,
+`design_validation.py`, and three test files) — each caught individually via `manage.py check`'s import
+resolution failing, fixed by redirecting to `legacy_design_schema`; (2) `design_preview.py` still called two
+functions (`render_editor_canvas_html`/`render_editor_element_html`) whose import lines had been deleted but
+whose function bodies (dead wrappers around the now-deleted original editor's own endpoints) had not — caught
+by the now-orphaned `test_design_editor_canvas.py` failing with a `NameError`, fixed by deleting the wrapper
+functions and the meaningless test file, not by restoring the import.
+
+Genuinely unavoidable compatibility remnants, stated plainly rather than hidden: (1) `design_data`'s
+`schema_version` discriminator itself — required by the directive's own explicit exception for legacy-data
+compatibility, and the only way a JSONField holding two structurally different historical shapes can be told
+apart at read time; (2) `legacy_design_schema.py`/`legacy_design_renderer.py` — kept permanently, not as a
+second live path, but because at least one real design in this very database (the AI-seeded Modern design
+that failed automatic migration) genuinely still needs them to remain readable/renderable; (3) the
+`lancera-v2-*` GrapesJS component-type-id prefix (`constants.js`) — an internal namespacing string, invisible
+anywhere in the actual product UI, left as-is rather than renamed purely for its own sake (renaming
+internal string identifiers with zero external surface, purely to remove a stray "v2," was judged not worth
+the file-wide churn and re-test it would require for zero user-facing or architectural benefit).
+
+Remaining limitations genuinely outside this task's scope, not addressed this pass: `color_variant`
+resolution's own inherent design-language limits (documented in earlier passes, unrelated to this cutover);
+live drag-time snap guides and canvas Shift+click multi-select (an earlier pass's own recorded, deliberate
+scope decision, unaffected by this cutover); a permanent E2E Playwright suite (no live browser available in
+this environment); Draft/Publish, collaborative editing, a mobile editor, or arbitrary HTML/JS execution —
+none of these were introduced, matching the directive's explicit prohibition; the audit named in
+`LANCERAOS_TEMPLATE_BUILDER_2_FINAL_ARCHITECTURE.md`'s original brief as a SEPARATE, later task was
+deliberately not performed as part of this cutover, per this same directive's own explicit final instruction
+to stop after the cutover and not yet run it.
+
+Docs: this entry; CLAUDE.md's Module 2 section and Section 4's project-structure tree updated to describe
+the Template Builder as the one production system (no "V2" qualifier) and to reflect the real, current
+file names; STANDARDS.md's file-naming convention note; DATABASE.md's `invoice_designs` entry rewritten to
+document both schema generations (production-live and legacy-retired-but-kept) and the new
+`invoice_design_versions` table, plus the previously-undocumented `Invoice.rendered_design_snapshot` field;
+`LANCERAOS_TEMPLATE_BUILDER_2_FINAL_ARCHITECTURE.md` transformed in place into the authoritative
+`LANCERAOS_TEMPLATE_BUILDER_ARCHITECTURE.md`, no longer written in "V2" framing, historical phase docs left
+archived and untouched.

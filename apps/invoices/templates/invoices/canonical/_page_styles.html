@@ -1,0 +1,265 @@
+<style>
+  {% comment %}
+    Template Builder 2.0, Phase 1 — isolated V2 stylesheet. A NEW file,
+    not a modification of _dynamic_element_styles.html (v1's, untouched).
+    Font URLs come from FONT_CONTEXT (file:// for PDF) or PORTAL_FONT_CONTEXT
+    (/static/ for HTML) depending on the caller — the same real,
+    environment-safe asset mechanism apps/invoices/pdf_generator.py
+    already established, reused here rather than reinvented.
+  {% endcomment %}
+  @font-face { font-family: 'IBM Plex Sans'; src: url('{{ font_ibm_plex_sans_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('{{ font_ibm_plex_sans_semibold }}'); font-weight: 600; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+  @font-face { font-family: 'Source Serif 4'; src: url('{{ font_source_serif_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'Source Serif 4'; src: url('{{ font_source_serif_semibold }}'); font-weight: 600; }
+  @font-face { font-family: 'Space Grotesk'; src: url('{{ font_space_grotesk }}'); font-weight: 400; }
+  @font-face { font-family: 'Space Grotesk'; src: url('{{ font_space_grotesk }}'); font-weight: 700; }
+
+  @page { size: {{ page_width_mm }}mm {{ page_height_mm }}mm; margin: 0; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+    color: #262420;
+    background: #ffffff;
+    font-size: 9.5pt;
+    line-height: 1.5;
+  }
+
+  {% comment %}
+    Phase 2 addition — a real, generic (non-template-specific) full-height
+    sidebar region, only present when a design's page.sidebar is set (see
+    design_schema_v2.py's _validate_page docstring for why this exists:
+    Modern's real, existing CSS already has one, with no V2 schema
+    representation until now). position:fixed repeats it on every
+    generated page — the exact same real technique modern.html's own
+    .sidebar rule already uses.
+  {% endcomment %}
+  {% comment %}
+    Phase 4B.2: .v2-sidebar-flow (a separate absolutely-positioned
+    container sidebar elements used to be nested inside, offset below
+    the sidebar's own header content) is gone — sidebar elements are now
+    direct children of .v2-sidebar, each carrying its own real x/y like
+    every other element (see design_schema_v2.py's own docstring); no
+    intermediate stacking container is needed once nothing needs to be
+    computed to know where sidebar "flow" content starts.
+  {% endcomment %}
+  .v2-sidebar { position: fixed; top: 0; left: 0; bottom: 0; color: #ffffff; padding: 14mm 6mm 12mm; }
+  {% comment %}
+    Phase 4B fidelity fix, found via real-browser screenshot verification:
+    .v2-line/.v2-link/.v2-alias-box's own shared colors (#55524a dark
+    gray / #7a7568) are all correct for main content on a white
+    background, but read as nearly invisible against the sidebar's dark
+    background — a real, pre-existing gap (the shared classes never had
+    a sidebar-aware override, unlike modern.html's own real
+    `.sidebar .tagline`/`.sidebar .pay-block .link` rules, both a light
+    lavender `#c3c0e0`). Scoped descendant selectors, not a change to
+    the shared classes' own default (main content is unaffected).
+  {% endcomment %}
+  .v2-sidebar .v2-line,
+  .v2-sidebar .v2-link,
+  .v2-sidebar .v2-alias-box { color: #c3c0e0; }
+  .v2-sidebar .v2-alias-box { border-color: #6a67a0; background: rgba(255,255,255,0.06); }
+  {% comment %}
+    Real, separate bug found the same way: .v2-label's shared color is
+    design_primary_color — correct contrast on main content's white
+    background, but the sidebar's OWN background is ALSO
+    design_primary_color (canonical.html: sidebar.color|default:
+    design_primary_color), making the label render invisible against
+    its own background. modern.html's real .sidebar .pay-block .lbl
+    uses design_secondary_color specifically for this reason.
+  {% endcomment %}
+  .v2-sidebar .v2-label { color: {{ design_secondary_color }}; }
+
+  {% comment %}
+    Phase 1 deliberately uses overflow:visible, not v1's overflow:hidden —
+    a real, low-risk safety improvement (architecture plan's DATA-1
+    finding: v1's fixed-height, overflow:hidden header boxes silently
+    truncate long business names/addresses with no visual warning at
+    all). Letting real content overflow visibly, rather than vanish, is
+    strictly safer and is not a "risky layout algorithm" — no reflow/
+    shrink-to-fit logic exists here. Phase 4B.2: renamed from
+    .v2-header-el to .v2-el (was header-only; now applies uniformly to
+    every element regardless of which list it came from — the table
+    included).
+  {% endcomment %}
+  .v2-el { overflow: visible; }
+
+  table.v2-items { width: 100%; border-collapse: collapse; margin-bottom: 2mm; }
+  table.v2-items thead th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7.5pt;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #7a7568;
+    text-align: left;
+    padding: 0 3mm 3mm 0;
+  }
+  table.v2-items thead th.v2-num-col { text-align: right; }
+  table.v2-items tbody td { padding: 3.5mm 3mm 3.5mm 0; font-size: 9pt; vertical-align: top; }
+  table.v2-items tbody td.v2-num-col { text-align: right; font-family: 'IBM Plex Mono', monospace; }
+
+  .v2-eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7.5pt;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: {{ design_primary_color }};
+    margin-bottom: 2mm;
+  }
+  .v2-bizname { font-size: 18pt; font-weight: 600; margin: 0 0 1mm; }
+  .v2-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7.5pt;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: {{ design_primary_color }};
+    margin-bottom: 2.5mm;
+  }
+  .v2-partyname { font-size: 11pt; font-weight: 600; margin-bottom: 1mm; }
+  .v2-line { color: #55524a; font-size: 9pt; }
+  .v2-num { font-size: 12pt; font-weight: 600; margin-bottom: 2mm; }
+  .v2-daterow { color: #7a7568; font-size: 8.5pt; margin-top: 1mm; }
+  .v2-daterow b { color: #262420; font-weight: 600; margin-left: 2mm; }
+
+  .v2-row { display: flex; justify-content: space-between; gap: 2mm; font-size: 9pt; color: #55524a; padding: 1.4mm 0; }
+  .v2-row-due {
+    border-top: 0.4mm solid {{ design_secondary_color }};
+    margin-top: 2mm;
+    padding-top: 3mm;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13pt;
+    font-weight: 600;
+    color: {{ design_secondary_color }};
+  }
+
+  {% comment %}
+    Phase 2 addition — the total_pill / total_due_display totals variants,
+    mirroring _dynamic_element_styles.html's own .dyn-total-pill /
+    .dyn-total-due-lbl / .dyn-total-due-amt exactly (same real values,
+    same real golden templates they reproduce).
+  {% endcomment %}
+  .v2-total-pill {
+    display: inline-block;
+    background: {{ design_secondary_color }};
+    color: #16151c;
+    border-radius: 3mm;
+    padding: 3mm 5mm;
+    margin-top: 2mm;
+    font-size: 16pt;
+    font-weight: 700;
+  }
+  .v2-total-due-lbl {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8pt;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: {{ design_primary_color }};
+    margin-bottom: 1mm;
+  }
+  {% comment %}
+    Phase 4B fidelity fix: 34pt, not 30pt — the real, measured value in
+    minimal.html's own .total-due-block .amt (confirmed by direct
+    inspection). This V2 seed value silently diverged from the canonical
+    static template it's meant to reproduce; no design_data or renderer
+    logic depended on the wrong number, so correcting it is a pure
+    fidelity fix with no other effect.
+  {% endcomment %}
+  .v2-total-due-amt { font-family: 'IBM Plex Mono', monospace; font-size: 34pt; font-weight: 600; }
+
+  .v2-sig-img { height: 14mm; margin-bottom: 1mm; }
+  .v2-sig-line {
+    border-top: 0.3mm solid {{ design_secondary_color }};
+    padding-top: 2.5mm;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7.5pt;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #a09a89;
+  }
+
+  .v2-method { display: flex; justify-content: space-between; gap: 2mm; font-size: 8.5pt; padding: 1.6mm 0; }
+  .v2-method span:first-child { font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; color: #a09a89; text-transform: uppercase; }
+
+  {% comment %}
+    Phase 5.5a — closes the exact defect Phase 5.3/5.4 traced and proved
+    fixable: neither span in a .v2-row/.v2-method flex row had
+    `white-space: nowrap`, so flexbox's own default `min-width: auto`
+    let whichever span happens to contain a space (almost always the
+    LABEL — "Total due", "Bank transfer" — never the value, which is
+    normally one unbroken token) wrap internally when a long real value
+    (a large total, a long bank account number) left less remaining row
+    width than the label's own natural size needs. That wrap doubled the
+    row's own height, colliding with whatever real element sits below it
+    — a real, live-reproduced defect in the canonical, client-facing
+    render, not just the editor (Phase 5.3's own $123,456,789.99/long-
+    account-number findings). Proven fixable in isolation via an
+    ephemeral, non-persisted CSS experiment (Phase 5.4, Section 5) before
+    landing it here for real: forcing both spans to stay one line lets a
+    genuinely oversized value overflow horizontally instead — messier in
+    the extreme case, but never vertically colliding with the next real
+    element, and still never silently clipped (this project's own
+    established DATA-1 principle, unchanged). `gap: 2mm` above (not part
+    of the original defect, a Phase 5.4-recommended refinement) keeps
+    label and value from visually touching in that same tight case.
+    Deliberately scoped to exactly the two components measured and
+    proven affected — `.v2-daterow` uses a different, non-flex layout
+    and was confirmed NOT to share this mechanism (Phase 5.4, Section 5).
+    Changes content flow inside each element's own already-fixed box
+    only; does not touch persisted geometry, the schema, or GrapesJS.
+  {% endcomment %}
+  .v2-row span,
+  .v2-method span {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  {% comment %}
+    Phase 4B.2: .v2-pair-row (the paired_side_by_side flex-row wrapper)
+    is removed — pairing itself is gone from the schema (every element
+    now has real, free x/y; two elements sit side by side simply by
+    having adjacent x values, no special grouping construct needed). The
+    legacy payment_info(variant='qr_and_link') branch below still uses
+    .v2-payonline for its OWN internal QR+link layout (unchanged,
+    untouched back-compat path — see _v2_element_content.html), which is
+    a different, smaller thing than the removed multi-element pairing.
+  {% endcomment %}
+  .v2-payonline { display: flex; align-items: center; gap: 4mm; }
+  .v2-qr { width: 20mm; height: 20mm; }
+  {% comment %}
+    overflow-wrap:anywhere, not v1's word-break:break-all — a real,
+    low-risk typography improvement (architecture plan's DATA-4 finding):
+    breaks at natural points where possible instead of mid-character
+    every time.
+  {% endcomment %}
+  .v2-link { font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; color: #55524a; overflow-wrap: anywhere; }
+
+  {% comment %}
+    Phase 4B — the design-time alias placeholder for elements that are
+    inherently visual (logo, signature, QR code), where "show the field's
+    name instead of real data" (the pattern every text field uses) has no
+    literal-text equivalent. A plain, unmistakably-a-placeholder bordered
+    box with a centered label — never a real invoice's actual visual
+    style, so it can't be mistaken for real content. Used only in
+    content_mode='alias', which real invoice rendering never reaches.
+  {% endcomment %}
+  {% comment %}
+    Deliberately no width/height here — usage sites supply their own
+    (either "100%" when the wrapping element has a real, known height —
+    header-zone elements always do — or a fixed mm size when it doesn't
+    — flow-zone elements have no height in the schema at all, only
+    spacing_after_previous, so e.g. .v2-qr's own fixed 20mm/20mm class is
+    combined with this one instead).
+  {% endcomment %}
+  .v2-alias-box {
+    min-width: 8mm; min-height: 6mm;
+    display: flex; align-items: center; justify-content: center;
+    border: 0.3mm dashed #a09a89;
+    background: #f5f3ee;
+    color: #7a7568;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7pt;
+    text-align: center;
+  }
+</style>

@@ -51,7 +51,7 @@ from django.utils import timezone
 
 from core.money import Money
 
-from .design_renderer import design_has_real_custom_data, render_dynamic_design_html
+from .legacy_design_renderer import design_has_real_custom_data, render_dynamic_design_html
 from .design_seeds import resolve_design_colors
 
 logger = logging.getLogger(__name__)
@@ -154,12 +154,48 @@ def _template_name_for_design(design):
     return TEMPLATE_MAP[DEFAULT_TEMPLATE]
 
 
+class _FrozenDesignSnapshot:
+    """
+    Master Blueprint cutover — the real read-side of the TB-007 provenance
+    fix. A lightweight, read-only stand-in for a real InvoiceDesign row,
+    built from Invoice.rendered_design_snapshot's own self-contained dict
+    (base_template + color_variant + design_data — everything
+    _design_colors_for/render_html_for_design/design_has_real_custom_data
+    actually read off a design object) — never a real database row, and
+    never saved anywhere. Exists so _effective_design can return something
+    that behaves like a real design to every existing caller without
+    those callers needing a special case for "this came from a frozen
+    snapshot instead of a live FK".
+    """
+
+    def __init__(self, snapshot):
+        self.base_template = snapshot.get('base_template')
+        self.color_variant = snapshot.get('color_variant') or ''
+        self.design_data = snapshot.get('design_data')
+
+
 def _effective_design(invoice):
     """
-    Which InvoiceDesign should actually drive this invoice's render.
-    Real, persisted assignment wins when one exists (invoice.design,
-    set by invoice_create/_finalise_invoice — see DECISIONS.md's 19
-    August 2026 "SEV1 — the design-to-invoice assignment gap" entry).
+    Which design should actually drive this invoice's render.
+
+    Master Blueprint cutover: for anything PAST draft, a real, self-
+    contained snapshot (Invoice.rendered_design_snapshot, captured once by
+    _finalise_invoice at the exact moment this invoice left draft) wins
+    over the live `invoice.design` FK whenever one exists — this is the
+    real fix for TB-007 (a real, previously-observed case: deleting a
+    design nulled a frozen invoice's own provenance; a real, previously-
+    reachable case: editing a design after finalising an invoice against
+    it silently changed what that already-sent invoice would render as on
+    any live re-render, e.g. the self-heal fallback path or preview-as-
+    client). Editing or deleting `invoice.design` after this point can
+    never again change what THIS invoice renders as.
+
+    Invoices finalised BEFORE this fix existed have no snapshot at all
+    (rendered_design_snapshot is null) — these fall through to the exact
+    pre-existing behavior below (the live `invoice.design` FK, unchanged),
+    never retroactively altered by this fix; a real, deliberate choice,
+    matching this codebase's own "never touch an already-frozen invoice"
+    convention.
 
     For a still-editable DRAFT with none yet — predates any default
     design existing at all, or predates one being SET as default after
@@ -167,16 +203,14 @@ def _effective_design(invoice):
     default design, so a draft's own live preview (the only case that
     genuinely re-renders on every GET; see invoice_pdf, views.py) never
     shows stale output while a user is actively experimenting with
-    designs. Never applies past draft — a finalised invoice's design is
-    frozen exactly as finalise resolved it, forever, per the same
-    frozen-PDF guarantee that already governs everything else about a
-    finalised invoice; this function must never quietly change what a
-    real, already-sent invoice renders as.
+    designs.
 
     A pure read-time fallback — never mutates invoice.design itself.
     The real, permanent assignment still only ever happens via
     invoice_create/_finalise_invoice.
     """
+    if invoice.status != 'draft' and invoice.rendered_design_snapshot:
+        return _FrozenDesignSnapshot(invoice.rendered_design_snapshot)
     if invoice.design_id:
         return invoice.design
     if invoice.status == 'draft':
@@ -275,37 +309,63 @@ def render_invoice_pdf(invoice):
     """
     from weasyprint import HTML
 
-    html_string = _render_invoice_html(invoice, build_pdf_context(invoice))
+    html_string = _render_invoice_html(invoice, build_pdf_context(invoice), for_pdf=True)
     return HTML(string=html_string).write_pdf()
 
 
-def _render_invoice_html(invoice, context):
+def _render_invoice_html(invoice, context, *, for_pdf=False):
     """
-    The one real branch point between the 3 static templates and the
-    design_data-driven renderer (apps/invoices/design_renderer.py) —
-    shared by both render_invoice_pdf and render_invoice_portal_html so
-    neither grows its own copy of this decision. Routes through
-    _effective_design(invoice) (not invoice.design directly) so a
-    still-editable draft's live preview picks up the user's current
-    default design even before that assignment is ever persisted — see
-    that function's own docstring. render_html_for_design is the same
-    design-parametrized entry point a gallery preview render (no real
-    Invoice in scope at all) also uses — see apps/invoices/
-    design_preview.py.
+    The one real branch point between the 3 static templates, the v1
+    design_data-driven renderer (apps/invoices/design_renderer.py), and
+    (Template Builder 2.0 cutover) the v2 canonical renderer
+    (apps/invoices/design_renderer.py) — shared by both
+    render_invoice_pdf and render_invoice_portal_html so neither grows its
+    own copy of this decision. Routes through _effective_design(invoice)
+    (not invoice.design directly) so a still-editable draft's live preview
+    picks up the user's current default design even before that
+    assignment is ever persisted — see that function's own docstring.
+    render_html_for_design is the same design-parametrized entry point a
+    gallery preview render (no real Invoice in scope at all) also uses —
+    see apps/invoices/design_preview.py.
+
+    `for_pdf` selects file:// font URIs (WeasyPrint) vs /static/ URLs
+    (browser-rendered HTML) for a v2 design's own render — the same
+    real distinction FONT_CONTEXT/PORTAL_FONT_CONTEXT already encode for
+    v1's own two callers below (render_invoice_pdf=True,
+    render_invoice_portal_html=False); a v1 design ignores this flag
+    entirely, since its own font URIs already live inside `context`
+    (build_pdf_context/build_portal_context), unchanged.
     """
-    return render_html_for_design(_effective_design(invoice), context)
+    return render_html_for_design(_effective_design(invoice), context, for_pdf=for_pdf)
 
 
-def render_html_for_design(design, context):
+def render_html_for_design(design, context, *, for_pdf=False):
     """
-    design_has_real_custom_data's own docstring has the exact condition
-    for when a design's design_data is "real" enough to render dynamically
-    vs. falling back to one of the 3 static templates by base_template
-    alone — same rule, whether `design` came from a real invoice or a
-    gallery preview request.
+    Three-way dispatch, in order:
+
+      1. A real, saved v2 design (design_data.schema_version == 2) — the
+         Template Builder 2.0 cutover this function exists to make real:
+         `apps/invoices/design_renderer.render_design_html` is the
+         one canonical v2 renderer (see that module's own docstring for
+         why it has no seed-equality branch of its own). `context` already
+         carries everything that renderer needs (invoice/freelancer/
+         qr_code_data_uri/design_primary_color/design_secondary_color) —
+         build_pdf_context/build_portal_context/design_preview.py's own
+         build_preview_context all already build exactly this shape, so
+         no second v2-specific context builder is needed here.
+      2. A v1 design with real custom edits (design_has_real_custom_data's
+         own docstring has the exact condition) — v1's existing dynamic
+         renderer, unchanged.
+      3. Everything else (no design, or an untouched v1 builtin pick) —
+         one of the 3 static templates, unchanged.
     """
-    if design is not None and design_has_real_custom_data(design):
-        return render_dynamic_design_html(design, context)
+    if design is not None:
+        schema_version = (design.design_data or {}).get('schema_version')
+        if schema_version == 2:
+            from .design_renderer import render_design_html
+            return render_design_html(design.design_data, context, for_pdf=for_pdf)
+        if design_has_real_custom_data(design):
+            return render_dynamic_design_html(design, context)
     return render_to_string(_template_name_for_design(design), context)
 
 
@@ -350,7 +410,7 @@ def render_invoice_portal_html(invoice):
     there ignores html/body box styling like this entirely, so this
     can't affect the PDF/frozen-artifact output at all).
     """
-    html = _render_invoice_html(invoice, build_portal_context(invoice))
+    html = _render_invoice_html(invoice, build_portal_context(invoice), for_pdf=False)
     return html.replace('</head>', PORTAL_WRAPPER_STYLE + '</head>', 1)
 
 

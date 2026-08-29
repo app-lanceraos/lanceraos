@@ -16,7 +16,7 @@ from apps.invoices.ai_design import (
     LAYOUT_SCALE_BY_DENSITY, apply_ai_adjustments, classify_design_image,
     compress_image, seed_design_data_from_image,
 )
-from apps.invoices.design_schema import validate_design_data_schema
+from apps.invoices.legacy_design_schema import validate_design_data_schema
 from apps.invoices.design_seeds import BUILTIN_DESIGNS
 from apps.invoices.models import InvoiceDesign
 from apps.invoices.tests.test_views import InvoicesAPITestCase

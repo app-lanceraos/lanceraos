@@ -15,6 +15,7 @@ action names or mislabel invoice actions as "ratelimit_clients_...".
 Replicated with an "invoices"-scoped key instead; behavior is identical.
 """
 import base64
+import copy
 import io
 import logging
 import os
@@ -50,18 +51,14 @@ from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTE
 
 from .ai_design import seed_design_data_from_image
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
-from .design_preview import (
-    render_builtin_template_preview_html, render_design_preview_html,
-    render_editor_canvas_html, render_editor_element_html,
-)
-from .design_schema import ZONE_1_TYPES, ZONE_2_TYPES, validate_design_data_schema
-from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
+from .design_preview import render_builtin_template_preview_html, render_design_preview_html
+from .design_templates import BUILTIN_DESIGNS, get_builtin_design_data
 from .email_service import (
     build_formal_notice_email, build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email,
 )
 from .models import (
-    NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceItem, InvoicePartialPayment,
-    InvoicePreset, InvoicePresetItem, InvoiceReminder, PaymentClaim,
+    NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceDesignVersion, InvoiceItem,
+    InvoicePartialPayment, InvoicePreset, InvoicePresetItem, InvoiceReminder, PaymentClaim,
 )
 from .pdf_generator import TEMPLATE_MAP, render_invoice_pdf
 from .tasks import REMINDER_SCHEDULE, _advance_recurring_date, _send_reminder, render_and_store_invoice_pdf
@@ -648,6 +645,24 @@ def _finalise_invoice(invoice, force_reminders_off=True):
     # nothing has assigned one already (never overrides a real choice).
     if invoice.design_id is None:
         invoice.design = InvoiceDesign.objects.filter(user=invoice.user, is_default=True).first()
+
+    # Master Blueprint cutover — the real write-side of the TB-007
+    # provenance fix (Invoice.rendered_design_snapshot existed, unpopulated
+    # by any code path, since Phase 0 of the Template Builder 2.0 work).
+    # This is the exact moment `invoice.design` becomes final for this
+    # invoice's entire remaining lifecycle (the same moment the PDF itself
+    # gets frozen, below) — a real, self-contained COPY (base_template +
+    # color_variant + design_data, everything pdf_generator._effective_design
+    # needs to re-render this exact design later) is captured here so that
+    # deleting or editing `invoice.design` afterward can never again change
+    # what THIS invoice renders as. See pdf_generator._effective_design's
+    # own updated docstring for the read side of this fix.
+    if invoice.design_id:
+        invoice.rendered_design_snapshot = {
+            'base_template': invoice.design.base_template,
+            'color_variant': invoice.design.color_variant,
+            'design_data': copy.deepcopy(invoice.design.design_data),
+        }
 
     # A recurring root's next_recurring_date was never being set anywhere
     # (Step 16 only ever advances it once a value already exists) — every
@@ -2398,6 +2413,53 @@ def design_detail(request, pk):
     return Response(InvoiceDesignSerializer(design).data)
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def design_versions_list(request, pk):
+    """
+    Green-Light directive — version history for the Template Health/
+    editor UI. Real, already-populated data
+    (InvoiceDesign._create_version_if_content_changed writes one row per
+    genuine content change on every real save) — this endpoint is the
+    first real reader of that table. Newest first; deliberately returns
+    no `design_data` (that would make this list expensive and is never
+    needed just to show "what changed and when" — the restore endpoint
+    below fetches one specific version's full payload when actually
+    needed).
+    """
+    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
+    versions = design.versions.order_by('-version_number').values('id', 'version_number', 'created_at')
+    return Response(list(versions))
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def design_version_restore(request, pk, version_id):
+    """
+    Green-Light directive — rollback. Deliberately non-destructive: this
+    never deletes or rewrites history. Restoring version N copies that
+    version's own `design_data` onto the design's LIVE `design_data` and
+    saves — InvoiceDesign.save()'s own existing
+    _create_version_if_content_changed then creates a brand-new version
+    for this restored content (unless it happens to exactly match the
+    CURRENT live version already, the same no-op-safe rule every other
+    save already follows), so "undo the rollback" is just restoring the
+    version that came before it — the version list only ever grows.
+    """
+    if _check_moderate_rate_limit('design_version_restore', request.user):
+        return _too_many_requests('Too many actions. Please try again later.')
+
+    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
+    version = get_object_or_404(InvoiceDesignVersion, pk=version_id, design=design)
+    design.design_data = version.design_data
+    design.save()
+    logger.info(
+        '[INVOICES] Restored design %s to version %s (a new version was created for the restored content).',
+        design.pk, version.version_number,
+    )
+    return Response(InvoiceDesignSerializer(design).data)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def design_set_default(request, pk):
@@ -2461,83 +2523,14 @@ def design_preview(request, pk):
     return HttpResponse(html, content_type='text/html')
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def design_editor_canvas(request):
-    """
-    Step 8b canvas rework, 20 August 2026 (see DECISIONS.md's "canvas must
-    render the real thing" entry) — the editor's OWN initial-load render.
-    Called exactly once when DesignEditor.jsx opens, with whatever
-    design_data it's starting from (a saved design's own, a builtin seed,
-    or the blank starting point — all three already schema-valid by
-    construction, but validated here anyway as a real defensive measure
-    against a malformed payload reaching design_renderer.py and 500ing
-    partway through, not just trusted). base_template/color_variant are
-    passed separately from design_data (mirroring how DesignEditor.jsx's
-    own `design` state already keeps them as sibling fields) purely to
-    resolve the real color pair — see design_seeds.resolve_design_colors.
-
-    POST, not GET, since design_data is a real nested JSON object — a
-    query-string GET would be impractical for the same reason
-    design_duplicate/design_create already use a POST body over query
-    params for structured input.
-    """
-    if _check_moderate_rate_limit('design_editor_canvas', request.user):
-        return _too_many_requests('Too many actions. Please try again later.')
-
-    design_data = request.data.get('design_data')
-    base_template = request.data.get('base_template')
-    color_variant = request.data.get('color_variant', '') or ''
-    sample_rows = request.data.get('sample_rows', 3)
-
-    if not isinstance(design_data, dict):
-        return Response({'design_data': 'design_data must be an object.'}, status=status.HTTP_400_BAD_REQUEST)
-    schema_errors = validate_design_data_schema(design_data)
-    if schema_errors:
-        return Response({'design_data': schema_errors}, status=status.HTTP_400_BAD_REQUEST)
-    if base_template not in TEMPLATE_MAP:
-        return Response({'base_template': f'Must be one of {sorted(TEMPLATE_MAP)}.'}, status=status.HTTP_400_BAD_REQUEST)
-    try:
-        sample_rows = max(1, min(20, int(sample_rows)))
-    except (TypeError, ValueError):
-        sample_rows = 3
-
-    html = render_editor_canvas_html(request.user, design_data, base_template, color_variant, sample_rows=sample_rows)
-    return HttpResponse(html, content_type='text/html')
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def design_editor_element(request):
-    """
-    The canvas's live per-element content refresh — called from
-    ElementSettingsPanel.jsx's own style-panel changes (font/color/label/
-    variant/etc.), debounced on the frontend so a color-picker drag or
-    fast typing doesn't hammer this per keystroke. Returns just the one
-    element's real inner content fragment (never the whole canvas) so the
-    live positions of every OTHER element on the canvas are left
-    untouched. `zone` picks whether `style.rows`/`style.variant`
-    (totals) and payment_info's own variant default get computed — same
-    real annotation _prepare_zone2_rows itself uses, not a second copy.
-    """
-    if _check_moderate_rate_limit('design_editor_element', request.user):
-        return _too_many_requests('Too many actions. Please try again later.')
-
-    el_type = request.data.get('el_type')
-    style = request.data.get('style')
-    base_template = request.data.get('base_template')
-    color_variant = request.data.get('color_variant', '') or ''
-
-    valid_types = set(ZONE_1_TYPES) | set(ZONE_2_TYPES)
-    if el_type not in valid_types:
-        return Response({'el_type': f'Must be one of {sorted(valid_types)}.'}, status=status.HTTP_400_BAD_REQUEST)
-    if not isinstance(style, dict):
-        return Response({'style': 'style must be an object.'}, status=status.HTTP_400_BAD_REQUEST)
-    if base_template not in TEMPLATE_MAP:
-        return Response({'base_template': f'Must be one of {sorted(TEMPLATE_MAP)}.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    html = render_editor_element_html(request.user, base_template, color_variant, el_type, style)
-    return Response({'html': html})
+# Production cutover — design_editor_canvas/design_editor_element (the
+# legacy canvas editor's own initial-load render + live per-element
+# content refresh) are retired outright, not replaced: the one production
+# editor's own equivalent endpoints (design_canvas_document/
+# design_canvas_element, this module continues below) already cover this
+# for the production schema, and nothing edits a legacy-shape design
+# anymore (see legacy_design_renderer.py's own module docstring — opening
+# any design for editing migrates a legacy-shape one in-memory first).
 
 
 @api_view(['POST'])

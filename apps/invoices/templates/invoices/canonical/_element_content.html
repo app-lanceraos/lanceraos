@@ -1,0 +1,268 @@
+{% load humanize %}{% if el.kind == 'semantic' %}
+  {% if el.type == 'logo' %}
+    {% comment %}
+      Phase 3.2 follow-up (found during Finding 1's own investigation,
+      the identical class of bug — a real v1 convention never ported to
+      V2): Professional's own real seed data already carries
+      `style.border_radius_mm` on its logo element, matching v1's own
+      established `_zone1_element_css` convention exactly. Applied
+      directly on the <img> itself, not the wrapping .v2-el div —
+      that div uses overflow:visible (a deliberate Phase 1 fix for
+      DATA-1, so long text never gets silently clipped), so a
+      border-radius on the wrapper alone would clip nothing; an <img>
+      has no children to overflow, so rounding its own corners directly
+      needs no overflow:hidden anywhere.
+    {% endcomment %}
+    {% if el.content_mode == 'alias' %}
+      <div class="v2-alias-box" style="width:100%;height:100%;{% if el.style.border_radius_mm %}border-radius:{{ el.style.border_radius_mm }}mm;{% endif %}">Logo</div>
+    {% elif freelancer.logo %}
+      <img src="{{ freelancer.logo }}" alt="" style="width:100%;height:100%;object-fit:cover;{% if el.style.border_radius_mm %}border-radius:{{ el.style.border_radius_mm }}mm;{% endif %}">
+    {% endif %}
+
+  {% elif el.type == 'business_info' and el.style.variant == 'sender_repeat' %}
+    <div class="v2-label">{{ el.resolved_label|default:"From" }}</div>
+    {% if el.content_mode == 'alias' %}
+      <div class="v2-partyname">Business Name</div>
+      <div class="v2-line">Business Name</div>
+      <div class="v2-line">Business Address</div>
+      <div class="v2-line">Business Email</div>
+    {% else %}
+      <div class="v2-partyname">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+      <div class="v2-line">{{ freelancer.display_name }}</div>
+      {% if freelancer.address_line1 %}<div class="v2-line">{{ freelancer.address_line1 }}</div>{% endif %}
+      <div class="v2-line">{{ invoice.user.email }}</div>
+    {% endif %}
+
+  {% elif el.type == 'business_info' %}
+    {% if el.style.eyebrow %}<div class="v2-eyebrow">{{ el.style.eyebrow }}</div>{% endif %}
+    {% comment %}
+      Phase 3.2 follow-up (the identical CSS-specificity issue Finding 1's
+      own .v2-num fix already closed): .v2-bizname's own class rule
+      hardcodes font-size:18pt, which always wins over an ancestor's
+      inherited value — Professional's real masthead (21pt) and Minimal's
+      (19pt) were silently collapsing to this one shared default. Applied
+      inline, directly on this element, the same established pattern.
+    {% endcomment %}
+    {% if el.content_mode == 'alias' %}
+      <div class="v2-bizname" style="{% if el.style.font_size_pt %}font-size:{{ el.style.font_size_pt }}pt;{% endif %}">Business Name</div>
+      {% if el.style.show_tagline %}<div class="v2-line">Business City, Business Country</div>{% endif %}
+    {% else %}
+      <div class="v2-bizname" style="{% if el.style.font_size_pt %}font-size:{{ el.style.font_size_pt }}pt;{% endif %}">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+      {% if el.style.show_tagline %}<div class="v2-line">{% if freelancer.profession %}{{ freelancer.profession }}{% if freelancer.city %} · {% endif %}{% endif %}{{ freelancer.city }}{% if freelancer.city %}, {% endif %}{{ freelancer.country }}</div>{% endif %}
+    {% endif %}
+
+  {% elif el.type == 'client_info' %}
+    <div class="v2-label">{{ el.resolved_label|default:"Bill to" }}</div>
+    {% if el.content_mode == 'alias' %}
+      <div class="v2-partyname">Client Name</div>
+      <div class="v2-line">Client Company</div>
+      <div class="v2-line">Client Address</div>
+      <div class="v2-line">Client Email</div>
+    {% else %}
+      <div class="v2-partyname">{{ invoice.client_name|default:"No client yet" }}</div>
+      {% if invoice.client_company %}<div class="v2-line">{{ invoice.client_company }}</div>{% endif %}
+      {% if invoice.client_address %}<div class="v2-line">{{ invoice.client_address|linebreaksbr }}</div>{% endif %}
+      {% if invoice.client_email %}<div class="v2-line">{{ invoice.client_email }}</div>{% endif %}
+    {% endif %}
+
+  {% elif el.type == 'dates' %}
+    {% comment %}
+      Phase 3.2 fix (LANCERAOS_TEMPLATE_BUILDER_2_PHASE3_1.md Finding 1,
+      follow-up): the wrapping .v2-header-el div's own inline
+      font-size/font-weight (design_renderer_v2.py's prepare_header_element)
+      only reaches this inner .v2-num div via CSS inheritance — which
+      .v2-num's OWN class rule (font-size:12pt; font-weight:600, see
+      _v2_page_styles.html) always wins over, regardless of the
+      ancestor's specificity. Applied directly here, inline, on the
+      specific element that actually needs it — the same established
+      pattern this partial's own totals branch already uses for
+      el.resolved_pill_color overriding .v2-total-pill's shared default
+      (Phase 6: reads the resolved value, not the raw el.style.pill_color,
+      so a real overrides.pill_color and the 'theme_primary'/
+      'theme_secondary' sentinel tokens both actually take effect here).
+      Reads el.style generically; no template-name branching.
+    {% endcomment %}
+    {% if el.content_mode == 'alias' %}
+      {% if el.style.show_invoice_number %}<div class="v2-num" style="{% if el.style.font_size_pt %}font-size:{{ el.style.font_size_pt }}pt;{% endif %}{% if el.style.font_weight %}font-weight:{{ el.style.font_weight }};{% endif %}">Invoice Number</div>{% endif %}
+      <div class="v2-daterow">Issue date <b>Invoice Date</b></div>
+      <div class="v2-daterow">Due date <b>Due Date</b></div>
+    {% else %}
+      {% if el.style.show_invoice_number %}<div class="v2-num" style="{% if el.style.font_size_pt %}font-size:{{ el.style.font_size_pt }}pt;{% endif %}{% if el.style.font_weight %}font-weight:{{ el.style.font_weight }};{% endif %}">{{ invoice.invoice_number|default:"DRAFT" }}</div>{% endif %}
+      <div class="v2-daterow">Issue date <b>{{ invoice.issue_date|date:"d M Y" }}</b></div>
+      <div class="v2-daterow">Due date <b>{% if invoice.due_date %}{{ invoice.due_date|date:"d M Y" }}{% else %}—{% endif %}</b></div>
+    {% endif %}
+
+  {% elif el.type == 'totals' %}
+    {% comment %}
+      Phase 2 fix: variant handling added to match all 3 golden templates'
+      real totals presentations — the original Phase 1 version only ever
+      rendered the plain-row style, which is correct for Professional but
+      silently wrong for Minimal's real total_due_display (a large
+      standalone amount) and Modern's real total_pill (a colored pill).
+      Mirrors apps/invoices/design_renderer.py's own already-correct v1
+      _dynamic_element_content.html totals logic.
+    {% endcomment %}
+    {% if el.content_mode == 'alias' %}
+      {% if el.style.variant != 'total_due_display' %}
+        {% if 'subtotal' in el.totals_rows %}<div class="v2-row"><span>Subtotal</span><span>Subtotal Amount</span></div>{% endif %}
+        {% if 'tax' in el.totals_rows %}<div class="v2-row"><span>Tax</span><span>Tax Amount</span></div>{% endif %}
+        {% if 'discount' in el.totals_rows %}<div class="v2-row"><span>Discount</span><span>Discount Amount</span></div>{% endif %}
+      {% endif %}
+      {% if el.style.variant == 'total_pill' %}
+        <div style="text-align:{{ el.style.align|default:'right' }};"><span class="v2-total-pill" style="{% if el.resolved_pill_color %}background:{{ el.resolved_pill_color }};{% endif %}">Total Amount</span></div>
+      {% elif el.style.variant == 'total_due_display' %}
+        <div style="text-align:{{ el.style.align|default:'right' }};">
+          <div class="v2-total-due-lbl">Total due</div>
+          <div class="v2-total-due-amt">Total Amount</div>
+        </div>
+      {% elif 'total' in el.totals_rows %}
+        <div class="v2-row v2-row-due"><span>Total due</span><span>Total Amount</span></div>
+      {% endif %}
+    {% else %}
+      {% if el.style.variant != 'total_due_display' %}
+        {% if 'subtotal' in el.totals_rows %}<div class="v2-row"><span>Subtotal</span><span>{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</span></div>{% endif %}
+        {% if invoice.tax_rate and 'tax' in el.totals_rows %}<div class="v2-row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+        {% if invoice.discount_amount and 'discount' in el.totals_rows %}<div class="v2-row"><span>Discount</span><span>−{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+      {% endif %}
+      {% if el.style.variant == 'total_pill' %}
+        <div style="text-align:{{ el.style.align|default:'right' }};"><span class="v2-total-pill" style="{% if el.resolved_pill_color %}background:{{ el.resolved_pill_color }};{% endif %}">{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</span></div>
+      {% elif el.style.variant == 'total_due_display' %}
+        <div style="text-align:{{ el.style.align|default:'right' }};">
+          <div class="v2-total-due-lbl">Total due</div>
+          <div class="v2-total-due-amt">{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</div>
+        </div>
+      {% elif 'total' in el.totals_rows %}
+        <div class="v2-row v2-row-due"><span>Total due</span><span>{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</span></div>
+      {% endif %}
+    {% endif %}
+
+  {% elif el.type == 'notes' %}
+    {% comment %}
+      Phase 4B.3 (LANCERAOS_TEMPLATE_BUILDER_2_PHASE4B2_AUDIT.md finding C3)
+      — `el.notes_sections` (design_renderer_v2.py's own new resolved
+      field, default ['notes','terms'] so any pre-existing design that
+      never sets `style.sections` renders byte-identical to before) lets
+      design_seeds_v2.py give Notes and Terms their own independent
+      element, each still correctly gated on its own real content being
+      non-blank — the exact same per-section conditional this branch
+      already had, just ALSO gated on whether this element is even
+      responsible for that section. The `margin-top:6mm` on the Terms
+      label only applies when BOTH sections render from the SAME element
+      (the legacy, still-fully-supported bundled shape) — a
+      section-only element has nothing above it to space away from.
+    {% endcomment %}
+    {% if el.content_mode == 'alias' %}
+      {% if 'notes' in el.notes_sections %}<div class="v2-label">{{ el.resolved_notes_label }}</div><p>Notes text</p>{% endif %}
+      {% if 'terms' in el.notes_sections %}<div class="v2-label" style="{% if 'notes' in el.notes_sections %}margin-top:6mm;{% endif %}">{{ el.resolved_terms_label }}</div><p>Terms text</p>{% endif %}
+    {% else %}
+      {% if 'notes' in el.notes_sections and invoice.notes %}<div class="v2-label">{{ el.resolved_notes_label }}</div><p>{{ invoice.notes|linebreaksbr }}</p>{% endif %}
+      {% if 'terms' in el.notes_sections and invoice.terms %}<div class="v2-label" style="{% if 'notes' in el.notes_sections %}margin-top:6mm;{% endif %}">{{ el.resolved_terms_label }}</div><p>{{ invoice.terms|linebreaksbr }}</p>{% endif %}
+    {% endif %}
+
+  {% elif el.type == 'signature' %}
+    {% if el.content_mode == 'alias' %}
+      <div class="v2-alias-box" style="width:30mm;height:12mm;">Signature</div>
+    {% elif freelancer.signature_url %}
+      <img class="v2-sig-img" src="{{ freelancer.signature_url }}" alt="">
+    {% endif %}
+    <div class="v2-sig-line">{{ el.resolved_label|default:"Authorised signature" }}</div>
+
+  {% elif el.type == 'qr_code' %}
+    {% comment %}
+      Phase 4B — split out of payment_info's own qr_and_link variant (see
+      design_schema_v2.py's own comment on FLOW_SEMANTIC_TYPES) so the QR
+      image and the payment link text below become two independent
+      objects. Real mode keeps the same single-conditional-on-the-image-
+      only pattern the old qr_and_link branch established (Phase 1's
+      DATA-5 fix) — never gates the link's own text on QR generation
+      succeeding, since that's now a wholly separate element anyway.
+    {% endcomment %}
+    {% if el.content_mode == 'alias' %}
+      <div class="v2-alias-box v2-qr">QR Code</div>
+    {% elif qr_code_data_uri %}
+      <img class="v2-qr" src="{{ qr_code_data_uri }}" alt="">
+    {% endif %}
+
+  {% elif el.type == 'online_payment_link' %}
+    <div class="v2-label">{{ el.resolved_label|default:"Pay online" }}</div>
+    {% if el.content_mode == 'alias' %}
+      <div class="v2-link">Payment Link</div>
+    {% else %}
+      <div class="v2-link">{{ invoice.payment_page_url }}</div>
+    {% endif %}
+
+  {% elif el.type == 'payment_info' and el.style.variant == 'qr_and_link' %}
+    {% comment %}
+      Legacy/back-compat only — no seed produces this variant as of Phase
+      4B (see qr_code/online_payment_link above, the real replacement).
+      Left unchanged so any pre-existing design_data using it still
+      renders exactly as it always has; Phase 1's own DATA-5 fix (QR image
+      conditional independent of the link text) is preserved verbatim.
+    {% endcomment %}
+    <div class="v2-payonline">
+      {% if qr_code_data_uri %}<img class="v2-qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+      <div>
+        <div class="v2-label">{{ el.resolved_label|default:"Pay online" }}</div>
+        <div class="v2-link">{{ invoice.payment_page_url }}</div>
+      </div>
+    </div>
+
+  {% elif el.type == 'payment_info' %}
+    {% comment %}
+      Real mode keeps the label itself gated on at least one method
+      actually existing — matching the real, deliberate 16 August 2026
+      v1 fix (CLAUDE.md's own "empty 'Payment methods' header with
+      nothing under it" bug) rather than reintroducing it here. Alias
+      mode is a design environment, not a live preview, so it always
+      shows the label + all 4 methods regardless of real data.
+    {% endcomment %}
+    {% if el.content_mode == 'alias' %}
+      <div class="v2-label">{{ el.resolved_label|default:"Payment methods" }}</div>
+      <div class="v2-method"><span>Bank transfer</span><span>Bank Name — Bank Account Number</span></div>
+      <div class="v2-method"><span>Payoneer</span><span>Payoneer Email</span></div>
+      <div class="v2-method"><span>JazzCash</span><span>JazzCash Number</span></div>
+      <div class="v2-method"><span>Easypaisa</span><span>Easypaisa Number</span></div>
+    {% elif freelancer.bank_name or freelancer.payoneer_email or freelancer.jazzcash_number or freelancer.easypaisa_number %}
+      <div class="v2-label">{{ el.resolved_label|default:"Payment methods" }}</div>
+      {% if freelancer.bank_name %}<div class="v2-method"><span>Bank transfer</span><span>{{ freelancer.bank_name }} — {{ freelancer.bank_account_number }}</span></div>{% endif %}
+      {% if freelancer.payoneer_email %}<div class="v2-method"><span>Payoneer</span><span>{{ freelancer.payoneer_email }}</span></div>{% endif %}
+      {% if freelancer.jazzcash_number %}<div class="v2-method"><span>JazzCash</span><span>{{ freelancer.jazzcash_number }}</span></div>{% endif %}
+      {% if freelancer.easypaisa_number %}<div class="v2-method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
+    {% endif %}
+
+  {% endif %}
+{% elif el.kind == 'structural' and el.type == 'table' %}
+  {% comment %}
+    Phase 4B.2 — the table is now a real positioned element (see
+    design_schema_v2.py's own docstring); its content is the exact same
+    real markup the old `flow.table` special key produced (the shared
+    _v2_table_head.html/_v2_table_row.html partials, unchanged), just
+    reached through this one unified content-dispatch path instead of a
+    separate top-level block in canonical.html. `el.table_rows` is
+    real invoice.items.all() in real mode, or a fixed 3-row placeholder
+    set in alias mode (design_renderer_v2.ALIAS_SAMPLE_TABLE_ITEMS) — see
+    prepare_element's own comment for why alias mode doesn't just reuse
+    the sample invoice's own specific line items.
+  {% endcomment %}
+  <table class="v2-items" style="width:100%;{% if el.style.font %}font-family:'{{ el.style.font }}';{% endif %}">
+    {% include 'invoices/canonical/_table_head.html' with table_columns=el.table_columns thead_cell_css=el.thead_cell_css %}
+    <tbody>
+      {% for row in el.table_rows %}
+        {% include 'invoices/canonical/_table_row.html' with row=row table_columns=el.table_columns row_cell_css=el.row_cell_css currency_symbol=invoice.currency_symbol %}
+      {% endfor %}
+    </tbody>
+  </table>
+{% elif el.kind == 'generic' %}
+  {% if el.type == 'text' %}{{ el.resolved_text|linebreaksbr }}
+
+  {% elif el.type == 'image' %}
+    {% if el.image_src %}<img src="{{ el.image_src }}" alt="" style="width:100%;height:100%;object-fit:contain;">{% endif %}
+
+  {% elif el.type == 'rectangle' or el.type == 'container' %}
+    <div style="width:100%;height:100%;{{ el.shape_css }}"></div>
+
+  {% elif el.type == 'divider' %}
+    <div style="width:100%;{{ el.shape_css }}"></div>
+
+  {% endif %}
+{% endif %}

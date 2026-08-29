@@ -31,7 +31,7 @@ from PIL import Image
 from django.conf import settings
 
 from core.ai import call_groq, strip_model_reply_wrapper
-from .design_schema import validate_design_data_schema
+from .legacy_design_schema import validate_design_data_schema
 from .design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
 
 logger = logging.getLogger(__name__)

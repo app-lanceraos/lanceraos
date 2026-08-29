@@ -1,0 +1,17 @@
+{% comment %}
+  Phase 4B — the mandatory line-items table's head, driven by
+  `table_columns` (design_renderer_v2.py's resolve_table_columns, the one
+  real computation shared by BOTH the canonical renderer (canonical.html)
+  and the editor canvas (design_canvas_v2.py, which renders this same
+  partial standalone into table.thead_html) — closes a real, pre-existing
+  duplication where the frontend used to hardcode its own separate,
+  independently-drifting copy of this exact markup (frontend/src/lib/
+  designEditorV2/constants.js's old tableHeadHtml, now deleted).
+{% endcomment %}
+<thead>
+  <tr>
+    {% for col in table_columns %}
+    <th class="{% if col.key != 'description' %}v2-num-col{% endif %}" style="width:{{ col.width_pct }}%;{{ thead_cell_css }}">{{ col.label }}</th>
+    {% endfor %}
+  </tr>
+</thead>

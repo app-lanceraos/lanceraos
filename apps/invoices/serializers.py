@@ -13,7 +13,7 @@ from rest_framework import serializers
 from apps.clients.models import Client
 from apps.clients.serializers import validate_currency_code
 
-from .design_schema import validate_design_data_schema
+from .design_schema import validate_design_data_schema_by_version
 from .models import Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem, _today
 
 
@@ -366,7 +366,21 @@ class InvoiceDesignSerializer(serializers.ModelSerializer):
         return value
 
     def validate_design_data(self, value):
-        errors = validate_design_data_schema(value)
+        """
+        Template Builder 2.0 cutover: dispatches to the v1 structural
+        validator for a legacy-shape payload (schema_version absent or 1
+        — every design saved before this cutover, and still the default
+        for a brand-new custom/blank design) or the v2 validator for a
+        real schema_version: 2 payload (design_canvas.py's own editor,
+        or a v1->v2 migrated design) — see
+        design_schema.validate_design_data_schema_by_version's own
+        docstring. This is what lets a v2 design be created/edited/
+        deleted/set-default through the exact same real InvoiceDesign
+        CRUD endpoints (design_list/design_detail/design_set_default,
+        apps/invoices/views.py) v1 designs already use, rather than a
+        second, parallel v2-only persistence surface.
+        """
+        errors = validate_design_data_schema_by_version(value)
         if errors:
             raise serializers.ValidationError(errors)
         return value

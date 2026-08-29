@@ -10,9 +10,11 @@ import copy
 from django.core.cache import cache
 from django.urls import reverse
 
-from apps.invoices.design_schema import validate_design_data_schema
+from apps.invoices.legacy_design_schema import validate_design_data_schema
+from apps.invoices.design_schema import validate_design_data_schema_v2
 from apps.invoices.design_seeds import BUILTIN_DESIGNS, get_builtin_design_data
-from apps.invoices.models import InvoiceDesign
+from apps.invoices.design_templates import BUILTIN_DESIGNS as PRODUCTION_BUILTIN_DESIGNS
+from apps.invoices.models import InvoiceDesign, InvoiceDesignVersion
 from apps.invoices.tests.test_views import InvoicesAPITestCase
 from apps.users.models import User
 
@@ -307,10 +309,118 @@ class DesignSetDefaultTests(InvoicesAPITestCase):
 
 
 # ══════════════════════════════════════════════════════════════════
+# VERSION HISTORY + ROLLBACK (Green-Light directive)
+# ══════════════════════════════════════════════════════════════════
+
+class DesignVersionHistoryTests(InvoicesAPITestCase):
+    def test_saving_real_content_changes_creates_real_version_rows(self):
+        design = InvoiceDesign.objects.create(
+            user=self.user, name='D1', base_template='professional',
+            design_data=copy.deepcopy(BUILTIN_DESIGNS['professional']),
+        )
+        self.assertEqual(design.versions.count(), 1)  # the initial save
+
+        design.design_data['zone_1']['elements'][0]['x'] += 5
+        design.save()
+        self.assertEqual(design.versions.count(), 2)
+
+        resp = self._get(reverse('invoices:design_versions_list', kwargs={'pk': design.pk}))
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(len(body), 2)
+        self.assertEqual(body[0]['version_number'], 2)  # newest first
+        self.assertEqual(body[1]['version_number'], 1)
+        self.assertNotIn('design_data', body[0])  # list is deliberately lightweight
+
+    def test_versions_list_scoped_to_requesting_user_only(self):
+        other = User.objects.create_user(email='other-versions@example.com', password='Sup3r$ecret1')
+        other_design = InvoiceDesign.objects.create(
+            user=other, name='Other', base_template='professional',
+            design_data=copy.deepcopy(BUILTIN_DESIGNS['professional']),
+        )
+        resp = self._get(reverse('invoices:design_versions_list', kwargs={'pk': other_design.pk}))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_restore_copies_the_old_versions_content_onto_the_live_design(self):
+        design = InvoiceDesign.objects.create(
+            user=self.user, name='D1', base_template='professional',
+            design_data=copy.deepcopy(BUILTIN_DESIGNS['professional']),
+        )
+        original_data = copy.deepcopy(design.design_data)
+        version_1 = design.versions.get(version_number=1)
+
+        design.design_data['zone_1']['elements'][0]['x'] += 5
+        design.save()
+        self.assertNotEqual(design.design_data, original_data)
+
+        resp = self._post(reverse('invoices:design_version_restore', kwargs={
+            'pk': design.pk, 'version_id': version_1.pk,
+        }))
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        design.refresh_from_db()
+        self.assertEqual(design.design_data, original_data)
+
+    def test_restore_is_non_destructive_it_creates_a_new_version_rather_than_deleting_history(self):
+        design = InvoiceDesign.objects.create(
+            user=self.user, name='D1', base_template='professional',
+            design_data=copy.deepcopy(BUILTIN_DESIGNS['professional']),
+        )
+        version_1 = design.versions.get(version_number=1)
+        design.design_data['zone_1']['elements'][0]['x'] += 5
+        design.save()  # version 2
+        self.assertEqual(design.versions.count(), 2)
+
+        self._post(reverse('invoices:design_version_restore', kwargs={
+            'pk': design.pk, 'version_id': version_1.pk,
+        }))
+
+        self.assertEqual(design.versions.count(), 3)  # never drops to 1 or overwrites version 2
+        self.assertTrue(InvoiceDesignVersion.objects.filter(pk=version_1.pk).exists())
+
+    def test_restore_scoped_to_requesting_users_own_design_and_version(self):
+        other = User.objects.create_user(email='other-restore@example.com', password='Sup3r$ecret1')
+        other_design = InvoiceDesign.objects.create(
+            user=other, name='Other', base_template='professional',
+            design_data=copy.deepcopy(BUILTIN_DESIGNS['professional']),
+        )
+        other_version = other_design.versions.get(version_number=1)
+        resp = self._post(reverse('invoices:design_version_restore', kwargs={
+            'pk': other_design.pk, 'version_id': other_version.pk,
+        }))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_restore_a_version_id_that_belongs_to_a_different_design_returns_404(self):
+        """A version id must be scoped to the SAME design in the URL, not just owned by the same user."""
+        design_a = InvoiceDesign.objects.create(
+            user=self.user, name='A', base_template='professional',
+            design_data=copy.deepcopy(BUILTIN_DESIGNS['professional']),
+        )
+        design_b = InvoiceDesign.objects.create(
+            user=self.user, name='B', base_template='minimal',
+            design_data=copy.deepcopy(BUILTIN_DESIGNS['minimal']),
+        )
+        version_of_b = design_b.versions.get(version_number=1)
+        resp = self._post(reverse('invoices:design_version_restore', kwargs={
+            'pk': design_a.pk, 'version_id': version_of_b.pk,
+        }))
+        self.assertEqual(resp.status_code, 404)
+
+
+# ══════════════════════════════════════════════════════════════════
 # DUPLICATE (Path 1 — instantiate a builtin seed as a real owned row)
 # ══════════════════════════════════════════════════════════════════
 
 class DesignDuplicateTests(InvoicesAPITestCase):
+    """
+    Production cutover — design_duplicate now instantiates the PRODUCTION
+    builtin seeds (apps.invoices.design_templates.BUILTIN_DESIGNS, real
+    header/flow schema) rather than the legacy zone_1/zone_2 shape, so
+    every "Use this template" design created from today onward is already
+    schema_version 2 — no on-open migration needed for anything a user
+    creates going forward.
+    """
+
     def test_duplicate_creates_real_owned_row_from_seed(self):
         resp = self._post(reverse('invoices:design_duplicate'), {'base_template': 'modern'})
         self.assertEqual(resp.status_code, 201, resp.content)
@@ -320,15 +430,16 @@ class DesignDuplicateTests(InvoicesAPITestCase):
 
         design = InvoiceDesign.objects.get(pk=body['id'])
         self.assertEqual(design.user, self.user)
-        self.assertEqual(validate_design_data_schema(design.design_data), [])
+        self.assertEqual(design.design_data.get('schema_version'), 2)
+        self.assertEqual(validate_design_data_schema_v2(design.design_data), [])
 
     def test_duplicate_is_independent_of_the_seed_constant(self):
-        """Editing the duplicated row's design_data must never mutate the shared BUILTIN_DESIGNS dict."""
+        """Editing the duplicated row's design_data must never mutate the shared production BUILTIN_DESIGNS dict."""
         resp = self._post(reverse('invoices:design_duplicate'), {'base_template': 'professional'})
         design = InvoiceDesign.objects.get(pk=resp.json()['id'])
-        design.design_data['zone_1']['elements'][0]['x'] = 12345
+        design.design_data['header']['elements'][0]['x'] = 12345
         design.save()
-        self.assertNotEqual(BUILTIN_DESIGNS['professional']['zone_1']['elements'][0]['x'], 12345)
+        self.assertNotEqual(PRODUCTION_BUILTIN_DESIGNS['professional']['header']['elements'][0]['x'], 12345)
 
     def test_duplicate_rejects_unknown_base_template(self):
         resp = self._post(reverse('invoices:design_duplicate'), {'base_template': 'nonexistent'})

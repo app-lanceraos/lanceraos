@@ -120,10 +120,15 @@ export default function App() {
           path="/invoices/analytics"
           element={<PrivateRoute><AppShell><InvoiceAnalytics /></AppShell></PrivateRoute>}
         />
-        {/* Step 8b's canvas editor — deliberately NOT wrapped in AppShell,
-            same shell-less pattern as /account/deletion-review above (see
-            DesignEditor.jsx's own comment and DECISIONS.md). Still gated by
-            PrivateRoute — shell-less is a layout choice, not an auth one. */}
+        {/* The LanceraOS Template Builder — deliberately NOT wrapped in
+            AppShell, same shell-less pattern as /account/deletion-review
+            above (a real, focused, full-screen editing surface). Still
+            gated by PrivateRoute — shell-less is a layout choice, not an
+            auth one. Production cutover: this is the one editor route —
+            no separate "v2"/isolated-sandbox route exists anymore; the
+            same component always runs in real-persistence mode here,
+            since a real `:id` route param (including the literal `new`)
+            is always present. */}
         <Route
           path="/invoices/designs/:id/edit"
           element={<PrivateRoute><DesignEditor /></PrivateRoute>}

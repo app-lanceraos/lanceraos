@@ -1,0 +1,65 @@
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+{% include 'invoices/canonical/_page_styles.html' %}
+</head>
+<body>
+
+{% if sidebar %}
+<div class="v2-sidebar" style="width:{{ sidebar_width_mm }}mm;background:{{ sidebar.color|default:design_primary_color }};">
+  {% for el in sidebar_elements %}
+  <div class="v2-el" style="{{ el.css }}">
+    {% include 'invoices/canonical/_element_content.html' %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% comment %}
+  Pagination fix (28 August 2026) — the header region stays exactly the
+  free-form absolutely-positioned box it always has been (see
+  design_renderer_v2._prepare_header_region's own docstring for why it
+  deliberately does NOT get the same treatment as flow content below) —
+  `position:relative` (not `absolute`) on ITS OWN wrapper, with a real,
+  computed `height`, is what makes the header a genuine, ordinary,
+  in-flow block that correctly pushes the flow region below it, while
+  every element INSIDE it keeps its own free 2D absolute placement
+  exactly as before (a byte-for-byte no-op for the header specifically —
+  nothing about header rendering changed except the ONE wrapper box
+  around it no longer being absolutely positioned itself).
+{% endcomment %}
+<div class="v2-content" style="width:{{ page_width_mm }}mm;min-height:{{ page_height_mm }}mm;padding:{{ margin_top_mm }}mm {{ margin_right_mm }}mm {{ margin_bottom_mm }}mm {{ margin_left_mm }}mm;">
+  <div class="v2-header" style="position:relative;width:{{ content_width_mm }}mm;height:{{ header_height_mm }}mm;">
+    {% for el in header_elements %}
+    <div class="v2-el" style="{{ el.css }}">
+      {% include 'invoices/canonical/_element_content.html' %}
+    </div>
+    {% endfor %}
+  </div>
+
+  {% comment %}
+    Pagination fix — the real root-cause fix (see design_renderer_v2.
+    _prepare_flow_region's own docstring for the full investigation and
+    reasoning): every flow element, chain or single, `flow`- or `pinned`-
+    layout_mode alike, now renders inside a real, ordinary (never
+    `position:absolute`) flex row — a genuine CSS document-flow box, which
+    is what makes WeasyPrint's own real pagination engine correctly
+    fragment this content (a real `<table>`, real overflowing paragraph
+    text) across as many pages as it actually needs, instead of silently
+    confining it to a single page regardless of how tall it renders.
+    `align-items:flex-start` is required, not cosmetic — flex's own
+    default (`stretch`) would artificially stretch every item in a row to
+    match its tallest sibling, which is not this schema's own "each
+    element has its own real height" contract.
+  {% endcomment %}
+  {% for row in flow_rows %}
+  <div class="v2-flow-row" style="display:flex;align-items:flex-start;margin-top:{{ row.margin_top_mm }}mm;">
+    {% for item in row.items %}
+    <div class="v2-flow-item" style="width:{{ item.width_mm }}mm;{% if item.margin_left_mm %}margin-left:{{ item.margin_left_mm }}mm;{% endif %}{% if item.height_mm %}height:{{ item.height_mm }}mm;{% endif %}">{{ item.content_html|safe }}</div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+</body>
+</html>

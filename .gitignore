@@ -25,6 +25,11 @@ db.sqlite3
 media/
 staticfiles/
 
+# Real-data backups (Template Builder 2.0 Phase 0's export_invoice_designs_backup
+# command writes here by default) — contains real user design/business data,
+# never commit
+backups/
+
 # Celery
 celerybeat-schedule
 celerybeat.pid
