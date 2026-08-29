@@ -1669,11 +1669,29 @@ history only ever grows and there is no destructive rollback. See DATABASE.md's 
 historical source `migrate_v1_to_v2` maps from and as the golden-reference comparison input for
 render-fidelity tests.
 
-Path 3 (AI-seeded designs, `apps/invoices/ai_design.py`) is unchanged in mechanism — upload a
+Path 3 (AI-seeded designs, `apps/invoices/ai_design.py`) is unchanged in MECHANISM — upload a
 reference image, one real Groq vision call (`GROQ_MODEL_VISION`, via `core/ai.py`) classifies it
 against the 3 base templates plus extracted colors and a layout-density choice, deliberately
-CLASSIFY-only, never full HTML generation — but its output is now adjusted from a production-shape
-seed and re-validated against the production schema validator before the row is ever saved.
+CLASSIFY-only, never full HTML generation. Its actual IMPLEMENTATION was not, as this document
+previously (incorrectly) claimed here: a 29 August 2026 audit found `apply_ai_adjustments` was
+still adjusting `design_seeds.py`'s retired legacy seed via `get_builtin_design_data` imported from
+`.design_seeds`, and re-validating with `legacy_design_schema.validate_design_data_schema` — every
+real AI-seeded design was silently saved in the retired zone_1/zone_2 shape, contradicting this
+exact paragraph, discovered during a routine audit rather than a user report (a documentation-drift
+bug — the claim was written once, the code drifted after, nothing re-checked it against reality).
+Fixed the same day: `apply_ai_adjustments` now adjusts `design_templates.py`'s real production
+`BUILTIN_DESIGNS` (`header`/`flow`, color changes applied to the table element found by
+`type == 'table'` and every header text element bound to `business.name`, proportion changes
+applied only to non-sidebar header elements via a safe-uniform-scale computation — see
+DECISIONS.md's own entry for why an earlier version of this fix that independently clamped
+overflowing elements after scaling was itself wrong, reintroducing the exact overlap risk uniform
+scaling exists to avoid), and the final row is re-validated with
+`design_schema.validate_design_data_schema_by_version` — confirmed directly (not assumed) to be the
+exact function `InvoiceDesignSerializer.validate_design_data` calls for every real save, the same
+gate every other design goes through. See DECISIONS.md's 29 August 2026 entry for the full
+before/after and the two further stale docstrings (`design_schema.py`'s own
+`validate_design_data_schema_v2`/`validate_design_data_schema_by_version`) this same investigation
+found and corrected.
 
 Full detail — including the pre-cutover Steps 8/8b/9 build history, the render-path/design-
 assignment/color-wiring SEV1 fixes, and the full editor feature build order — lives in

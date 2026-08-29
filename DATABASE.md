@@ -1069,10 +1069,20 @@ the design-to-invoice assignment gap" entry for the full, live-browser-verified 
 it. `color_variant` gets `'ai_extracted'` on this path specifically (a literal string, not one of
 the frontend gallery's 3 curated per-template keys — this path extracts real colors from a real
 uploaded reference image rather than picking from a fixed swatch list). No new column: the
-classify-and-adjust pipeline produces a `design_data` payload from one of the same 3 seeds, still
-validated by the exact same `validate_design_data_schema` before the row is ever saved. See
-DECISIONS.md's Step 9 entry for the full classify-vs-generate reasoning and the overlap-safety
-argument behind how `design_data` gets adjusted.
+classify-and-adjust pipeline produces a `design_data` payload from one of the same 3 seeds,
+re-validated before the row is ever saved. This paragraph describes Step 9's own original,
+pre-cutover mechanism (accurate at the time it was written, back when there was only one schema
+generation to adjust/validate against) — see DECISIONS.md's Step 9 entry for the full
+classify-vs-generate reasoning and the overlap-safety argument behind how `design_data` gets
+adjusted. It is NOT accurate for which seed/validator this path actually uses today: a 29 August
+2026 audit found the pipeline had never been updated for the production cutover below and was
+still adjusting `design_seeds.py`'s retired legacy seed, validated by
+`legacy_design_schema.validate_design_data_schema` — every real AI-seeded design was silently
+saved in the retired legacy shape. Fixed the same day: this path now adjusts
+`design_templates.py`'s real production `BUILTIN_DESIGNS` and validates with
+`design_schema.validate_design_data_schema_by_version` (confirmed directly to be the same function
+`InvoiceDesignSerializer.validate_design_data` calls for every real save) — see DECISIONS.md's
+29 August 2026 entry for the full before/after.
 
 ### Two schema generations — production cutover (29 August 2026)
 

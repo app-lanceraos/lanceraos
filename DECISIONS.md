@@ -6965,3 +6965,168 @@ document both schema generations (production-live and legacy-retired-but-kept) a
 `LANCERAOS_TEMPLATE_BUILDER_2_FINAL_ARCHITECTURE.md` transformed in place into the authoritative
 `LANCERAOS_TEMPLATE_BUILDER_ARCHITECTURE.md`, no longer written in "V2" framing, historical phase docs left
 archived and untouched.
+
+Date: 29 August 2026 (Template Builder Phase 1 — blank-design activation, client-side bounds clamping,
+AI-seed pipeline schema/validator fix, dev-diagnostic gating)
+Decision: closed four real gaps found by a full read-only audit of the Template Builder run immediately
+after the 29 August production cutover above, landed together as one commit
+(`d71dd7d`, "Fix blank-design activation flow, add client-side bounds clamping, repoint AI-seed pipeline
+to production schema/seeds, add unsaved-changes guard, hide dev-diagnostic tooling from production
+builds"): DesignGallery.jsx's blank-design flow, a new shared client-side bounds clamp, ai_design.py's
+seed/validator imports, and DesignEditor.jsx's dev-only UI surface. The unsaved-changes (`beforeunload`)
+guard named in that same commit message was investigated and found to already exist, correctly
+implemented (gated on the real `dirty` flag, added/removed on mount/unmount) — no code change was needed
+there; it's listed in the commit message because the audit explicitly checked for it, not because
+anything was touched.
+
+Reason, per item:
+
+**Blank design activation** (`DesignGallery.jsx`'s `handleStartBlank`) — the real risk this fixed: a user
+clicks "Blank design," sees a green success banner reading `"{name}" is ready to use as-is, or you can
+customize it further` (the exact same banner `handleUseTemplate`/`handleAiSeedUpload` show after a real
+`set-default` call), and reasonably believes their new design is now live for new invoices. It never was
+— `handleStartBlank` never called `set-default` at all, unlike its two siblings — and even if it had, a
+blank design's own `header.elements` is `[]` (confirmed directly against
+`design_templates.get_blank_design_data`): no logo, no business name, no client info, nothing "ready" at
+all. A real invoice built from this design "as-is" would ship with no identifying information whatsoever.
+Live-reproduced during the audit: created a blank design, and the "Currently active for new invoices"
+banner sitting inches above the "ready to use as-is" banner stayed unchanged, contradicting it on screen
+simultaneously. Fixed by navigating straight to the editor instead of showing any success banner or
+calling `set-default` — there is nothing to "use as-is" with zero content, so the honest UX is "go build
+something," not a false completion signal. `handleUseTemplate`/`handleAiSeedUpload` were left untouched;
+their `set-default` call is correct for those two paths (a real template or a real AI-classified seed
+genuinely does have real content).
+
+**Client-side bounds clamping** (`constants.js`'s new `clampToBoundsMm`, wired into `componentTypes.js`'s
+resize `updateTarget` and `DesignEditor.jsx`'s drag-commit/keyboard-nudge handlers) — before this, none
+of the three real interaction paths (drag, resize, arrow-key nudge) had any bounds check at all; the
+mandatory table (already at full content width by construction) could be nudged rightward by a single
+arrow-key press and silently exceed the page's real content width, discovered live only at Save time via
+a genuine `design_schema.py` 400 rejection, with autosave capable of firing that same failure in the
+background while the user wasn't looking. `clampToBoundsMm` mirrors `design_schema.py`'s
+`_validate_page_bounds` exactly, including its `OVERLAP_EPSILON_MM = 0.3` tolerance — an early version of
+this fix omitted the epsilon and was consequently STRICTER than the backend, which would have visibly
+repositioned an element (the mandatory table's own default width already sits 0.1mm over its nominal
+content width, well within the backend's own tolerance) the real validator was always going to accept
+unchanged; a client stricter than the server it's supposed to match is exactly as wrong as one that's too
+lenient. Resize clamps width only (never repositions x to compensate — a resize handle simply stops at
+the edge); drag/nudge clamp position only (never touch width/height, since neither interaction resizes
+anything) — matching `_validate_page_bounds`'s own two independent checks. No bottom-edge (`y + height`)
+ceiling anywhere, matching the backend's own deliberate non-enforcement of one (content may legitimately
+flow onto a second page). Bounds are read live from `canvasDoc.page.content_width_mm`/
+`page.sidebar.width_mm` — already server-resolved by `design_canvas.py`'s own margin/sidebar fallback
+chain — via a ref (`canvasDocRef`), not a plain closure, since the drag-commit/nudge listeners are
+registered once at editor init and would otherwise go stale the moment a different design loads.
+
+**The `ai_design.py` fix** — this is the one that most needs a clear record, because it is a
+documentation-drift-caused bug, the same failure class this project has named explicitly before
+(comments/docstrings asserting a behavior that was true when written and silently stopped being true):
+CLAUDE.md's own Template Builder section stated as fact that AI-seeded designs are "adjusted from a
+production-shape seed and re-validated against the production schema validator before the row is ever
+saved." This was false. `apps/invoices/ai_design.py` still imported `BUILTIN_DESIGNS`/
+`get_builtin_design_data` from `.design_seeds` (the RETIRED v1 seed source — CLAUDE.md's own words
+elsewhere describe this exact module as "kept only as the historical source `migrate_v1_to_v2` maps from
+... never a live seed source") and validated with `.legacy_design_schema.validate_design_data_schema`
+(the retired v1 validator) — confirmed directly by contrasting against `views.py`'s `design_duplicate`
+(the "Use this template" backend), which correctly imports both from `.design_templates`. Every real
+AI-seeded design — one of the gallery's three advertised first-class creation paths — was silently saved
+with legacy-shape `design_data` (no `schema_version: 2`), rendering through the fallback
+`legacy_design_renderer.py`/static-template path rather than the canonical production renderer every
+other design goes through, discovered during a routine read-only audit of the whole Template Builder
+rather than a user report or a failing test (`test_ai_design.py` had no `schema_version` assertion
+anywhere, which is how this went unnoticed for as long as it did).
+
+Fixing it surfaced a second, deeper documentation-drift bug one layer down: `design_schema.py`'s own
+`validate_design_data_schema_v2`/`validate_design_data_schema_by_version` docstrings both explicitly
+claimed "NOT called by anything live in this phase"/"NOT used by InvoiceDesignSerializer... every real
+design saved today is legacy-shape" — describing an earlier Phase 0 state that was no longer true as of
+the production cutover, confirmed directly against `serializers.py`'s
+`InvoiceDesignSerializer.validate_design_data`, which DOES call `validate_design_data_schema_by_version`
+for every real save. `ai_design.py`'s own prior implementation is a direct, concrete example of what
+trusting that exact stale claim produces: code that picked the wrong validator because its own comment
+said the right one "isn't used by anything live." Both docstrings corrected in place.
+
+Rewriting `apply_ai_adjustments` for the real `header`/`flow` shape surfaced a further, real structural
+question, not just a rename: v1's single bundled `business_info` header element no longer exists in the
+production schema (Phase 4B's field-level decomposition split it into individual generic text elements)
+— color adjustment now targets every header text element bound to `business.name` by matching
+`type == 'text' and binding == 'business.name'`, which for Modern (its own business.name repeated in
+both main content and its sidebar) colors more elements than the original ever could — a strictly more
+thorough application of the same intent, not a behavior change. The table's own color slots are now found
+via `type == 'table'` inside `flow.elements` rather than a fixed `zone_2.table` path.
+
+Porting the density-driven proportional scale surfaced two further real bugs, both caught by this
+session's own new test suite, not assumed fixed on the first attempt: (1) the ported defensive clamp used
+the raw page width (210mm) instead of `design_schema.py`'s real `content_width_mm` bound (page width
+minus real margins/sidebar, 174mm for Professional) — real-tested at 'spacious' density, several header
+elements scaled past the real bound while still sitting comfortably under the wrong, too-lenient one,
+letting the final validator reject the whole design instead of the clamp doing its job; fixed with a new
+`_content_width_mm` helper reproducing `design_schema.py`'s own margin+sidebar formula exactly, using the
+real `PAGE_MARGIN_LEFT_MM`/`PAGE_MARGIN_RIGHT_MM` imported directly from `design_renderer.py` (their real,
+canonical, public source) rather than a third hardcoded copy. (2) Worse: fixing (1) by independently
+clamping whichever header elements happened to overflow, post-scale, reintroduced the exact "naive
+independent nudge" overlap risk `apply_ai_adjustments`' own docstring already warns uniform scaling is
+meant to avoid — real-tested, two originally-adjacent, non-overlapping sibling elements collided the
+moment only one of them got independently repositioned back into bounds. Fixed properly: a new
+`_safe_uniform_scale` finds the largest single scale <= the requested density's scale factor that keeps
+the WHOLE non-sidebar header set within bounds, then applies that one (possibly smaller) scale uniformly
+— preserving the exact same one-scale-one-origin overlap-safety guarantee, never repositioning any
+element independently of its siblings. Sidebar-flagged header elements (Modern's own logo/business.name/
+city/country in its sidebar column) are excluded from scaling entirely — they live in a separate,
+fixed-width coordinate space with no comparable "density" concept, and the classify prompt itself only
+ever describes "how tightly packed the reference's header/info area looks" (main content), never the
+sidebar.
+
+**Dev-diagnostic UI gating** (`DesignEditor.jsx`, behind `import.meta.env.DEV`) — the audit's own example
+list (carried over from an earlier investigation) named "reload from serialized"/"show canonical
+reference" as dev-only elements to gate; both were confirmed, by direct code read, to no longer exist in
+the file at all (only in historical comments describing past bugs) — an example of the audit's own
+starting assumptions needing re-verification against current code, not blind trust, consistent with this
+whole pass's own method. The REAL dev-only surface still present and ungated: the template/variant
+`<select>` pair plus Load/Start-blank buttons (only ever meaningful when `id === 'new'`, a route confirmed
+by repo-wide grep to be unreachable from any real product navigation — every real creation path creates a
+real `InvoiceDesign` row first and always navigates to that real id's own `/edit` route), and the
+"Activity" log + raw page/margin/sidebar/zoom debug readout. Gating these was not merely cosmetic
+decluttering: `handleLoadBuiltin`/`handleLoadBlank` both called `loadIntoCanvas()` with no confirmation
+and no dirty-state guard at all, and this toolbar row rendered UNCONDITIONALLY — even while a real user
+was editing their own already-saved real design. A stray click on "Load" mid-edit would have silently
+discarded it with zero warning; this was a real, live hazard hiding in plain sight, not just clutter.
+Zoom-level buttons, Save/Undo/Redo/Add Element/StylePanel/Layers/Template Health/Preview, and the
+`v2-reload-advisory` content-overflow warning (a real, user-facing banner despite its historical
+"reload"-era test-id) were all confirmed real/user-facing and left untouched. The now-orphaned `builtins`
+fetch (only ever feeding the gated pickers) is also skipped entirely outside `import.meta.env.DEV`, so
+production spends no API call on data nothing renders.
+
+Alternatives considered: for the AI-seed fix specifically, keeping the legacy seed/validator and instead
+adding an explicit migration step to convert the AI-adjusted legacy payload to production shape before
+saving (mirroring `design_migration.migrate_v1_to_v2`'s own on-demand conversion) was considered and
+rejected — it would have kept a second, parallel "adjust legacy, then convert" code path alive
+indefinitely for no real benefit over adjusting the real production seed directly, and every other
+creation path (`design_duplicate`, blank creation) already proves adjusting the production seed directly
+works correctly. For the bounds-clamp overlap regression, clamping post-scale with a small buffer/margin
+(rather than reducing the scale factor itself) was considered and rejected — any independent
+per-element repositioning after a uniform scale reintroduces the same class of risk regardless of buffer
+size; only reducing the shared scale factor uniformly preserves the actual mathematical guarantee.
+
+Verification: full `apps.invoices` suite, 1063/1063 passing (`python manage.py test apps.invoices
+--keepdb`), including a fully rewritten `test_ai_design.py` (27/27) — the old suite exercised the retired
+zone_1/zone_2 shape directly and would have kept passing against the broken pipeline forever, since
+nothing in it ever asserted `schema_version`; the rewrite adds a new
+`SeedDesignDataFromImageRealRenderTests` class asserting BOTH the real `schema_version: 2` discriminator
+AND a successful render through the real production renderer (`design_renderer.render_design_html`),
+per this pass's own explicit "don't just prove structural validation passes" standard — before the fix,
+this exact test would have failed at the schema_version assertion alone. Full frontend suite, 262/262
+passing (`npx vitest run`, up from 244 — 1 new `DesignGallery.test.jsx` proving the blank-design path
+navigates and never calls set-default, 13 new `constants.test.js` tests covering `clampToBoundsMm`
+including the epsilon-tolerance cases). Clean production `vite build`, confirmed by grepping the actual
+output bundle: every dev-only test-id/string (`v2-template-select`, `v2-variant-select`, `v2-load-btn`,
+`v2-load-blank-btn`, `v2-page-meta`, `v2-log`) is absent; every real one (`v2-zoom-*`,
+`v2-real-save-btn`, `v2-undo-btn`, `v2-redo-btn`, `v2-health-btn`, `v2-style-panel`,
+`v2-reload-advisory`, `v2-add-element-btn`, `v2-layers-toggle-btn`, `v2-versions-toggle-btn`) is present.
+
+Docs: this entry; CLAUDE.md's Module 2 Path 3 paragraph corrected (previously claimed the wrong seed/
+validator, now names both precisely and states the fix plainly rather than only the current-true
+version, matching this project's own precedent of recording what was WRONG, not just what's now right);
+DATABASE.md's Step 9 `source='ai_seeded'` entry given the same treatment (explicitly marked as
+describing Step 9's own original, pre-cutover mechanism, with a forward correction to the real current
+seed/validator).
