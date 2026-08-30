@@ -65,3 +65,14 @@ coverage.xml
 .mypy_cache/
 
 v1-reference/
+
+# Backend test suites — untracked deliberately to stay under claude.ai's
+# GitHub-sync file-count limit (not a normal practice; these still exist
+# and run locally/in CI from disk, just no longer pushed to GitHub).
+apps/*/tests/
+core/tests/
+
+# Frontend test files (colocated *.test.jsx/*.test.js, not a separate
+# folder) — same reason as the backend test suites above.
+frontend/**/*.test.jsx
+frontend/**/*.test.js

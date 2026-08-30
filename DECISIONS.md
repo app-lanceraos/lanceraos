@@ -7393,3 +7393,52 @@ Docs: this entry, explicitly retracting this same day's earlier "drag already co
 claim rather than silently superseding it; `LANCERAOS_TEMPLATE_BUILDER_ARCHITECTURE.md`'s §35 updated
 again with the corrected understanding of the zoom mechanism and the two newly-flagged real-browser-zoom
 issues.
+
+Date: 30 August 2026 (backend + frontend test suites untracked from git, claude.ai GitHub-sync file
+limit)
+Decision: `apps/clients/tests/`, `apps/invoices/tests/`, `apps/users/tests/`, `core/tests/` (61 Python
+files), and every colocated frontend `*.test.jsx`/`*.test.js` file (24 files) are added to `.gitignore`
+and removed from git tracking (`git rm --cached`, files left untouched on disk). 85 real test files, ~19K
+lines, no longer pushed to GitHub from this point forward.
+
+Reason: purely operational, not a testing-discipline change — Ali connects claude.ai's own project
+GitHub-sync feature to this repo so its web UI can see current code, and that sync has a file-count limit
+this repo has exceeded. An initial investigation (before this decision) found the actual git-tracked size
+of these files is trivial (~1.3MB total, whole `.git` folder 3.9MB) — this is not a real disk-space or
+repo-bloat problem, and `__pycache__`/`.pytest_cache` etc. were already correctly gitignored beforehand
+with zero tracked cache files. The actual constraint is claude.ai's own sync limit, which appears to be
+file-count-based (or otherwise sensitive to a large number of small files) rather than byte-size-based —
+confirmed relevant here since `apps/invoices/tests/` alone is 37 files. Test files are one of very few
+categories in this repo that are numerous, are not needed by claude.ai's own read-the-current-code use
+case (they describe expected behavior of already-written code, not the code itself), and can be safely
+excluded from that ONE sync channel without affecting anything else that depends on the actual git
+history — GitHub itself, CI (if configured), and every local clone (`git clone` on a fresh checkout would
+no longer receive these files either, a real, accepted tradeoff of this decision, not hidden).
+
+**This is a real, permanent reduction in what the tracked repository contains, not a cosmetic or
+claude.ai-scoped-only change** — worth stating plainly since it's easy to conflate "stop syncing to one
+tool" with ".gitignore only affects that tool." Once committed and pushed, these 85 files are gone from
+GitHub's own view of the repository going forward (recoverable from git history, but not present in a
+fresh clone or on GitHub's file browser) — the same way any other gitignored+untracked file behaves. Test
+files themselves are entirely unaffected on this machine: `python manage.py test`/`npx vitest run` read
+from the real files on disk, not from git's index, so nothing about actually running the suites changes.
+
+Alternatives considered: keeping test files tracked and instead configuring claude.ai's own sync feature
+(if it exposes a separate include/exclude list distinct from `.gitignore`) to skip them — not pursued,
+since Ali's own request was specifically for the `.gitignore` mechanism, and no such separate claude.ai-
+side control was confirmed to exist without leaving this codebase to check a product surface outside this
+session's own tools. If claude.ai's sync is later found to respect its own separate exclude rules, this
+`.gitignore`-based approach could be reverted (`git add -f` the same paths, or drop the new `.gitignore`
+lines) without any other consequence, since nothing else in this project depends on these files being
+absent from tracking.
+
+Verification: `git status --ignored` confirms all 85 files now report as ignored, not tracked-and-modified
+or untracked-and-unignored; every file confirmed still present on disk at its original path afterward
+(`ls`/`find` re-run post-`rm --cached`, not assumed). No test suite was run as part of this change itself
+— it doesn't touch source or test content, only git's own tracking of it — the two most recent DECISIONS.md
+entries already carry the real, current backend (1063/1063) and frontend (262/262) pass counts from
+immediately prior work in this same repo state.
+
+Docs: this entry; `.gitignore` itself (see its own new comments naming this as a deliberate,
+non-standard exception, not a template other projects should copy without the same claude.ai-sync
+constraint).
