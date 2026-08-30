@@ -83,7 +83,29 @@
     align-items: flex-start;
     margin-bottom: 9mm;
   }
-  .brand { display: flex; gap: 5mm; align-items: flex-start; }
+  /* header.top's default flex-basis:auto genuinely under-allocates width to
+     a flex item containing wrappable text — confirmed directly (real
+     drawn-box measurement, not assumed): with a real logo present (the
+     common case), .brand's own box came out to just ~169pt wide against a
+     true ~386pt of real available room before .meta, and .brand's OWN
+     wrapping <div> (itself a flex child of .brand) repeats the exact same
+     under-allocation one level down — a real, measured 2-word name
+     ("Freelance OS", 21pt Source Serif 4 semibold) needs ~124pt but was only
+     given ~110pt, wrapping to 2 lines despite ~217pt of genuinely free space
+     in the row. An earlier fix here (removing this rule's own
+     letter-spacing) was based on a wrong theory: negative letter-spacing
+     tightens rendered text, so removing it should make wrapping LESS likely,
+     not more — and re-tested directly with a real logo present, removing it
+     alone did NOT fix the real failing case. letter-spacing has no real
+     bearing on this bug; restored below. flex:1 1 0% on both .brand and its
+     wrapping div bypasses the buggy content-based auto-basis entirely by
+     giving each a real, definite starting basis of 0 plus grow:1, so it
+     fills the real leftover row space instead — verified against both
+     "Freelance OS" (now one line) and a real 7-word name (still safely
+     wraps, ~33pt clear of .meta). max-width is a real, measured, separate
+     safety cap, not derived from the flex fix alone. */
+  .brand { display: flex; gap: 5mm; align-items: flex-start; flex: 1 1 0%; }
+  .brand > div { flex: 1 1 0%; }
   .brand img.logo {
     width: 15mm; height: 15mm;
     border-radius: 2.5mm;
@@ -96,10 +118,7 @@
     color: {{ design_secondary_color }};
     margin: 0 0 2mm;
     letter-spacing: -0.01em;
-  }
-  .brand .tagline {
-    font-size: 8.5pt;
-    color: #7a7568;
+    max-width: 100mm;
   }
   .meta {
     text-align: right;
@@ -299,7 +318,6 @@
       <div>
         <div class="eyebrow">Invoice</div>
         <h1>{{ freelancer.business_name|default:freelancer.display_name }}</h1>
-        <div class="tagline">{% if freelancer.profession %}{{ freelancer.profession }}{% if freelancer.city %} · {% endif %}{% endif %}{{ freelancer.city }}{% if freelancer.city %}, {% endif %}{{ freelancer.country }}</div>
       </div>
     </div>
     <div class="meta">
@@ -387,10 +405,12 @@
         <div class="link">{{ invoice.payment_page_url }}</div>
       </div>
     </div>
+    {% if signature_url %}
     <div class="sign-block">
-      {% if signature_url %}<img class="sig" src="{{ signature_url }}" alt="">{% endif %}
+      <img class="sig" src="{{ signature_url }}" alt="">
       <div class="line">Authorised signature</div>
     </div>
+    {% endif %}
   </div>
 
 </div>

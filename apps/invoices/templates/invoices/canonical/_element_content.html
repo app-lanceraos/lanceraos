@@ -162,10 +162,11 @@
   {% elif el.type == 'signature' %}
     {% if el.content_mode == 'alias' %}
       <div class="v2-alias-box" style="width:30mm;height:12mm;">Signature</div>
+      <div class="v2-sig-line">{{ el.resolved_label|default:"Authorised signature" }}</div>
     {% elif freelancer.signature_url %}
       <img class="v2-sig-img" src="{{ freelancer.signature_url }}" alt="">
+      <div class="v2-sig-line">{{ el.resolved_label|default:"Authorised signature" }}</div>
     {% endif %}
-    <div class="v2-sig-line">{{ el.resolved_label|default:"Authorised signature" }}</div>
 
   {% elif el.type == 'qr_code' %}
     {% comment %}

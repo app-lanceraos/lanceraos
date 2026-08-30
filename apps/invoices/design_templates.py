@@ -276,8 +276,6 @@ PROFESSIONAL_DESIGN_DATA_V2 = {
             _static_text(20, 0, 90, 4, 'Invoice', _EYEBROW_STYLE),
             _bound_text('business.name', 20, 5, 90, 10,
                         {'font': 'Source Serif 4', 'font_size_pt': 21, 'font_weight': 600, 'color': 'theme_secondary'}),
-            _bound_text('business.city', 20, 16, 44, 4, {'font_size_pt': 8.5}),
-            _bound_text('business.country', 66, 16, 44, 4, {'font_size_pt': 8.5}),
 
             # ── Dates: was one bundled dates element ────────────────────
             _bound_text('invoice.number', 130, 0, 44, 6,
@@ -410,8 +408,6 @@ MINIMAL_DESIGN_DATA_V2 = {
             _static_text(17, 0, 90, 4, 'Invoice', _EYEBROW_STYLE),
             _bound_text('business.name', 17, 5, 90, 9,
                         {'font': 'IBM Plex Sans', 'font_size_pt': 19, 'font_weight': 600, 'color': 'theme_secondary'}),
-            _bound_text('business.city', 17, 15, 44, 4, {'font_size_pt': 8.5}),
-            _bound_text('business.country', 63, 15, 44, 4, {'font_size_pt': 8.5}),
 
             _bound_text('invoice.number', 130, 0, 44, 6,
                         {'font': 'IBM Plex Mono', 'font_size_pt': 10, 'font_weight': 600, 'align': 'right', 'color': 'theme_secondary'}),
@@ -551,8 +547,6 @@ MODERN_DESIGN_DATA_V2 = {
              'style': {'sidebar': True}, 'overrides': {}},
             _bound_text('business.name', 6, 35, 30, 8,
                         {'sidebar': True, 'font': 'Space Grotesk', 'font_size_pt': 14, 'font_weight': 700}),
-            _bound_text('business.city', 6, 44, 30, 4, {'sidebar': True, 'font_size_pt': 7.5}),
-            _bound_text('business.country', 6, 48, 30, 4, {'sidebar': True, 'font_size_pt': 7.5}),
 
             # ── Main content ─────────────────────────────────────────
             _bound_text('invoice.number', 0, 0, 60, 8,

@@ -316,9 +316,9 @@ def apply_ai_adjustments(design_data, classify):
       cannot introduce a NEW overlap within it. A per-element independent
       nudge (the "naive" approach this deliberately avoids) has no such
       guarantee at all. Sidebar-flagged header elements (Modern's own
-      logo/business.name/business.city/business.country in its sidebar
-      column) are deliberately excluded from scaling — they live in a
-      separate, fixed-width coordinate space with no comparable "density"
+      logo/business.name in its sidebar column) are deliberately excluded
+      from scaling — they live in a separate, fixed-width coordinate space
+      with no comparable "density"
       concept, and the classify prompt itself only ever describes
       "how tightly packed the reference's header/info area looks" (main
       content), not the sidebar. `_safe_uniform_scale` is the second half

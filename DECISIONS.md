@@ -7442,3 +7442,254 @@ immediately prior work in this same repo state.
 Docs: this entry; `.gitignore` itself (see its own new comments naming this as a deliberate,
 non-standard exception, not a template other projects should copy without the same claude.ai-sync
 constraint).
+
+---
+
+Date: 30 August 2026 (business.city/business.country removed from the 3 builtins; signature block now
+conditional on a real signature image)
+Decision: Two independent template-content fixes to the 3 builtin designs (`apps/invoices/
+design_templates.py`'s `BUILTIN_DESIGNS`) and their real render paths.
+
+(1) `business.city`/`business.country` header elements removed entirely from all 3 builtin templates —
+Professional's and Minimal's main-content masthead row, and Modern's sidebar copy (Modern's main content
+never had its own separate copy of these two fields to begin with). `design_schema.py`'s
+`SUPPORTED_BINDINGS`, `design_renderer.py`'s `BINDING_RESOLVERS`/`ALIAS_BINDING_LABELS`, and the editor's
+own bindings dropdown (`frontend/src/lib/designEditor/constants.js`) all keep both bindings as available,
+addable options — this only removes them from the 3 SEEDED designs, it does not remove the general
+capability to bind a text element to `business.city`/`business.country` by hand in the editor.
+
+(2) The signature block — image AND the "Authorised signature" line/label together — no longer renders at
+all when `freelancer.signature_url` is unset, on every real (non-legacy) render path: the canonical V2
+renderer (`design_renderer.py`'s `_element_has_real_content`, which now gates `type == 'signature'` on
+`bool(freelancer.signature_url)`, the same pattern `logo`/`payment_info`/`qr_code`/`online_payment_link`
+already use, exactly as `logo`'s own is checked one branch above it), its element-content partial
+(`templates/invoices/canonical/_element_content.html`, image+label now share one conditional per branch
+instead of the label being unconditional), and all 3 static templates (`professional.html`/`minimal.html`/
+`modern.html`, `{% if signature_url %}` now wraps the whole `.sign-block` div, not just the `<img>` inside
+it). Previously only the image was conditional in every one of these; the label/line rendered regardless,
+leaving a dangling "Authorised signature" caption with no actual signature above it whenever a freelancer
+hadn't uploaded one — the exact "missing data must not create ugly empty spaces" defect this codebase's
+Green-Light directive already treats every other optional block as (payment methods, notes/terms, the
+logo itself).
+
+Reason: both are Ali's own explicit, decided calls — no design ambiguity, straight removal/gating.
+`business.city`/`business.country` were judged not worth a dedicated seeded slot on any of the 3 builtins.
+The signature line-with-no-image was a real, visible defect once named directly: it implied a signature had
+been provided when nothing had.
+
+Alternatives considered (signature only): keeping the label always-visible with just the image conditional
+(the pre-existing behavior) — rejected, that's precisely the defect being fixed. Gating only the canonical
+renderer and leaving the 3 static templates untouched — rejected: the 3 static templates are the real,
+currently-active DEFAULT fast path for any invoice whose design is byte-identical to its unedited builtin
+seed (see this file's own SEV1 entries on the design-to-invoice assignment gap), not a retired path, so
+leaving them inconsistent would have reintroduced the same defect for the majority of real invoices in this
+system today. The genuinely retired `apps/invoices/legacy_design_renderer.py` (`_dynamic_element_content.
+html`, the old zone_1/zone_2 shape) was deliberately left untouched — confirmed it only ever serves
+pre-existing rows already in that shape (no code path creates new legacy-shaped designs since the
+production cutover), so a behavior change there would affect already-rendered/already-sent historical
+invoices' re-renders for no real user-facing benefit, consistent with this project's own "legacy path is
+frozen, read-only" convention.
+
+Fallout handled: 3 existing fixtures across `apps/invoices/tests/` assumed the signature label always
+rendered regardless of `signature_url` (`test_design_templates_golden.py`'s `GoldenReferenceStructuralParityTests.setUp`,
+`test_design_pagination.py`'s `RendererPaginationTests.setUp`, and `test_design_renderer.py`'s
+`GoldenStructureTests.test_migrated_professional_seed_contains_every_expected_structural_piece`) — all
+three now set a real `signature_url` (a self-contained `data:` URI, matching this codebase's own
+established no-network-dependency convention for test logos) so they keep exercising the "signature
+present" case they were written for, rather than silently losing coverage. New, dedicated coverage added
+in `test_design_missing_data.py` (`MissingFlowContentTests`) for both directions of the new behavior:
+absent entirely with no `signature_url`, present when one is set.
+
+Found while investigating: `apps/invoices/tests/test_design_templates_golden.py`'s
+`test_professional_signature_label_position` and `test_minimal_total_due_display_renders_single_page` FAIL
+on this machine — confirmed via `git stash` to fail identically on the pre-existing baseline, before either
+change in this entry, so this is a real, PRE-EXISTING bug unrelated to and not introduced by either fix
+above. Not investigated further or fixed here (out of scope for this pass, flagged for a separate look) —
+professional's V2-rendered signature position is ~30mm further down the page than golden's, and minimal's
+V2 output doesn't contain the signature text at all under the current fixture data.
+
+Verification: every apps.invoices test module run individually/in batches (this dev machine's own
+documented native WeasyPrint/GC single-process segfault, see the "Running This Locally" section of
+CLAUDE.md, still reproduces on a full single-process run and is unrelated to this change) — 1035 individual
+test results collected across all batches, all passing except the 2 pre-existing, unrelated golden-test
+failures named above. No frontend test references any of the removed/changed content.
+
+Docs: this entry; `design_renderer.py`'s own `_element_has_real_content` docstring and `ai_design.py`'s
+`apply_ai_adjustments` docstring both updated to stop naming `business.city`/`business.country` as part of
+Modern's sidebar content and to stop listing `signature` among the always-real-content element types.
+
+---
+
+Date: 30 August 2026 (second pass — city/country/profession removal completed on the actual default
+render path; business-name 2-line-wrap bug found and fixed)
+Decision: The prior same-day pass ("business.city/business.country removed from the 3 builtins") only
+touched `design_templates.py` — the V2 schema-version-2 seed data. It never touched the 3 static
+templates (`professional.html`/`minimal.html`/`modern.html`), which each still had their own real,
+literal `.tagline` div rendering `freelancer.profession`/`.city`/`.country`. This was a real, material
+gap, not a cosmetic oversight: confirmed by direct query against this environment's actual data
+(`apps/invoices/pdf_generator.render_html_for_design`'s own 3-way dispatch — schema_version:2 through
+`design_renderer.py`, a v1 design with real custom edits through the legacy dynamic renderer, everything
+else through the 3 static templates directly) that **all 105 real Invoice rows in this environment
+resolve to the static-template branch today — 0 to the V2 canonical renderer, 0 to the legacy custom
+renderer**. The prior pass's change had zero real effect on any actual invoice in this data; this pass
+closes that gap on the branch that actually matters.
+
+Removed the `.tagline` div (and its now-unused `.brand .tagline`/`.sidebar .tagline` CSS rules) entirely
+from all 3 static templates — same "the whole thing, not just make it blank" standard as the earlier
+signature-block fix, since a `{% if %}`-guarded empty div is still a rendered box. `design_templates.py`'s
+V2 seeds were re-verified or, not re-touched — still correctly clean.
+
+Investigated (not removed) the `style.show_tagline`-gated tagline block that still exists in both
+`templates/invoices/canonical/_element_content.html` (the `business_info` semantic type's own branch) and
+the legacy `_dynamic_element_content.html`. **This is genuinely reachable, not dead code** — confirmed by
+direct query: `business_info` remains a structurally valid v2 schema type on purpose (`design_schema.py`'s
+own comment: "so any legacy-shape or already-migrated design keeps validating"), and **7 of this
+environment's 11 real `InvoiceDesign` rows are schema_version:2 with a real `business_info` element
+carrying `show_tagline: true`** (plus 1 further legacy-shape row with the same). None of those 7+1 rows
+are currently a user's `is_default` design or attached to a real Invoice via `invoice.design` — consistent
+with the 3-way dispatch query above (0 real invoices route through either branch today) — so this content
+is reachable by real, saved, user-owned design data but not currently exercised by any real invoice
+render in this snapshot. Left untouched, correctly: removing it would silently break real users' saved
+custom designs for no stated reason, well outside this pass's scope.
+
+Item 2 — the reported "business name sometimes wraps to 2 lines when it has a space" symptom — was
+investigated with real WeasyPrint renders (never assumed from CSS alone) and traced to a genuine,
+confirmed **WeasyPrint layout bug**, isolated by systematically removing one CSS rule/property at a time
+from a real reproduction until the wrap disappeared: `.brand h1 { letter-spacing: -0.01em; }` (present in
+both professional.html and minimal.html, NOT present in modern.html or the V2 canonical `.v2-bizname`)
+causes WeasyPrint's flex-basis/line-wrap computation to allocate an incorrectly narrow box for the
+business-name flex item — even though the *actual* rendered glyph width with that same negative spacing
+applied is smaller, not larger. Confirmed directly against the real files: a real 2-3 word business name
+("Callahan Design Studio") wrapped to 2 lines with the rule present, rendered on one line with it removed
+or set to `0`/a positive value.
+
+Fix applied, verified against BOTH short (fits on one line) and deliberately long (must still wrap safely,
+not collide with the invoice-number/dates column) real business names, per real rendered measurements:
+- **professional.html**: `letter-spacing: -0.01em;` removed from `.brand h1` outright. Verified safe up to
+  a real 7-word name (widest line measured ~393pt) against `.meta`'s own real start position (~426pt) —
+  a consistent ~30pt+ clearance at every length tested, no `max-width` needed.
+- **minimal.html**: same removal, PLUS a real, measured `max-width: 125mm;` added to `.brand h1`. Without
+  it, removing only the letter-spacing exposed a second, real, previously-masked risk: minimal.html's
+  `.meta` column (plain `white-space:nowrap` text, not professional.html's own flex-row `.meta .row`)
+  claims less horizontal space, so a real 5-word name reached x=449.0pt against `.meta`'s own x=449.1pt
+  start — a genuine, measured near-collision (touching, not yet overlapping) that the letter-spacing bug
+  had been accidentally masking all along (by wrapping even short names far too early, it never let ANY
+  name get close to `.meta`). The `max-width` bound forces safe wrapping before that boundary for a
+  realistically long name while leaving real 2-4 word names on one line, confirmed directly.
+- **modern.html**: not touched — no negative letter-spacing on `.brandname` at all, and its own real
+  wrapping (a genuine 3-line wrap for the same 3-word test name) is a legitimate consequence of the
+  sidebar's genuinely narrow 42mm/30mm-content column, not a bug; forcing single-line there would overflow
+  the sidebar for real.
+- **V2 canonical `.v2-bizname`**: not touched — no letter-spacing rule exists there, and it already wraps
+  correctly (safely, only when genuinely needed) inside its own fixed-width absolutely-positioned box,
+  confirmed directly with both a short and a deliberately long real name.
+
+Reason: both items are the same standing convention — verify against real render output, hit every real
+render path (not just the one first touched), and name a prior pass's incomplete scope directly rather
+than quietly redoing the work without saying why a second pass was needed.
+
+Alternatives considered (Item 2): `white-space: nowrap` on `.brand h1` — the more obvious-looking fix —
+was tested FIRST and rejected for professional.html once a real 4-word name test showed it forces the
+business name into the same visual row as "Issue date", producing a real, measured, confirmed text
+collision for a realistically long (not absurd) business name; a wrap is a strictly better outcome than
+overlapping unreadable text, so this was reported as a tradeoff rather than force-applied. Giving `.meta`
+`flex-shrink:0` and `.brand`'s inner wrapping div `flex:1 1 auto; min-width:0` (the textbook flexbox
+fix for "one fixed-natural-width sibling, one flexible-and-wrappable sibling") was also tested directly
+and had zero measurable effect on the real rendered output in either direction — WeasyPrint's flex
+implementation did not respond to it here — so the `max-width` bound was used instead, a real, verified,
+working mechanism rather than a theoretically-correct one that didn't actually change anything in this
+renderer.
+
+Verification: `apps.invoices` test batches covering every design/PDF template test module — 509 individual
+test results this pass (174 + 240 + 95, across 3 separate `manage.py test` invocations to work around this
+dev machine's own documented native WeasyPrint/GC single-process segfault, unrelated to this change) — all
+pass except the same 2 pre-existing `test_design_templates_golden.py` failures already confirmed via
+`git stash` (in this same day's first pass) to fail identically on the baseline, unrelated to and not
+caused by either of these changes; their exact golden-vs-V2 measured deltas shifted slightly (golden's own
+masthead is now shorter with the tagline gone) but the failures themselves are the same pre-existing,
+unrelated defect, not a new one. No test file references the removed `.tagline` markup directly (only
+substring-matched "profession" in `base_template='professional'`/file paths, confirmed by reading each
+real match). The `screenshot-demo@example.com` account's `business_name` was temporarily changed several
+times for real-name wrap testing and restored to its original value (`ScreenshotDemo Studio`) before
+finishing; no other account or invoice data was created or modified for this investigation.
+
+Docs: this entry.
+
+---
+
+Date: 30 August 2026 (third pass — correcting the second pass's wrong root-cause claim; the business-name
+wrap was NOT actually fixed)
+Decision: **The prior entry's letter-spacing root-cause claim was wrong**, not just incomplete — confirmed
+directly, not assumed. A real, freshly-rendered PDF showed a real 2-word business name ("Freelance OS",
+professional.html, WITH a real logo set — the common real-world case) still wrapping to 2 lines after the
+prior pass's fix, despite that pass's own testing having claimed "verified safe up to a real 7-word name."
+The actual gap: every test in the prior pass used a freelancer profile with NO logo set, so `.brand` (the
+flex item holding the logo + business name) never had to share space with a real image — the exact
+condition that turns out to matter. The letter-spacing theory was directionally backwards on its own logic
+too (negative letter-spacing tightens rendered text, so removing it should make wrapping LESS likely, not
+fix a case where it's MORE likely) — a real, confirmed self-contradiction in the prior reasoning that
+should have been caught before reporting the pass done.
+
+Real root cause, found by direct measurement (never assumed from CSS): with a real logo present,
+`.brand`'s own real, drawn CSS box (measured via debug outline/fill injected into the actual real render,
+read back from the rendered PDF's own vector drawings — not glyph text extraction) came out to **169.27pt
+wide**, and `.brand h1`'s own box to just **109.58pt**, against a real, measured **216.85pt of entirely
+unused blank space** between `.brand`'s right edge and `.meta`'s left edge in the same row. Separately,
+the real intrinsic (single-line, unwrapped) width WeasyPrint itself computes for "Freelance OS" at 21pt
+Source Serif 4 semibold — measured through an isolated render using the exact real `@font-face` file this
+app ships, not a browser or font tool — is **123.84pt**. `.brand h1`'s allocated 109.58pt is short of that
+by ~14pt, while ~217pt sits entirely idle in the same row: `header.top`'s default `flex-basis:auto` under-
+allocates a nested flex item containing wrappable text, and does so at BOTH levels of nesting here (`.brand`
+itself, and `.brand`'s own wrapping `<div>`, which is itself a flex child of `.brand`) — confirmed by
+testing the fix at each level independently. Negative letter-spacing turned out to have a real but small,
+secondary effect on this SAME buggy computation (not on final glyph width) — present only when the flex-
+basis bug wasn't otherwise fixed; once the real fix (below) is applied, a direct A/B test with
+letter-spacing restored vs. removed produced byte-identical wrap behavior, confirming it plays no role in
+the actual fix and was never the true cause.
+
+Real fix (`professional.html`, `minimal.html`) — `flex: 1 1 0%;` added to `.brand` AND to `.brand > div`
+(the wrapping div around the eyebrow/h1, a new selector — not previously targeted at all), bypassing the
+buggy content-based auto-basis at both nesting levels by giving each a real, definite starting basis of 0
+plus `flex-grow:1`, so each fills its real leftover row space instead of an under-computed content guess.
+A separate, real `max-width` safety cap remains on `.brand h1` (professional.html: `100mm`, new;
+minimal.html: lowered from the prior pass's `125mm` to `115mm`) — even a correctly-computed `.brand` can,
+for a genuinely long name, render close enough to `.meta` to visually collide before word-wrap kicks in,
+so this stops wrapping well before that boundary regardless of the flex fix's own real-but-imperfect
+headroom. `letter-spacing: -0.01em` is **restored** in professional.html (the prior pass's removal is
+reverted — it was based on the wrong theory and, per the A/B test above, is provably not load-bearing for
+the fix); minimal.html never had it to begin with.
+
+Reason: Ali's own standing rule, restated directly — verify against the ACTUAL failing case with a real
+rendered artifact, not a synthetic test that happens to avoid the real condition, and never let a
+prior pass's "verified safe" stand once real evidence contradicts it, without redoing the diagnosis from
+real numbers rather than layering a new guess onto a wrong one.
+
+Alternatives considered: same real 2-word/real-logo test against `flex:1 1 0%` on `.brand` ALONE (outer
+level only) — real, measured, still wraps ("Freelance"/"OS"), because the inner wrapping `<div>` repeats
+the identical under-allocation bug one level down; this is why the fix targets both levels, confirmed
+necessary rather than assumed sufficient. `max-width` alone (no flex fix) — real, measured, does not
+change wrap behavior at all when the true constraint is the OUTER box being too narrow to even reach the
+cap.
+
+Verification (all against real, freshly-rendered WeasyPrint output, direct PyMuPDF text-position readback,
+never assumed): "Freelance OS" with a real logo renders on one line in both `professional.html` and
+`minimal.html`, including through the real production `render_invoice_pdf` pipeline against a real,
+pre-existing `Invoice` row (not just the preview-context path) for `professional.html`. Both templates
+re-checked at "Freelance OS" without a logo (still one line, no regression), at a real 3-word name
+("Callahan Design Studio", one line in both), and at real deliberately-long names (5-7 words) — safely
+wraps in both templates with a measured clearance from `.meta` in every case, never touching. `modern.html`
+re-verified directly (not carried forward from the prior pass unverified) with the identical real name,
+both with and without a logo — wraps to 2-3 lines in its own genuinely narrow ~30mm sidebar column in
+every case, same as before either fix; unaffected, confirmed rather than assumed. Full affected test suite
+re-run in the same 3 batches as the prior pass (174 + 240 + 95 = 509 individual results) — identical
+outcome: all pass except the same 2 pre-existing, already-confirmed-unrelated `test_design_templates_golden.py`
+failures. `screenshot-demo@example.com`'s `business_name`/`logo` were temporarily changed multiple times
+for this real-render verification and restored to their original values (`'ScreenshotDemo Studio'`, blank
+logo) before finishing; the one real, pre-existing `Invoice` row used for the production-pipeline
+verification render was read via `render_invoice_pdf` only (a pure render call with no persistence side
+effect) and left otherwise untouched.
+
+Docs: this entry, explicitly correcting the prior entry's letter-spacing root-cause claim rather than
+leaving it standing uncorrected in the record (the prior entry's own text is left as-is/not retroactively
+edited, per this project's own convention of layering corrections as new dated entries rather than
+rewriting history).

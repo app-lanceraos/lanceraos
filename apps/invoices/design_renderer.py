@@ -193,10 +193,11 @@ def _element_has_real_content(element, context, content_mode='real'):
     Deliberately conservative — only specific, well-understood content-
     bearing types can ever be considered "empty." Decorative/structural
     types (rectangle, divider, container, the table, totals rows,
-    unbound static text, signature) always count as real content: "empty"
-    has no honest meaning for them (a $0.00 total is real data, not
-    missing data; a divider's entire purpose is the line itself; static
-    text a user deliberately typed is never treated as accidental).
+    unbound static text) always count as real content: "empty" has no
+    honest meaning for them (a $0.00 total is real data, not missing
+    data; a divider's entire purpose is the line itself; static text a
+    user deliberately typed is never treated as accidental). `signature`
+    is NOT in this always-real group — see its own branch below.
 
     `content_mode='alias'` (the editor's own design-time canvas) always
     returns True — the canvas must keep showing every element so a
@@ -262,9 +263,18 @@ def _element_has_real_content(element, context, content_mode='real'):
             or ('terms' in sections and invoice.terms)
         )
 
-    # signature, totals, table, rectangle, divider, container: always
-    # real content (see this function's own docstring for why each is
-    # deliberately excluded from ever being treated as "empty").
+    if el_type == 'signature':
+        # An unset signature is a genuinely empty block, not decorative
+        # scaffolding: with no real image to show, neither the image NOR
+        # the "Authorised signature" line/label means anything — the
+        # whole element collapses and the flow chain reclaims its space,
+        # matching the exact pattern `logo` already established above,
+        # not the "always real" treatment this type had before.
+        return bool(context['freelancer'].signature_url)
+
+    # totals, table, rectangle, divider, container: always real content
+    # (see this function's own docstring for why each is deliberately
+    # excluded from ever being treated as "empty").
     return True
 
 
