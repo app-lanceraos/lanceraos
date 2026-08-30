@@ -146,8 +146,30 @@ export function elementComponent(el, list) {
     },
     // A locked element can still be SELECTED (so it can be unlocked again
     // from the Layers panel) but never dragged/resized on the canvas.
+    //
+    // Phase 2 real bug found and fixed while investigating why the
+    // resize-handle/zoom fix (componentTypes.js's resizableConfig, its
+    // own `mousePosFetcher`) never actually ran: this line used to be
+    // `resizable: !el.locked` unconditionally — a plain BOOLEAN set on
+    // EVERY element instance, not just locked ones. Per Backbone Model's
+    // own defaults semantics, an explicit instance-level attribute always
+    // shadows the TYPE's own `defaults.resizable` (confirmed directly via
+    // `comp.resizable`/`comp.get('resizable')` both reporting a bare
+    // boolean, never the rich object, for a real element loaded through
+    // this exact function) — meaning `resizableConfig()`'s `silentFrames`/
+    // `updateTarget`/`mousePosFetcher` had never actually been the real
+    // resize configuration for ANY element loaded via buildV2ComponentTree
+    // since whichever pass added the lock/hide toggle after the original
+    // Phase 4A/4B fix, despite that fix's own extensive live-verified
+    // documentation (it WAS correct and verified at the time it was
+    // written — this is a real regression introduced later, not a false
+    // historical claim). Fixed by only ever setting `resizable` at all
+    // when actually locked (`false`, disabling resize outright) —
+    // otherwise the key is omitted entirely, letting Backbone's own
+    // defaults fallback apply the type's real `resizableConfig()` object
+    // as originally intended.
     draggable: !el.locked,
-    resizable: !el.locked,
+    ...(el.locked ? { resizable: false } : {}),
     style: {
       ...extra,
       position: 'absolute',

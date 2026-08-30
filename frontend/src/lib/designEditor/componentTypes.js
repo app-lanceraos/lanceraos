@@ -48,7 +48,7 @@ const ELEMENT_COMPONENT_TYPES = ['lancera-v2-element', 'lancera-v2-table']
 // matching the backend's own deliberate non-enforcement of one (content
 // may legitimately flow onto a second page — see design_schema.py's own
 // docstring on this).
-export function registerComponentTypes(editor, getElementBoundWidthMm) {
+export function registerComponentTypes(editor, getElementBoundWidthMm, getZoom) {
   const { DomComponents } = editor
 
   // ── The optional, real, full-height sidebar column ───────────────────
@@ -152,9 +152,48 @@ export function registerComponentTypes(editor, getElementBoundWidthMm) {
   // it to the real component model via addStyle — matching GrapesJS's own
   // intended avoidStore semantics (`store` is only true on the final
   // mouseup call).
+  // Phase 2 real fix — the resize-handle/zoom desync (DECISIONS.md's own
+  // "resize-handle/zoom desync" entry has the full investigation).
+  // Root-caused via an isolated GrapesJS harness (not assumed): dragging
+  // a component via `dmode:'absolute'` (GrapesJS's own internal Sorter)
+  // is ALREADY zoom-correct under this app's CSS-`transform:scale(zoom)`
+  // canvas wrapper — live-measured across zoom 1/0.65/0.8/0.4, matching
+  // `screenDelta / zoom` exactly. Resize alone was broken, because
+  // `updateTarget` above writes GrapesJS's own computed `rect` directly
+  // as raw px — and that rect is computed from the Resizer's DEFAULT
+  // `mousePosFetcher` (`ev.clientX/clientY`, unscaled), which has no way
+  // to know about an external CSS transform applied outside the canvas
+  // iframe it doesn't control. `mousePosFetcher` is a real, documented
+  // `ResizerOptions` field (`grapesjs/dist/index.d.ts`'s own
+  // `mousePosFetcher?: (ev: Event) => Position`) — dividing by the
+  // CURRENT zoom here makes every subsequent delta the Resizer computes
+  // internally already zoom-correct, without touching GrapesJS's own
+  // rect/delta computation, handle rendering, or event wiring (the exact
+  // same "real, supported override" precedent `updateTarget` above
+  // already established for a different broken internal step).
+  //
+  // A native `Canvas.setZoom()` alternative was prototyped and rejected —
+  // NOT because the API doesn't exist, but because live Playwright
+  // testing found it corrupts a plain bottom-right-handle resize: left/
+  // top shift by tens of px (should always stay 0,0 — a BR-handle drag
+  // never moves the anchor corner) at every non-100% zoom level tested,
+  // reproduced both mid-session (switch zoom, resize again) and as the
+  // very first action in a fresh session — a real regression, not a
+  // theoretical one, and confirmed NOT caused by canvas panning
+  // (`Canvas.getCoords()` reports the same `{x:0,y:0}` before and after
+  // `setZoom()`). `getZoom` is passed in from DesignEditor.jsx rather
+  // than imported directly (it needs live access to the CURRENT `zoom`
+  // React state via a ref, the same cross-file-bridge pattern
+  // `getElementBoundWidthMm` above already uses, for the same reason —
+  // this function is attached once at component-type registration and
+  // must never close over a stale value).
   function resizableConfig() {
     return {
       tl: 1, tc: 1, tr: 1, cl: 1, cr: 1, bl: 1, bc: 1, br: 1, silentFrames: true,
+      mousePosFetcher: (ev) => {
+        const zoom = getZoom ? getZoom() : 1
+        return { x: ev.clientX / zoom, y: ev.clientY / zoom }
+      },
       updateTarget: (el, rect, options) => {
         const comp = editor.getSelected()
         let { l, t, w, h } = rect

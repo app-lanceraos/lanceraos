@@ -7130,3 +7130,266 @@ version, matching this project's own precedent of recording what was WRONG, not 
 DATABASE.md's Step 9 `source='ai_seeded'` entry given the same treatment (explicitly marked as
 describing Step 9's own original, pre-cutover mechanism, with a forward correction to the real current
 seed/validator).
+
+Date: 29 August 2026 (resize-handle/zoom desync — investigated, root-caused, and fixed)
+Decision: fixed the resize-handle/zoom desync (DesignEditor.jsx's canvas zoom is a CSS
+`transform: scale(zoom)` wrapper; the mandatory-table nudge finding from the earlier audit — a 100px
+real mouse drag always produced ~26.46mm of model change regardless of the active zoom level) by
+adding a `mousePosFetcher` to `componentTypes.js`'s `resizableConfig()` — a real, documented
+`ResizerOptions` field (`grapesjs/dist/index.d.ts`) that divides the raw mouse position by the
+current zoom before GrapesJS's own Resizer computes its internal delta, making every subsequent
+delta already zoom-correct. Native `Canvas.setZoom()` was prototyped first, in an isolated
+standalone GrapesJS harness (not the real editor), and rejected on real, live-tested evidence — not
+theory — of a genuine regression: it corrupts a plain bottom-right-handle resize, shifting the
+element's left/top by tens of px (a BR-handle drag must never move that anchor corner) at every
+non-100% zoom level, confirmed both mid-session (switch zoom, resize again) and as the very first
+action in a fresh session, and confirmed NOT caused by canvas panning (`Canvas.getCoords()` reports
+the identical `{x:0,y:0}` before and after `setZoom()`). This is Option B from the investigation's
+own framing, scoped precisely by evidence rather than applied broadly: the Dragger (plain drag,
+`dmode:'absolute'`) needed NO fix at all — a live-tested, iframe-to-main-page-coordinate-corrected
+measurement (an earlier drag test had been silently broken by measuring iframe-internal coordinates
+against main-page mouse coordinates, giving a false "drag never moves anything" reading until
+corrected) proved drag is ALREADY zoom-correct under the current CSS-transform wrapper, at every
+zoom level tested, matching `screenDelta / zoom` exactly — GrapesJS's own internal Sorter mechanism
+already does correct ancestor-CSS-transform-aware coordinate translation for `dmode:'absolute'`
+dragging; only the Resizer's simpler default `mousePosFetcher` (raw `ev.clientX/clientY`, no
+transform awareness) did not.
+
+Reason, in the order the investigation actually proceeded:
+
+**Step 1, Option A prototype.** A standalone harness (plain HTML + the project's own installed
+`grapesjs` dist files, no React/GjsEditor wrapper, no app code) was built to test `Canvas.setZoom()`
+in isolation before touching the real editor, per the task's own explicit instruction. First
+attempt used a bare `resizable: {tl:1,...}` config with no `silentFrames`/`updateTarget` — this
+produced inconsistent, confusing results (resize working at zoom=1 but appearing to silently fail
+at zoom<1) that turned out to be a HARNESS bug, not a zoom finding: componentTypes.js's own
+extensive documentation already states GrapesJS's plain resize defaults are broken independent of
+zoom (`silentFrames:false` lets iframe-crossing mouse moves get stolen by the iframe's own
+document; the built-in commit path never reaches the model). Re-running with the harness's
+`resizableConfig()` mirroring the real app's own exactly (`silentFrames:true` + a custom
+`updateTarget`) gave a clean, trustworthy baseline. With that baseline: native `Canvas.setZoom()`
+resize produced real, reproducible corruption (left/top drift, inconsistent width/height deltas) at
+every zoom level below 100%, both switching zoom mid-session and as the first action in a fresh
+session — ruling out "stale state from switching zoom" as the explanation. `Canvas.getCoords()`
+before/after `setZoom()` stayed `{x:0,y:0}` both times, ruling out canvas panning/recentering as the
+mechanism (an initial hypothesis, disproven directly rather than assumed). `SetZoomOptions`
+(`grapesjs/dist/index.d.ts`) offers no coordinate/centering override that could plausibly route
+around this. A plain drag test in native mode was initially inconclusive due to the same
+iframe/main-page coordinate bug noted above; once fixed (via Playwright's own `frameLocator(...).
+boundingBox()`, which correctly accounts for the CSS transform through nested frames, rather than
+reading `comp.getEl().getBoundingClientRect()` from inside the iframe's own document), drag was
+confirmed correct in BOTH css-transform and native-zoom modes — the corruption is specific to
+native zoom's interaction with the Resizer/`updateTarget`, not a general native-zoom defect.
+
+**Step 2, decision point.** Per the task's own explicit criterion ("if Option A causes real
+regressions... implement Option B instead"), the confirmed resize corruption disqualifies Option A
+outright — this was not a judgment call requiring a stop-and-ask, since the task itself pre-specified
+this exact decision tree and the evidence was unambiguous (data corruption, not a milder UX
+mismatch). `ResizerOptions.mousePosFetcher` was found via the TypeScript definitions specifically
+because the task asked whether GrapesJS exposes a Resizer/Dragger config hook for this — it does,
+for the Resizer; `DraggerOptions.scale` is the equivalent for a standalone `Dragger` instance, but
+component-level `draggable` only accepts `boolean | string | DraggableDroppableFn` (confirmed
+directly against the type definitions) — no config-object passthrough the way `resizable` gets — a
+moot gap here since the Dragger needed no fix at all, but recorded since the task asked specifically
+about a Dragger hook.
+
+**A real, separate, more consequential bug surfaced while verifying the fix actually worked in the
+real editor (not just the isolated harness):** the fix's own `mousePosFetcher`, live-tested first
+via a temporary debug log, was confirmed to NEVER fire in the real app at all. Direct inspection
+(`comp.resizable`/`comp.get('resizable')`, both — `Component` has a real getter property distinct
+from the raw Backbone attribute, checked to rule out reading the wrong one) showed the SELECTED
+component's own `resizable` was a plain **boolean**, not `resizableConfig()`'s rich object.
+`serialization.js`'s `elementComponent()` — the one real function every element in every design
+passes through — set `resizable: !el.locked` unconditionally on every element instance, a change
+added later (for the Layers panel's lock/hide toggle) after the original Phase 4A/4B `silentFrames`/
+`updateTarget` fix was built and live-verified working. Per Backbone Model semantics, an explicit
+instance-level attribute always shadows the component TYPE's own `defaults` — meaning `silentFrames`/
+`updateTarget`, and now `mousePosFetcher`, had silently never been the real resize configuration for
+ANY element loaded through the real production load path since whichever pass added the lock
+feature, despite that earlier fix's own extensive, genuinely-live-verified-at-the-time documentation.
+This is not a case of a false historical claim — the original fix WAS correct and proven when
+written; a later, unrelated change silently broke it by a mechanism (instance-boolean-shadows-type-
+default) nobody had reason to suspect while working on a completely different feature (locking).
+Fixed by only ever setting `resizable` at the instance level when actually locked (`resizable:
+false`) — otherwise the key is omitted entirely, letting Backbone's own defaults fallback apply the
+type's real config as originally intended. Confirmed directly, before and after: `comp.resizable`
+went from a bare boolean to the full `{tl,tc,tr,cl,cr,bl,bc,br,silentFrames,mousePosFetcher,
+updateTarget}` object, and the debug log confirmed `mousePosFetcher` firing with the correct live
+zoom value on every resize mousemove.
+
+**Two further, real, NOT-yet-resolved issues surfaced by this same fix, flagged rather than
+silently patched or silently left undocumented — this fix is what made both reachable for the first
+time, since neither `updateTarget` nor its own bounds-clamp code (added in the earlier Phase 1 pass)
+had ever actually been running for a real resize before today:** (1) Undo does not revert a resize —
+tested live: resize a selected element, `UndoManager.hasUndo()` reports true and the Undo button is
+enabled, but clicking it leaves the element at its POST-resize geometry, not its pre-resize one (Redo
+is consequently also a no-op, since there's nothing real to redo). Whether this is specific to
+resize (drag/nudge undo were not re-tested this pass, given time already spent) or a wider
+GrapesJS-UndoManager-vs-`updateTarget`'s-manual-`addStyle`-calls interaction is not yet known. (2)
+The resize bounds-clamp (`clampToBoundsMm`, Phase 1) does not reliably hold under a larger,
+boundary-crossing drag — an isolated, single-small-step test confirmed the clamp DOES work correctly
+(raw width kept growing across several intermediate frames while the clamped model value stayed
+fixed exactly at the content-width boundary), but a longer, larger drag on the same element produced
+a final saved width well past the boundary (confirmed via a real backend 400 on save: `"...extends
+beyond the right edge... x=111.92 + width=81.76 = 193.68, which exceeds 174"`) — suggesting a
+frame-count- or drag-distance-dependent inconsistency in how the clamp's own written values interact
+with GrapesJS's own internal per-frame rect tracking, not yet root-caused. Both are flagged here as
+real, open follow-up items — deliberately not force-fixed under this same investigation's time
+budget, per the same "don't force it through, flag genuine judgment calls" principle the Option A/B
+decision itself was held to.
+
+Alternatives considered: keeping the CSS-transform zoom mechanism AND switching only the Dragger's
+own internal delta source to also flow through a custom hook (mirroring the Resizer's fix) — 
+rejected once live testing showed the Dragger needs no fix at all; doing so would have been
+unnecessary surface area with its own regression risk for zero real benefit. Patching GrapesJS's own
+Resizer/Canvas internals directly (the class of fix an earlier Phase 4A pass used for the resize-commit
+bug, via a `Resizer.prototype` monkeypatch used only to DIAGNOSE, never to ship) was not attempted
+here — `mousePosFetcher` is a real, public, intended-for-this-purpose option, a fundamentally
+different risk profile than patching an undocumented prototype method.
+
+Verification: full frontend suite, 262/262 passing (`npx vitest run` — this fix touched no test
+file; existing coverage for `clampToBoundsMm`/`getElementBoundWidthMm`/serialization continues to
+pass unchanged). Full `apps.invoices` backend suite, 1063/1063 passing (this fix touched no backend
+file at all). Clean production `vite build`. Live Playwright measurement against the REAL editor
+(not the isolated harness), fresh page load per zoom level, a small (30px) real-screen-pixel drag on
+the same real, saved "totals" element, at zoom 1/0.4/0.65/0.8: every level produced a width/height
+delta matching the zoom-correct prediction (`screenDelta / zoom * mm-per-px`) within normal rounding
+tolerance, and — critically, since this element type has never had this specifically verified before
+— x/y position stayed exactly unchanged (0mm drift) at every level, confirming the fix does not
+reintroduce anything resembling the native-zoom corruption it was chosen specifically to avoid.
+Regression spot-checks, live: the dirty-state ("Unsaved changes") badge correctly appears after a
+zoomed resize and is absent beforehand; the content-overflow advisory banner's own presence/absence
+was checked (informational only, this particular design doesn't currently overflow); sidebar-flagged
+elements and multi-select/alignment were reviewed in code (both read the same shared
+`getElementBoundWidthMm`/`resizableConfig` paths this fix touches, with no logic specific to either
+changed) but not independently live-tested this pass, given time already spent on the two flagged
+follow-up items above — noted here rather than silently claimed as verified.
+
+Docs: this entry; `LANCERAOS_TEMPLATE_BUILDER_ARCHITECTURE.md`'s §35 GrapesJS build-vs-keep entry
+updated to reflect this fix (one of its 4 cited "internal-bug workarounds" is now closed, via a
+real documented API rather than an undocumented patch — a relevant, if minor, data point for
+whatever build-vs-keep call gets made) and to name the two new follow-up items this fix surfaced.
+
+Date: 29 August 2026 (Phase 2 continuation — drag reposition bug: the prior "drag already correct" claim
+was wrong, retracted; real root cause found and fixed; a separate, unresolved real-browser-zoom
+interaction bug found and flagged)
+Decision: retracting this same day's earlier "resize-handle/zoom desync" entry's claim that drag needed
+no fix — a real user report ("dragging to reposition is wrong at non-100% app zoom... sometimes it does
+and sometimes don't, however it comes back on its own") directly contradicted it. Investigated rigorously
+this time: every hypothesis tested with at least 10 real, repeated Playwright drag trials per condition,
+not a single measurement. Root cause found and fixed: `DesignEditor.jsx`'s canvas mouseup handler (drag-
+commit) walks up from `e.target` looking for a `data-el-type` ancestor to identify which component was
+just dragged — but a real drag's own mouseup event lands on GrapesJS's own `.gjs-hovered` highlight
+overlay (confirmed directly by logging `e.target`), a SIBLING overlay element, never a descendant of the
+dragged element — so the walk-up finds nothing, and the entire rest of the handler (the Phase 1 bounds
+clamp and the pre-existing Phase 4B.1 resync) silently never ran for a real drag commit at all. It only
+ran later, whenever the user happened to mouseup squarely on the element's own rendered content again (a
+reselect, e.g.) — which is exactly "comes back on its own": an out-of-bounds drag committed uncontested,
+visibly wrong, until the NEXT unrelated interaction finally triggered the clamp for the first time.
+
+Reason, methodology, and what was ruled out first (per this task's own explicit standard — a single
+passing measurement is not evidence given a reported intermittent bug):
+
+**The user's own CSS-transition-timing hypothesis was tested directly and definitively falsified.** The
+zoom wrapper's `transition: transform 0.15s ease` was suspected as a race — dragging during the 150ms
+window reading a not-yet-settled transform. Tested at app zoom=0.4 (the level a prior chained test had
+already shown reproduces the bug) across three conditions, 10 trials each, same browser session: dragging
+~50ms after the zoom-button click (well inside the 150ms window), ~180ms after (just past it), and 600ms
+after (fully settled). Before the real fix, ALL THREE conditions reproduced the IDENTICAL failure pattern
+(trial 1 alone correct, every subsequent trial showing the exact same wrong delta) — timing relative to
+the CSS transition made no measurable difference whatsoever. This rules out the transition-timing
+hypothesis conclusively, not by assumption.
+
+**An initial, wrong hypothesis of my own — a race against GrapesJS's own async model commit — was also
+tested directly and falsified**, the same rigor applied to the user's hypothesis: deferred the bounds-
+clamp check via `setTimeout(0)` (the same pattern the pre-existing resync already uses, on the theory that
+GrapesJS's Sorter might not have finished writing the model by the time the clamp read it). Identical
+result before and after — proving the clamp wasn't running late, it wasn't running AT ALL. Only after
+adding a raw `e.target` log (tag/class, not just the walk-up's own boolean outcome) did the real cause —
+`.gjs-hovered` intercepting the walk-up entirely — become visible. Both wrong hypotheses are recorded here
+deliberately, not quietly dropped, since disproving them is exactly what makes the real cause credible
+rather than another guess.
+
+**Why this correlates with zoom without being caused by zoom, precisely:** the same real mouse-pixel drag
+covers far more model-space distance at low app zoom (model delta = screen-pixel delta / zoom — the
+correct, already-verified behavior from this session's earlier resize fix). The test element's own
+starting position (x=111.9mm, width=61.9mm, against a 174mm content bound) leaves only ~0.2mm of margin
+before the right edge — trivial to exceed with almost any rightward drag once the zoom-scaling makes a
+modest mouse movement into a large model-space one. The actual bug (the clamp/resync block never running
+on a real drag's own mouseup) is completely zoom-agnostic — a fresh single drag at ANY zoom, small enough
+to stay in bounds, always looked correct, because there was nothing for the (never-running) clamp to
+have caught in the first place. This is also why an earlier same-day audit pass's own single-measurement
+test at each zoom level (drag once, fresh page load, small delta) reported "drag already correct" — every
+one of those trials happened to stay within bounds, so the missing clamp/resync never had anything to
+expose.
+
+Fixed by making the mouseup handler's target resolution fall back to `ed.getSelected()` when the walk-up
+finds no `data-el-type` ancestor — reliable here because GrapesJS's own Sorter always keeps the dragged
+component selected throughout and after a `dmode:'absolute'` drag, so there is no need to enumerate every
+overlay class GrapesJS might put under the cursor at mouseup (a real drag could in principle land on
+different overlay elements depending on interaction specifics — the `.gjs-hovered` case is simply the one
+this investigation's exact trials reproduced). Verified directly, not assumed: raw, unrounded
+`comp.getStyle()` reads before/after a forward drag now show the SAME value the immediate next reselect
+also reads (no more silent jump between the two) — confirmed with the exact same reproduction sequence
+that exposed the bug in the first place, before and after the fix.
+
+**A genuinely separate, NOT fixed, real bug found and flagged rather than silently expanded into:**
+real browser zoom (Ctrl+/-, pinch-zoom — distinct from this app's own CSS-transform zoom buttons) breaks
+reliable canvas interaction at a structural level, independent of the drag bug above. Confirmed via CDP's
+`Emulation.setDeviceMetricsOverride` `scale` parameter (verified first, against a plain reference page, to
+be the mechanism that actually shrinks/expands the EFFECTIVE CSS-pixel viewport the way real browser zoom
+does — `window.innerWidth` genuinely changes, unlike `Page.setDeviceMetricsOverride`'s same-named
+parameter, `Emulation.setPageScaleFactor`, real `Control+Equal` keypresses in headless Chromium, or CSS
+`zoom`, none of which reproduced real-zoom's actual characteristics when checked directly). At 90%, 110%,
+and 125% simulated real browser zoom, attempting to select the same test element that works perfectly at
+100% real zoom instead hits GrapesJS's own `.gjs-hovered` highlight overlay intercepting the click — a
+DIFFERENT specific intercepting element at each zoom level (the canvas wrapper at 90%, the elements
+container at 110%, the mandatory table's own subtree at 125%) — meaning the actual rendered position of
+canvas content shifts enough under real browser zoom that a real mouse click can land on entirely the
+wrong thing. This is not a Playwright artifact: `elementFromPoint`-style hit-testing failures reflect
+genuine DOM stacking/positioning, which would affect a real mouse user identically. Root cause not fully
+determined this pass — plausibly the app's own outer flex/canvas layout reflowing differently at the
+wider effective viewport real zoom produces (confirmed real zoom genuinely changes `window.innerWidth`,
+e.g. 1600px context measured 1778px effective width at 90%), interacting with GrapesJS's own
+highlight-overlay positioning in a way this investigation did not have time to isolate further. Given the
+severity (basic selection breaking, not just drag) and the genuine uncertainty about the exact mechanism,
+this is named here as a real, open, flagged follow-up rather than force-fixed under this same pass's time
+budget, per this project's own established principle for exactly this situation.
+
+**A second, smaller, separate real-browser-zoom-specific bug also found and flagged, not fixed:** at 90%
+real browser zoom specifically, the editor's own top toolbar overlaps — the "Redo" button intercepts
+clicks intended for the "100%" app-zoom button — a genuine responsive-layout bug at that specific
+combination of app-toolbar width and real-zoom-expanded effective viewport, unrelated to the canvas
+hit-testing issue above.
+
+Given both real-browser-zoom findings above, the FULL 10-trial-per-condition matrix (5 app-zoom levels x
+4 real-browser-zoom levels) could not be completed with equal rigor at every cell: 100% real browser zoom
+was fully completed (5 app-zoom levels x 10 trials each, all passing, plus the 3-condition timing test, 10
+trials each) — the app-zoom-only dimension of the matrix this task asked for is therefore fully verified
+fixed. The 90%/110%/125% real-browser-zoom conditions could not reach 10 clean trials each, because the
+combination itself — independent of anything this pass fixed or could fix — blocks even the initial
+element selection needed to run a trial at all, for reasons named above as a separate, unresolved
+follow-up rather than glossed over as "matrix incomplete, no further comment."
+
+Alternatives considered: enumerating every GrapesJS overlay class (`.gjs-hovered`, `.gjs-selected`, etc.)
+explicitly in the walk-up's own target check, rather than falling back to `ed.getSelected()` — rejected as
+more fragile (a future GrapesJS version or a not-yet-encountered overlay class would silently reintroduce
+the exact same gap) and unnecessary, since `ed.getSelected()` is already the authoritative source of truth
+for "which component is this interaction about" in every other call site in this same file.
+
+Verification: full frontend suite, 262/262 passing (`npx vitest run` — this fix touched no test file
+directly; a proper, deterministic unit test for the specific mouseup-target-resolution fallback is a real
+gap this pass did not have time to add, flagged here rather than silently omitted). Full `apps.invoices`
+backend suite, 1063/1063 passing (this fix touched no backend file). Clean production `vite build`. Live
+Playwright verification, the actual required standard for this pass (real counts, not adjectives): timing/
+race hypothesis, 3 conditions x 10 trials = 30/30 passing after the fix (0/10, 0/10, 0/10 before it, at
+the one condition already known to reproduce — see above for why all three were identical, not just the
+"during transition" one); app-zoom matrix at 100% real browser zoom, 5 app-zoom levels x 10 trials = 50/50
+passing after the fix. Real browser zoom at 90%/110%/125%: 0 clean trials completed at any of the three,
+for the separate, flagged, NOT-fixed reason above — reported honestly as incomplete, not padded with
+partial or assumed data.
+
+Docs: this entry, explicitly retracting this same day's earlier "drag already correct, no fix needed"
+claim rather than silently superseding it; `LANCERAOS_TEMPLATE_BUILDER_ARCHITECTURE.md`'s §35 updated
+again with the corrected understanding of the zoom mechanism and the two newly-flagged real-browser-zoom
+issues.

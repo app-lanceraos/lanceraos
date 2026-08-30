@@ -143,6 +143,13 @@ export default function DesignEditor() {
   // clamp) always sees the CURRENTLY loaded page's real bounds.
   const canvasDocRef = useRef(null)
   useEffect(() => { canvasDocRef.current = canvasDoc }, [canvasDoc])
+  // Phase 2 — same stale-closure concern, for the resize-handle/zoom
+  // desync fix: componentTypes.js's resizableConfig() is attached once,
+  // at component-type registration, and needs the CURRENT zoom on every
+  // resize-handle mousemove — a plain closure over `zoom` state would
+  // freeze at whatever it was when the editor first initialized.
+  const zoomRef = useRef(zoom)
+  useEffect(() => { zoomRef.current = zoom }, [zoom])
 
   useEffect(() => {
     // Phase 5.1 — `builtins` only ever feeds the dev-only template/variant
@@ -511,9 +518,15 @@ export default function DesignEditor() {
     return { leftMm: x, topMm: y }
   }
 
+  // Phase 2 — resize-handle/zoom desync fix. Reads zoomRef (never `zoom`
+  // state directly — see that ref's own declaration comment).
+  function getZoom() {
+    return zoomRef.current
+  }
+
   const onEditorInit = useCallback((ed) => {
     setEditor(ed)
-    registerComponentTypes(ed, getElementBoundWidthMm)
+    registerComponentTypes(ed, getElementBoundWidthMm, getZoom)
     // A real, live GrapesJS editor reference on `window` — genuinely
     // useful for direct console-level debugging and for any future
     // Playwright coverage that needs to inspect internal editor state
@@ -662,42 +675,74 @@ export default function DesignEditor() {
       // its one confirmed failure mode.
       canvasDocument.addEventListener('mouseup', (e) => {
         let node = e.target
+        let comp = null
         while (node && node !== canvasDocument.body) {
           if (node.hasAttribute && node.hasAttribute('data-el-type') && node.id) {
-            const comp = ed.getWrapper().find(`#${node.id}`)[0]
-            if (comp && ed.getSelected() !== comp) ed.select(comp)
-            // Phase 5.1 client-side bounds clamp — a plain drag only
-            // ever repositions (x/y), never resizes, so only x/y are
-            // clamped here (mirrors design_schema.py's
-            // _validate_page_bounds; see clampXYMm's own comment).
-            // Reads whatever GrapesJS's own Sorter already committed to
-            // this component's style by the time mouseup fires.
-            if (comp) {
-              const boundWMm = getElementBoundWidthMm(comp)
-              const style = comp.getStyle() || {}
-              const widthMm = pxToMm(parseFloat(style.width) || 0)
-              const leftMm = pxToMm(parseFloat(style.left) || 0)
-              const topMm = pxToMm(parseFloat(style.top) || 0)
-              const clamped = clampXYMm(leftMm, topMm, widthMm, boundWMm)
-              if (clamped.leftMm !== leftMm || clamped.topMm !== topMm) {
-                comp.addStyle({ left: `${mmToPx(clamped.leftMm)}px`, top: `${mmToPx(clamped.topMm)}px` })
-              }
-            }
-            // Phase 4B.1: the same real model/view desync componentTypes.js's
-            // resize updateTarget now fixes (see that file's own comment)
-            // also happens after a plain DRAG, confirmed directly — and a
-            // drag's own mouseup always lands inside this iframe (unlike a
-            // resize handle's mouseup, which lands in the MAIN document,
-            // outside this listener's reach entirely — that direction is
-            // covered by componentTypes.js's own updateTarget instead).
-            // window.__v2ResyncView is the one shared implementation both
-            // paths call, deferred past this event's own call stack so it
-            // never fights whichever native interaction just committed.
-            if (comp && window.__v2ResyncView) window.__v2ResyncView(comp)
+            comp = ed.getWrapper().find(`#${node.id}`)[0]
             break
           }
           node = node.parentElement
         }
+        // Phase 2 real bug found and fixed while investigating a real
+        // user-reported "drag position is sometimes wrong at non-100%
+        // zoom, then comes back on its own" — root-caused via live,
+        // repeated-trial Playwright testing (many trials per condition,
+        // not one measurement), not assumed: the walk-up above found
+        // NOTHING for a genuine drag's own mouseup, confirmed directly
+        // by logging `e.target` — it's GrapesJS's own `.gjs-hovered`
+        // highlight overlay, a sibling overlay element, never a
+        // descendant of the dragged element. This meant the ENTIRE rest
+        // of this handler (the bounds clamp below AND the Phase 4B.1
+        // resync) silently never ran for a real drag commit at all —
+        // only later, whenever the user happened to mouseup squarely on
+        // the element's own rendered content again (a reselect, a
+        // resize-handle click, etc.), which is exactly "comes back on
+        // its own." An initial hypothesis — that this was a timing race
+        // against GrapesJS's own async commit — was tested directly
+        // (deferring the clamp check via setTimeout(0)) and definitively
+        // disproven (identical result); the earlier CSS-transition-
+        // timing hypothesis was also directly tested (dragging during/
+        // just-after/long-after the 150ms transition — 3 conditions x
+        // 10 trials each) and equally disproven — all three conditions
+        // reproduced the identical failure once triggered. This is why
+        // it correlates with zoom without being CAUSED by zoom: the same
+        // real mouse-pixel drag covers far more model-space distance at
+        // low zoom (delta = screen-delta / zoom), so it's far easier to
+        // push an element out of the content-width bound in the first
+        // place — the actual bug (this handler never running) is zoom-
+        // agnostic. Fixed by falling back to `ed.getSelected()` — always
+        // reliable here, since GrapesJS's own Sorter keeps the dragged
+        // component selected throughout and after a `dmode:'absolute'`
+        // drag — rather than trying to enumerate every overlay class
+        // GrapesJS might put under the cursor at mouseup.
+        if (!comp) comp = ed.getSelected()
+        if (!comp || !comp.getAttributes || !comp.getAttributes()['data-el-type']) return
+
+        if (ed.getSelected() !== comp) ed.select(comp)
+        // Phase 5.1 client-side bounds clamp — a plain drag only ever
+        // repositions (x/y), never resizes, so only x/y are clamped
+        // here (mirrors design_schema.py's _validate_page_bounds; see
+        // clampXYMm's own comment).
+        const boundWMm = getElementBoundWidthMm(comp)
+        const style = comp.getStyle() || {}
+        const widthMm = pxToMm(parseFloat(style.width) || 0)
+        const leftMm = pxToMm(parseFloat(style.left) || 0)
+        const topMm = pxToMm(parseFloat(style.top) || 0)
+        const clamped = clampXYMm(leftMm, topMm, widthMm, boundWMm)
+        if (clamped.leftMm !== leftMm || clamped.topMm !== topMm) {
+          comp.addStyle({ left: `${mmToPx(clamped.leftMm)}px`, top: `${mmToPx(clamped.topMm)}px` })
+        }
+        // Phase 4B.1: the same real model/view desync componentTypes.js's
+        // resize updateTarget now fixes (see that file's own comment)
+        // also happens after a plain DRAG, confirmed directly — and a
+        // drag's own mouseup always lands inside this iframe (unlike a
+        // resize handle's mouseup, which lands in the MAIN document,
+        // outside this listener's reach entirely — that direction is
+        // covered by componentTypes.js's own updateTarget instead).
+        // window.__v2ResyncView is the one shared implementation both
+        // paths call, deferred past this event's own call stack so it
+        // never fights whichever native interaction just committed.
+        if (window.__v2ResyncView) window.__v2ResyncView(comp)
       })
 
       canvasDocument.addEventListener('keydown', (e) => {
