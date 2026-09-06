@@ -168,17 +168,25 @@ def classify_design_image(raw_bytes):
     }]
 
     try:
-        # 2000, not a tight budget matching this schema's own tiny output —
-        # a real live-API test against qwen/qwen3.6-27b (a "thinking" model)
-        # showed its <think> reasoning block alone burns through several
-        # hundred tokens before it ever reaches the actual JSON answer;
-        # max_tokens=500 truncated mid-thought, before any real output,
-        # every time. The POC's own analyze_design call used 4000 for the
-        # same reason (a much bigger output schema, but the same thinking-
-        # budget problem) — 2000 comfortably covers this schema's own much
-        # smaller final answer plus the model's real reasoning overhead,
-        # confirmed directly against the live API, not assumed.
-        raw_reply = call_groq(messages, settings.GROQ_MODEL_VISION, max_tokens=2000)
+        # 800 — re-tuned in Phase 0 (06 September 2026) for the new default
+        # vision model, qwen/qwen3.8-27b, replacing qwen3.6-27b (being
+        # decommissioned by Groq 14 September 2026 — see settings.py's own
+        # comment). The 2000-token budget this comment used to specify was
+        # tuned around qwen3.6-27b's own real, reproduced failure mode: a
+        # <think> reasoning block that could burn through the entire
+        # budget before ever reaching the JSON answer (confirmed again,
+        # live, in this same Phase 0 pass — qwen3.6-27b overran a fresh
+        # 2000-token budget mid-thought on an unrelated reference image).
+        # qwen3.8-27b does not exhibit that failure mode for this prompt:
+        # 9 real live-API calls (3 distinct reference images x max_tokens
+        # of 400/800/2000) every time returned a clean, immediately-
+        # parseable JSON reply with NO <think> block at all, well under
+        # 800 tokens' worth of output. 800 keeps real headroom above the
+        # ~300-character replies actually observed — for a possibly-
+        # longer `reasoning` sentence or an unusually verbose model
+        # response — without paying for a 2000-token budget a model that
+        # doesn't think out loud here has no real use for.
+        raw_reply = call_groq(messages, settings.GROQ_MODEL_VISION, max_tokens=800)
     except RuntimeError as exc:
         raise ValueError(f'The AI design service is unavailable right now: {exc}') from exc
 

@@ -379,18 +379,46 @@ cloudinary.config(
 # ══════════════════════════════════════════════════════════════════
 
 GROQ_API_KEY = env('GROQ_API_KEY', default='')
-GROQ_MODEL_FAST = 'openai/gpt-oss-20b'
-GROQ_MODEL_QUALITY = 'llama-3.3-70b-versatile'
+# Phase 0 (06 September 2026): all three model ids are now env-readable,
+# fixing a real asymmetry this comment used to flag — FAST/QUALITY were
+# plain hardcoded strings while only VISION was env()-read, despite a
+# model id being exactly the kind of value Groq can deprecate out from
+# under a hardcoded string with no code change possible. All three now
+# follow the same pattern: env-overridable, with the current best-known-
+# live model as the default.
+#
+# GROQ_MODEL_QUALITY's default changed in this same pass — its old
+# hardcoded value, 'llama-3.3-70b-versatile', was found to already be
+# DEAD (Groq shut it down 16 August 2026, per console.groq.com/docs/
+# deprecations, discovered by checking live GroqCloud status directly
+# rather than trusting this file's own prior claim — see DECISIONS.md).
+# Every apps.proposals/apps.tax AI call routed through GROQ_MODEL_QUALITY
+# has been silently failing since that date. Replaced with
+# 'openai/gpt-oss-120b' — Groq's own listed migration target for that
+# exact deprecation, confirmed live/active, and a genuinely strong
+# general-purpose reasoning model for complex writing tasks (131K context,
+# variable reasoning effort, not vision-specific like the qwen options
+# also listed as alternates).
+GROQ_MODEL_FAST = env('GROQ_MODEL_FAST', default='openai/gpt-oss-20b')
+GROQ_MODEL_QUALITY = env('GROQ_MODEL_QUALITY', default='openai/gpt-oss-120b')
 # apps.invoices' AI-seeded design classification (Step 9, core/ai.py +
 # apps/invoices/ai_design.py) is the first real Groq consumer in this
-# project. Read from env with the real POC-tested model as the default —
-# note this is NOT actually "the same pattern as GROQ_MODEL_FAST/QUALITY"
-# above (checked directly: those two are plain hardcoded strings, not env
-# reads, despite the sibling naming suggesting otherwise) — env-overridable
-# felt like the right call for a model id that Groq could deprecate out
-# from under a hardcoded string; not silently changing FAST/QUALITY to
-# match, since that wasn't asked for here.
-GROQ_MODEL_VISION = env('GROQ_MODEL_VISION', default='qwen/qwen3.6-27b')
+# project. GROQ_MODEL_VISION's default changed in this same Phase 0 pass:
+# 'qwen/qwen3.6-27b' is being decommissioned by Groq on 14 September 2026
+# (requests auto-route to 'qwen3.8-27b' after that date). Rather than
+# accept the automatic reroute, 'qwen/qwen3.8-27b' is set explicitly here
+# — evaluated deliberately, not just because it's the default migration
+# target: as of this writing it is one of only two vision-capable models
+# on GroqCloud at all (the other being qwen3.6-27b itself); Meta's Llama 4
+# Scout/Maverick, the only other multimodal models Groq has ever hosted,
+# are BOTH already decommissioned (07/17/26 and 03/09/26 respectively).
+# Live-tested directly against the real Groq API (see DECISIONS.md) —
+# qwen3.8-27b reliably returned clean, immediately-parseable JSON with no
+# <think> reasoning block across 9 real calls (3 distinct reference
+# images x 3 max_tokens values), unlike qwen3.6-27b, which was reproduced
+# live in this same test run genuinely overrunning a 2000-token budget
+# mid-thought on the exact same image.
+GROQ_MODEL_VISION = env('GROQ_MODEL_VISION', default='qwen/qwen3.8-27b')
 
 # ══════════════════════════════════════════════════════════════════
 # CELERY / CHANNELS

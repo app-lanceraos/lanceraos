@@ -951,9 +951,10 @@ body {
   z-index: 7;
 }
 
-.rail-overlay {
+/* The marquee (drag-select) box drawn on empty canvas. */
+.selection-box {
   position: absolute;
-  border: 1.5px dashed var(--purple-300);
+  border: 1.5px solid var(--purple-300);
   background: rgba(168, 156, 242, 0.08);
   pointer-events: none;
   z-index: 2;

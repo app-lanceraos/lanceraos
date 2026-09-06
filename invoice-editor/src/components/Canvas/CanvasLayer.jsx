@@ -1,35 +1,27 @@
 import React, { useState } from 'react';
 import { useEditor } from '../../state/EditorContext';
-import { detectRail } from '../../data/shapeCatalog';
 import { beginDragSelectGuard } from '../../utils/dragGuard';
 import { rotatedBoundingBox } from '../../utils/geometry';
 import CanvasItem from './CanvasItem';
 import GroupSelectionOverlay from './GroupSelectionOverlay';
 
-// Single free-positioning canvas for every item — shape or content. Shapes
-// still paint as background decoration: the shape group is painted first,
-// the content group after, so content always sits visually above shapes
-// regardless of where either sits in the underlying flat `template.items`
-// array (which only orders items relative to their own kind-group).
+// Single free-positioning canvas for every item — shape or content, painted
+// in a SINGLE pass, in `template.items`'s own array order (index 0 = back,
+// last = front) — the shape-behind-content guarantee is not an artifact of
+// two hardcoded render groups; it comes entirely from EditorContext keeping
+// that array order itself correct (see utils/zorder.js's normalizeZOrder,
+// applied by every mutation that can change order or add items). This is
+// what actually lets an allowFreeLayering item (e.g. a user-placed image)
+// interleave above content — painting two fixed groups back-to-front could
+// never do that no matter what the array said.
 export default function CanvasLayer({ readOnly = false }) {
   const { template, selection, setSelection, guides, zoom, setContextMenu } = useEditor();
   const [marquee, setMarquee] = useState(null); // {x,y,w,h} while dragging on empty canvas, in PAGE units
 
-  // Prompt 26 item 3: painted in a SINGLE pass, in `template.items`'s own
-  // array order (index 0 = back, last = front) — the shape-behind-content
-  // guarantee is no longer an artifact of two hardcoded render groups; it
-  // now comes entirely from EditorContext keeping that array order itself
-  // correct (see utils/zorder.js's normalizeZOrder, applied by every
-  // mutation that can change order or add items). This is what actually
-  // lets a future allowFreeLayering item interleave above content —
-  // painting two fixed groups back-to-front could never do that no
-  // matter what the array said.
   // Prompt 26 item 1: hidden items are filtered out here — they don't
   // render, aren't selectable (nothing to click), and (being absent from
-  // this same list) never appear in the rail-detection or marquee hit-
-  // test below either.
+  // this same list) never appear in the marquee hit-test below either.
   const visibleItems = template.items.filter((i) => !i.hidden);
-  const shapes = visibleItems.filter((i) => i.kind === 'shape');
 
   const startMarquee = (e) => {
     // Prompt 29 item 6: a right (or middle) click on empty canvas must
@@ -119,13 +111,6 @@ export default function CanvasLayer({ readOnly = false }) {
     }
   };
 
-  // Live rail preview: while a selected shape is near an edge, show the
-  // dashed safe-area indicator (approximated from committed shape state —
-  // good enough since rail recognition only matters once released).
-  const rails = !readOnly && shapes
-    .map((shape) => ({ shape, rail: detectRail(shape, template.page) }))
-    .filter((r) => r.rail && selection.ids.includes(r.shape.id));
-
   return (
     <div
       className="canvas-layer"
@@ -138,23 +123,10 @@ export default function CanvasLayer({ readOnly = false }) {
 
       {!readOnly && <GroupSelectionOverlay />}
 
-      {!readOnly && rails.map(({ shape, rail }) => (
-        <div
-          key={shape.id}
-          className="rail-overlay"
-          style={{
-            left: rail.edge === 'right' ? undefined : rail.edge === 'left' ? rail.thickness : 0,
-            right: rail.edge === 'right' ? rail.thickness : rail.edge === 'left' ? undefined : 0,
-            top: rail.edge === 'bottom' ? undefined : rail.edge === 'top' ? rail.thickness : 0,
-            bottom: rail.edge === 'bottom' ? rail.thickness : rail.edge === 'top' ? undefined : 0,
-          }}
-        />
-      ))}
-
       {!readOnly && marquee && (
         <div
-          className="rail-overlay"
-          style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h, borderStyle: 'solid' }}
+          className="selection-box"
+          style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
         />
       )}
 

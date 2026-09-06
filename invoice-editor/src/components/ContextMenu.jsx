@@ -34,7 +34,7 @@ function itemCapabilities(item) {
 export default function ContextMenu() {
   const {
     template, selection, setSelection, contextMenu, setContextMenu,
-    duplicateItems, deleteItems, canDeleteSelection, updateItems, updateItemPart, groupItems,
+    duplicateItems, deleteItems, canDeleteSelection, updateItems, updateItemPart,
     moveSelectionZ,
   } = useEditor();
 
@@ -70,7 +70,6 @@ export default function ContextMenu() {
   // action every selected item actually supports shows up.
   const commonCaps = selectedItems.map(itemCapabilities).reduce((a, b) => new Set([...a].filter((x) => b.has(x))));
 
-  const canGroup = selectedItems.length >= 2 && selectedItems.every((i) => !i.locked);
   // Prompt 21 item 2: content items can't be duplicated/copied at all —
   // `canDuplicate` uses "at least one shape in the selection" (not the
   // Prompt 15 intersection every OTHER capability here uses) so the
@@ -130,9 +129,6 @@ export default function ContextMenu() {
       label: 'Reset border radius',
       run: () => updateItems(selection.ids, (item) => (item.kind === 'shape' ? { radius: 0 } : { cornerRadius: 0 })),
     });
-  }
-  if (canGroup) {
-    actions.push({ key: 'group', label: 'Group', run: () => groupItems(selection.ids) });
   }
   // Prompt 26 item 2: z-order actions, available for any non-empty
   // selection regardless of lock state (locking blocks

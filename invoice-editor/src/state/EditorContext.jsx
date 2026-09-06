@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useMemo, useReducer, useRef, useState } from 'react';
 import { historyReducer, initialHistoryState } from './historyReducer';
 import { ELEMENT_TYPES, createContentItem } from '../data/elementCatalog';
-import { createShape, detectRail } from '../data/shapeCatalog';
+import { createShape } from '../data/shapeCatalog';
 import { validateTemplate } from '../utils/validation';
 import { normalizeZOrder, appendRespectingZOrder, stepSelectionOnce } from '../utils/zorder';
 
@@ -485,24 +485,6 @@ export function EditorProvider({ children }) {
     [itemsById, updateItem]
   );
 
-  const groupItems = useCallback(
-    (ids) => {
-      if (ids.length < 2) return;
-      const groupId = `group-${Date.now()}`;
-      commit({ ...template, groups: { ...template.groups, [groupId]: ids } });
-    },
-    [template, commit]
-  );
-
-  const ungroupItems = useCallback(
-    (groupId) => {
-      const groups = { ...template.groups };
-      delete groups[groupId];
-      commit({ ...template, groups });
-    },
-    [template, commit]
-  );
-
   // Page background is a per-template value (not the global --page-bg
   // token), so different templates can each have their own page color.
   const updatePageBackground = useCallback(
@@ -525,30 +507,16 @@ export function EditorProvider({ children }) {
     [template, commit]
   );
 
-  // rails: recompute which shapes currently act as edge rails, and by how
-  // much they'd inset the page's safe area on each side (used by
-  // validation only now — there's no flow container left to actually pad).
-  const railInsets = useMemo(() => {
-    const insets = { top: 0, bottom: 0, left: 0, right: 0 };
-    template.items.forEach((item) => {
-      if (item.kind !== 'shape' || item.hidden) return;
-      const rail = detectRail(item, template.page);
-      if (rail) insets[rail.edge] = Math.max(insets[rail.edge], rail.thickness);
-    });
-    return insets;
-  }, [template.items, template.page]);
-
   const runSave = useCallback(() => {
-    const issues = validateTemplate(template, railInsets);
+    const issues = validateTemplate(template, effectiveSizes);
     const hasErrors = issues.some((i) => i.level === 'error');
     setSaveState({ status: hasErrors ? 'blocked' : 'saved', issues });
     return !hasErrors;
-  }, [template, railInsets]);
+  }, [template, effectiveSizes]);
 
   const value = {
     template,
     itemsById,
-    railInsets,
     saveState,
     runSave,
     canUndo: history.past.length > 0,
@@ -591,8 +559,6 @@ export function EditorProvider({ children }) {
     reorderItems,
     toggleItemLocked,
     toggleItemHidden,
-    groupItems,
-    ungroupItems,
     updatePageBackground,
     updateTheme,
   };

@@ -31,7 +31,7 @@ export function useKeyboardShortcuts({ onPreviewToggle } = {}) {
   const {
     template, selection, setSelection,
     undo, redo, runSave,
-    deleteItems, canDeleteSelection, deleteBlockLine, canDeleteBlockLine, duplicateItems, groupItems,
+    deleteItems, canDeleteSelection, deleteBlockLine, canDeleteBlockLine, duplicateItems,
     addItemsFromClipboard, addImageItem,
   } = useEditor();
 
@@ -55,12 +55,6 @@ export function useKeyboardShortcuts({ onPreviewToggle } = {}) {
         // Prompt 26 item 1: a hidden item isn't rendered/selectable on
         // canvas at all — select-all shouldn't silently include it either.
         setSelection({ ids: template.items.filter((i) => !i.hidden).map((i) => i.id), part: null });
-        return;
-      }
-
-      if (mod && e.key.toLowerCase() === 'g') {
-        e.preventDefault();
-        if (selection.ids.length >= 2) groupItems(selection.ids);
         return;
       }
 
@@ -127,7 +121,7 @@ export function useKeyboardShortcuts({ onPreviewToggle } = {}) {
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [template, selection, undo, redo, runSave, deleteItems, canDeleteSelection, deleteBlockLine, canDeleteBlockLine, duplicateItems, groupItems, setSelection, addItemsFromClipboard, onPreviewToggle]);
+  }, [template, selection, undo, redo, runSave, deleteItems, canDeleteSelection, deleteBlockLine, canDeleteBlockLine, duplicateItems, setSelection, addItemsFromClipboard, onPreviewToggle]);
 
   // Prompt 27 item 2: real OS clipboard image data (e.g. a screenshot
   // copied elsewhere, then Cmd/Ctrl+V'd here) — a genuinely separate

@@ -11,13 +11,14 @@ export function getFooterTop(items, page) {
 }
 
 // The valid position/size envelope for an item: shapes may sit flush
-// against the true page edge (0/page.width — required for the rail
-// behavior) and content items must stay at least PAGE_PADDING away from
-// every edge — EXCEPT at the bottom, where the footer's own top edge
-// applies instead whenever it's the more restrictive of the two. Every
-// kind is excluded from the footer's strip, including shapes: a decorative
-// rail is allowed flush against the true page edge everywhere else, but
-// not through the footer specifically.
+// against the true page edge (0/page.width — a decorative bar/divider
+// along a page edge is a legitimate design choice on its own merits) and
+// content items must stay at least PAGE_PADDING away from every edge —
+// EXCEPT at the bottom, where the footer's own top edge applies instead
+// whenever it's the more restrictive of the two. Every kind is excluded
+// from the footer's strip, including shapes: a decorative shape is
+// allowed flush against the true page edge everywhere else, but not
+// through the footer specifically.
 export function getItemBounds(item, page, footerTop = page.height) {
   const bottomLimit = Math.min(page.height, footerTop);
   if (item.kind === 'shape') {
@@ -394,9 +395,9 @@ export function detectEqualSpacing(draggedPos, draggedSize, rowItems, tolerance)
 // side that no OTHER item's own box may cross, so when two items are as
 // close as the constraint allows, there's 1px (mover) + 1px (neighbor) =
 // 2px of real empty space between their actual borders. Shapes are exempt
-// — same rail exception as the Prompt 5 edge-padding rule, since a
-// decorative rail is meant to sit flush against/behind content, not be
-// pushed away by it.
+// — same exemption as the Prompt 5 edge-padding rule, since a decorative
+// shape is meant to sit flush against/behind content, not be pushed away
+// by it.
 export const COLLISION_MARGIN = 1;
 
 // The axis-aligned box that encloses a (possibly rotated) item — two
@@ -780,6 +781,20 @@ export function clampToPage(box, bounds) {
       bottom: y + height >= bounds.maxY - 0.5,
     },
   };
+}
+
+// Prompt 27 item 3: how far past its own true pixel resolution an image
+// can be stretched before it's likely to look visibly soft/pixelated —
+// checked per axis (a non-uniform resize can over-stretch just one
+// dimension) against `item.sourceWidth/Height` (captured once at upload,
+// never touched again — see EditorContext's addImageItem). Lives here
+// (not in CanvasItem.jsx, its original home) so both CanvasItem's live
+// per-item badge and validation.js's save-time check can import it
+// without CanvasItem's own EditorContext dependency creating a cycle.
+export const PIXELATION_THRESHOLD = 1.5;
+export function isImagePixelated(item, width, height) {
+  if (!item.sourceWidth || !item.sourceHeight) return false;
+  return width / item.sourceWidth > PIXELATION_THRESHOLD || height / item.sourceHeight > PIXELATION_THRESHOLD;
 }
 
 // Hard boundary constraint for a RESIZE, against the same kind-aware

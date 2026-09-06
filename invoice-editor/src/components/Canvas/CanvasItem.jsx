@@ -26,6 +26,7 @@ import {
   detectEqualSpacing,
   SNAP_ENGAGE_TOLERANCE,
   SNAP_RELEASE_TOLERANCE,
+  isImagePixelated,
 } from '../../utils/geometry';
 import { beginDragSelectGuard } from '../../utils/dragGuard';
 import { resolveItemTheme } from '../../utils/theme';
@@ -544,17 +545,6 @@ function ImageBody({ item }) {
   );
 }
 
-// Prompt 27 item 3: how far past its own true pixel resolution an image
-// can be stretched before it's likely to look visibly soft/pixelated —
-// checked per axis (a non-uniform resize can over-stretch just one
-// dimension) against `item.sourceWidth/Height` (captured once at upload,
-// never touched again — see EditorContext's addImageItem).
-const PIXELATION_THRESHOLD = 1.5;
-function isImagePixelated(item, width, height) {
-  if (!item.sourceWidth || !item.sourceHeight) return false;
-  return width / item.sourceWidth > PIXELATION_THRESHOLD || height / item.sourceHeight > PIXELATION_THRESHOLD;
-}
-
 export const RotateIcon = (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
     <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
@@ -798,8 +788,8 @@ export default function CanvasItem({ item, readOnly = false }) {
     // line for it; the edge-glow already covers that same edge).
     const xCandidates = [...alignmentCandidates('x', others, template.page), ...boundaryCandidates(bounds, 'x')];
     const yCandidates = [...alignmentCandidates('y', others, template.page), ...boundaryCandidates(bounds, 'y')];
-    // Collision is content-vs-content only — shapes stay exempt, same rail
-    // exception as the Prompt 5 edge-padding rule. Neighbors are the raw
+    // Collision is content-vs-content only — shapes stay exempt, same
+    // exemption as the Prompt 5 edge-padding rule. Neighbors are the raw
     // items (not pre-expanded boxes) — the cascade needs each one's own
     // id/locked flag to know who it can push, and by how much — captured
     // once here since only one item's OWN position ever changes as a

@@ -59,10 +59,15 @@ Developer: Solo founder - Ali Amir
 - PDF generation: WeasyPrint
 - Media storage: Cloudinary
 - AI inference: Groq API
-- AI model (fast tasks): openai/gpt-oss-20b
-- AI model (complex writing): llama-3.3-70b-versatile
-- AI model (vision — image classify, Step 9): qwen/qwen3.6-27b, env-overridable via
-  GROQ_MODEL_VISION (unlike the two above, which are hardcoded, not env-read — see DECISIONS.md)
+- AI model (fast tasks): openai/gpt-oss-20b, env-overridable via GROQ_MODEL_FAST
+- AI model (complex writing): openai/gpt-oss-120b, env-overridable via GROQ_MODEL_QUALITY
+  (changed from llama-3.3-70b-versatile in Phase 0, 06 September 2026 — that model was found
+  to already be decommissioned by Groq on 16 August 2026; see DECISIONS.md)
+- AI model (vision — image classify, Step 9): qwen/qwen3.8-27b, env-overridable via
+  GROQ_MODEL_VISION (changed from qwen/qwen3.6-27b in the same Phase 0 pass — that model is
+  being decommissioned by Groq 14 September 2026; see DECISIONS.md for the live-tested
+  evaluation behind the replacement). All three model ids are now env-readable via the same
+  pattern (Phase 0 fixed a real asymmetry where only VISION was env-read).
 - Encryption: cryptography library (Fernet)
 - Node.js: 24 LTS
 
@@ -2006,8 +2011,14 @@ CELERY_BROKER_URL=
 CELERY_RESULT_BACKEND=
 CHANNEL_LAYER_URL=
 GROQ_API_KEY=
-GROQ_MODEL_FAST=openai/gpt-oss-20b
-GROQ_MODEL_QUALITY=llama-3.3-70b-versatile
+# GROQ_MODEL_FAST/QUALITY/VISION are all optional — each has a live-
+# verified default in config/settings.py (currently openai/gpt-oss-20b /
+# openai/gpt-oss-120b / qwen/qwen3.8-27b respectively) and only need a
+# real entry here to override it. See DECISIONS.md's Phase 0 entry
+# (06 September 2026) for why QUALITY/VISION's defaults changed.
+GROQ_MODEL_FAST=
+GROQ_MODEL_QUALITY=
+GROQ_MODEL_VISION=
 RESEND_API_KEY=
 RESEND_FROM_EMAIL=noreply@lanceraos.com
 RESEND_FROM_NAME=LanceraOS

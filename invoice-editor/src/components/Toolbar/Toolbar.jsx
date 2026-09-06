@@ -6,7 +6,7 @@ export default function Toolbar({ onPreview }) {
   const {
     canUndo, canRedo, undo, redo, runSave,
     template, selection, deleteItems, canDeleteSelection, deleteBlockLine, canDeleteBlockLine,
-    duplicateItems, groupItems,
+    duplicateItems,
     zoom, setZoom, canvasViewportRef,
   } = useEditor();
 
@@ -34,7 +34,6 @@ export default function Toolbar({ onPreview }) {
     selection.part && selection.ids.length === 1
       ? canDeleteBlockLine(selection.ids[0], selection.part.key)
       : canDeleteSelection(selection.ids);
-  const canGroup = selection.ids.length >= 2;
   // Prompt 21 item 2: content items are single-instance and can't be
   // duplicated — reflect that in the button's own enabled state (rather
   // than leaving it clickable-but-a-no-op) the same way ContextMenu's
@@ -67,10 +66,6 @@ export default function Toolbar({ onPreview }) {
       </button>
       <button className="tbtn" disabled={!canRedo} onClick={redo}>
         Redo <span className="tbtn__key">⌘Y</span>
-      </button>
-
-      <button className="tbtn" disabled={!canGroup} onClick={() => groupItems(selection.ids)}>
-        Group <span className="tbtn__key">⌘G</span>
       </button>
 
       <button className="tbtn" disabled={!canDuplicate} onClick={() => duplicateItems(selection.ids)}>

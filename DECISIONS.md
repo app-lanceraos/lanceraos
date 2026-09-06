@@ -7879,3 +7879,209 @@ temporary `InvoiceDesign` rows were used for real-render verification throughout
 before finishing; no other account or invoice data was created or modified.
 
 Docs: this entry.
+
+---
+
+Date: 06 September 2026 (Phase 0 — editor dead-code removal, validation hardening, Groq migration)
+Decision: Two unrelated pieces of cleanup landed together as one pass, on the editor
+(`invoice-editor/`, the standalone template-builder project newly merged into this repo) and on Groq
+model configuration.
+
+**Editor — dead rail mechanism removed.** The zone-based editor's "rail" concept (a shape flush against
+a full page edge insetting the content flow container by its own thickness) had its actual effect die
+with the free-canvas migration (no flow container survived), but detection (`shapeCatalog.js`'s
+`detectRail`/`RAIL_TOLERANCE_PX`), a validation gate (`validation.js`'s two rail rules, blocking save
+over content space nothing constrains anymore), a live canvas overlay, and `EditorContext.jsx`'s own
+`railInsets` computation all survived — `EditorContext.jsx`'s own comment on `railInsets` already said
+plainly "used by validation only now — there's no flow container left to actually pad." All of it
+removed: `detectRail`/`RAIL_TOLERANCE_PX` (`shapeCatalog.js`), `railInsets` and its `detectRail` import
+(`EditorContext.jsx`, `runSave` now calls `validateTemplate(template, effectiveSizes)` instead), the two
+rail validation rules and `MIN_SAFE_AREA_PX` (`validation.js`), and the rail live-preview block + its
+`detectRail` import (`CanvasLayer.jsx`). The marquee selection box reused the same `.rail-overlay` CSS
+class with an inline `borderStyle: 'solid'` override — renamed to a real, honest `.selection-box` (now
+solid-bordered by default in `editor.css`, no inline override needed) rather than leaving a marquee-only
+class named after a mechanism that no longer exists. Shapes are still allowed to sit flush against page
+edges (`getItemBounds`) and still stay collision-exempt (`COLLISION_MARGIN`) — that capability itself
+was never rail-specific, just its justification comments were; both were reworded to state the real,
+current reason (a decorative shape/bar is a legitimate design choice, not "required for the rail
+behavior") rather than referencing removed code. `App.jsx`'s and `editor.css`'s own unrelated "rail" =
+collapsed-side-panel-strip terminology was confirmed unrelated and left untouched.
+
+**Editor — stale `CanvasLayer` header comment fixed, plus a sweep.** The file's header comment claimed
+shapes and content paint as two separate hardcoded groups ("the shape group is painted first, the
+content group after") — directly contradicted by an accurate comment 20 lines further down describing
+the real, current mechanism (a single pass over `template.items` in array order, with
+`utils/zorder.js`'s `normalizeZOrder` — not two render groups — keeping shapes behind content, which is
+also what lets an `allowFreeLayering` item interleave above content, something two fixed groups could
+never do). Rewritten to state the accurate mechanism directly, folding in the accurate lower comment
+rather than leaving both. A broader sweep across the editor's `src/` for comments describing behavior
+the code no longer has found two more real drifts, both in `data/initialState.js`: the items-array
+comment described "shapes always paint behind content as a group" (same stale two-group framing as
+CanvasLayer's own header, fixed the same way), and the page comment/`PAGE_PADDING` comment both
+justified shape edge-flush placement as "required for the rail behavior" / "used for rail detection" —
+both reworded once rail detection was removed (see above). Every other "used to"/"no longer"/"previously"
+comment found in the sweep was checked against current behavior and confirmed accurate (describes real,
+completed history, not a live claim) — none of those needed changing.
+
+**Editor — save-time validation hardened (`utils/validation.js`).** Added four real checks beyond the
+existing required-elements/payment-methods rules, all warnings-never-block except overlap/bounds (errors,
+matching what a live gesture already prevents):
+- **Overlap** (error): a pairwise check across all visible, non-hidden content items (shapes/images stay
+  collision-exempt, same as during a live drag), reusing `rotatedBoundingBox` and the same
+  `COLLISION_MARGIN` a live gesture's `resolveMoveCollision`/`resolveResizeCollision` already enforce, so
+  "overlap" at save time means exactly what it means mid-drag — closing a real gap where a numeric
+  width/height typed directly into the properties panel, a theme change altering measured text size, or
+  undo/redo landing on a stale arrangement could reach an overlapping state gesture-clamping never sees.
+- **Page bounds** (error): reuses `getItemBounds`/`getFooterTop` directly rather than re-deriving the
+  content-vs-shape padding distinction. The footer itself is explicitly excluded from this check — it's
+  fixed, locked page chrome whose own `y` DEFINES the footer-top boundary every other item is measured
+  against, so testing it against a boundary it itself produces would always "fail" by construction (the
+  live app never subjects it to this test either, since `beginMove`/`beginResize` both short-circuit on
+  `item.locked` before ever calling `getItemBounds` for it) — verified directly with a dedicated test
+  case rather than assumed safe.
+- **Text contrast** (warning): a real WCAG 2.x relative-luminance contrast ratio (implemented directly —
+  nothing existing to reuse for this one) between each text-bearing item/sub-part's resolved color and
+  its effective background, resolving theme links via `resolveItemTheme` and falling back to the exact
+  same hardcoded per-part fallback colors `CanvasItem.jsx`'s `ContentBody`/`partInlineStyle` actually
+  render with (e.g. block/qr title's `#a2896b`, block lines' `#55524a`, the footer's `#a09a89`) so the
+  check judges what would actually render, not an approximation of it — resolution order matches
+  `CanvasItem.jsx` exactly (sub-part's own color > theme link > hardcoded default). Live-tested against
+  the real default template: it genuinely flags 7 real contrast warnings (block/qr titles and the footer,
+  all ~2.7–3.15:1 against the cream page background, below the 4.5:1 threshold) — a real, previously-
+  undetected finding about this app's own default theme, not a false positive from the check itself.
+- **Image resolution** (warning): reuses `isImagePixelated` (the same threshold the live per-item
+  pixelation badge already uses) rather than duplicating it. `isImagePixelated`/`PIXELATION_THRESHOLD`
+  were moved from `CanvasItem.jsx` (their original home) to `geometry.js` to make this reuse possible at
+  all — `validation.js` is imported by `EditorContext.jsx`, which `CanvasItem.jsx` itself imports
+  (`useEditor`), so importing `isImagePixelated` from `CanvasItem.jsx` into `validation.js` would have
+  created a real circular import (`EditorContext` → `validation` → `CanvasItem` → `EditorContext`);
+  `geometry.js` is a dependency-free leaf both already import, so it became the shared home instead.
+- All four verified with a live smoke-test harness (Vite's own `ssrLoadModule`, since these are plain
+  extensionless-import ES modules Node's own resolver can't load directly) against the real default
+  template plus 5 deliberately-broken variants (forced overlap, an item pushed off-page, an explicit
+  low-contrast color, a stretched image, and a rotated-item overlap to confirm the rotated bounding-box
+  math is genuinely exercised, not just axis-aligned boxes) — every case produced exactly the expected
+  issue, the pristine default template produced zero errors (only the real contrast warnings above), and
+  the footer never false-positived on the bounds check.
+- `PropertiesPanel.jsx`'s save-status list was checked, not changed — its parent `.panel` already has
+  `overflow-y: auto`, so a run with 10+ warnings scrolls the panel rather than overflowing it; no CSS fix
+  was needed.
+
+**Editor — `template.groups`/`groupItems`/`ungroupItems` removed (dead, not just redundant).**
+Investigated before touching anything, per this phase's own instruction not to guess: traced every real
+read of `template.groups` across the whole editor `src/` and found none — `GroupSelectionOverlay.jsx`
+(what actually gives a multi-selection its shared group move/resize/rotate box) derives its member list
+entirely from `selection.ids` on every render, never from `template.groups`; nothing in rendering,
+z-order (`zorder.js`), collision (`geometry.js`), or serialization reads it either. Worse than merely
+unread: `ungroupItems` (the only way `template.groups` could ever shrink again) has ZERO call sites
+anywhere in the UI (`Toolbar.jsx`, `ContextMenu.jsx`, `LayersPanel.jsx`, `useKeyboardShortcuts.js`) — the
+Group button/⌘G/context-menu action writes a `groupId → [itemId,...]` entry that nothing ever reads and
+nothing can ever remove. `LayersPanel.jsx`'s own "grouping" (`numberingGroup`) is a same-named but
+unrelated concept (labeling multiple same-type shapes/images for display), confirmed by reading it
+directly, not assumed from the name. Removed: `groupItems`/`ungroupItems` (`EditorContext.jsx`), the
+Group button (`Toolbar.jsx`), the Group context-menu entry (`ContextMenu.jsx`), the ⌘G shortcut
+(`useKeyboardShortcuts.js`), and `groups: {}` plus its comment (`initialState.js`). Production's
+`design_data` schema (`schema_version: 2`) has no group concept either, confirming this would only have
+become dead weight for a future adapter to decide what to do with, never something worth preserving.
+
+**Groq model configuration.** `GROQ_MODEL_FAST`/`GROQ_MODEL_QUALITY` were plain hardcoded strings in
+`config/settings.py` while `GROQ_MODEL_VISION` alone was `env()`-read — the file's own comment already
+flagged this as an asymmetry, since a model id is exactly the kind of value Groq can deprecate out from
+under a hardcoded string with no code change possible. All three are now `env()`-read with the current
+best-known-live model as the default.
+
+While checking whether `GROQ_MODEL_FAST`/`GROQ_MODEL_QUALITY`'s existing hardcoded values were still
+live on GroqCloud (this phase's own explicit instruction, not assumed necessary) — a real, unanticipated
+finding: `GROQ_MODEL_QUALITY`'s value, `llama-3.3-70b-versatile`, was ALREADY DECOMMISSIONED by Groq on
+16 August 2026 (confirmed against `console.groq.com/docs/deprecations` directly, and independently via a
+web search corroborating the same date and Groq's own migration announcement), three weeks before this
+writing — meaning every real `apps.proposals`/`apps.tax` AI call that would route through
+`GROQ_MODEL_QUALITY` has been silently failing (a `RuntimeError` from `core.ai.call_groq`) since that
+date, in any environment actually calling it. `GROQ_MODEL_FAST`'s value, `openai/gpt-oss-20b`, was
+confirmed still live/active (and is itself Groq's own listed replacement for a different, unrelated
+deprecated model) — left unchanged. `GROQ_MODEL_QUALITY`'s default changed to `openai/gpt-oss-120b` —
+Groq's own listed migration target for the `llama-3.3-70b-versatile` deprecation (the other listed
+alternative, `qwen/qwen3.6-27b`, is itself being decommissioned 8 days after this writing and is a
+vision-tuned model, not the better fit for general complex-writing tasks); confirmed live/active, 131K
+context, variable reasoning effort. This model swap was NOT live-tested end-to-end against real
+apps.proposals/apps.tax prompts (out of this phase's own scope, which named the vision path specifically)
+— flagged here rather than silently assumed fine; a real live test of proposal/tax AI generation quality
+against the new model is a reasonable follow-up before this reaches anyone relying on those features.
+
+`GROQ_MODEL_VISION`'s default changed from `qwen/qwen3.6-27b` to `qwen/qwen3.8-27b`. Evaluated
+deliberately rather than accepting Groq's own automatic-reroute-after-deprecation default: fetched the
+live GroqCloud model catalog directly (`console.groq.com/docs/models`, `/docs/vision`,
+`/docs/deprecations`, plus per-model pages) rather than trusting this file's own prior description of it.
+Findings: GroqCloud hosts exactly two vision-capable models as of this writing, both Qwen
+(`qwen/qwen3.6-27b` and `qwen/qwen3.8-27b`) — the only other multimodal models Groq has ever hosted, Meta's
+Llama 4 Scout and Maverick, are BOTH already decommissioned (07/17/26 and 03/09/26 respectively, both
+dates already past). `qwen/qwen3.8-27b` is qwen3.6-27b's own direct successor generation, same ~131K
+context window, comparable speed (450 vs 500 tok/s), a real `reasoning_effort`/`reasoning_format`
+parameter for tuning "thinking" depth (not used by this pass — `core.ai.call_groq` doesn't pass extra Groq
+params through, and wasn't extended to, since it wasn't needed to fix the actual problem here — see
+below), and Groq's own listed replacement for it. Given no other option currently exists, it's both the
+deliberately-evaluated choice and, in this specific case, the only real one.
+
+Live-tested end to end, mandatory per this phase's own instructions — not just against the mocked test
+suite, which uses a mocked `call_groq` and could never catch a real model-behavior regression the way it
+already once didn't (see the Step 9 entry this phase's own prompt referenced: `max_tokens=500` failed
+every time against the live API for the exact same reason being re-verified here). Ran 11 real calls
+against the live Groq API using a real Django shell environment and this repo's own real
+`compress_image`/`_build_classify_prompt`/`call_groq`/`classify_design_image` functions, unmodified,
+against 3 synthetic reference images (a sidebar-heavy "modern"-leaning layout, a grayscale
+whitespace-heavy "minimal"-leaning layout, and a navy/amber "professional"-leaning layout — generated
+with Pillow since no real reference image fixture exists in this repo): (1) `qwen/qwen3.6-27b` at the
+OLD `max_tokens=2000` was reproduced FAILING live, genuinely overrunning the full 2000-token budget
+mid-`<think>`-block on the sidebar image, never reaching a JSON answer — direct, fresh confirmation the
+deprecation matters and isn't merely a formality; (2) `qwen/qwen3.8-27b` at `max_tokens` of 400/800/2000,
+across all 3 images (9 calls), returned a clean, immediately-parseable JSON reply with a correct
+`base_template` matching the image's actual design intent EVERY TIME, and — notably — with NO `<think>`
+reasoning block in any of the 9 replies (real replies were ~260–300 characters each, regardless of the
+max_tokens ceiling); (3) a final, distinct verification called the real, completely unmodified
+`classify_design_image()` (not a reimplementation) against all 3 images through `settings.GROQ_MODEL_VISION`
+resolving to the new default, and it succeeded cleanly on all 3.
+
+`max_tokens` for the vision call (`apps/invoices/ai_design.py`'s `classify_design_image`) reduced from
+2000 to 800 based on this same live evidence — the old value's own comment was tuned specifically around
+qwen3.6-27b's real `<think>`-block overrun failure mode, which qwen3.8-27b does not exhibit for this
+prompt; 800 keeps real headroom above the ~300-character replies actually observed (for a possibly-longer
+`reasoning` sentence or an unusually verbose response) without paying for budget a model that isn't
+thinking out loud here has no use for. The comment explaining this was rewritten to state the new,
+real reasoning rather than leaving the qwen3.6-specific one in place describing a failure mode that no
+longer applies. Not pursued in this pass: passing `reasoning_effort='none'` through to explicitly force
+non-thinking mode (`core.ai.call_groq` has no parameter for it today, and the model already behaves this
+way for this prompt without it, so there was no live evidence it would change anything worth the
+scope-creep of extending a shared utility's signature for an unobserved need) — flagged as a real, cheap
+future optimization if a later prompt/task on this same model ever DOES trigger visible thinking output.
+
+Reason: two independent goals for the phase, bundled at Ali's own direction — clean up dead editor
+mechanisms/comments before further template-builder work lands on top of them, and pre-empt a real,
+imminent Groq deprecation (14 September 2026) rather than let production silently start failing the way
+`GROQ_MODEL_QUALITY` already had, undetected, for three weeks.
+
+Alternatives considered: for the vision model, waiting for Groq's own automatic post-deprecation reroute
+to `qwen3.8-27b` (rejected — identical end state today, but leaves the actual model silently undocumented
+and unverified rather than a deliberate, tested choice, and the reroute mechanism itself isn't guaranteed
+to land on the objectively-best replacement rather than merely "whatever Groq picked"); keeping
+`isImagePixelated` in `CanvasItem.jsx` and having `validation.js` import it from there (rejected — real
+circular import, `EditorContext` → `validation` → `CanvasItem` → `EditorContext`, confirmed by tracing the
+actual import graph rather than assumed safe); giving the marquee selection box its own new CSS class
+instead of renaming the shared one (equivalent outcome either way — renaming was chosen since the
+rail-preview usage that justified the old name is gone, so keeping the old name around would itself become
+a small stale-comment-shaped trap for the next reader).
+
+Verification: Editor — `npm run build` clean (no new warnings versus the pre-change baseline, confirmed by
+running `npm run lint` before and after); a live smoke-test harness (Vite's `ssrLoadModule`) exercising
+`validateTemplate` against the real default template plus 5 deliberately-broken variants, all producing
+exactly the expected issues; `grep` swept the whole editor `src/` for `rail`/`Rail`/`groups`/`groupItems`/
+`ungroupItems` post-removal, confirming zero live references remain (only unrelated "rail" = collapsed-
+panel-strip UI terminology in `App.jsx`/`editor.css` survives, correctly). Backend — full `apps.invoices`
+suite (1072 tests, `--keepdb`): 3 pre-existing failures (`test_design_pagination`/
+`test_design_templates_golden`), confirmed via `git stash` to fail identically on the pre-change codebase,
+so genuinely unrelated to this phase's changes, not a regression; the dedicated `test_ai_design.py`/
+`test_design_renderer.py` modules (90 tests, both mocking `call_groq`) pass unchanged. The live Groq API
+verification above (11 real calls, 2 model configurations, 3 reference images) is the actual proof for the
+model-swap half of this entry — the mocked suite alone could not have caught either qwen3.6-27b's real
+failure mode or confirmed qwen3.8-27b's real success, by design (it mocks the exact function being tested).
+
+Docs: this entry; CLAUDE.md's tech-stack and environment-variables sections; .env.example.

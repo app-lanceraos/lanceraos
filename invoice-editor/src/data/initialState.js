@@ -2,8 +2,9 @@ import { ELEMENT_TYPES, createContentItem } from './elementCatalog';
 import { DEFAULT_THEME } from '../utils/theme';
 
 // Minimum distance a content item is ever allowed from a page edge (move or
-// resize) — shapes ignore this and can still sit flush at the true edge,
-// since that's required for the rail behavior. Easy to tune.
+// resize) — shapes ignore this and can still sit flush at the true edge
+// (a decorative bar/divider along a page edge is a legitimate design
+// choice on its own merits, independent of any padding rule). Easy to tune.
 export const PAGE_PADDING = 24;
 
 // Build the starting item list: every content type with defaultOn:true gets
@@ -19,14 +20,13 @@ export const initialTemplateState = {
   // One flat list of canvas items — shapes and content elements alike,
   // each `{ id, kind: 'content' | 'shape', type, x, y, width, height,
   // rotation, naturalWidth, naturalHeight, ...style }`. Paint/stacking
-  // order follows array order within each kind (see CanvasLayer.jsx —
-  // shapes always paint behind content as a group, matching the existing
-  // "shapes are background decoration" rule).
+  // order IS array order (index 0 = back, last = front) — a single pass,
+  // see CanvasLayer.jsx — with the shape-behind-content guarantee kept by
+  // utils/zorder.js's normalizeZOrder rather than by two hardcoded render
+  // groups.
   items: buildInitialItems(),
-  // shape ids currently grouped, keyed by groupId -> [itemId, ...]
-  groups: {},
-  // ~A4 at 96dpi, used for rail detection + the boundary clamp. backgroundColor
-  // is a per-template value (not the global --page-bg token) so different
+  // ~A4 at 96dpi, used for the boundary clamp. backgroundColor is a
+  // per-template value (not the global --page-bg token) so different
   // templates can have different page colors; this default matches the
   // token's current cream tone so existing templates don't visually change.
   page: { width: 794, height: 1123, backgroundColor: '#FAF9F6' },

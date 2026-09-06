@@ -46,20 +46,3 @@ export const createShape = (type, position = { x: 40, y: 40 }) => {
     borderColor: { linked: 'primary' },
   };
 };
-
-// A shape counts as a candidate "rail" when it's flush against a page edge
-// and spans that edge's full length (within a small tolerance).
-export const RAIL_TOLERANCE_PX = 6;
-
-export function detectRail(shape, pageSize) {
-  const { x, y, width, height } = shape;
-  const { width: pageW, height: pageH } = pageSize;
-
-  if (x <= RAIL_TOLERANCE_PX && height >= pageH - RAIL_TOLERANCE_PX) return { edge: 'left', thickness: width };
-  if (x + width >= pageW - RAIL_TOLERANCE_PX && height >= pageH - RAIL_TOLERANCE_PX)
-    return { edge: 'right', thickness: width };
-  if (y <= RAIL_TOLERANCE_PX && width >= pageW - RAIL_TOLERANCE_PX) return { edge: 'top', thickness: height };
-  if (y + height >= pageH - RAIL_TOLERANCE_PX && width >= pageW - RAIL_TOLERANCE_PX)
-    return { edge: 'bottom', thickness: height };
-  return null;
-}
