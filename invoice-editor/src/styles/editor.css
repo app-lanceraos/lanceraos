@@ -1,0 +1,1147 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Doto:wght@600&family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+}
+
+/* ---------- Scrollbars (Prompt 20) ---------- */
+/* Default browser scrollbars read as generic/unstyled against this
+   dark purple/navy theme — thin, themed track/thumb instead, applied to
+   every scrollable surface (`.panel` — element library, properties —
+   and `.canvas-scroll`). `scrollbar-width`/`scrollbar-color` cover
+   Firefox; the `::-webkit-scrollbar*` rules cover Chromium/WebKit —
+   between the two, every current browser gets a themed scrollbar. */
+.panel,
+.canvas-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-glass-strong) var(--bg-panel);
+}
+.panel::-webkit-scrollbar,
+.canvas-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.panel::-webkit-scrollbar-track,
+.canvas-scroll::-webkit-scrollbar-track {
+  background: var(--bg-panel);
+}
+.panel::-webkit-scrollbar-thumb,
+.canvas-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--border-glass-strong);
+  border-radius: 20px;
+  border: 2px solid var(--bg-panel);
+}
+.panel::-webkit-scrollbar-thumb:hover,
+.canvas-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--purple-500);
+}
+.panel::-webkit-scrollbar-corner,
+.canvas-scroll::-webkit-scrollbar-corner {
+  background: var(--bg-panel);
+}
+
+/* Prompt 32 item 2: the real root of the "canvas pushes the right sidebar
+   off-screen" bug — `.app-shell` only ever declared ROW tracks, leaving
+   its single COLUMN implicit. An implicit `auto` column doesn't get
+   clamped to the container's own width the way an explicit `minmax(0,
+   1fr)` one does — it sizes to its content's preferred width instead, and
+   `.workspace`'s own widest possible content (an oversized/zoomed canvas)
+   is wide enough to blow that column out past the viewport, which then
+   stretched `.workspace` right back out to match regardless of anything
+   set on `.workspace` itself (confirmed: neither `min-width: 0` nor
+   `overflow: hidden` nor an explicit `width: 100%` on `.workspace` alone
+   fixed it — the oversized containing block was the actual problem, not
+   `.workspace`'s own sizing). `minmax(0, 1fr)` is the standard explicit
+   fix: a real track that's clamped to the available space, with `0` as
+   its floor instead of "as wide as my content wants." */
+.app-shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100vh;
+}
+
+/* ---------- Toolbar ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--bg-glass);
+  border-bottom: 1px solid var(--border-glass);
+  backdrop-filter: blur(16px);
+  z-index: 10;
+}
+
+.toolbar__spacer { flex: 1; }
+
+.tbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  font-family: var(--font-display);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.tbtn:hover:not(:disabled) {
+  border-color: var(--border-glass-strong);
+  background: rgba(168, 156, 242, 0.08);
+}
+
+.tbtn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.tbtn--primary {
+  background: var(--purple-500);
+  border-color: var(--purple-500);
+  color: white;
+  font-weight: 600;
+}
+
+.tbtn--primary:hover:not(:disabled) {
+  background: #8264F7;
+  border-color: #8264F7;
+}
+
+.tbtn__key {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-glass);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* Prompt 22 item 1 — zoom controls: the -/+ buttons reuse .tbtn as-is;
+   just the percentage dropdown needs its own (compact) sizing. */
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.zoom-select {
+  width: 68px;
+  background: var(--bg-panel-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  padding: 6px 6px;
+  text-align: center;
+}
+
+/* ---------- Main layout ---------- */
+
+/* Prompt 32 item 2: CSS Grid's "auto min size" trap, two levels deep.
+   `.canvas-scroll` (the middle column's own content) can be much wider
+   than the viewport — its `overflow: auto` is what's SUPPOSED to make
+   grid treat its automatic minimum width as 0 instead of its actual
+   content size, letting the `1fr` track shrink to the real available
+   space while `.canvas-scroll` scrolls its own overflow internally. But
+   `.workspace` ITSELF is also a grid item — of `.app-shell`'s single
+   implicit column — with `overflow: visible` (the default), so IT was
+   still contributing ITS OWN content-based minimum width (i.e. its
+   widest row's, in practice the same oversized canvas) to how wide
+   `.app-shell`'s column gets allowed to be, which then stretched
+   `.workspace` right back out past the viewport regardless of its own
+   columns being sized correctly. `min-width: 0` alone doesn't fix this —
+   only `overflow` (here, hidden — nothing legitimately needs to overflow
+   `.workspace`'s own box; `.canvas-scroll` already owns the one place
+   that should scroll) makes grid apply the exemption. */
+.workspace {
+  display: grid;
+  grid-template-columns: 240px 1fr 280px;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.panel {
+  background: var(--bg-panel);
+  overflow-y: auto;
+  padding: 16px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panel--right {
+  border-right: none;
+}
+
+/* Prompt 24 item 1: redesigned from Prompt 23's dedicated full-height
+   rail strip AND from an absolutely-positioned button overlapping the
+   panel's own content — `.panel-wrap` is now a plain column flexbox:
+   collapsed, it holds just the toggle button (centered by ordinary flex
+   centering, so it's mechanically impossible for it to sit wider than
+   the column and drift outside it — item 2's fix); expanded, it holds a
+   small header row (label + toggle, normal inline flow, no overlap risk
+   with the panel's own content below) followed by the actual panel. */
+.panel-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-glass);
+}
+
+.panel-wrap--right {
+  border-right: none;
+  border-left: 1px solid var(--border-glass);
+}
+
+.panel-wrap--collapsed {
+  align-items: center;
+  padding-top: 10px;
+}
+
+/* Prompt 29 item 4: horizontal padding matches `.panel`'s own 16px
+   exactly, so the header row's label/toggle share the same left (and
+   right) edge as the section titles rendered inside `.panel` below it —
+   the previous 12px left a visible 4px mismatch. */
+.panel-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px 0;
+}
+
+/* Right panel's canvas-facing inner edge is its LEFT — the toggle stays
+   on that inner edge for both sidebars, label on the outer edge. */
+.panel-wrap--right .panel-header {
+  flex-direction: row-reverse;
+}
+
+.panel-header__label {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.panel-toggle-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.panel-toggle-btn:hover {
+  border-color: var(--border-glass-strong);
+  background: rgba(168, 156, 242, 0.08);
+}
+
+.panel__section-title {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: 18px 0 8px;
+}
+
+.panel__section-title:first-child { margin-top: 0; }
+
+.lib-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-panel-raised);
+  margin-bottom: 6px;
+  font-size: 12.5px;
+}
+
+.lib-item__toggle {
+  width: 30px;
+  height: 17px;
+  border-radius: 20px;
+  background: var(--border-glass-strong);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease;
+}
+
+.lib-item__toggle--on { background: var(--purple-500); }
+
+.lib-item__toggle__dot {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 120ms ease;
+}
+
+.lib-item__toggle--on .lib-item__toggle__dot { transform: translateX(13px); }
+
+/* ---------- Layers panel (Prompt 26) ---------- */
+
+.layers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: var(--bg-panel-raised);
+  cursor: grab;
+  font-size: 12px;
+  user-select: none;
+}
+
+.layer-row:hover {
+  border-color: var(--border-glass);
+}
+
+.layer-row--selected {
+  border-color: var(--purple-500);
+  background: rgba(113, 82, 245, 0.12);
+}
+
+/* Drop-target feedback while dragging another row over this one. */
+.layer-row--over {
+  border-color: var(--purple-300);
+  box-shadow: inset 0 2px 0 var(--purple-500);
+}
+
+.layer-row--hidden {
+  opacity: 0.5;
+}
+
+.layer-row__kind {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+/* Shapes vs content vs image, visually distinguishable at a glance
+   (Prompt 26 item 2, extended for Prompt 27's third kind) — a filled
+   square for a shape (matches the shape-swatch convention above), a
+   purple dot for content, a diamond for an uploaded image. */
+.layer-row__kind--shape {
+  background: var(--purple-300);
+  border-radius: 2px;
+}
+
+.layer-row__kind--content {
+  background: var(--purple-500);
+  border-radius: 50%;
+}
+
+.layer-row__kind--image {
+  background: var(--warning);
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.layer-row__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Prompt 30 item 3: `<button>` elements get an opaque, dark UA-default
+   `color` (e.g. `ButtonText`) that does NOT inherit from the surrounding
+   dark theme the way a `<div>`/`<span>` would — every other button in
+   the app already sets `color` explicitly (`.tbtn`, `.panel-toggle-btn`,
+   `.modal-btn`) for exactly this reason; this one was the one place that
+   got missed, which is why its `currentColor`-based icons rendered
+   near-invisible against the dark row background. */
+.layer-row__icon-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.layer-row__icon-btn:hover {
+  opacity: 1;
+  background: rgba(168, 156, 242, 0.15);
+}
+
+.layers-clamp-hint {
+  font-size: 11.5px;
+  color: var(--warning);
+  line-height: 1.5;
+  margin: 0 0 8px;
+}
+
+/* ---------- Tooltip (Prompt 30 item 1) ---------- */
+
+/* Prompt 32 item 3: no longer needs `position: relative` — the tooltip
+   popup itself is portal-rendered into `document.body` with fixed
+   viewport coordinates now, not positioned relative to this wrapper. */
+.tooltip-wrap {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* For a tooltip wrapping a flex child that needs to shrink/grow/truncate
+   within its OWN flex parent (e.g. a layer row's label) — without this,
+   the wrapper span (not the child) becomes the actual flex item, and the
+   child's own `flex`/`min-width` rules stop doing anything. */
+.tooltip-wrap--flex-fill {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Prompt 32 item 3: `left`/`top` are set inline per instance (the
+   trigger's own measured `getBoundingClientRect`, via the portal in
+   Tooltip.jsx) — `position: fixed` + those viewport coordinates is what
+   lets this render fully outside any scrollable panel's own overflow
+   clipping, since it's no longer a DOM descendant of the trigger at all.
+   The two placements only differ in which way they translate off that
+   anchor point: `top` pins its own bottom-left... rather, its own BOTTOM
+   edge to the anchor (sitting above the trigger), `bottom` pins its own
+   TOP edge to it (sitting below) — both centered horizontally. */
+.tooltip--portal {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-panel-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--border-glass-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: var(--font-display);
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: var(--shadow-panel);
+}
+
+.tooltip--portal.tooltip--top { transform: translate(-50%, -100%); }
+.tooltip--portal.tooltip--bottom { transform: translate(-50%, 0); }
+
+.shape-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-panel-raised);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.shape-btn:hover { border-color: var(--border-glass-strong); }
+
+.shape-swatch {
+  width: 20px;
+  height: 20px;
+  background: var(--purple-500);
+  flex-shrink: 0;
+}
+.shape-swatch--rect { border-radius: 5px; }
+.shape-swatch--ellipse { border-radius: 50%; }
+.shape-swatch--line { height: 3px; border-radius: 2px; margin: 8px 0; }
+
+/* Prompt 27: the "Upload image" action's own swatch — a simple
+   picture-frame glyph rather than the flat color chip the primitive
+   shapes use, so it reads as "bring your own asset" rather than "add a
+   colored rectangle." */
+.shape-swatch--image {
+  background: transparent;
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+  position: relative;
+  color: var(--purple-300);
+}
+.shape-swatch--image::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ---------- Canvas ---------- */
+
+.canvas-scroll {
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  background: radial-gradient(circle at 50% 0%, #0d0d18 0%, var(--bg-base) 60%);
+  display: flex;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+/* Prompt 22 — zoom: `.page-zoom-wrapper` is the actual flex child, sized
+   in inline style to the page's TRUE dimensions times the current zoom
+   factor, so `.canvas-scroll`'s overflow/scroll math sees the real
+   on-screen (zoomed) size. `.page-frame` inside it keeps its natural,
+   UNSCALED 794x1123 layout box (every item inside it stores/reads plain
+   page-unit coordinates, same as before zoom existed) and is scaled
+   purely visually via CSS `transform` (set inline, alongside the zoom
+   factor) — `position: absolute` pulls it out of normal flow so its own
+   unscaled box never affects the wrapper's (already explicitly sized)
+   layout; it still establishes the same containing block its own
+   absolutely-positioned children (`.page-edge-glow` etc.) already relied
+   on `position: relative` for. */
+.page-zoom-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.page-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 794px;
+  height: 1123px;
+  transform-origin: top left;
+  background: var(--page-bg);
+  color: var(--page-text);
+  box-shadow: var(--shadow-panel);
+}
+
+/* ---------- Canvas layer (unified shapes + content items) ---------- */
+
+.canvas-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/* One shared free-positioned box for every canvas item, shape or content.
+   Shapes and content items paint as two back-to-front groups (see
+   CanvasLayer.jsx) so shapes always stay background decoration, even
+   though items can now freely overlap within/across either group. */
+.item {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.item--selected::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 1.5px solid var(--purple-500);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* Hover preview (Prompt 15) — a lighter/thinner echo of the selection
+   outline above, shown before a click commits to selecting anything.
+   Never rendered together with .item--selected on the same element (see
+   CanvasItem's hover state), so there's no risk of the two stacking. */
+.item--hover-preview::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 1px solid rgba(113, 82, 245, 0.45);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* The natural-size wrapper every item's actual content renders into —
+   `transform: scale(...)` (set inline, since it depends on the item's
+   current vs. natural size) stretches it to fill the resized box, so
+   resizing always scales what's rendered, not just the frame around it. */
+.item__scale {
+  transform-origin: top left;
+  overflow: hidden;
+}
+
+/* height: auto (not 100%) — Prompt 13: text no longer stretches to fill
+   its box, so this only ever takes the space its own content needs;
+   CanvasItem's `.item__scale` flex wrapper positions it (top/middle/
+   bottom) within whatever's left over. */
+.item__text {
+  box-sizing: border-box;
+  width: 100%; height: auto;
+  padding: 2px 4px;
+  font-size: 10px;
+}
+
+.item__block {
+  box-sizing: border-box;
+  width: 100%; height: 100%;
+  padding: 2px 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.item__block-title { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 2px; }
+.item__block-line { font-size: 9px; }
+
+.item__block-title--selected,
+.item__block-line--selected {
+  outline: 1.5px solid var(--purple-500);
+  outline-offset: 1px;
+  background: rgba(113, 82, 245, 0.08);
+  border-radius: 3px;
+}
+
+.item__block-title--hover,
+.item__block-line--hover {
+  outline: 1px solid rgba(113, 82, 245, 0.4);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* Due Date / Issue Date: a fixed "Label: Value" line split into two
+   independently-selectable/styleable spans — a styling split only, the
+   baked-in text itself is unchanged (see elementCatalog.js). */
+.item__label-value {
+  box-sizing: border-box;
+  width: 100%; height: auto;
+  padding: 2px 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.item__label--selected,
+.item__value--selected {
+  outline: 1.5px solid var(--purple-500);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.item__label--hover,
+.item__value--hover {
+  outline: 1px solid rgba(113, 82, 245, 0.4);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.item__image-placeholder {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 7px; text-align: center;
+}
+
+/* Prompt 16 item 5 — the real <img> (item__image-placeholder) underneath
+   has pointer-events:none, so this transparent layer is what actually
+   captures every click/drag across the item's FULL box, regardless of
+   the asset's own transparent/opaque pixels or the browser's native
+   image-drag gesture. */
+.item__image-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.item__image-interaction {
+  position: absolute;
+  inset: 0;
+}
+
+/* Prompt 27 item 3: a small always-on-top badge (never clipped by the
+   frame's own overflow:hidden `.item__scale`, since it's a sibling of
+   that wrapper, not a child of it) — deliberately plain/unstyled-by-
+   rotation positioning (top-right of the unrotated frame) so it stays
+   legible even when the item itself is rotated. */
+/* Prompt 30 item 1: positioning lives on the TOOLTIP WRAPPER now, not on
+   the badge itself — `.tooltip-wrap` has its own `position: relative`
+   (the containing block for the tooltip popup), so putting the badge's
+   `position: absolute` directly on it would resolve against that small
+   wrapper instead of the item's own frame. `pointer-events` is no longer
+   `none` here either — the badge needs real hover to trigger its own
+   tooltip (a plain mousedown that lands on it still bubbles up to the
+   frame's own drag handler, since neither this nor the wrapper stops
+   propagation, so dragging the image is unaffected). */
+.tooltip-wrap--pixelation-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  z-index: 4;
+}
+
+.item__pixelation-badge {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--warning);
+  color: #262420;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+  box-shadow: 0 0 0 2px white;
+}
+
+.item__divider {
+  width: 100%;
+  height: 100%;
+}
+
+/* Already had no padding of its own before this pass — already the
+   snuggest it can be, nothing to reduce here. */
+.item__table {
+  box-sizing: border-box;
+  width: 100%; height: 100%;
+  border-collapse: collapse;
+  font-size: 8.5px;
+}
+.item__table th { text-align: left; font-size: 7px; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 1px solid #262420; padding-bottom: 4px; }
+.item__table td { padding: 4px 0; border-bottom: 0.5px solid #e5e1d6; }
+.item__table th:not(:first-child), .item__table td:not(:first-child) { text-align: right; }
+
+.item__shape-fill {
+  width: 100%;
+  height: 100%;
+}
+
+.item__qr-wrap {
+  box-sizing: border-box;
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+}
+
+.item__qr-wrap--hover {
+  outline: 1px solid rgba(113, 82, 245, 0.4);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.item__qr-wrap--selected {
+  outline: 1.5px solid var(--purple-500);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.item__qr-svg {
+  width: 100%;
+  height: 100%;
+  shape-rendering: crispEdges;
+}
+
+/* align-items: center (not flex-start) — Prompt 15: the Prompt 10 fix
+   aligned the wordmark to "Generated by"'s text baseline, which reads
+   correctly for that ONE pairing but still leaves both footer columns
+   sitting near the row's top edge, not centered in the row itself
+   (measured: text/wordmark center ~6px above the row's true center at
+   this height). Centering here is what actually addresses "the footer
+   row as a whole" rather than just the text-to-wordmark relationship. */
+.item__footer {
+  box-sizing: border-box;
+  width: 100%; height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+  border-top: 1px solid #e5e1d6;
+  font-size: 7px;
+  line-height: 1.6;
+  color: #a09a89;
+}
+
+/* align-items: center (not baseline) — pairs the wordmark's and
+   "Generated by"'s own rendered vertical centers directly, rather than
+   matching the text's baseline (correct for the pairing on its own, but
+   not the same thing as centering, and no longer needed now the whole
+   row centers together above). */
+.item__footer-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  /* Local override: the wordmark's own fill (`var(--wordmark)`) is tuned
+     for the dark toolbar; on the light page it needs a muted color that
+     matches this footer's own text instead of the global token. */
+  --wordmark: #a09a89;
+}
+
+/* ---------- Resize (8-point) + rotate handles ---------- */
+
+/* Prompt 18 — the shared multi-selection bounding box (replaces every
+   individual item's own handles while 2+ movable items are selected).
+   `pointer-events: none` on the box itself lets clicks in its empty
+   interior pass straight through to whatever item is actually there
+   (each handle re-enables its own pointer-events explicitly, inline). */
+.group-selection-box {
+  pointer-events: none;
+}
+.group-selection-box::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 1.5px solid var(--purple-500);
+  pointer-events: none;
+}
+
+/* Prompt 23 item 5: square, sitting directly on the item's own border
+   (offset math lives in CanvasItem's adaptiveHandleOffset/GroupSelection-
+   Overlay — this is just the visual size/shape) — a deliberate reversal
+   of Prompt 12's earlier "float outside the border" circular-dot fix. */
+.item__resize-handle {
+  position: absolute;
+  z-index: 2;
+  width: 8px; height: 8px;
+  background: white;
+  border: 1.5px solid var(--purple-500);
+  border-radius: 2px;
+  transform: translate(-50%, -50%);
+}
+
+/* A table's column-boundary dividers — separate from the 8-point resize
+   handles above: dragging one redistributes width between the two
+   adjacent columns only, the table's own total width/height untouched. */
+.item__col-divider {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+}
+
+.item__col-divider::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--purple-500);
+  opacity: 0.6;
+}
+
+/* Prompt 24 item 3 recalibration: the top-center resize handle now
+   straddles the selection outline (centered 4px above the item's true
+   edge, extending to -8px at its own outward point — see CanvasItem's
+   SELECTION_OUTLINE_INSET/HALF_HANDLE), so -34px leaves a clear ~8px gap
+   between the two at every item size. */
+.item__rotate-handle {
+  position: absolute;
+  z-index: 2;
+  width: 18px; height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: white;
+  color: var(--purple-500);
+  border: 1.5px solid var(--purple-500);
+  border-radius: 50%;
+  left: 50%;
+  top: -34px;
+  transform: translateX(-50%);
+  cursor: grab;
+  transition: box-shadow 100ms ease, border-width 100ms ease;
+}
+
+/* Momentary feedback while a rotate drag is snapped to a straight
+   (0/90/180/270°) orientation. */
+.item__rotate-handle--snapped {
+  border-width: 2.5px;
+  box-shadow: 0 0 0 3px rgba(113, 82, 245, 0.35);
+}
+
+/* Boundary-contact feedback: while a drag/resize gesture has clamped an
+   item flush against a page edge, glow that edge; cleared the instant the
+   item moves away or the gesture ends (see CanvasItem's clampToPage use). */
+.page-edge-glow {
+  position: absolute;
+  background: var(--purple-500);
+  box-shadow: 0 0 8px 1px var(--purple-glow);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.page-edge-glow--top { top: 0; left: 0; right: 0; height: 3px; }
+.page-edge-glow--bottom { bottom: 0; left: 0; right: 0; height: 3px; }
+.page-edge-glow--left { top: 0; bottom: 0; left: 0; width: 3px; }
+.page-edge-glow--right { top: 0; bottom: 0; right: 0; width: 3px; }
+
+/* Smart alignment guides (item-to-item/page-center, not page-boundary —
+   see .page-edge-glow above for that, a deliberately separate system):
+   a distinct, saturated accent color (never the purple used for
+   selection/UI chrome elsewhere) so the two never get confused, even
+   when both show at once. Transient, only while a drag/resize gesture is
+   engaged (CanvasItem's resolveAxisSnap). Prompt 19 visual-polish pass:
+   `top`/`left`/`width`/`height` are set INLINE per instance (the line's
+   bounded from/to span — see guideSpan in geometry.js) rather than
+   hardcoded full-page here, so an ordinary item-to-item alignment draws
+   only between the two elements involved; only a genuine page-center
+   match spans the full page. */
+.align-guide {
+  position: absolute;
+  background: #ff3d8a;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.align-guide--vertical { width: 1px; }
+.align-guide--horizontal { height: 1px; }
+
+.align-guide-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: #ff3d8a;
+  color: white;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 7;
+}
+
+.rail-overlay {
+  position: absolute;
+  border: 1.5px dashed var(--purple-300);
+  background: rgba(168, 156, 242, 0.08);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ---------- Properties panel ---------- */
+
+.prop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.prop-row label { color: var(--text-secondary); }
+
+.prop-row input[type="color"] {
+  width: 32px; height: 24px;
+  border: 1px solid var(--border-glass);
+  border-radius: 4px;
+  background: none;
+  padding: 0;
+}
+
+.prop-row input[type="range"],
+.prop-row input[type="number"] {
+  width: 110px;
+  accent-color: var(--purple-500);
+}
+
+/* Prompt 23 item 7: every slider-based control pairs with an exact-value
+   numeric input — dragging the slider updates the number, typing the
+   number updates the slider (both drive the same onChange). */
+.slider-with-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-with-input input[type="range"] {
+  width: 78px;
+}
+
+.slider-with-input input[type="number"] {
+  width: 46px;
+  flex-shrink: 0;
+}
+
+.prop-row select {
+  width: 140px;
+  background: var(--bg-panel-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--border-glass);
+  border-radius: 4px;
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  padding: 4px 6px;
+}
+
+/* Prompt 28: the shared "linked to theme, or custom" control pattern — a
+   narrower select (leaving room for the swatch) paired with the color
+   input, disabled while linked (nudging a linked value isn't a local
+   edit — see LinkableColorRow's own comment). */
+.linked-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.linked-control__select {
+  width: 96px !important;
+}
+
+.linked-control input[type="color"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.prop-row input[type="checkbox"] {
+  width: 16px; height: 16px;
+  accent-color: var(--purple-500);
+}
+
+.align-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.align-grid .tbtn {
+  justify-content: center;
+  padding: 6px 4px;
+}
+
+.empty-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
+.validation-list {
+  margin-top: 14px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border-glass);
+}
+
+.validation-item {
+  font-size: 11.5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.validation-item__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  margin-top: 1px;
+}
+
+.validation-item--error { color: var(--danger); }
+.validation-item--warning { color: var(--warning); }
+
+/* ---------- Right-click context menu ---------- */
+
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 180px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-glass-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-panel);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.context-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-family: var(--font-display);
+  cursor: pointer;
+}
+
+.context-menu__item:hover {
+  background: rgba(168, 156, 242, 0.12);
+}
+
+/* ---------- Preview modal ---------- */
+
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.72);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+
+.modal-actions {
+  position: absolute;
+  top: 24px; right: 32px;
+  display: flex;
+  gap: 8px;
+}
+
+.modal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.modal-btn:disabled { opacity: 0.5; cursor: not-allowed; }

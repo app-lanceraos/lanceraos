@@ -1,0 +1,40 @@
+:root {
+  --bg-base: #050508;
+  --bg-panel: #0c0c14;
+  --bg-panel-raised: #13131f;
+  --bg-glass: rgba(19, 19, 31, 0.72);
+  --border-glass: rgba(168, 156, 242, 0.16);
+  --border-glass-strong: rgba(168, 156, 242, 0.32);
+
+  --purple-500: #7152F5;
+  --purple-300: #A89CF2;
+  --purple-200: #C8C0F8;
+  --purple-glow: rgba(113, 82, 245, 0.35);
+
+  --logo-body: var(--purple-500);
+  --logo-mark: var(--purple-200);
+  --wordmark: var(--text-primary);
+
+  --text-primary: #F3F1FA;
+  --text-secondary: #9C97B5;
+  --text-tertiary: #625D7A;
+
+  --danger: #F26B6B;
+  --success: #6BD8A0;
+  --warning: #F2C46B;
+
+  --page-bg: #FAF9F6;
+  --page-text: #262420;
+
+  --font-display: 'DM Sans', sans-serif;
+  --font-mono: 'DM Mono', monospace;
+  --font-accent: 'Doto', sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --shadow-panel: 0 8px 32px rgba(0, 0, 0, 0.45);
+
+  --t: 160ms ease;
+}
