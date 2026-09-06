@@ -20,14 +20,71 @@
 
   @page {
     size: A4;
-    margin: 0;
-    @bottom-right {
+    /* Real, confirmed WeasyPrint behavior (not assumed): a margin box on a
+       page EDGE that has ZERO @page margin gets no real box to live in at
+       all — its own margin-bottom/etc. properties have NO effect (tested
+       directly: 10mm, 16mm, and 20mm all produced the IDENTICAL position,
+       flush against — and in one real test, bleeding PAST — the true
+       page edge). Confirmed this template's own original @page margin:0
+       (kept for the sidebar's full-bleed look) was silently already
+       affected by this before this pass — it just went unnoticed because
+       the old single "Page X of Y" box was short and inconspicuous. The
+       real fix: a genuine, non-zero @page bottom margin (16mm, matching
+       professional.html's own convention) so the 3 footer boxes below
+       have real room to sit in — with .sidebar's own `bottom` pulled back
+       down by that exact amount (see .sidebar's own comment) so its full
+       bleed is unaffected; top/left/right stay 0 (nothing sits in those
+       margins, so nothing needed compensating there). */
+    margin: 0 0 16mm 0;
+    /* This template had NO @bottom-left at all before this pass (the
+       business-name/email footer professional.html/minimal.html both
+       already had was simply missing here) — @bottom-left's own left
+       offset (58mm) matches .main's real effective left edge (.sidebar's
+       42mm width + .main's own 16mm padding-left) so the text clears the
+       sidebar rather than sitting inside/under it. */
+    /* Real, confirmed WeasyPrint bug (not assumed): with no explicit
+       `width` on these 3 boxes, WeasyPrint's margin-box layout let
+       @bottom-left's own real-length content ("Horizon Studio ·
+       freelancer@example.com") silently collide with @bottom-center's —
+       a real isolated reproduction showed BOTH truncated ("Horizon
+       Studio ·" with the email missing; "Page 1" with " of 5" missing)
+       even though the two boxes' declared positions don't nominally
+       overlap. Giving each box a real, explicit `width` (bounding them
+       to non-overlapping zones within .main's own real 58–194mm content
+       range, confirmed by direct re-render) is what actually fixes it —
+       margin-box `width` does NOT resize `content: url(...)` image
+       content (confirmed separately, see _generate_wordmark_data_uri's
+       own docstring), but it does correctly bound text-content boxes and
+       stop them from colliding with siblings. */
+    @bottom-left {
+      content: "{{ freelancer.business_name|default:freelancer.display_name }}{% if invoice.user.email %} · {{ invoice.user.email }}{% endif %}";
+      font-family: 'IBM Plex Mono';
+      font-size: 7pt;
+      color: #a8a5b8;
+      margin: 0 0 5mm 58mm;
+      width: 50mm;
+    }
+    {% if not single_page_layout %}
+    /* See professional.html's identical block for the full reasoning —
+       no pure-CSS "exactly one page" selector exists (confirmed directly:
+       no `@page :first:last` support), so this is gated by
+       single_page_layout, set only after a real page-count check. */
+    @bottom-center {
       content: "Page " counter(page) " of " counter(pages);
       font-family: 'IBM Plex Mono';
       font-size: 7pt;
       color: #a8a5b8;
-      margin: 0 16mm 10mm 0;
+      margin: 0 0 5mm 113.5mm;
+      width: 25mm;
     }
+    {% endif %}
+    {% if wordmark_data_uri %}
+    @bottom-right {
+      content: url("{{ wordmark_data_uri }}");
+      margin: 0 16mm 5mm 0;
+      width: 20mm;
+    }
+    {% endif %}
   }
   * { box-sizing: border-box; }
   body {
@@ -39,10 +96,16 @@
     line-height: 1.55;
   }
 
-  /* full-height sidebar — position:fixed repeats it on every generated page */
+  /* full-height sidebar — position:fixed repeats it on every generated page.
+     `bottom: -16mm` (not 0) — position:fixed is scoped to @page's own
+     margin box, not the true physical page edge (confirmed directly), so
+     with a real, non-zero @page bottom margin now in place (see @page's
+     own comment above), a plain `bottom:0` would stop 16mm short of the
+     true edge — pulling it back down by that exact amount is what
+     actually restores the full bleed this sidebar has always had. */
   .sidebar {
     position: fixed;
-    top: 0; left: 0; bottom: 0;
+    top: 0; left: 0; bottom: -16mm;
     width: 42mm;
     background: {{ design_primary_color }};
     color: #ffffff;
@@ -73,6 +136,21 @@
 
   /* main content, offset past the sidebar */
   .main { margin-left: 42mm; padding: 14mm 16mm 16mm; }
+  /* Signature pinned to the true bottom — see professional.html's
+     identical .page.page-single rule for the full reasoning (confirmed
+     WeasyPrint mechanism, confirmed NOT margin-top:auto, never applied to
+     a multi-page render). min-height (297mm page − @page's own real 16mm
+     bottom margin, see @page's own comment) is the real, full page-box
+     height available to .main — content extending past this would
+     fragment onto a real 2nd page rather than render into the reserved
+     margin, so this value must match that boundary exactly, not just be
+     "generously tall". */
+  .main.main-single {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 281mm;
+  }
 
   .masthead { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8mm; }
   .masthead .eyebrow {
@@ -164,7 +242,8 @@
     <div class="contact">{{ invoice.user.email }}</div>
   </div>
 
-  <div class="main">
+  <div class="main{% if single_page_layout %} main-single{% endif %}">
+    <div class="main-body">
     <div class="masthead">
       <div>
         <div class="eyebrow">Invoice</div>
@@ -249,6 +328,7 @@
         {% if freelancer.easypaisa_number %}<div class="method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
       </div>
       {% endif %}
+    </div>
     </div>
 
     {% if signature_url %}

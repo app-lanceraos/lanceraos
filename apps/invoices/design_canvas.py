@@ -165,7 +165,12 @@ def build_canvas_document(design_data, context, content_mode='alias'):
     # the canvas silently fell back to the browser's default serif font
     # for every element — a real, confirmed Phase 3 fidelity bug, not a
     # theoretical one (Part 8 explicitly forbids exactly this).
-    css = render_to_string(PAGE_STYLES_TEMPLATE, context)
+    # 30 August 2026 fidelity fix — page.background_color (see
+    # design_renderer.render_design_html's own identical extraction) must
+    # reach the canvas too, or the editor would show a plain white canvas
+    # for a design whose real render is off-white — a real mismatch this
+    # pass exists to close, not one to reintroduce here.
+    css = render_to_string(PAGE_STYLES_TEMPLATE, {**context, 'page_background_color': page.get('background_color', '#ffffff')})
 
     return {
         'schema_version': design_data.get('schema_version'),

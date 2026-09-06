@@ -18,12 +18,23 @@
       font-size: 7pt;
       color: #a3a099;
     }
-    @bottom-right {
+    {% if not single_page_layout %}
+    /* See professional.html's identical block for the full reasoning —
+       no pure-CSS "exactly one page" selector exists (confirmed directly:
+       no `@page :first:last` support), so this is gated by
+       single_page_layout, set only after a real page-count check. */
+    @bottom-center {
       content: "Page " counter(page) " of " counter(pages);
       font-family: 'IBM Plex Mono';
       font-size: 7pt;
       color: #a3a099;
     }
+    {% endif %}
+    {% if wordmark_data_uri %}
+    @bottom-right {
+      content: url("{{ wordmark_data_uri }}");
+    }
+    {% endif %}
   }
   * { box-sizing: border-box; }
   body {
@@ -33,6 +44,19 @@
     background: #fdfdfb;
     font-size: 9.5pt;
     line-height: 1.55;
+  }
+  /* Signature pinned to the true bottom — see professional.html's
+     identical .page.page-single rule for the full reasoning (confirmed
+     WeasyPrint mechanism, confirmed NOT margin-top:auto, never applied to
+     a multi-page render). minimal.html has no separate .page wrapper —
+     body itself is the printable box here, so the flex rule and the
+     min-height (real printable content height: 297mm page − 20mm top
+     margin − 16mm bottom margin) both apply directly to it. */
+  body.body-single {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 261mm;
   }
 
   .eyebrow {
@@ -172,8 +196,9 @@
   }
 </style>
 </head>
-<body>
+<body{% if single_page_layout %} class="body-single"{% endif %}>
 
+  <div class="page-body">
   <header class="top">
     <div class="brand">
       {% if freelancer.logo %}<img class="logo" src="{{ freelancer.logo }}" alt="">{% endif %}
@@ -261,6 +286,7 @@
       {% if freelancer.easypaisa_number %}<div class="method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
     </div>
     {% endif %}
+  </div>
   </div>
 
   <div class="sign-row">

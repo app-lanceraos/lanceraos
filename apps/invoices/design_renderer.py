@@ -357,8 +357,18 @@ def attach_generic_content(prepared, element, context, content_mode='real'):
         prepared['image_src'] = resolve_style_value(element, 'src', '')
 
     elif el_type in ('rectangle', 'container'):
-        bg = resolve_style_value(element, 'background_color', 'transparent')
-        border_color = resolve_style_value(element, 'border_color', None)
+        # 30 August 2026 fidelity fix — this branch never called
+        # resolve_theme_color (every OTHER color-bearing generic/semantic
+        # branch in this module does), a real, confirmed gap: a rectangle's
+        # `background_color`/`border_color` set to the 'theme_primary'/
+        # 'theme_secondary' sentinel rendered as the LITERAL invalid CSS
+        # value `background:theme_primary;` (silently transparent) instead
+        # of the design's real resolved color — found while adding
+        # Professional's V2 spine (a real rectangle element that needs to
+        # track color_variant, exactly like the golden static template's
+        # own `.spine { background: {{ design_primary_color }}; }`).
+        bg = resolve_theme_color(resolve_style_value(element, 'background_color', 'transparent'), context)
+        border_color = resolve_theme_color(resolve_style_value(element, 'border_color', None), context)
         border_width = resolve_style_value(element, 'border_width_mm', 0)
         css = f'background:{bg};'
         if border_color and border_width:
@@ -366,7 +376,7 @@ def attach_generic_content(prepared, element, context, content_mode='real'):
         prepared['shape_css'] = css
 
     elif el_type == 'divider':
-        color = resolve_style_value(element, 'color', '#cccccc')
+        color = resolve_theme_color(resolve_style_value(element, 'color', '#cccccc'), context)
         thickness = resolve_style_value(element, 'thickness_mm', 0.5)
         prepared['shape_css'] = f'border-top:{thickness}mm solid {color};'
 
@@ -1042,6 +1052,30 @@ def render_design_html(design_data, context, *, for_pdf=False):
     margin_left_mm = page.get('margin_left_mm', PAGE_MARGIN_LEFT_MM)
     sidebar = page.get('sidebar')
     sidebar_width_mm = sidebar['width_mm'] if sidebar else 0
+    # 30 August 2026 — optional, additive `page.spine` (the same pattern
+    # `page.sidebar` already established: absent for every existing
+    # design, so this is fully backward-compatible). Renders a real,
+    # full-page-height decorative bar bled to the true left page edge —
+    # Professional's own golden static template's real `.spine` element,
+    # which the V2 canonical render never reproduced at all until now
+    # (a real, confirmed fidelity gap). Deliberately NOT added to
+    # design_schema.py's own formal validation (which already tolerates
+    # unrecognized `page` keys, confirmed directly — no "extra keys
+    # rejected" check exists) or to design_canvas.py's editor — scoped
+    # exactly to what this pass asked for (the real render output), not
+    # silently expanded into editor support, which would be a real,
+    # separate, larger feature.
+    # 30 August 2026 fidelity fix — each real template's own genuinely
+    # different page background (#faf9f6 professional / #fdfdfb minimal /
+    # #ffffff modern) was silently flattened to one hardcoded #ffffff
+    # shared across all three in the canonical renderer's own stylesheet.
+    # Optional, additive `page.background_color` (absent = the existing
+    # #ffffff default, so this is fully backward-compatible), same
+    # pattern as spine/sidebar above.
+    background_color = page.get('background_color', '#ffffff')
+    spine = page.get('spine')
+    spine_color = resolve_theme_color(spine.get('color'), context) if spine else None
+    spine_accent_color = spine.get('accent_color') if spine else None
     # A sidebar's own width is a real, additional left offset for the
     # main content column — matching modern.html's own real CSS
     # (`.main { margin-left: 42mm; padding: ... 16mm; }`, i.e. the
@@ -1092,6 +1126,10 @@ def render_design_html(design_data, context, *, for_pdf=False):
         'sidebar': sidebar,
         'sidebar_width_mm': sidebar_width_mm,
         'sidebar_elements': sidebar_elements,
+        'spine': spine,
+        'spine_color': spine_color,
+        'spine_accent_color': spine_accent_color,
+        'page_background_color': background_color,
         'invoice': context['invoice'],
         'freelancer': context['freelancer'],
         'qr_code_data_uri': context.get('qr_code_data_uri'),

@@ -1475,13 +1475,32 @@ export default function DesignEditor() {
                 Not checked yet — click "Check design health" above.
               </div>
             )}
-            {healthResult && healthResult.errors.length === 0 && healthResult.warnings.length === 0 && (
+            {/* 30 August 2026 fidelity fix — healthResult (design_validate,
+                Layers A/C/D: schema + semantic + a real-sample-data dry-run
+                render) and overflowScan (this same tab's own live DOM
+                scrollHeight-vs-declared-box measurement against whatever
+                ALIAS content is on screen right now) check two genuinely
+                different things and were never contradictory in what each
+                one itself measures — but showing "0 issues" here while the
+                overflow banner above says "9 elements exceed their design
+                box" reads as a flat contradiction to a real user, since
+                neither panel explained what the other wasn't checking.
+                Layer D's own dry-run render already succeeds regardless of
+                visual overflow (this renderer deliberately uses
+                overflow:visible everywhere — real content overflowing its
+                own box is a design concern, never a render error), so
+                design_validate has no way to know about it at all; folding
+                the already-computed overflowScan count into what this
+                panel calls a "found issue" is what actually makes the two
+                signals agree, honestly (a real, counted problem now shown
+                in both places), not just cosmetically. */}
+            {healthResult && healthResult.errors.length === 0 && healthResult.warnings.length === 0 && overflowScan.count === 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--success-text)' }}>
                 <CheckCircle2 size={14} />
                 <span>Looks good — no issues found.</span>
               </div>
             )}
-            {healthResult && (healthResult.errors.length > 0 || healthResult.warnings.length > 0) && (
+            {healthResult && (healthResult.errors.length > 0 || healthResult.warnings.length > 0 || overflowScan.count > 0) && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {healthResult.errors.map((finding, i) => (
                   <div key={`err-${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: '0.72rem', color: 'var(--danger)' }}>
@@ -1495,6 +1514,14 @@ export default function DesignEditor() {
                     <span>{finding.message}</span>
                   </div>
                 ))}
+                {overflowScan.count > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: '0.72rem', color: 'var(--warning-text)' }}>
+                    <AlertTriangle size={13} style={{ marginTop: 1, flexShrink: 0 }} />
+                    <span>
+                      {overflowScan.count} element{overflowScan.count === 1 ? '' : 's'} currently exceed{overflowScan.count === 1 ? 's' : ''} {overflowScan.count === 1 ? 'its' : 'their'} design box (see the banner above) — this render check alone can't see that, since real content is deliberately allowed to overflow its own box rather than error.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -22,7 +22,7 @@
     margin: 0;
     font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
     color: #262420;
-    background: #ffffff;
+    background: {{ page_background_color|default:'#ffffff' }};
     font-size: 9.5pt;
     line-height: 1.5;
   }
@@ -46,6 +46,15 @@
     computed to know where sidebar "flow" content starts.
   {% endcomment %}
   .v2-sidebar { position: fixed; top: 0; left: 0; bottom: 0; color: #ffffff; padding: 14mm 6mm 12mm; }
+  {% comment %}
+    30 August 2026 — the real, previously-missing spine (Professional's
+    own golden static template's `.spine`/`.spine::after`, see
+    professional.html). position:fixed (the same real, confirmed
+    mechanism .v2-sidebar already uses) so it repeats, bled to the true
+    left page edge, on every generated page — never just page 1.
+  {% endcomment %}
+  .v2-spine { position: fixed; top: 0; left: 0; bottom: 0; }
+  .v2-spine-accent { position: fixed; top: 0; bottom: 0; width: 0.4mm; }
   {% comment %}
     Phase 4B fidelity fix, found via real-browser screenshot verification:
     .v2-line/.v2-link/.v2-alias-box's own shared colors (#55524a dark
@@ -132,6 +141,26 @@
     font-size: 13pt;
     font-weight: 600;
     color: {{ design_secondary_color }};
+  }
+  {% comment %}
+    30 August 2026 fidelity fix — the golden static template's own real
+    `.totals .row.due span:first-child` (the "Total due" LABEL
+    specifically, not the amount) is genuinely, deliberately styled
+    DIFFERENTLY from the amount span next to it (uppercase, letter-spaced,
+    small 8pt sans, primary-colored) — .v2-row-due above only ever styled
+    the row as a whole, so the label rendered plain, in the amount's own
+    13pt mono/secondary-color style. `_element_content.html`'s totals
+    branch always emits the label as `<span>Total due</span>` first —
+    :first-child is a real, stable selector for it.
+  {% endcomment %}
+  .v2-row-due span:first-child {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 8pt;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: {{ design_primary_color }};
+    align-self: center;
   }
 
   {% comment %}

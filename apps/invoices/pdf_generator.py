@@ -255,6 +255,149 @@ def _generate_qr_data_uri(url):
         return None
 
 
+# Copied verbatim from frontend/src/components/Brand.jsx's own WordmarkSVG
+# (viewBox 0 0 140 21, single <path>) — that file's own comment says "Never
+# recreate or approximate these elsewhere", so this is the literal path
+# data, not a redrawn approximation. The React component fills with
+# `var(--wordmark)` (a web-theme custom property with no meaning inside an
+# isolated WeasyPrint-rendered SVG document) — _generate_wordmark_data_uri
+# below substitutes a real, fixed hex color instead, chosen per template to
+# match that template's own existing muted footer-text color.
+_WORDMARK_SVG_PATH_D = (
+    "M1.91977 13.32H11.5678V15.144H-0.000234358V0.191968H1.91977V13.32ZM32.1078 15.144V9.71997C32.1078 8.56797 "
+    "31.8678 7.63197 31.3878 6.91197C30.9078 6.19197 30.0518 5.86397 28.8198 5.92797C27.8758 5.99197 26.9078 "
+    "6.51997 25.9158 7.51197C25.6598 7.75197 25.1078 8.38397 24.2598 9.40797C23.2198 10.672 22.4438 11.576 "
+    "21.9318 12.12V15.144H20.0118V13.8C19.7558 14.056 19.2838 14.384 18.5958 14.784C17.9078 15.168 17.1158 "
+    "15.344 16.2198 15.312C15.0358 15.28 14.0678 14.984 13.3158 14.424C12.5798 13.848 12.1958 13.04 12.1638 "
+    "12C12.1318 10.832 12.5398 9.90397 13.3878 9.21597C14.2358 8.52797 15.4118 8.18397 16.9158 8.18397H19.9878C"
+    "19.9878 7.38397 19.7478 6.83997 19.2678 6.55197C18.8038 6.24797 18.1318 6.09597 17.2518 6.09597H13.6038V4."
+    "27197H17.1558C18.7558 4.27197 19.9238 4.57597 20.6598 5.18397C21.4118 5.79197 21.8278 6.76797 21.9078 8.1"
+    "1197V8.47197L20.0118 10.608V10.008H16.9158C16.0678 10.008 15.4038 10.16 14.9238 10.464C14.4598 10.768 14."
+    "2198 11.192 14.2038 11.736C14.1878 12.248 14.3398 12.656 14.6598 12.96C14.9958 13.248 15.4518 13.416 16.0"
+    "278 13.464C16.6358 13.528 17.2918 13.376 17.9958 13.008C18.6998 12.624 19.3718 12.104 20.0118 11.448C20.9"
+    "238 10.52 21.9638 9.31197 23.1318 7.82397C23.2278 7.69597 23.2838 7.62397 23.2998 7.60797V4.27197H25.2198"
+    "V5.63997C26.2598 4.66397 27.4598 4.15197 28.8198 4.10397C30.6118 4.03997 31.9238 4.53597 32.7558 5.59197C"
+    "33.6038 6.64797 34.0278 8.02397 34.0278 9.71997V15.144H32.1078ZM23.2998 11.52L25.2918 9.09597L25.2198 15."
+    "144H23.2998V11.52ZM48.7925 14.76C48.0245 14.376 47.3765 13.856 46.8485 13.2C46.8485 13.2 46.4805 13.408 4"
+    "5.7445 13.824C45.0245 14.224 44.1925 14.584 43.2485 14.904C42.3205 15.208 41.4245 15.352 40.5605 15.336C3"
+    "9.5525 15.304 38.6165 15.04 37.7525 14.544C36.9045 14.032 36.2245 13.352 35.7125 12.504C35.2165 11.656 34"
+    ".9685 10.728 34.9685 9.71997C34.9685 8.71197 35.2165 7.77597 35.7125 6.91197C36.2245 6.04797 36.9045 5.36"
+    "797 37.7525 4.87197C38.6165 4.37597 39.5525 4.12797 40.5605 4.12797C41.5845 4.12797 42.5285 4.38397 43.39"
+    "25 4.89597C44.2565 5.39197 44.9365 6.06397 45.4325 6.91197L43.7285 8.01597C43.4245 7.43997 42.9845 6.9839"
+    "7 42.4085 6.64797C41.8485 6.29597 41.2325 6.11997 40.5605 6.11997C39.5685 6.11997 38.7205 6.47197 38.0165"
+    " 7.17597C37.3125 7.87997 36.9605 8.72797 36.9605 9.71997C36.9605 10.728 37.2885 11.576 37.9445 12.264C38."
+    "6165 12.952 39.5205 13.336 40.6565 13.416C41.6485 13.48 42.6245 13.312 43.5845 12.912C44.5445 12.496 45.8"
+    "325 11.848 47.4485 10.968C47.6085 10.888 47.7205 10.824 47.7845 10.776C49.1125 10.072 50.4565 9.30397 51."
+    "8165 8.47197C53.1765 7.63997 53.8565 7.22397 53.8565 7.22397C53.1365 6.48797 52.2725 6.11997 51.2645 6.11"
+    "997C50.2725 6.11997 49.4245 6.47197 48.7205 7.17597C48.0165 7.87997 47.6645 8.72797 47.6645 9.71997C47.66"
+    "45 9.84797 47.6725 9.97597 47.6885 10.104L45.8165 11.04C45.7685 10.896 45.7365 10.752 45.7205 10.608C45."
+    "6725 10.32 45.6485 10.024 45.6485 9.71997C45.6485 8.71197 45.8965 7.77597 46.3925 6.91197C46.9045 6.04797"
+    " 47.5845 5.36797 48.4325 4.87197C49.2965 4.37597 50.2405 4.12797 51.2645 4.12797C52.5925 4.12797 53.7845 "
+    "4.57597 54.8405 5.47197C55.1765 5.75997 55.4725 6.07997 55.7285 6.43197C56.0005 6.76797 56.2085 7.07997 5"
+    "6.3525 7.36797C56.4965 7.63997 56.5685 7.77597 56.5685 7.77597L48.6965 12.264C49.4005 12.968 50.2565 13.3"
+    "2 51.2645 13.32C51.9365 13.32 52.5525 13.152 53.1125 12.816C53.6725 12.464 54.1045 12.008 54.4085 11.448L"
+    "56.1125 12.528C55.6165 13.376 54.9365 14.056 54.0725 14.568C53.2085 15.08 52.2725 15.336 51.2645 15.336C5"
+    "0.3845 15.336 49.5605 15.144 48.7925 14.76ZM66.0354 5.78397L64.6674 7.22397C64.1874 6.34397 63.4994 5.911"
+    "97 62.6034 5.92797C61.7714 5.94397 61.0354 6.33597 60.3954 7.10397C59.7714 7.85597 59.4594 8.58397 59.459"
+    "4 9.28797L59.4354 15.144H57.5154V4.27197H59.4594V5.63997C59.9074 5.17597 60.3394 4.81597 60.7554 4.55997C"
+    "61.1874 4.28797 61.7154 4.13597 62.3394 4.10397C63.8914 3.97597 65.1234 4.53597 66.0354 5.78397ZM66.9945 "
+    "4.27197H70.5465C72.2425 4.27197 73.4585 4.61597 74.1945 5.30397C74.9465 5.99197 75.3225 7.11197 75.3225 8"
+    ".66397V15.144H73.4025V13.8C73.3865 13.816 73.3705 13.832 73.3545 13.848C72.9545 14.28 72.5465 14.624 72.1"
+    "305 14.88C71.7145 15.12 71.1145 15.264 70.3305 15.312C68.9545 15.408 67.8185 15.168 66.9225 14.592C66.042"
+    "5 14.016 65.5865 13.152 65.5545 12C65.5225 10.832 65.9305 9.91197 66.7785 9.23997C67.6265 8.55197 68.8025"
+    " 8.20797 70.3065 8.20797H73.3785C73.3785 7.39197 73.1385 6.83997 72.6585 6.55197C72.1945 6.24797 71.5225 "
+    "6.09597 70.6425 6.09597H66.9945V4.27197ZM73.4025 10.008H70.3065C69.4585 10.008 68.7945 10.168 68.3145 10."
+    "488C67.8505 10.792 67.6105 11.208 67.5945 11.736C67.5625 12.408 67.8185 12.888 68.3625 13.176C68.9065 13."
+    "464 69.6025 13.544 70.4505 13.416C70.9945 13.336 71.4825 13.144 71.9145 12.84C72.3465 12.52 72.6985 12.18"
+    "4 72.9705 11.832C73.2585 11.48 73.4025 11.304 73.4025 11.304V10.008ZM79.6366 1.03197C80.8206 0.343968 82."
+    "1086 -3.19481e-05 83.5006 -3.19481e-05C84.8766 -3.19481e-05 86.1486 0.343968 87.3166 1.03197C88.4846 1.71"
+    "997 89.4126 2.64797 90.1006 3.81597C90.7886 4.98397 91.1326 6.26397 91.1326 7.65597C91.1326 9.03197 90.78"
+    "86 10.312 90.1006 11.496C89.4126 12.664 88.4846 13.592 87.3166 14.28C86.1486 14.968 84.8766 15.312 83.500"
+    "6 15.312C82.1086 15.312 80.8206 14.968 79.6366 14.28C78.4686 13.592 77.5406 12.664 76.8526 11.496C76.1646"
+    " 10.312 75.8206 9.03197 75.8206 7.65597C75.8206 6.26397 76.1646 4.98397 76.8526 3.81597C77.5406 2.64797 7"
+    "8.4686 1.71997 79.6366 1.03197ZM86.3086 2.78397C85.4446 2.27197 84.5086 2.01597 83.5006 2.01597C82.4766 2"
+    ".01597 81.5326 2.27197 80.6686 2.78397C79.8046 3.27997 79.1166 3.95997 78.6046 4.82397C78.1086 5.68797 77"
+    ".8606 6.63197 77.8606 7.65597C77.8606 8.67997 78.1086 9.62397 78.6046 10.488C79.1166 11.336 79.8046 12.01"
+    "6 80.6686 12.528C81.5326 13.024 82.4766 13.272 83.5006 13.272C84.5086 13.272 85.4446 13.024 86.3086 12.52"
+    "8C87.1726 12.016 87.8526 11.336 88.3486 10.488C88.8606 9.62397 89.1166 8.67997 89.1166 7.65597C89.1166 6."
+    "63197 88.8606 5.68797 88.3486 4.82397C87.8526 3.95997 87.1726 3.27997 86.3086 2.78397ZM101.842 12.888C102"
+    ".37 12.584 102.61 12.064 102.562 11.328C102.53 10.56 102.122 9.99197 101.338 9.62397C100.57 9.23997 99.38"
+    "55 8.84797 97.7855 8.44797C96.4895 8.12797 95.4335 7.82397 94.6175 7.53597C93.8175 7.23197 93.1215 6.7999"
+    "7 92.5295 6.23997C91.9535 5.66397 91.6415 4.92797 91.5935 4.03197C91.5455 3.05597 91.8655 2.17597 92.5535"
+    " 1.39197C93.2415 0.591969 94.4095 0.191968 96.0575 0.191968H103.834V2.01597H96.0335C95.3455 2.01597 94.75"
+    "35 2.17597 94.2575 2.49597C93.7615 2.81597 93.5455 3.31997 93.6095 4.00797C93.6575 4.66397 94.0335 5.1519"
+    "7 94.7375 5.47197C95.4575 5.77597 96.5535 6.09597 98.0255 6.43197C99.4015 6.75197 100.514 7.06397 101.362"
+    " 7.36797C102.226 7.67197 102.97 8.14397 103.594 8.78397C104.218 9.40797 104.546 10.248 104.578 11.304C10"
+    "4.594 12.28 104.266 13.168 103.594 13.968C102.922 14.752 101.762 15.144 100.114 15.144H91.8335V13.32H99."
+    "9695C100.706 13.32 101.33 13.176 101.842 12.888Z"
+)
+
+
+# 88 CSS-px-equivalent SVG user units wide (~9.9pt / ~3.5mm tall at the
+# wordmark's own real 140:21 aspect ratio) — a real, measured, deliberate
+# match to the ~7pt footer text height it sits beside (see
+# _generate_wordmark_data_uri's own docstring for why this can't be sized
+# via the margin box's CSS width/height instead).
+_WORDMARK_FOOTER_WIDTH_PX = 88
+
+
+def _generate_wordmark_data_uri(fill_color, width_px=_WORDMARK_FOOTER_WIDTH_PX):
+    """
+    The real LanceraOS wordmark (see _WORDMARK_SVG_PATH_D's own comment),
+    as an inline SVG data: URI — confirmed directly (a real isolated
+    render, not assumed) that WeasyPrint's @page margin boxes support
+    `content: url("data:image/svg+xml;base64,...")` with real vector/text
+    content preserved, not silently dropped or rasterized away.
+    `fill_color` lets each template match its own existing muted
+    footer-text color rather than sharing one hardcoded hex across all
+    three (their footer text colors already differ: #a09a89/#a3a099/
+    #a8a5b8).
+
+    A real, confirmed WeasyPrint margin-box limitation (not assumed):
+    the `width`/`height` CSS properties on the margin box itself (e.g.
+    `@bottom-right { width: 20mm; }`) do NOT scale `content: url(...)`
+    image content — a real isolated test rendered the image at its own
+    unconstrained intrinsic size (140 SVG user units = 105pt = 37.04mm)
+    regardless. The SVG's own `width`/`height` ATTRIBUTES are therefore
+    what actually control the rendered size (1 SVG user unit = 0.75pt,
+    the same CSS-px-to-pt ratio browsers use) — `width_px`/`height_px`
+    below set those directly rather than relying on the margin box.
+    """
+    height_px = width_px * 21 / 140
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 21" '
+        f'width="{width_px}" height="{height_px:.4f}">'
+        f'<path fill="{fill_color}" d="{_WORDMARK_SVG_PATH_D}"/></svg>'
+    )
+    encoded = base64.b64encode(svg.encode('utf-8')).decode('ascii')
+    return f'data:image/svg+xml;base64,{encoded}'
+
+
+# Each template's own real, existing muted footer-text color (verified
+# directly against each file's own @bottom-left/.footer-ish rules) — the
+# wordmark uses the same color as the rest of that template's footer so it
+# reads as one consistent footer, not a mismatched insert.
+_WORDMARK_FILL_BY_TEMPLATE = {
+    'professional': '#a09a89',
+    'minimal': '#a3a099',
+    'modern': '#a8a5b8',
+}
+
+
+def _is_premium_branding_enabled(freelancer):
+    """
+    The one, single real hook point for a future "show the LanceraOS
+    wordmark only on paid plans" gate — Module 8 (Subscriptions) doesn't
+    exist yet (see CLAUDE.md's own module build-status table), so this
+    always returns True today. Once a real subscription/tier field exists,
+    flip ONLY this function's own return statement (e.g.
+    `return freelancer.user.subscription.tier != 'free'`) — every real
+    call site (build_pdf_context below) already reads through this one
+    function, so nothing else needs to change.
+    """
+    return True
+
+
 def build_pdf_context(invoice):
     """
     Everything the three templates need. `invoice`/`freelancer` give the
@@ -282,6 +425,8 @@ def build_pdf_context(invoice):
     freelancer = invoice.user.profile
     design = _effective_design(invoice)
     primary_color, secondary_color = _design_colors_for(design)
+    base_template = design.base_template if design else DEFAULT_TEMPLATE
+    wordmark_fill = _WORDMARK_FILL_BY_TEMPLATE.get(base_template, _WORDMARK_FILL_BY_TEMPLATE[DEFAULT_TEMPLATE])
     return {
         'invoice': invoice,
         'freelancer': freelancer,
@@ -289,8 +434,32 @@ def build_pdf_context(invoice):
         'signature_url': freelancer.signature_url or None,
         'design_primary_color': primary_color,
         'design_secondary_color': secondary_color,
+        'wordmark_data_uri': _generate_wordmark_data_uri(wordmark_fill) if _is_premium_branding_enabled(freelancer) else None,
         **FONT_CONTEXT,
     }
+
+
+def _is_static_template_design(design):
+    """
+    True when `design` will actually go through one of the 3 static
+    templates — the same condition `render_html_for_design`'s own 3-way
+    dispatch uses for its branch 3, duplicated here (not imported/reused
+    directly, since it's the negative/gating check, not the dispatch
+    itself) so the 2-pass single-page render below (Part 2 — signature
+    pinning + conditional page-indicator) can be scoped to ONLY this
+    branch. Confirmed directly against real data (see DECISIONS.md) that
+    every real Invoice in this environment resolves here today — but the
+    V2 canonical and legacy-dynamic branches are deliberately left
+    completely untouched by the 2-pass logic below regardless, since a
+    user actively picking "Use this template" (V2) is a real, separate
+    path this pass does not touch.
+    """
+    if design is None:
+        return True
+    schema_version = (design.design_data or {}).get('schema_version')
+    if schema_version == 2:
+        return False
+    return not design_has_real_custom_data(design)
 
 
 def render_invoice_pdf(invoice):
@@ -306,11 +475,51 @@ def render_invoice_pdf(invoice):
     process that merely imports this module (e.g. a Celery worker at
     startup, well before any task actually runs) and confined to the one
     call site that genuinely needs it.
+
+    Signature pinning + the footer's conditional "Page X of N" (Part 1/2 of
+    the 30 August 2026 footer+signature pass — see DECISIONS.md) apply ONLY
+    when `design` resolves to one of the 3 static templates
+    (_is_static_template_design) — the V2 canonical and legacy-dynamic
+    renderers are untouched, a single plain render exactly as before.
+
+    MANDATORY SAFE ORDER for the static-template branch (do not reorder):
+      1. Render through the template exactly as it renders today
+         (`single_page_layout=False` — natural document flow, the
+         already-proven-safe path). Read the REAL page count off
+         WeasyPrint's own `Document.pages` — never assumed, never
+         re-derived from content length/heuristics.
+      2. ONLY if that real count is exactly 1: re-render the SAME
+         `design`/`context` with `single_page_layout=True` (the bottom-pin
+         CSS variant — signature flush to the true bottom of the one real
+         page, page-indicator omitted) and use THAT as final output.
+      3. If the first render is 2+ pages: return that first render's own
+         bytes directly. The bottom-pin CSS variant is NEVER attempted on
+         a multi-page document, under any circumstance — flex-column
+         layout silently drops content that would otherwise fragment
+         across pages in this WeasyPrint version (confirmed directly,
+         see DECISIONS.md's "footer+signature" entry) — this order is
+         what makes that failure mode structurally unreachable, not just
+         avoided by convention.
     """
     from weasyprint import HTML
 
-    html_string = _render_invoice_html(invoice, build_pdf_context(invoice), for_pdf=True)
-    return HTML(string=html_string).write_pdf()
+    design = _effective_design(invoice)
+    context = build_pdf_context(invoice)
+
+    if not _is_static_template_design(design):
+        html_string = render_html_for_design(design, context, for_pdf=True)
+        return HTML(string=html_string).write_pdf()
+
+    context['single_page_layout'] = False
+    html_string = render_html_for_design(design, context, for_pdf=True)
+    document = HTML(string=html_string).render()
+
+    if len(document.pages) == 1:
+        context['single_page_layout'] = True
+        html_string = render_html_for_design(design, context, for_pdf=True)
+        document = HTML(string=html_string).render()
+
+    return document.write_pdf()
 
 
 def _render_invoice_html(invoice, context, *, for_pdf=False):

@@ -6,6 +6,13 @@
 </head>
 <body>
 
+{% if spine %}
+<div class="v2-spine" style="width:{{ spine.width_mm }}mm;background:{{ spine_color }};"></div>
+{% if spine_accent_color %}
+<div class="v2-spine-accent" style="left:{{ spine.width_mm }}mm;background:{{ spine_accent_color }};"></div>
+{% endif %}
+{% endif %}
+
 {% if sidebar %}
 <div class="v2-sidebar" style="width:{{ sidebar_width_mm }}mm;background:{{ sidebar.color|default:design_primary_color }};">
   {% for el in sidebar_elements %}

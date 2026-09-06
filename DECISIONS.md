@@ -7693,3 +7693,189 @@ Docs: this entry, explicitly correcting the prior entry's letter-spacing root-ca
 leaving it standing uncorrected in the record (the prior entry's own text is left as-is/not retroactively
 edited, per this project's own convention of layering corrections as new dated entries rather than
 rewriting history).
+
+---
+
+Date: 30 August 2026 (fourth pass — real footer completion, single-page signature pinning, Professional
+V2 canonical fidelity fixes)
+Decision: Three related pieces of work, all scoped to the 3 static templates (the confirmed real default
+render path for actual invoices — see this file's own 3-way-dispatch query entry) for the footer/
+signature work, and to the V2 canonical renderer for the fidelity fixes (the correct target there, since
+that IS the real path a user reaches by actively picking "Use this template").
+
+**Scope note, stated explicitly per the standing instruction not to let this become another silent gap**:
+none of this pass's footer/signature-pinning work touches `apps/invoices/design_renderer.py`'s own
+`render_design_html` output — the V2 canonical renderer still has NO real page-footer wordmark/page-
+indicator and NO signature-pinning mechanism. This is a real, deliberate, flagged follow-up gap, not an
+oversight — the V2 path is confirmed (same query as before) to serve 0 real invoices in this environment
+today, so it was correctly deprioritized, not silently forgotten. Whoever picks this up next: the static
+templates' own mechanism (a 2-pass render via `pdf_generator.render_invoice_pdf`'s
+`_is_static_template_design` gate) doesn't transfer directly — `render_design_html` has its own separate
+call sites (`design_preview.py`'s gallery cards, `design_renderer.render_design_pdf_bytes`) that would each
+need the same real page-count-then-decide treatment, and the wordmark/footer would need genuinely new
+`@page` margin-box CSS in `canonical.html`/`_page_styles.html`, which currently has none at all.
+
+**Part 1 — footer completion (professional.html, minimal.html, modern.html):**
+- `@bottom-left`: unchanged where it already existed (professional.html, minimal.html); ADDED to
+  modern.html, which had none at all before this pass (confirmed directly, not assumed).
+- `@bottom-center`: real "Page X of N", gated by a new `single_page_layout` context flag (see Part 2)
+  so it appears ONLY on a confirmed multi-page render. Real WeasyPrint capability check, not assumed:
+  `@page :first:last` (the obvious-looking pure-CSS "exactly one page" selector) does not exist —
+  tested directly against both a real 1-page and a real multi-page document, matched neither.
+- `@bottom-right`: the real LanceraOS wordmark, as an inline SVG data: URI — confirmed directly (real
+  isolated render) that WeasyPrint's margin boxes support `content: url("data:image/svg+xml;base64,...")`
+  with real vector/text content preserved. The literal path data is copied verbatim from
+  `frontend/src/components/Brand.jsx`'s own `WordmarkSVG` (that file's own comment: "Never recreate or
+  approximate these elsewhere") into a new `pdf_generator._WORDMARK_SVG_PATH_D` constant — the two files
+  can't literally share code (Python can't import a .jsx module), so this is kept in sync manually, flagged
+  in the new function's own docstring. Sized via the SVG's own `width`/`height` attributes, not the margin
+  box's — a real, confirmed WeasyPrint limitation found along the way: `width`/`height` CSS on
+  `@bottom-right` itself does NOT scale `content: url(...)` image content at all (tested directly: box
+  `width:20mm` had zero effect, image still rendered at its full intrinsic 105pt/37mm). Gated behind a new
+  `pdf_generator._is_premium_branding_enabled(freelancer)` — the one, single, named hook point for a future
+  real subscription-tier check (Module 8 doesn't exist yet); always returns `True` today, and every real
+  call site reads through this one function, so flipping the gate later is a one-line change to this
+  function's own body, not a rewrite.
+- "Generated via LanceraOS" text removed from all 3 (superseded by the wordmark).
+
+**A real, separate, confirmed WeasyPrint bug found and fixed along the way (modern.html specifically)**:
+with no explicit `width` on the 3 footer margin boxes, WeasyPrint let @bottom-left's own real-length
+content ("Horizon Studio · freelancer@example.com") silently collide with @bottom-center's — a real
+isolated reproduction showed BOTH truncated (the email cut off; " of N" cut off) even though the two
+boxes' own declared positions don't nominally overlap. Fixed by giving each of the 3 boxes a real,
+explicit, non-overlapping `width`. **A second, deeper, related bug found investigating the first**: with
+`@page margin: 0` (which modern.html's own sidebar bleed genuinely needs), a margin box on that same zero-
+margin edge gets no real box to live in at all — its own `margin-bottom` has NO effect whatsoever (tested
+directly: 10mm/16mm/20mm all produced the IDENTICAL position, flush against — and in one real test,
+bleeding PAST — the true page edge). Real fix: `@page margin: 0 0 16mm 0` (a genuine, non-zero bottom
+margin, matching professional.html's own convention) — with `.sidebar`'s own `bottom: 0` changed to
+`bottom: -16mm` to counteract it, since `position:fixed` is scoped to the page's own margin box, not the
+physical edge (confirmed directly), so this negative offset is what restores the sidebar's original full
+bleed. This bug almost certainly predates this pass (modern.html's own prior single "Page X of Y" box was
+short/inconspicuous enough that no one had reason to notice it sat flush against — and could in principle
+overflow past — the true page edge) — a real, previously-undetected defect, not something this pass
+introduced, closed as a side effect of giving the footer real content worth noticing it with.
+
+**Part 2 — signature pinned to the true bottom (single-page only), MANDATORY SAFE ORDER as specified**:
+`pdf_generator.render_invoice_pdf` now does a real 2-pass render for the static-template branch only
+(`_is_static_template_design`, a new gating function): pass 1 is the exact same natural-flow render as
+before (`single_page_layout=False`), with the real page count read off WeasyPrint's own
+`HTML(...).render().pages` (never PyMuPDF, never a heuristic) — if that's exactly 1 page, pass 2 re-renders
+with `single_page_layout=True`; if it's 2+, pass 1's own bytes are returned directly, unmodified, and pass
+2 is never attempted. The bottom-pin mechanism itself (`.page.page-single`/`.main.main-single`/
+`body.body-single`, gated by the SAME `single_page_layout` flag driving the footer's page-indicator
+visibility) required a real, separate finding: `margin-top: auto` on a flex item — the textbook CSS
+"stick to bottom" trick — does NOT work in this WeasyPrint version (tested directly, isolated: a flex
+column with a `margin-top:auto` last child left ZERO gap, staying right after its sibling). The mechanism
+that DOES work, confirmed directly: `justify-content: space-between` on the flex container with EXACTLY 2
+real children (a new wrapper div — `.page-body`/`.main-body`, or minimal.html's own `<body>` directly,
+since it has no separate `.page` wrapper — holding everything else, and the sign-row/sign-block itself as
+the second child) correctly pushes the last child flush to the container's own bottom edge. Applied ONLY
+when a real, prior render already confirmed exactly 1 page — the flex/bottom-pin CSS never exists in the
+DOM for a multi-page render (no conditional class is ever applied), making the documented "flex silently
+drops content that would otherwise fragment across pages" failure mode structurally unreachable in
+production, not just conventionally avoided.
+
+Real, permanent regression test added (`apps/invoices/tests/test_pdf_pipeline.py`'s new
+`FooterAndSignaturePinningTests`, 7 tests): the one that must never be allowed to regress —
+`test_multi_page_invoice_renders_through_safe_path_with_all_items_intact` — creates a real 40-item invoice
+across all 3 templates, forces a genuine multi-page render, and asserts every single line item description
+is still present in the extracted PDF text. A real test-design mistake was caught and fixed along the way
+(not shipped uncorrected): the first version of this test used an exact-substring containment check, which
+falsely reported all 40 items "missing" for modern.html specifically — its real, narrower 136mm main
+content column (vs professional's 174mm, because of the 42mm sidebar) genuinely word-wraps these
+fixture's longer descriptions onto 2 lines, which PyMuPDF reports as two separate newline-joined text
+lines, not one line with a plain space; the real content was always present, only the test's own
+containment check was wrong. Fixed with whitespace normalization before comparison — confirmed this was a
+test bug, not a rendering bug, by reproducing it in complete isolation before touching the assertion.
+
+**Part 3 — Professional V2 canonical fidelity fixes** (the correct target: a user reaching this path by
+actively picking "Use this template" does go through the V2 canonical renderer):
+- **The spine**: added as a new, real, additive, OPTIONAL `page.spine` schema field (`{width_mm, color,
+  accent_color}`) — deliberately NOT a template-name branch inside the renderer itself (this codebase has
+  a real, enforced rule against exactly that: `test_renderer_module_source_contains_no_seed_equality_
+  comparison` asserts the renderer's own source never references `BUILTIN_DESIGNS`/a seed-identity check).
+  Rendered via `position:fixed` (the same real, confirmed-working mechanism `.v2-sidebar` already uses) so
+  it bleeds to the true page edge and repeats on every page. Set only on Professional's own real V2 seed
+  (`design_templates.py`) — Minimal/Modern's golden templates have no spine, so their seeds don't get one.
+  Deliberately NOT added to `design_schema.py`'s formal validation or to `design_canvas.py`'s editor (a
+  real, confirmed-safe omission — the schema validator already tolerates unrecognized `page` keys, no
+  "reject extra keys" check exists — but a real, flagged gap: the spine won't show in the live editor
+  canvas, only in the actual rendered output, until someone builds real editor support for it).
+- **A real, separate, pre-existing bug found and fixed while wiring the spine's color**: the generic
+  `rectangle`/`container`/`divider` element types' own `background_color`/`border_color`/`color` never
+  called `resolve_theme_color` at all (every OTHER color-bearing branch in this renderer does) — setting
+  `'theme_primary'` on a rectangle rendered as the literal, invalid CSS value `background:theme_primary;`
+  (silently transparent) instead of the design's real resolved color. Real, necessary fix for the spine to
+  track `color_variant` at all, not a scope-creep addition.
+- **Page background**: new, optional, additive `page.background_color` (professional: `#faf9f6`, minimal:
+  `#fdfdfb` — both real, measured findings from the prior investigation; modern's own real `#ffffff`
+  already matched the canonical renderer's one shared hardcoded default, so it needed no seed change).
+  Threaded through both `render_design_html` (the real render) and `design_canvas.py`'s own
+  `build_canvas_document` (the editor) — deliberately NOT editor-exclusive like the spine, since a white
+  editor canvas for an off-white real design would be a real, newly-introduced mismatch, not a neutral gap.
+- **The missing `<hr class="rule">` divider**: added as a real `type:'divider'` generic element (a
+  pre-existing, already-implemented schema type — this was a seed-content gap, never a renderer gap) to
+  BOTH Professional's AND Minimal's own V2 seeds. Extending this to Minimal, beyond the prior audit's own
+  literal "Professional fidelity gaps" framing, is a deliberate, explained choice: the prior audit's own
+  background-color finding already named Minimal as a second real, confirmed instance of the identical
+  defect class, and Minimal's own real `<hr>` uses the exact same `design_secondary_color`-based styling
+  Professional's does, so the fix is genuinely the same mechanism, not a new, separately-unverified
+  assumption. Modern's own `<hr>` was deliberately NOT touched — out of the audit's own scope, and its
+  real color (`#e4e2f0`) is a plain literal, not theme-token-based like professional/minimal's, so
+  extending the fix there would need real, separate verification this pass didn't do.
+- **TOTAL DUE label styling**: `.v2-row-due span:first-child` — the golden static templates' own real
+  `.totals .row.due span:first-child` deliberately styles the LABEL differently from the amount next to it
+  (uppercase/letter-spaced/8pt sans/primary-colored vs the amount's own 13pt mono/secondary-colored) —
+  `.v2-row-due` only ever styled the row as a whole before this, so the label rendered in the amount's own
+  style. `_element_content.html`'s totals branch always emits the label as the row's first `<span>`,
+  confirmed a real, stable selector target.
+- **The "9 elements exceed" vs "Check design health: 0 issues" contradiction**: investigated and diagnosed
+  directly, not assumed. Verdict: NEITHER check was wrong in what it itself measures — `overflowScan`
+  (`DesignEditor.jsx`) is a real, live DOM `scrollHeight`-vs-declared-box measurement of whatever ALIAS
+  content is actually on screen; `design_validate`'s own Layers A/C/D check schema validity, semantic
+  rules, and that a REAL dry-run render (real sample invoice data) completes without error — and this
+  renderer deliberately uses `overflow:visible` everywhere (a real, documented Phase 1 design decision:
+  content overflowing its own box is a design concern, never treated as a render error), so Layer D has no
+  way to know about visual overflow at all, by design. The real, fixed problem was presentation, not logic:
+  showing "0 issues" directly beside "9 elements exceed their design box" reads as a flat contradiction to
+  a real user, with neither panel explaining what the other one wasn't checking. Fix: the "Template health"
+  panel now folds the already-computed `overflowScan.count` into what it calls a "found issue" — it can no
+  longer claim "Looks good — no issues found" while a nonzero overflow count exists, and a real, specific
+  line item now explains why the render check alone couldn't have caught it. This makes the two signals
+  agree because a real, shared problem is now surfaced consistently in both places, not because the numbers
+  were superficially forced to match.
+
+Reason: Ali's own explicit task breakdown, closing named gaps directly rather than re-discovering them
+piecemeal — verify every claim against real render output (page counts read from WeasyPrint itself, never
+assumed; the wordmark/margin-box sizing behavior tested in real isolated documents before touching the real
+templates; the modern.html footer collision and the flex margin-top:auto failure both found by direct
+reproduction, not predicted from reading CSS).
+
+Alternatives considered: for signature pinning, `margin-top:auto` (rejected — real, confirmed non-working
+in this WeasyPrint version); positioning the spine via a template-name branch in the renderer (rejected —
+directly violates this codebase's own enforced no-seed-comparison rule, confirmed by a real, existing test
+that would have caught it). For the health/overflow discrepancy, unifying the two checks into one shared
+server-side computation was considered and rejected as out of scope for this pass — the client-side
+overflow check depends on a real browser's own DOM layout (`scrollHeight`), which the Django backend has no
+synchronous equivalent for without adding a headless-browser dependency; the frontend-side fix folds the
+existing signal in without that larger change.
+
+Verification: real, freshly-rendered PDFs for every claim in this entry (single-page footer with all 3
+positions correct and signature flush to the true bottom; a genuine 40-item multi-page invoice with every
+line item confirmed present via the new permanent test; Professional's V2 canonical render screenshotted
+directly, showing the spine/background/divider/TOTAL DUE styling together). Backend: every affected test
+module run individually/in small batches (this dev machine's own documented native WeasyPrint/GC single-
+process segfault reproduced once during a larger combined run this pass, unrelated to these changes, worked
+around the same documented way) — 7 new + ~700 existing across `apps.invoices`, all passing except the
+same 2 pre-existing, already-confirmed-unrelated `test_design_templates_golden.py` failures; 3 tests in
+`test_design_renderer.py` needed a real, small position adjustment (a Y-coordinate 3 tests had deliberately
+hard-coded into what used to be empty header space now genuinely occupied by the new divider element — the
+tests' own stale comment explaining "real, deliberately-checked empty space" was updated, not just the
+number). Frontend: a clean production `vite build`; no existing test file covered the health panel this
+pass touched, so none could regress, and none was added given the scope already covered this pass.
+`screenshot-demo@example.com`'s profile fields (`business_name`/`logo`/`signature_url`) and a handful of
+temporary `InvoiceDesign` rows were used for real-render verification throughout and fully reverted/deleted
+before finishing; no other account or invoice data was created or modified.
+
+Docs: this entry.

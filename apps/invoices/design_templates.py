@@ -213,6 +213,24 @@ def _bound_text(binding, x, y, width, height, style):
     }
 
 
+def _divider(x, y, width, thickness_mm, color):
+    """
+    30 August 2026 fidelity fix — the real golden static templates'
+    `<hr class="rule">` (a real, visible divider between the header and
+    the Bill-to/table content) was completely absent from the V2
+    canonical render. `type:'divider'` is a pre-existing, already-
+    implemented generic schema type (design_renderer.py's own
+    attach_generic_content/`_element_content.html`) — this was never a
+    renderer gap, only a seed-content gap. A thin, near-zero declared
+    height (1mm) — the real visible mark is `shape_css`'s own
+    `border-top`, not the element's own box height.
+    """
+    return {
+        'kind': 'generic', 'type': 'divider', 'x': x, 'y': y, 'width': width, 'height': 1,
+        'style': {'thickness_mm': thickness_mm, 'color': color}, 'overrides': {}, 'binding': None,
+    }
+
+
 def _table(x, y, width, height, style):
     """
     Master Blueprint cutover (§B.3): `layout_mode: 'flow'` — the table's
@@ -266,6 +284,24 @@ PROFESSIONAL_DESIGN_DATA_V2 = {
     'page': {
         'size': 'A4', 'width_mm': 210, 'height_mm': 297,
         'margin_top_mm': 16, 'margin_right_mm': 16, 'margin_bottom_mm': 16, 'margin_left_mm': 20,
+        # 30 August 2026 fidelity fix — the real golden static template's
+        # own decorative `.spine`/`.spine::after` (professional.html: a
+        # 3mm primary-colored bar bled to the true left page edge, plus a
+        # thin 0.4mm accent line at its own right edge) was completely
+        # absent from the V2 canonical render before this. `color:
+        # 'theme_primary'` (not a literal hex) so it tracks color_variant
+        # like every other themed element in this seed — the golden
+        # template's own accent_color (#d9c9a8) is a fixed literal there
+        # too (not itself color_variant-aware), so kept literal here for
+        # an exact match rather than invented as a second theme token.
+        'spine': {'width_mm': 3, 'color': 'theme_primary', 'accent_color': '#d9c9a8'},
+        # 30 August 2026 fidelity fix — professional.html's own real
+        # `body { background: #faf9f6; }` (a warm off-white, not pure
+        # white) was silently flattened to the canonical renderer's one
+        # shared, hardcoded `#ffffff` for every template. Real, measured
+        # value (confirmed directly: golden PNG background pixel sampled
+        # at rgb(249,249,246) vs the V2 render's rgb(255,255,255)).
+        'background_color': '#faf9f6',
     },
     'header': {
         'elements': [
@@ -301,6 +337,10 @@ PROFESSIONAL_DESIGN_DATA_V2 = {
     },
     'flow': {
         'elements': [
+            # y=68: the real golden `<hr class="rule">` — sits between the
+            # header's own real content bottom (65mm) and the table's own
+            # calibrated y=76 below, with real clearance on both sides.
+            _divider(0, 68, 174, 0.4, 'theme_secondary'),
             # y=76: header's own real content bottom (65mm) + the real,
             # measured gap to the table's top edge in the golden template
             # (11mm) — unchanged from this seed's pre-4B.2 spacing_before_mm.
@@ -399,6 +439,11 @@ MINIMAL_DESIGN_DATA_V2 = {
     'page': {
         'size': 'A4', 'width_mm': 210, 'height_mm': 297,
         'margin_top_mm': 20, 'margin_right_mm': 18, 'margin_bottom_mm': 16, 'margin_left_mm': 18,
+        # 30 August 2026 fidelity fix — see Professional's own identical
+        # comment above. minimal.html's own real `body { background:
+        # #fdfdfb; }`, silently flattened to the canonical renderer's one
+        # shared #ffffff before this.
+        'background_color': '#fdfdfb',
     },
     'header': {
         'elements': [
@@ -430,6 +475,10 @@ MINIMAL_DESIGN_DATA_V2 = {
     },
     'flow': {
         'elements': [
+            # y=67: the real golden `<hr class="rule">` (0.3mm, matching
+            # minimal.html's own thinner rule vs Professional's 0.4mm) —
+            # sits with real clearance before the table's own y=75 below.
+            _divider(0, 67, 174, 0.3, 'theme_secondary'),
             _table(0, 75, 174, _TABLE_HEIGHT_ESTIMATE_MM, {
                 # Phase 6: same TB-001-class fix as Professional's table
                 # above — '#171614' was a literal copy of Minimal's own

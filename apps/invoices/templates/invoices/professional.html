@@ -29,12 +29,29 @@
       font-size: 7pt;
       color: #a09a89;
     }
-    @bottom-right {
-      content: "Page " counter(page) " of " counter(pages) " · Generated via LanceraOS";
+    {% if not single_page_layout %}
+    /* Real WeasyPrint limitation, confirmed directly: there is no
+       `@page :first:last` (or any pure-CSS "exactly one page") selector —
+       tested directly, matched nothing in either a real 1-page or a real
+       multi-page document. `single_page_layout` (set by
+       pdf_generator.render_invoice_pdf's own 2-pass real-page-count check,
+       never guessed) is what actually makes this conditional: this whole
+       @bottom-center block is omitted from the rendered CSS entirely for a
+       confirmed single page — never rendered as "Page 1 of 1" — and
+       included, with the real counter(pages), only for a render already
+       confirmed to be 2+ pages. */
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
       font-family: 'IBM Plex Mono';
       font-size: 7pt;
       color: #a09a89;
     }
+    {% endif %}
+    {% if wordmark_data_uri %}
+    @bottom-right {
+      content: url("{{ wordmark_data_uri }}");
+    }
+    {% endif %}
   }
   * { box-sizing: border-box; }
   body {
@@ -50,6 +67,26 @@
     width: 210mm;
     min-height: 281mm;
     padding: 16mm 16mm 0 20mm;
+  }
+  /* Signature pinned to the true bottom (Part 2 of the 30 August 2026
+     footer+signature pass) — applied ONLY when pdf_generator.py's own
+     2-pass render has already confirmed this exact content is genuinely
+     1 page (single_page_layout, see the @page block's own comment above).
+     `.spine` stays absolutely positioned (out of flow — not a flex item
+     either way) regardless. `justify-content: space-between` with exactly
+     2 real flex children (`.page-body`, wrapping everything else, and
+     `.sign-row` itself) is the one mechanism actually confirmed to push
+     the last child flush to a flex container's own bottom edge in this
+     WeasyPrint version — `margin-top: auto` on a flex item was tested
+     directly first and does NOT work here (a real, isolated reproduction
+     left zero gap at all; see DECISIONS.md). Never applied to a
+     multi-page render — see pdf_generator.render_invoice_pdf's own
+     MANDATORY SAFE ORDER docstring for why that's structurally, not just
+     conventionally, true. */
+  .page.page-single {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
   }
   /* signature element: the ledger spine */
   .spine {
@@ -309,9 +346,10 @@
 </style>
 </head>
 <body>
-<div class="page">
+<div class="page{% if single_page_layout %} page-single{% endif %}">
   <div class="spine"></div>
 
+  <div class="page-body">
   <header class="top">
     <div class="brand">
       {% if freelancer.logo %}<img class="logo" src="{{ freelancer.logo }}" alt="">{% endif %}
@@ -395,6 +433,7 @@
       {% if freelancer.easypaisa_number %}<div class="method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
     </div>
     {% endif %}
+  </div>
   </div>
 
   <div class="sign-row">
