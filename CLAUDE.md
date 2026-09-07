@@ -1704,6 +1704,27 @@ assignment/color-wiring SEV1 fixes, and the full editor feature build order — 
 2026); DATABASE.md's `invoice_designs`/`invoice_design_versions` entries are the authoritative
 schema reference.
 
+**07 September 2026 (Phase 1 — schema extensions ahead of the editor swap)**: the standalone
+invoice editor (a separate Vite/React project merged into this repo, `invoice-editor/`) is
+replacing `DesignEditor.jsx` (GrapesJS) as the real Template Builder frontend in a later phase —
+the canonical renderer, validation, versioning, gallery, and invoice-assignment pipeline are all
+staying exactly as they are. Before that swap, the production schema (`schema_version: 2`) gained
+4 additive capabilities the new editor already has and would otherwise silently lose on save:
+element `rotation` (pinned elements only, with `design_schema.py`'s overlap AND page-bounds checks
+both made rotation-aware — a direct Python port of the editor's own `rotatedBoundingBox` math,
+byte-identical to the old axis-aligned behavior at rotation=0), a 6th generic type `ellipse`
+(found and fixed a real bug along the way: the element wrapper's own generic background-color
+handling was silently painting a sharp-cornered rectangle behind/around the shape, hiding an
+ellipse's own rounding entirely — see `design_renderer.SHAPE_TYPES_WITH_OWN_FILL`), a
+`page.footer` config object (the same real `Page X of N`/business-identity/wordmark footer the 3
+static templates already show, now available to schema_version 2 designs too, via real WeasyPrint
+`@page` margin boxes and the identical natural-flow-first page-count sequencing
+`pdf_generator.render_invoice_pdf`'s own docstring already mandates for the static templates'
+identical problem), and non-destructive image `crop` (a stored rectangle, never a re-encoded
+asset). See DATABASE.md's own "Phase 1 schema additions" entry under `invoice_designs` for the
+full schema shape, and DECISIONS.md's 07 September 2026 entry for the full verification evidence
+(real WeasyPrint renders, not just schema validation).
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

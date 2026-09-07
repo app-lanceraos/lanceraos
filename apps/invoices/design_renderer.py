@@ -29,7 +29,13 @@ from types import SimpleNamespace
 from django.template.loader import render_to_string
 
 from apps.invoices.design_schema import SUPPORTED_BINDINGS, validate_design_data_schema_v2
-from apps.invoices.pdf_generator import FONT_CONTEXT, PORTAL_FONT_CONTEXT, _generate_qr_data_uri
+from apps.invoices.pdf_generator import (
+    FONT_CONTEXT,
+    PORTAL_FONT_CONTEXT,
+    _generate_qr_data_uri,
+    _generate_wordmark_data_uri,
+    _is_premium_branding_enabled,
+)
 
 # Page content margins, in mm. NOT invented for Phase 1 — these are the
 # exact real values apps/invoices/templates/invoices/_dynamic_element_styles.html's
@@ -44,6 +50,40 @@ PAGE_MARGIN_TOP_MM = 16
 PAGE_MARGIN_RIGHT_MM = 16
 PAGE_MARGIN_BOTTOM_MM = 16
 PAGE_MARGIN_LEFT_MM = 20
+
+# Phase 1 (rotation/ellipse/footer/crop, 07 September 2026) — the real
+# WeasyPrint `@page` bottom margin reserved for `page.footer`'s own
+# margin-box content (@bottom-left/@bottom-center/@bottom-right — see
+# _page_styles.html), same value professional.html/minimal.html/
+# modern.html already use for the identical purpose (their own real,
+# working `@page { margin: 0 0 16mm 0; }`). A renderer-level constant,
+# not part of design_data — this schema has no per-design footer-height
+# concept, matching how PAGE_MARGIN_*_MM above are renderer constants too.
+# Distinct from PAGE_MARGIN_BOTTOM_MM (a plain CSS `padding-bottom` on
+# `.v2-content`, inside the body's own normal flow, unrelated to the
+# real `@page` margin box a footer needs — the two can both apply at
+# once, one adding breathing room above the last real content row, the
+# other carving out physical page space for the footer strip below it).
+FOOTER_MARGIN_BOX_HEIGHT_MM = 16
+
+# Phase 1 — the footer's own default style, applied whenever `page.footer`
+# is present but a given key is absent from `page.footer.style` (design_
+# schema.py validates these are the right TYPE when present, but doesn't
+# assign defaults — that's this renderer's job, same division of
+# responsibility every other optional page/style field in this module
+# already follows). `text_color` reuses `#a09a89` — not invented for this
+# feature, it's this exact file's own pre-existing muted-footer-ish tone
+# (`.v2-sig-line`'s color, _page_styles.html) rather than a new arbitrary
+# shade or one of the 3 static templates' own template-specific hues.
+FOOTER_STYLE_DEFAULTS = {
+    'text_color': '#a09a89',
+    'background_color': 'transparent',
+    'divider_color': None,
+    'font_family': 'IBM Plex Mono',
+    'font_size_pt': 7,
+    'font_weight': None,
+    'show_wordmark': True,
+}
 
 
 class DesignRenderError(ValueError):
@@ -335,6 +375,14 @@ def is_sidebar_element(element):
     return bool((element.get('style') or {}).get('sidebar'))
 
 
+# The 3 generic types whose fill/border is resolved authoritatively by
+# attach_generic_content's own shape_css (below), onto their INNER
+# shaped div — see prepare_element's own background-color guard, which
+# reads this same tuple to make sure the OUTER `.v2-el` wrapper never
+# also paints an identical, always-sharp-cornered background behind it.
+SHAPE_TYPES_WITH_OWN_FILL = ('rectangle', 'container', 'ellipse')
+
+
 def attach_generic_content(prepared, element, context, content_mode='real'):
     """Populates the extra keys the template needs for a generic element. No-op for semantic elements."""
     if element.get('kind') != 'generic':
@@ -355,8 +403,35 @@ def attach_generic_content(prepared, element, context, content_mode='real'):
 
     elif el_type == 'image':
         prepared['image_src'] = resolve_style_value(element, 'src', '')
+        # Phase 1 — non-destructive crop: `element['crop']` (validated by
+        # design_schema.py to be x/y/width/height fractions of the SOURCE
+        # image, each 0-1) is rendered via the standard CSS
+        # crop-without-re-encoding technique — a sized, `overflow:hidden`
+        # wrapper (see _element_content.html) with the real, full <img>
+        # scaled up by 1/crop.width x 1/crop.height and shifted so the
+        # crop rectangle's own top-left lands at the wrapper's origin.
+        # The source asset itself is never touched — only re-cropping the
+        # SAME original never compounds quality loss, unlike re-encoding
+        # a new, already-cropped image on every edit. Confirmed directly
+        # against a real WeasyPrint render (see DECISIONS.md) — absolute
+        # positioning + percentage width/height inside an overflow:hidden
+        # ancestor renders correctly, the same real mechanism this
+        # renderer already trusts elsewhere (.v2-sidebar, .v2-spine).
+        crop = element.get('crop')
+        if crop:
+            crop_width = crop['width'] or 1
+            crop_height = crop['height'] or 1
+            img_width_pct = 100 / crop_width
+            img_height_pct = 100 / crop_height
+            left_pct = -(crop['x'] / crop_width) * 100
+            top_pct = -(crop['y'] / crop_height) * 100
+            prepared['crop_css'] = (
+                f'position:absolute;max-width:none;'
+                f'width:{img_width_pct}%;height:{img_height_pct}%;'
+                f'left:{left_pct}%;top:{top_pct}%;'
+            )
 
-    elif el_type in ('rectangle', 'container'):
+    elif el_type in SHAPE_TYPES_WITH_OWN_FILL:
         # 30 August 2026 fidelity fix — this branch never called
         # resolve_theme_color (every OTHER color-bearing generic/semantic
         # branch in this module does), a real, confirmed gap: a rectangle's
@@ -373,6 +448,17 @@ def attach_generic_content(prepared, element, context, content_mode='real'):
         css = f'background:{bg};'
         if border_color and border_width:
             css += f'border:{border_width}mm solid {border_color};'
+        # Phase 1 — 'ellipse' reuses this exact same fill/border
+        # resolution (never a parallel one) plus one forced addition: a
+        # single border-radius:50% renders as a true ellipse (not just a
+        # circle) on a non-square box — CSS resolves a percentage
+        # border-radius independently per axis, confirmed directly
+        # against a real WeasyPrint render (see DECISIONS.md). Always
+        # forced, never a user-configurable style key — an "ellipse" that
+        # isn't elliptical would just be a second, confusingly-named
+        # rectangle.
+        if el_type == 'ellipse':
+            css += 'border-radius:50%;'
         prepared['shape_css'] = css
 
     elif el_type == 'divider':
@@ -424,6 +510,24 @@ def prepare_element(element, context, content_mode='real', *, chain_member=False
             f"position:absolute;left:{element['x']}mm;top:{element['y']}mm;"
             f"width:{element['width']}mm;height:{element['height']}mm;"
         )
+    # Phase 1 — rotation (degrees; absent/0 means no transform at all, so
+    # this is a pure no-op for every element that predates this field).
+    # design_schema.py's own validation already rejects rotation on a
+    # 'flow'-layout element, so a chain_member here can only ever be a
+    # PINNED single flow-region item (see _prepare_flow_region) — never
+    # an actual growing chain member. That item's real box lives on its
+    # own .v2-flow-item wrapper (not this inner div — see that function's
+    # own docstring), so `width:100%;height:100%;` is added here too,
+    # making this div's own box match its wrapper exactly before rotating
+    # it around that box's center — otherwise this div (with no size of
+    # its own) would rotate around a zero-size point instead of visually
+    # rotating in place. A header-region element already has its own
+    # real width/height in `css` above, so this branch is a no-op there.
+    rotation = element.get('rotation') or 0
+    if rotation:
+        if chain_member:
+            css += 'width:100%;height:100%;'
+        css += f'transform:rotate({rotation}deg);transform-origin:center;'
     # `style.align` applied on the wrapping container, matching v1's own
     # real, established convention exactly (design_renderer.py's
     # _zone1_element_css) — found and fixed during Phase 2's own golden-
@@ -476,9 +580,25 @@ def prepare_element(element, context, content_mode='real', *, chain_member=False
     text_transform = resolve_style_value(element, 'text_transform')
     if text_transform:
         css += f'text-transform:{text_transform};'
-    background_color = resolve_theme_color(resolve_style_value(element, 'background_color'), context)
-    if background_color:
-        css += f'background-color:{background_color};'
+    # Phase 1 real bug fix, found via a real WeasyPrint render (see
+    # DECISIONS.md): rectangle/container/ellipse resolve their OWN fill
+    # from this exact same `style.background_color` key via
+    # attach_generic_content's `shape_css`, applied to the INNER shaped
+    # div — this generic per-element background-color would ALSO paint
+    # the OUTER `.v2-el` wrapper with the identical color, as a plain,
+    # always-sharp-cornered rectangle. For a rectangle/container (no
+    # rounding), the two identically-sized, identically-colored boxes
+    # were visually indistinguishable — completely harmless. For an
+    # ellipse, the outer wrapper's own sharp-cornered rectangle painted
+    # right behind/around the inner rounded shape, in the same color,
+    # silently hiding the rounding entirely (confirmed directly: the
+    # element rendered as a plain rectangle, not the ellipse it should
+    # have been). These 3 types manage their own fill authoritatively via
+    # shape_css; the outer wrapper should never also paint it.
+    if not (element.get('kind') == 'generic' and element.get('type') in SHAPE_TYPES_WITH_OWN_FILL):
+        background_color = resolve_theme_color(resolve_style_value(element, 'background_color'), context)
+        if background_color:
+            css += f'background-color:{background_color};'
     opacity = resolve_style_value(element, 'opacity')
     if opacity is not None:
         css += f'opacity:{opacity};'
@@ -1073,6 +1193,33 @@ def render_design_html(design_data, context, *, for_pdf=False):
     # #ffffff default, so this is fully backward-compatible), same
     # pattern as spine/sidebar above.
     background_color = page.get('background_color', '#ffffff')
+    footer = page.get('footer')
+    # Phase 1 — a real @page bottom margin is only ever reserved when a
+    # footer is actually configured; every existing design (no page.footer
+    # key at all) keeps the exact `margin:0` / full-page-height body it
+    # already renders with, byte-for-byte. `.v2-content`'s own min-height
+    # is reduced by the same amount so a short, otherwise-single-page
+    # design doesn't overflow onto a spurious page 2 purely because its
+    # declared min-height now exceeds what one page's shrunken content
+    # box actually holds — confirmed against a real WeasyPrint render,
+    # not assumed (see DECISIONS.md).
+    footer_margin_mm = FOOTER_MARGIN_BOX_HEIGHT_MM if footer else 0
+    content_min_height_mm = page['height_mm'] - footer_margin_mm
+    footer_style = {**FOOTER_STYLE_DEFAULTS, **(footer.get('style') or {})} if footer else None
+    footer_wordmark_data_uri = None
+    if footer and footer_style['show_wordmark'] and _is_premium_branding_enabled(context['freelancer']):
+        footer_wordmark_data_uri = _generate_wordmark_data_uri(footer_style['text_color'])
+    # Real WeasyPrint limitation (confirmed directly, same finding
+    # professional.html's own @page block already documents): there is no
+    # `@page :first:last` / "exactly one page" CSS selector, so whether to
+    # even show a "Page X of N" counter can only be decided from a REAL
+    # rendered page count — never guessed from content length. Callers
+    # that already know (render_design_pdf_bytes' own 2-pass render, or
+    # pdf_generator.render_invoice_pdf's identical mandatory sequencing
+    # for the static templates) set this in `context`; any other caller
+    # (a browser-rendered portal/preview HTML view, where `@page` margin
+    # boxes have no visual effect at all) safely defaults to False.
+    single_page_layout = bool(footer and context.get('single_page_layout', False))
     spine = page.get('spine')
     spine_color = resolve_theme_color(spine.get('color'), context) if spine else None
     spine_accent_color = spine.get('accent_color') if spine else None
@@ -1130,6 +1277,12 @@ def render_design_html(design_data, context, *, for_pdf=False):
         'spine_color': spine_color,
         'spine_accent_color': spine_accent_color,
         'page_background_color': background_color,
+        'content_min_height_mm': content_min_height_mm,
+        'footer': footer,
+        'footer_style': footer_style,
+        'footer_margin_mm': footer_margin_mm,
+        'footer_wordmark_data_uri': footer_wordmark_data_uri,
+        'single_page_layout': single_page_layout,
         'invoice': context['invoice'],
         'freelancer': context['freelancer'],
         'qr_code_data_uri': context.get('qr_code_data_uri'),
@@ -1154,10 +1307,39 @@ def render_design_pdf_bytes(design_data, context):
     practice guards against doesn't currently apply here either way — but
     following the same convention costs nothing and avoids reintroducing a
     real, previously-fixed class of bug if a later phase ever does.
+
+    Phase 1 (rotation/ellipse/footer/crop, 07 September 2026) — a design
+    with `page.footer` configured now goes through the same MANDATORY SAFE
+    ORDER pdf_generator.render_invoice_pdf's own docstring establishes for
+    the 3 static templates' identical "Page X of N" problem: page count
+    must always come from a natural-flow render first, never guessed or
+    assumed. (1) Render once assuming multi-page (`single_page_layout`
+    unset/False, the counter markup present); read the REAL page count
+    off WeasyPrint's own `Document.pages`. (2) Only if that count is
+    exactly 1, re-render the SAME design_data/context with
+    `single_page_layout=True` (the counter omitted) and use THAT as final
+    output — never rendered a third time, and never applied to a
+    confirmed multi-page document. A design with no footer at all skips
+    this entirely (single render, unchanged performance) — there is
+    nothing page-count-dependent to decide in that case.
     """
     from weasyprint import HTML
+
+    footer = (design_data.get('page') or {}).get('footer')
+    if not footer:
+        html_string = render_design_html(design_data, context, for_pdf=True)
+        return HTML(string=html_string).write_pdf()
+
+    context = {**context, 'single_page_layout': False}
     html_string = render_design_html(design_data, context, for_pdf=True)
-    return HTML(string=html_string).write_pdf()
+    document = HTML(string=html_string).render()
+
+    if len(document.pages) == 1:
+        context = {**context, 'single_page_layout': True}
+        html_string = render_design_html(design_data, context, for_pdf=True)
+        document = HTML(string=html_string).render()
+
+    return document.write_pdf()
 
 
 def build_render_context(user, base_template, color_variant, invoice=None):

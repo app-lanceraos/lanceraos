@@ -507,6 +507,24 @@ def render_invoice_pdf(invoice):
     context = build_pdf_context(invoice)
 
     if not _is_static_template_design(design):
+        # Phase 1 (rotation/ellipse/footer/crop, 07 September 2026) — a
+        # real, schema_version=2 design routes through design_renderer.
+        # render_design_pdf_bytes, not a bare HTML(...).write_pdf() call
+        # here, because THAT function is what now carries forward this
+        # same MANDATORY SAFE ORDER natural-flow-first page-count check
+        # (see its own docstring) for a v2 design's own `page.footer` —
+        # a real, independent decommission of that exact WeasyPrint
+        # limitation, needed here because page.footer is a Phase 1
+        # capability the older legacy-dynamic render path never had and
+        # still doesn't. A v2 design with no footer configured falls
+        # straight through to that same single, unchanged plain render
+        # internally — zero performance cost for the common case. The
+        # legacy-dynamic path (real, saved zone_1/zone_2 customizations
+        # with no schema_version key) is completely untouched, still a
+        # single plain render exactly as before this phase.
+        if design is not None and (design.design_data or {}).get('schema_version') == 2:
+            from .design_renderer import render_design_pdf_bytes
+            return render_design_pdf_bytes(design.design_data, context)
         html_string = render_html_for_design(design, context, for_pdf=True)
         return HTML(string=html_string).write_pdf()
 

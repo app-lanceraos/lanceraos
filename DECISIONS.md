@@ -8085,3 +8085,311 @@ model-swap half of this entry — the mocked suite alone could not have caught e
 failure mode or confirmed qwen3.8-27b's real success, by design (it mocks the exact function being tested).
 
 Docs: this entry; CLAUDE.md's tech-stack and environment-variables sections; .env.example.
+
+---
+
+Date: 07 September 2026 (Phase 1 — schema extensions: rotation, ellipse, page.footer, image crop)
+Decision: Added 4 additive capabilities to the production `design_data` schema (`schema_version:
+2`, `apps/invoices/design_schema.py`) and the canonical renderer (`apps/invoices/design_renderer.py`)
+ahead of the standalone invoice editor (`invoice-editor/`, merged into this repo in Phase 0)
+replacing `DesignEditor.jsx` (GrapesJS) as the real Template Builder frontend — the canonical
+renderer, validation, versioning, gallery, and invoice-assignment pipeline are unchanged; this
+phase touched schema/renderer only, no editor code, no adapter (`design_canvas.py`) changes.
+
+**1. `rotation`** — an optional float (degrees) on any element, default 0, restricted to
+`layout_mode: 'pinned'` (confirmed the real default directly: absent means pinned). Rejected with
+a clear message on a `layout_mode: 'flow'` element (a flow element's real footprint is
+content-driven and unknown at design time, and would break `_group_into_render_chains`' own
+anchor math). Rendered as a real `transform:rotate(Ndeg);transform-origin:center;` in
+`prepare_element` — for a `chain_member` (a pinned single item inside the flow region, the ONLY
+case a rotated non-header element can reach, since a real growing chain member can never have
+rotation set), the inner div also gets `width:100%;height:100%;` first, since that item's real box
+lives on its own `.v2-flow-item` wrapper rather than this inner div — otherwise it would rotate
+around a zero-size point instead of its own real box.
+
+**Critical requirement — rotation-aware overlap**: `design_schema.rotated_bounding_box` is a
+direct, line-for-line Python port of the editor's own real rotation math
+(`invoice-editor/src/utils/geometry.js`'s `rotateVector`/`rotatedBoundingBox`) — rotate each of an
+element's 4 corners around its own center, take the axis-aligned min/max of the rotated corners —
+not a looser reinvention. For rotation=0 this returns byte-identical values to the plain unrotated
+box every existing check already used, confirmed both by construction (the function's own
+early-return) and by a dedicated test. `_validate_overlap` was rewritten to compare every pair's
+REAL rotated footprint (`_boxes_overlap_rotated`, same `OVERLAP_EPSILON_MM` tolerance as before)
+instead of the plain axis-aligned `legacy_design_schema.boxes_overlap` it used to import and call —
+verified in BOTH directions with dedicated tests, not just the "catches a new overlap" direction:
+(a) two 40x40 boxes 1mm apart on the X-axis (no unrotated overlap) — rotating one by 45° grows its
+real diagonal footprint (40·√2 ≈ 56.57mm wide) enough to genuinely reach the other, correctly
+flagged; (b) two 100x10 boxes overlapping 40mm on the X-axis when unrotated — rotating one by 90°
+shrinks its real X-extent to its own height (10mm, centered on its original center), genuinely
+clearing the other, correctly NOT flagged (the old axis-aligned check would have wrongly rejected
+this valid design). `_validate_page_bounds` was extended the same way (beyond the letter of the
+"Critical" instruction, which named only `_validate_overlap` — a deliberate, disclosed judgment
+call): a rotated element's true top-left corner can sit outside its own unrotated x/y even when
+x/y themselves look on-page, so the x/y-floor and right-edge checks now use the same rotated
+footprint too. Confirmed byte-identical for rotation=0 by construction; confirmed to catch a real
+new case with a dedicated test (a 20x20 box at x=0,y=0 rotated 30° genuinely pokes off the left/top
+edge, where the plain unrotated check would have passed it).
+
+A real robustness bug was found and fixed while writing this phase's own test suite (not by manual
+verification — a genuine test failure caught it): `_validate_element_list` admits an element into
+the overlap/bounds pass as long as its x/y/width/height are numbers, regardless of whether some
+OTHER field (like `rotation`) already failed its own separate validation — so an element with a
+non-numeric `rotation` (already correctly flagged elsewhere as its own schema error) crashed
+`rotated_bounding_box` outright with a raw `TypeError` instead of degrading gracefully. Fixed by
+treating a non-numeric rotation as 0 for geometric-check purposes only (the real "must be a
+number" error is still reported, separately, by `_validate_element` — this fix only stops one bad
+field from taking the rest of the validation run down with it).
+
+**2. `ellipse`** — a 6th `GENERIC_TYPES` entry, reusing the exact same fill/border resolution
+`rectangle`/`container` already use (`attach_generic_content`), plus one forced, non-configurable
+`border-radius:50%`. **A real, live-rendered bug was found and fixed**: a first real WeasyPrint
+render (a green ellipse next to a rotated red rectangle, screenshotted directly) showed the ellipse
+as a plain, sharp-cornered rectangle — traced to `prepare_element`'s own generic per-element CSS
+building, which ALSO paints `background-color` on the OUTER `.v2-el` wrapper from the exact same
+`style.background_color` key `attach_generic_content`'s `shape_css` already resolves onto the
+INNER shaped div. For a rectangle/container this redundant double-paint was completely invisible
+(both boxes always identical size/color, no rounding to hide) — but for an ellipse, the outer
+wrapper's own always-sharp-cornered rectangle painted directly behind/around the inner rounded
+shape, in the identical color, silently erasing the rounding. Fixed by excluding
+`rectangle`/`container`/`ellipse` (the new `SHAPE_TYPES_WITH_OWN_FILL` tuple, shared by both
+`prepare_element` and `attach_generic_content` so the two can't drift apart on which types this
+applies to) from the generic wrapper's own `background-color` — those 3 types manage their own
+fill authoritatively via `shape_css`. Re-rendered and re-screenshotted after the fix: a real
+ellipse, confirmed visually, isolated CSS also confirmed WeasyPrint genuinely supports
+percentage `border-radius` producing a true (non-circular) ellipse on a non-square box.
+
+**3. `page.footer`** — the largest, most architecturally significant addition. A config object,
+not a positioned canvas element (no x/y/width/height of its own) — turns on the SAME fixed 3-slot
+footer content `professional.html`/`minimal.html`/`modern.html` already show (business identity
+left, a real multi-page-only "Page X of N" counter center, "Generated by" + the LanceraOS wordmark
+right), with `style` customizing appearance only, never per-slot content. `design_renderer.py` had
+ZERO existing footer handling before this phase (confirmed directly via `grep`, not assumed) — so
+this is a genuinely new capability, not a reconciliation of something pre-existing.
+
+Implementation mirrors the static templates' own real, working `@page` margin-box technique
+exactly (`_page_styles.html`'s new `@page { margin: 0 0 {{footer_margin_mm}}mm 0; @bottom-left{...}
+@bottom-center{...} @bottom-right{...} }`, gated entirely on `page.footer`'s presence — absent
+means the exact `margin:0` every existing design already renders with, byte-for-byte).
+`FOOTER_MARGIN_BOX_HEIGHT_MM` (16mm, matching the static templates' own real value) is a
+renderer-level constant, not a schema field, same category as the existing `PAGE_MARGIN_*_MM`
+constants. `.v2-content`'s own `min-height` is reduced by the same amount when a footer is present
+(`content_min_height_mm`) — found and fixed a real, would-have-been-live bug during this pass's own
+render verification: WITHOUT this reduction, a short single-page design's `min-height` (still the
+FULL, un-shrunk page height) would exceed what one page's now-smaller content box actually holds
+once the real `@page` bottom margin is reserved, forcing a spurious, empty page 2 purely from the
+mismatch — confirmed the fix by rendering the identical content with and without a footer and
+checking both produce the same real page count.
+
+**Carrying forward the project's own hard rule** (`pdf_generator.render_invoice_pdf`'s own
+"MANDATORY SAFE ORDER" docstring: page count must always come from a natural-flow render first,
+never guessed): WeasyPrint has no `@page :first:last`/"exactly one page" CSS selector (the same
+real, confirmed limitation the static templates' own identical footer already documents), so
+whether to even show the counter can only be decided from a REAL rendered page count.
+`render_design_pdf_bytes` (design_renderer.py) now performs the identical 2-pass sequence for a
+v2 design with a footer: render once assuming multi-page (counter present), read the real page
+count off WeasyPrint's own `Document.pages`, and ONLY if that count is exactly 1, re-render once
+more with the counter omitted — never a third render, never applied to a confirmed multi-page
+document. A v2 design with no footer skips this entirely (single render, zero performance cost,
+unchanged from before this phase). `pdf_generator.render_invoice_pdf`'s own v2 branch — which
+previously did one bare `HTML(...).write_pdf()` call for EVERY non-static-template design,
+v2 and legacy-dynamic alike — now special-cases a genuine `schema_version: 2` design to route
+through this same function instead; the legacy-dynamic branch (a real, customized legacy design
+with no `schema_version` key) is completely untouched, still the exact single plain render it
+always was.
+
+Verified live end to end against real WeasyPrint output, not just schema validation: a genuine
+single-page render with a footer shows the business name/wordmark and — confirmed by real text
+extraction, not visual inspection alone — NO page-counter text at all (never a degenerate "Page 1
+of 1"); a forced 6-page render shows the real, correct "Page X of 6" counter on literally every one
+of the 6 pages (asserted individually per page, not just spot-checked); an identical no-footer
+control render produces the same page count as the with-footer version for genuinely-fitting
+content, proving the footer's own reserved margin doesn't silently push content onto a spurious
+extra page. `show_wordmark` (the phase's own named forward-compatible premium-gating flag) is
+combined at render time with the one real, pre-existing `_is_premium_branding_enabled` hook
+(`pdf_generator.py`) rather than a second, parallel "is this premium" concept.
+
+**4. Image `crop`** — an optional `{x, y, width, height}` object (each a fraction 0-1 of the
+SOURCE image's own dimensions) on a generic `image` element only, validated accordingly (rejected
+on any other type, out-of-range fractions rejected, missing keys rejected). Non-destructive by
+construction: `style.src` (the original asset) is never touched, re-encoded, or replaced — the
+crop rectangle is stored as sibling data to the element's own geometry, so re-cropping later never
+compounds quality loss the way re-encoding an already-cropped image would. Rendered via the
+standard CSS crop-without-re-encoding technique: a sized `overflow:hidden` wrapper around a
+`position:absolute`, percentage-scaled (`100/crop.width`, `100/crop.height`) and percentage-shifted
+(`-(crop.x/crop.width)*100`, `-(crop.y/crop.height)*100`) `<img>`. Verified this actually works in
+WeasyPrint (which does not support every CSS technique a browser does) with a real, purpose-built
+4-quadrant test PNG (solid red/green/blue/yellow quadrants, built with Pillow — not a hand-typed
+fake base64 string, which was tried first and failed to decode at all, a real dead end caught
+immediately by WeasyPrint's own image-load error rather than silently producing a blank render):
+the uncropped render showed all 4 quadrants; a second image on the same page, cropped to exactly
+the top-right (green) quadrant, rendered as a single solid green box with zero distortion or
+bleed from the neighboring quadrants — confirmed by direct visual inspection of the rendered PNG,
+not assumed from the CSS alone.
+
+Reason: the standalone editor (Phase 0) already supports full rotation, ellipse/rounded-rect/line
+shapes, and (per the editor's own upcoming image-upload work) crop — saving a design built with any
+of these into the current schema would silently lose them entirely (rotation flattens to
+axis-aligned, ellipse has nowhere to go, crop has no schema field to persist to) the moment the new
+editor replaces the old one, unless the schema/renderer gain these capabilities first. `page.footer`
+is a separate, pre-existing gap this phase closed opportunistically: a schema_version 2 design has
+never been able to show a real per-page counter at all, unlike the 3 static templates.
+
+Alternatives considered: reinventing a simpler, non-rotation-aware overlap check for the common
+case (rejected — the phase's own instructions were explicit that an axis-aligned test would be
+actively wrong once rotation exists, in both directions, and the editor's own real math already
+exists to port faithfully rather than approximate); clamping an out-of-range crop fraction instead
+of rejecting it (rejected — matches this schema's own established policy elsewhere, e.g.
+`_validate_page_bounds`'s own docstring: reject at validation time, never silently mutate what a
+user configured); re-encoding a cropped image server-side into a new, smaller asset (rejected —
+directly contradicts the phase's own "non-destructive" requirement and this codebase's own
+Cloudinary-asset-reuse conventions elsewhere).
+
+Verification: full `apps.invoices` suite, 1107 tests (up from 1072 pre-Phase-1) — the same 3
+pre-existing failures (`test_design_pagination`/`test_design_templates_golden`, confirmed via
+`git stash` in Phase 0 and re-confirmed unchanged here) and zero new ones. A new, permanent test
+module, `apps/invoices/tests/test_design_phase1_extensions.py` (35 tests), covers every case
+above at both the schema-validation and real-WeasyPrint-render layers, including the two real bugs
+this phase's own verification found and fixed (the ellipse double-background paint, the
+non-numeric-rotation crash) as regression tests, not just fixed silently. Every existing golden
+design (all 3 real builtin templates, both schema generations) re-verified to render identically —
+`test_design_templates_golden.py`'s own pass/fail set is completely unchanged by this phase.
+`legacy_design_schema.py`/`legacy_design_renderer.py` were not touched at all (confirmed via `git
+diff`); `design_canvas.py` needed no changes (it reuses `prepare_element`/`attach_generic_content`
+directly, so it inherits rotation/ellipse/crop support automatically the moment a design_data
+payload uses them — `page.footer` has no canvas-editor relevance at all, since `@page` margin
+boxes have zero visual effect in a browser-rendered iframe, only in real print/PDF output).
+
+Docs: this entry; DATABASE.md's `invoice_designs` entry (new "Phase 1 schema additions" section
+plus an updated schema JSON example); CLAUDE.md's Template Builder section.
+
+---
+
+Date: 07 September 2026 (Phase 1b — editor light/dark theme, matching LanceraOS)
+Decision: Made the standalone invoice editor (`invoice-editor/`) theme-aware, following the main
+LanceraOS app's own real light/dark mechanism rather than inventing a second one — independent of
+the same day's schema work (Phase 1), no Django code touched.
+
+**The real mechanism, confirmed by reading it directly, not assumed**: `frontend/src/hooks/
+useTheme.js` sets `data-theme="light"|"dark"` on `<html>`, sourced from the `lanceraos-theme`
+localStorage key with a `prefers-color-scheme` fallback when nothing's been chosen, and live-
+updates on both a `storage` event (cross-tab sync) and a media-query change (live OS-preference
+following when no explicit choice exists). `theme-bridge.js` (new) is a deliberate, minimal PORT of
+that exact same logic — same key, same fallback, same two live listeners — for this standalone
+project's own dev server, with no setter/toggle of its own: it only ever OBSERVES the theme, never
+owns it, matching the phase's own explicit "no second switching system" requirement. The moment
+this editor is actually mounted inside the main app (replacing `DesignEditor.jsx`, confirmed via
+`App.jsx`'s own route comment to be deliberately shell-less/full-screen, same category as
+`/account/deletion-review`) and shares its real `<html>` with `useTheme.js`, that hook is what
+would be setting `data-theme` — this bridge becomes a redundant no-op at that point, safe to delete
+then, harmless to leave running meanwhile.
+
+**Token mapping** (`tokens.css`, editor token NAMES unchanged — `editor.css`/every component
+reference to `--bg-panel`/`--purple-500`/etc. keeps working as-is; only their VALUES were re-
+derived): every mapped token is defined as `var(--<lanceraos-name>, <matching-literal-fallback>)`,
+not a copied literal — standalone (today) the LanceraOS variable is undefined so the fallback
+applies, but the moment this editor's stylesheet ever shares a document with the real `theme.css`,
+the same reference resolves to the live real value automatically, no further change needed — this
+is the literal mechanism behind "one palette, not two that happen to match today and drift later."
+Real mappings made: `--bg-base`→`--bg-page` (outermost body bg), `--bg-panel`→`--bg` (toolbar +
+side-panel chrome — the shell-background role, since this editor IS its own shell for this
+screen), `--bg-panel-raised`→`--bg-surface-2`, `--bg-glass`→`--menu-bg` (blurred toolbar/context-
+menu/tooltip surfaces), `--border-glass`/`--border-glass-strong`→`--border-default`/`--border-
+strong`, `--text-primary`/`--text-secondary`→the identically-named generic text-scale tokens,
+`--danger`/`--success`/`--warning`→`--error-text`/`--success-text`/`--warning-text` (the same
+tokens `.fos-alert-*` already use). One genuine EXACT match confirmed and reused directly, not
+approximated: `--purple-300` (#A89CF2) is byte-identical to LanceraOS's own theme-invariant
+`--nav-active`/`--icon-active` brand purple — aliased to `var(--nav-active, #A89CF2)`.
+
+**Deliberately NOT mapped**, each with a real reason: `--purple-500`/`--purple-200`/`--purple-glow`
+(no LanceraOS equivalent at this exact saturation — kept as the editor's own established,
+theme-invariant accent, confirmed by real contrast testing to work in both themes for its own
+uses); `--page-bg`/`--page-text` (the invoice PAGE's own default ink/background — see the page-vs-
+chrome boundary below, never themed); radii/motion/fonts (not a color/theme concern); `--logo-
+body`/`--logo-mark` (the editor's own small in-toolbar brand mark uses different literal values
+than the main app's real `--logo-body`/`--logo-mark` — confirmed, a genuine pre-existing brand-
+color mismatch, but a static-color-fidelity issue, not a light/dark theme issue; flagged here,
+deliberately not fixed in this pass to avoid scope creep beyond theming).
+
+**The invoice-page-vs-chrome boundary — audited, confirmed already clean, one real fix made
+regardless**: `.page-frame`'s CSS background/color (`--page-bg`/`--page-text`) are theme-invariant
+defaults, but the REAL page background is always set inline from `template.page.backgroundColor`
+(`EditorCanvas.jsx`'s own `style={{ background: template.page.backgroundColor }}`) — confirmed
+directly this already correctly overrides the CSS default regardless of app theme, so the
+per-document color the user actually controls was never at risk. `.item__table`/`.item__footer`'s
+hardcoded `#262420`/`#e5e1d6`/`#a09a89` (the simulated invoice content's own ink/border/muted-
+footer tones, matching the real static PDF templates' literal values) were audited and confirmed
+correctly untouched — a documenting comment was added at the audit site rather than silently
+leaving future readers to re-derive the same conclusion. The one real, found-and-fixed leak: `.
+canvas-scroll`'s own vignette-behind-the-page gradient was a hardcoded near-black (`#0d0d18`)
+regardless of app theme — genuinely part of the app CHROME (the viewport the page floats in, not
+the page itself), so it needed to follow the theme even though it sits visually adjacent to the
+page; replaced with a new `--canvas-vignette` token (light: a soft lavender-tinted glow; dark: the
+original near-black), leaving the page's own rendering completely untouched.
+
+**Every UI element in the phase's own checklist verified with real screenshots** (Playwright +
+Chromium, installed transiently for this verification and removed again afterward — this project
+had no browser-automation tooling of its own to reuse, and adding a permanent new dependency for a
+one-time verification pass wasn't warranted): selection outlines/resize handles/rotate handle
+(single-item and group-selection-overlay forms), the marquee box, the context menu, the properties
+panel (including the save-validation error/warning/success list — genuinely confirming Phase 0's
+own contrast checker still renders correctly themed, the "irony" the phase's own brief named
+directly), a portal-rendered tooltip (confirmed CSS custom properties inherit through the real DOM
+tree regardless of `createPortal` re-parenting — no special handling needed, verified rather than
+assumed), and a live drag gesture (smart guide lines + distance labels). Smart guides (`#ff3d8a`)
+were investigated per the brief's own explicit callout and found to need NO change: they render
+exclusively inside `.canvas-layer`, always drawn over the invoice PAGE's own (light, per-document)
+background, never over app chrome — so their contrast was never actually theme-dependent to begin
+with, confirmed by tracing the render tree rather than assumed from the brief's own framing.
+
+**Two real WCAG AA failures found by direct measurement (not eyeballing) and fixed**:
+(1) `--text-tertiary`, used for real, load-bearing UI text (section labels — "INVOICE ELEMENTS,"
+"LAYERS" — and toolbar keyboard-shortcut hints, not decorative filler) — measured 3.23:1 (light) /
+3.12:1 (dark) against `--bg-panel`, both below the 4.5:1 text minimum. Deliberately NOT aliased to
+LanceraOS's own same-named token (breaking this file's usual `var(--name, fallback)` pattern on
+purpose) — the real, measured discovery here is that the MAIN APP'S OWN `--text-tertiary` value
+has this exact same AA shortfall against its own generic surface tokens, a genuine, pre-existing
+gap in `theme.css` this phase did not introduce and is not in scope to fix (a separate, larger
+concern touching the whole app, flagged here rather than silently worked around or silently
+inherited). The editor's own `--text-tertiary` is now `#6e6e88` (light) / `#787894` (dark) — the
+same hues, darkened/lightened just enough to clear 4.5:1 (measured 4.67:1 / 4.56:1) — a deliberate,
+disclosed exception to "reuse the same token," chosen because this phase's own explicit acceptance
+criterion (WCAG AA on the editor's own chrome) would otherwise be silently violated by correctly
+following the reuse instruction. (2) `.shape-swatch--image`'s icon color, `--purple-300` (a light
+pastel purple, correct and screenshot-verified everywhere else it's used — always either a border/
+fill over the light invoice page, or against this SAME editor's dark panel background) measured
+only 2.28:1 against the LIGHT panel — under even the 3:1 non-text/graphical-object WCAG floor, a
+real visibility problem invisible in the dark-only original because dark mode never exposed it.
+Fixed by using `--purple-500` instead for this one consumer (measured 4.69:1 light / 3.92:1 dark —
+genuinely legible in both) — `--purple-300` itself is untouched everywhere else.
+
+Reason: this editor is going to replace `DesignEditor.jsx` inside the real app; shipping it
+dark-only would visibly break the moment a light-mode user opens it, and inventing a second,
+parallel theme system (rather than genuinely adopting the one that already exists) would be exactly
+the "two palettes that happen to match today and drift later" outcome the phase's own brief
+explicitly warns against.
+
+Alternatives considered: giving the editor its own visible theme-toggle control for local dev/
+testing convenience (rejected — the phase's own explicit "no second switching system" requirement;
+verification was done by setting `localStorage`/`data-theme` directly via the browser automation
+tooling instead, never by shipping a second control in the product); keeping `--text-tertiary`
+aliased to the main app's own token for strict consistency (rejected — would silently reintroduce
+a real, measured AA failure the moment this editor is actually integrated, in service of a
+consistency goal the main app's own token doesn't itself satisfy); leaving `.shape-swatch--image`
+on `--purple-300` and instead giving `--purple-300` itself a per-theme override (rejected — would
+have fixed this one consumer at the cost of changing the one color already confirmed, by
+screenshot, to look and read correctly everywhere else it's used, a real regression risk for no
+added benefit over fixing the one actual consumer that needed it).
+
+Verification: real Chromium screenshots (Playwright, installed transiently) in both themes,
+covering every element named in the phase's own checklist — selection/handles/rotate, group-
+selection overlay, marquee, smart guides + distance labels, context menu, properties panel
+including the validation list, and a portal-rendered tooltip; a real drag gesture exercised live
+(not a static state). Direct WCAG contrast computation (the same relative-luminance formula Phase
+0's own design-time contrast checker uses) for every real text/background pairing in the editor
+chrome, in both themes, catching the two failures above that visual inspection alone had not
+flagged. `npm run build` clean, no new warnings versus the pre-phase baseline (`npm run lint`
+compared before/after). The transient Playwright dev-dependency and its downloaded Chromium binary
+were both removed after verification — confirmed via `git diff` that `package.json`/
+`package-lock.json` are back to their pre-phase state.
+
+Docs: this entry.

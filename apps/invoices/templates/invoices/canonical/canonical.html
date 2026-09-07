@@ -36,7 +36,7 @@
   nothing about header rendering changed except the ONE wrapper box
   around it no longer being absolutely positioned itself).
 {% endcomment %}
-<div class="v2-content" style="width:{{ page_width_mm }}mm;min-height:{{ page_height_mm }}mm;padding:{{ margin_top_mm }}mm {{ margin_right_mm }}mm {{ margin_bottom_mm }}mm {{ margin_left_mm }}mm;">
+<div class="v2-content" style="width:{{ page_width_mm }}mm;min-height:{{ content_min_height_mm }}mm;padding:{{ margin_top_mm }}mm {{ margin_right_mm }}mm {{ margin_bottom_mm }}mm {{ margin_left_mm }}mm;">
   <div class="v2-header" style="position:relative;width:{{ content_width_mm }}mm;height:{{ header_height_mm }}mm;">
     {% for el in header_elements %}
     <div class="v2-el" style="{{ el.css }}">

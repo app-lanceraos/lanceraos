@@ -503,7 +503,19 @@ body {
   border: 1.5px solid currentColor;
   border-radius: 4px;
   position: relative;
-  color: var(--purple-300);
+  /* Phase 1b real contrast fix: --purple-300 (a light pastel purple) is
+     theme-invariant and reads fine as a border/fill over the invoice
+     PAGE (always light) or against a DARK panel — but measured directly
+     at only 2.28:1 against this LIGHT panel background, well under even
+     the 3:1 non-text/graphical-object WCAG minimum, let alone 4.5:1 —
+     a real visibility problem exposed only once light mode existed to
+     check it against. --purple-500 (more saturated/darker) measures
+     4.69:1 light / 3.92:1 dark against this same panel — genuinely
+     legible in both, so used here instead of a per-theme override.
+     --purple-300 itself is untouched — every OTHER real consumer
+     (selection outline/marquee, always over the light invoice page) was
+     screenshot-verified fine as-is. */
+  color: var(--purple-500);
 }
 .shape-swatch--image::after {
   content: '';
@@ -522,7 +534,13 @@ body {
   overflow: auto;
   min-width: 0;
   min-height: 0;
-  background: radial-gradient(circle at 50% 0%, #0d0d18 0%, var(--bg-base) 60%);
+  /* Phase 1b — was a hardcoded near-black gradient start regardless of
+     theme; now the theme-aware --canvas-vignette (tokens.css), same
+     subtle vignette-behind-the-page effect in both themes. This is the
+     app-chrome VIEWPORT the page floats in, not the page itself — the
+     page's own background stays exactly template.page.backgroundColor
+     either way. */
+  background: var(--canvas-vignette);
   display: flex;
   justify-content: center;
   padding: 40px 20px;
@@ -730,7 +748,16 @@ body {
   height: 100%;
 }
 
-/* Already had no padding of its own before this pass — already the
+/* Phase 1b theme audit: `.item__table`/`.item__footer`'s hardcoded
+   #262420/#e5e1d6/#a09a89 below are the simulated INVOICE PAGE's own
+   ink/border/muted-footer colors (matching the real static PDF
+   templates' own literal values, e.g. professional.html's identical
+   #a09a89 footer tone) — this is exactly the boundary the phase's own
+   instructions call for keeping clean: the document being designed is
+   never themed, only the app chrome around it is. Confirmed correct as
+   written; left untouched.
+
+   Already had no padding of its own before this pass — already the
    snuggest it can be, nothing to reduce here. */
 .item__table {
   box-sizing: border-box;

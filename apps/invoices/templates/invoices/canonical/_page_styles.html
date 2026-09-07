@@ -16,7 +16,58 @@
   @font-face { font-family: 'Space Grotesk'; src: url('{{ font_space_grotesk }}'); font-weight: 400; }
   @font-face { font-family: 'Space Grotesk'; src: url('{{ font_space_grotesk }}'); font-weight: 700; }
 
-  @page { size: {{ page_width_mm }}mm {{ page_height_mm }}mm; margin: 0; }
+  {% comment %}
+    Phase 1 (rotation/ellipse/footer/crop, 07 September 2026) — page.footer.
+    A real `@page` bottom margin is reserved ONLY when a footer is
+    configured (footer_margin_mm is 0 otherwise) — every existing design
+    with no page.footer key renders with the exact `margin:0` it always
+    has. The 3 real @bottom-left/@bottom-center/@bottom-right margin
+    boxes are the SAME real, working WeasyPrint technique
+    professional.html/minimal.html/modern.html already use (see that
+    file's own @page block comment) — reused here as one generic,
+    style-driven footer rather than 3 separate per-template hardcodings.
+    `single_page_layout` (real, per-render page count — see
+    design_renderer.render_design_pdf_bytes' own 2-pass docstring) is
+    what omits @bottom-center's counter entirely for a confirmed single
+    page, matching the exact same real WeasyPrint limitation the static
+    templates' own identical conditional documents (no `@page :first:
+    last`/"exactly one page" selector exists to do this in pure CSS).
+  {% endcomment %}
+  @page {
+    size: {{ page_width_mm }}mm {{ page_height_mm }}mm;
+    {% if footer %}
+    margin: 0 0 {{ footer_margin_mm }}mm 0;
+    @bottom-left {
+      content: "{{ freelancer.business_name|default:freelancer.display_name }}{% if invoice.user.email %} · {{ invoice.user.email }}{% endif %}";
+      font-family: '{{ footer_style.font_family }}';
+      font-size: {{ footer_style.font_size_pt }}pt;
+      {% if footer_style.font_weight %}font-weight: {{ footer_style.font_weight }};{% endif %}
+      color: {{ footer_style.text_color }};
+      {% if footer_style.background_color and footer_style.background_color != 'transparent' %}background: {{ footer_style.background_color }};{% endif %}
+      {% if footer_style.divider_color %}border-top: 0.3mm solid {{ footer_style.divider_color }};{% endif %}
+    }
+    {% if not single_page_layout %}
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: '{{ footer_style.font_family }}';
+      font-size: {{ footer_style.font_size_pt }}pt;
+      {% if footer_style.font_weight %}font-weight: {{ footer_style.font_weight }};{% endif %}
+      color: {{ footer_style.text_color }};
+      {% if footer_style.background_color and footer_style.background_color != 'transparent' %}background: {{ footer_style.background_color }};{% endif %}
+      {% if footer_style.divider_color %}border-top: 0.3mm solid {{ footer_style.divider_color }};{% endif %}
+    }
+    {% endif %}
+    {% if footer_wordmark_data_uri %}
+    @bottom-right {
+      content: url("{{ footer_wordmark_data_uri }}");
+      {% if footer_style.background_color and footer_style.background_color != 'transparent' %}background: {{ footer_style.background_color }};{% endif %}
+      {% if footer_style.divider_color %}border-top: 0.3mm solid {{ footer_style.divider_color }};{% endif %}
+    }
+    {% endif %}
+    {% else %}
+    margin: 0;
+    {% endif %}
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0;
