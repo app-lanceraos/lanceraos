@@ -3,6 +3,7 @@ import { toPng } from 'html-to-image';
 import { useEditor } from '../state/EditorContext';
 import EditorCanvas from './Canvas/EditorCanvas';
 import { CloseIcon } from './Icons';
+import { mmToPx } from '../utils/units';
 
 // The preview is deliberately just the SAME canvas tree in a modal — no
 // separate render path, so there's no risk of preview drifting from what
@@ -26,9 +27,15 @@ export default function PreviewModal({ onClose }) {
     if (!pageEl || downloading) return;
     setDownloading(true);
     try {
+      // Phase 2a: toPng's own width/height options are real output PIXELS
+      // (it rasterizes `.page-frame` into a canvas of exactly this size) —
+      // template.page.width/height are mm now, so they need the same
+      // mm->px boundary conversion every other pixel-consuming API in
+      // this app goes through, or the exported PNG would come out at a
+      // tiny ~210x297px instead of the correct ~794x1123 (x pixelRatio).
       const dataUrl = await toPng(pageEl, {
-        width: template.page.width,
-        height: template.page.height,
+        width: mmToPx(template.page.width),
+        height: mmToPx(template.page.height),
         pixelRatio: 2,
         backgroundColor: template.page.backgroundColor,
       });

@@ -1,24 +1,31 @@
 // Fixed, professional shape primitives only. No freeform/polygon drawing.
+import { pxToMm, roundMm } from '../utils/units';
+
+// Phase 2a: defaultSize/position/radius below are still authored at their
+// original px values and converted to mm once, at module load — same
+// mechanical-conversion reasoning as elementCatalog.js's own boxMm (this
+// is seed/demo sizing, not a tuned UX-feel constant).
+const toMm = (v) => roundMm(pxToMm(v));
 
 export const SHAPE_TYPES = {
   roundedRect: {
     label: 'Rounded rectangle',
-    defaultSize: { width: 160, height: 90 },
-    defaultProps: { fill: '#7152F5', borderColor: 'transparent', borderWidth: 0, radius: 12 },
+    defaultSize: { width: toMm(160), height: toMm(90) },
+    defaultProps: { fill: '#7152F5', borderColor: 'transparent', borderWidth: 0, radius: toMm(12) },
   },
   ellipse: {
     label: 'Circle / ellipse',
-    defaultSize: { width: 120, height: 120 },
+    defaultSize: { width: toMm(120), height: toMm(120) },
     defaultProps: { fill: '#A89CF2', borderColor: 'transparent', borderWidth: 0 },
   },
   line: {
     label: 'Line / divider',
-    defaultSize: { width: 200, height: 4 },
+    defaultSize: { width: toMm(200), height: toMm(4) },
     defaultProps: { fill: '#7152F5', borderColor: 'transparent', borderWidth: 0 },
   },
 };
 
-export const createShape = (type, position = { x: 40, y: 40 }) => {
+export const createShape = (type, position = { x: toMm(40), y: toMm(40) }) => {
   const def = SHAPE_TYPES[type];
   return {
     id: `shape-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,

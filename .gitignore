@@ -65,6 +65,7 @@ coverage.xml
 .mypy_cache/
 
 v1-reference/
+DOCS
 
 # Backend test suites — untracked deliberately to stay under claude.ai's
 # GitHub-sync file-count limit (not a normal practice; these still exist

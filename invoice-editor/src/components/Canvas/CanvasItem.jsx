@@ -27,9 +27,11 @@ import {
   SNAP_ENGAGE_TOLERANCE,
   SNAP_RELEASE_TOLERANCE,
   isImagePixelated,
+  EDGE_CONTACT_EPSILON_MM,
 } from '../../utils/geometry';
 import { beginDragSelectGuard } from '../../utils/dragGuard';
 import { resolveItemTheme } from '../../utils/theme';
+import { pxToMm, mm, pt } from '../../utils/units';
 
 // Table columns default to equal shares of the table's width; stored as
 // percentages (summing to 100) rather than px, so they stay meaningful
@@ -58,11 +60,26 @@ const NOOP = () => {};
 // outward point flush with the neighbor — never past it.
 export const SELECTION_OUTLINE_INSET = 4;
 const HALF_HANDLE = 4;
-function adaptiveHandleOffset(fx, negClearance, posClearance) {
-  if (fx === 0.5) return 0;
-  const clearance = fx === 1 ? posClearance : negClearance;
-  const outward = Math.max(-HALF_HANDLE, Math.min(SELECTION_OUTLINE_INSET, clearance - HALF_HANDLE));
-  return fx === 1 ? outward : -outward;
+// Phase 2a: `SELECTION_OUTLINE_INSET`/`HALF_HANDLE` above stay in raw CSS
+// px unchanged — GroupSelectionOverlay's own groupHandleOffset uses them
+// directly as a fixed CSS offset with no item-geometry math involved at
+// all (see that file's own comment: "no adaptive-neighbor shrinking
+// here"), so there's nothing there to convert. THIS function is
+// different: it mixes those two fixed handle-size constants with
+// `clearance` (edgeClearance's return, computed FROM item x/y/width/
+// height — mm now), so mixing a raw px constant into mm-space math would
+// silently be wrong. The two px constants are converted to their own mm
+// equivalents here, the whole clamp runs in mm (matching `clearance`),
+// and the final result converts back only at the very end via the mm()
+// string helper — the handle offset is consumed directly as a CSS
+// calc() term by its caller below, so no numeric mm->px step is needed.
+const HALF_HANDLE_MM = pxToMm(HALF_HANDLE);
+const SELECTION_OUTLINE_INSET_MM = pxToMm(SELECTION_OUTLINE_INSET);
+function adaptiveHandleOffset(fx, negClearanceMm, posClearanceMm) {
+  if (fx === 0.5) return '0px';
+  const clearanceMm = fx === 1 ? posClearanceMm : negClearanceMm;
+  const outwardMm = Math.max(-HALF_HANDLE_MM, Math.min(SELECTION_OUTLINE_INSET_MM, clearanceMm - HALF_HANDLE_MM));
+  return fx === 1 ? mm(outwardMm) : mm(-outwardMm);
 }
 
 // Text-bearing variants whose box no longer scales its content (Prompt
@@ -117,13 +134,25 @@ function useMinContentSize(active) {
   const [minWidth, setMinWidth] = useState(null);
   const [wrappedHeight, setWrappedHeight] = useState(null);
 
+  // Phase 2a: ResizeObserver always reports in real CSS px, regardless of
+  // what unit (mm or px) the observed element's own style was authored
+  // in — the browser resolves `width: "12.7mm"` down to a device px
+  // measurement before this callback ever sees it. Converted to mm ONCE,
+  // right here at the point of capture (via pxToMm), and every state/prop
+  // this hook exposes downstream (minWidth/wrappedHeight) is mm from then
+  // on — never converted back and forth per frame. The de-jitter epsilon
+  // (was a bare 0.5px) converts the same way, for the same reason: it's
+  // filtering real sub-pixel measurement noise, not a UX-feel constant,
+  // so a straight conversion (not a re-tuned round number) is correct.
+  const jitterEpsilonMm = pxToMm(0.5);
+
   useLayoutEffect(() => {
     if (!active) return undefined;
     const node = minRef.current;
     if (!node) return undefined;
     const ro = new ResizeObserver(([entry]) => {
-      const w = entry.contentRect.width;
-      setMinWidth((prev) => (prev !== null && Math.abs(prev - w) < 0.5 ? prev : w));
+      const w = pxToMm(entry.contentRect.width);
+      setMinWidth((prev) => (prev !== null && Math.abs(prev - w) < jitterEpsilonMm ? prev : w));
     });
     ro.observe(node);
     return () => ro.disconnect();
@@ -134,8 +163,8 @@ function useMinContentSize(active) {
     const node = wrapRef.current;
     if (!node) return undefined;
     const ro = new ResizeObserver(([entry]) => {
-      const h = entry.contentRect.height;
-      setWrappedHeight((prev) => (prev !== null && Math.abs(prev - h) < 0.5 ? prev : h));
+      const h = pxToMm(entry.contentRect.height);
+      setWrappedHeight((prev) => (prev !== null && Math.abs(prev - h) < jitterEpsilonMm ? prev : h));
     });
     ro.observe(node);
     return () => ro.disconnect();
@@ -150,11 +179,11 @@ function partInlineStyle(item, part, fallbackColor, fallbackWeight, fallbackSize
     color: s.textColor || fallbackColor,
     background: s.bgColor,
     borderColor: s.borderColor,
-    borderWidth: s.borderWidth ? `${s.borderWidth}px` : undefined,
+    borderWidth: s.borderWidth ? mm(s.borderWidth) : undefined,
     borderStyle: s.borderWidth ? 'solid' : undefined,
     fontFamily: fontFamilyCSS(s.fontFamily),
     fontWeight: s.fontWeight || fallbackWeight,
-    fontSize: s.fontSize || fallbackSize,
+    fontSize: pt(s.fontSize || fallbackSize),
     // Left unset (rather than defaulted) when the part has no override —
     // the container it sits in (`.item__block`) carries the whole-item
     // default via ordinary CSS inheritance, so a part only needs its own
@@ -181,7 +210,7 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
   const fontStyle = (fallbackWeight, fallbackSize) => ({
     fontFamily: fontFamilyCSS(item.fontFamily),
     fontWeight: item.fontWeight || fallbackWeight,
-    fontSize: item.fontSize || fallbackSize,
+    fontSize: pt(item.fontSize || fallbackSize),
   });
   // How content sits inside its own box — independent of the align-to-page
   // buttons (those move the box itself; this only affects the content
@@ -196,10 +225,10 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
 
   switch (def.variant) {
     case 'text':
-      return <div className="item__text" style={{ height: 'auto', ...fontStyle(undefined, 10), ...alignStyle() }}>{data}</div>;
+      return <div className="item__text" style={{ height: 'auto', ...fontStyle(undefined, 7.5), ...alignStyle() }}>{data}</div>;
     case 'label-value': {
       const fallbackWeight = def.strong ? 700 : undefined;
-      const fallbackSize = def.strong ? 11 : 10;
+      const fallbackSize = def.strong ? 8.25 : 7.5;
       const labelStyle = partInlineStyle(item, 'label', undefined, fallbackWeight, fallbackSize);
       const valueStyle = partInlineStyle(item, 'value', undefined, fallbackWeight, fallbackSize);
       // `spread` (Subtotal/Tax/Discount/Total due) always spreads label
@@ -253,7 +282,7 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
       // layout below, which still needs height:100% for its `flex: 1`
       // QR-code area to fill the (still content-scaled) box; only this
       // case's own instance opts out of that.
-      const titleStyle = partInlineStyle(item, 'title', '#a2896b', undefined, 8);
+      const titleStyle = partInlineStyle(item, 'title', '#a2896b', undefined, 6);
       const hidden = item.hiddenLines || [];
       const visibleLines = data.lines.filter((line) => !hidden.includes(line.key));
       return (
@@ -271,7 +300,7 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
           {visibleLines.map((line) => (
             <div
               className={`item__block-line${isPartSelected(line.key) ? ' item__block-line--selected' : isPartHovered(line.key) ? ' item__block-line--hover' : ''}`}
-              style={partInlineStyle(item, line.key, '#55524a', undefined, 9)}
+              style={partInlineStyle(item, line.key, '#55524a', undefined, 6.75)}
               key={line.key}
               onClick={(e) => onSelectPart(e, line.key)}
               onMouseEnter={(e) => onPartHoverEnter(e, line.key)}
@@ -285,7 +314,7 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
       );
     }
     case 'note':
-      return <div className="item__text" style={{ height: 'auto', opacity: 0.6, ...fontStyle(undefined, 10), ...alignStyle() }}>{data}</div>;
+      return <div className="item__text" style={{ height: 'auto', opacity: 0.6, ...fontStyle(undefined, 7.5), ...alignStyle() }}>{data}</div>;
     case 'image':
       // No border/background of its own — the outer frame (CanvasItem)
       // already renders the item's border/background, and this placeholder
@@ -328,9 +357,9 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
       // A plain content-item version of the decorative line shape (color
       // + thickness) — thickness is just its own height, resized the same
       // way as every other item, so it needs no dedicated control.
-      return <div className="item__divider" style={{ background: item.bgColor || '#262420', borderRadius: item.naturalHeight / 2 }} />;
+      return <div className="item__divider" style={{ background: item.bgColor || '#262420', borderRadius: mm(item.naturalHeight / 2) }} />;
     case 'qr': {
-      const titleStyle = partInlineStyle(item, 'title', '#a2896b', undefined, 8);
+      const titleStyle = partInlineStyle(item, 'title', '#a2896b', undefined, 6);
       // The QR pattern itself stays fixed black-on-white regardless of the
       // body's style overrides — a real QR needs strong, reliable contrast
       // to stay scannable, so only its surrounding box (background/border)
@@ -392,7 +421,7 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
           style={{
             color: item.textColor || undefined,
             borderTopColor: item.dividerColor || undefined,
-            ...fontStyle(undefined, 7),
+            ...fontStyle(undefined, 5.25),
           }}
         >
           <div className="item__footer-left">
@@ -429,7 +458,10 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
       // rest right, e.g. numbers/currency) until a column's own choice
       // overrides it.
       const columnAlign = (j) => item.columnAlign?.[j] || (j === 0 ? 'left' : 'right');
-      const cellPadding = item.cellPadding ?? 4;
+      // Phase 2a: cellPadding is a spacing quantity, same "mm family" as
+      // border-width/corner-radius (see units.js's header comment) — was
+      // a bare px default of 4; converted to its mm equivalent (~1.06mm).
+      const cellPadding = item.cellPadding ?? pxToMm(4);
       return (
         <table className="item__table">
           <thead>
@@ -440,10 +472,10 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
                   style={{
                     width: `${widths[j]}%`,
                     textAlign: columnAlign(j),
-                    padding: cellPadding,
+                    padding: mm(cellPadding),
                     fontFamily: fontFamilyCSS(item.fontFamily),
                     fontWeight: item.headerFontWeight || item.fontWeight || 700,
-                    fontSize: item.headerFontSize || 7,
+                    fontSize: pt(item.headerFontSize || 5.25),
                     background: item.headerBg,
                     color: item.headerTextColor,
                   }}
@@ -462,11 +494,11 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
                     style={{
                       width: `${widths[j]}%`,
                       textAlign: columnAlign(j),
-                      padding: cellPadding,
-                      ...fontStyle(undefined, 8.5),
+                      padding: mm(cellPadding),
+                      ...fontStyle(undefined, 6.375),
                       borderBottom:
                         item.rowBorderWidth !== undefined
-                          ? `${item.rowBorderWidth}px solid ${item.rowBorderColor || '#e5e1d6'}`
+                          ? `${mm(item.rowBorderWidth)} solid ${item.rowBorderColor || '#e5e1d6'}`
                           : undefined,
                     }}
                   >
@@ -486,8 +518,8 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
 
 function shapeBorderRadius(item) {
   if (item.type === 'ellipse') return '50%';
-  if (item.type === 'line') return item.naturalHeight / 2;
-  return item.radius;
+  if (item.type === 'line') return mm(item.naturalHeight / 2);
+  return mm(item.radius);
 }
 
 // Prompt 24 item 4: the logo shape/mask picker (elementCatalog.js's
@@ -501,8 +533,13 @@ function logoMaskRadius(item) {
   if (item.type !== 'logo') return null;
   const shape = item.logoShape || 'square';
   if (shape === 'circle') return '50%';
-  if (shape === 'rounded') return 10;
-  return 0;
+  // Was a bare 10 (px) — a fixed visual mask radius, not stored item
+  // geometry, so converted once here via the same boundary conversion
+  // rather than a re-tuned round mm number (this one isn't a UX-feel
+  // constant the way PAGE_PADDING is; it's a single "rounded corner"
+  // look with no equivalent design reasoning to re-derive from scratch).
+  if (shape === 'rounded') return mm(pxToMm(10));
+  return mm(0);
 }
 
 // A shape's fill/border/radius IS its content — rendered at natural size
@@ -810,8 +847,8 @@ export default function CanvasItem({ item, readOnly = false }) {
 
     const onMove = (ev) => {
       draggedRef.current = true;
-      let nx = start.origX + (ev.clientX - start.x) / scale;
-      let ny = start.origY + (ev.clientY - start.y) / scale;
+      let nx = start.origX + pxToMm((ev.clientX - start.x) / scale);
+      let ny = start.origY + pxToMm((ev.clientY - start.y) / scale);
 
       // Prompt 19 item 2: who's "in the same row/column" as the dragged
       // box right now — same overlap test the old distance-label always
@@ -887,23 +924,23 @@ export default function CanvasItem({ item, readOnly = false }) {
       if (snapX.spacing.length === 0) {
         const { before, after } = nearestGap(fx, item.width, rowNeighbors);
         if (before !== null && (after === null || before <= after)) {
-          labels.push({ x: fx - before / 2, y: fy + item.height / 2, text: `${Math.round(before)}px` });
+          labels.push({ x: fx - before / 2, y: fy + item.height / 2, text: `${(before).toFixed(1)}mm` });
         } else if (after !== null) {
-          labels.push({ x: fx + item.width + after / 2, y: fy + item.height / 2, text: `${Math.round(after)}px` });
+          labels.push({ x: fx + item.width + after / 2, y: fy + item.height / 2, text: `${(after).toFixed(1)}mm` });
         }
       }
       if (snapY.spacing.length === 0) {
         const { before, after } = nearestGap(fy, item.height, colNeighbors);
         if (before !== null && (after === null || before <= after)) {
-          labels.push({ x: fx + item.width / 2, y: fy - before / 2, text: `${Math.round(before)}px` });
+          labels.push({ x: fx + item.width / 2, y: fy - before / 2, text: `${(before).toFixed(1)}mm` });
         } else if (after !== null) {
-          labels.push({ x: fx + item.width / 2, y: fy + item.height + after / 2, text: `${Math.round(after)}px` });
+          labels.push({ x: fx + item.width / 2, y: fy + item.height + after / 2, text: `${(after).toFixed(1)}mm` });
         }
       }
 
       const spacing = [
-        ...snapX.spacing.map((g) => ({ axis: 'x', from: g.start, to: g.end, cross: fy + item.height / 2, text: `${Math.round(g.value)}px` })),
-        ...snapY.spacing.map((g) => ({ axis: 'y', from: g.start, to: g.end, cross: fx + item.width / 2, text: `${Math.round(g.value)}px` })),
+        ...snapX.spacing.map((g) => ({ axis: 'x', from: g.start, to: g.end, cross: fy + item.height / 2, text: `${(g.value).toFixed(1)}mm` })),
+        ...snapY.spacing.map((g) => ({ axis: 'y', from: g.start, to: g.end, cross: fx + item.width / 2, text: `${(g.value).toFixed(1)}mm` })),
       ];
 
       setGuides({
@@ -1032,8 +1069,8 @@ export default function CanvasItem({ item, readOnly = false }) {
       // Prompt 22: raw screen-pixel deltas converted to page units before
       // anything downstream (snap, boundary clamp, collision) ever sees
       // them.
-      const rawDx = (ev.clientX - start.x) / scale;
-      const rawDy = (ev.clientY - start.y) / scale;
+      const rawDx = pxToMm((ev.clientX - start.x) / scale);
+      const rawDy = pxToMm((ev.clientY - start.y) / scale);
 
       // Prompt 19 item 4: snap the GROUP's own envelope against outside
       // items/page-center before the per-member boundary clamp below —
@@ -1107,10 +1144,10 @@ export default function CanvasItem({ item, readOnly = false }) {
         const b = getItemBounds(m, template.page, footerTop);
         const nx = origX + dx;
         const ny = origY + dy;
-        if (nx <= b.minX + 0.5) edges.left = true;
-        if (nx + m.width >= b.maxX - 0.5) edges.right = true;
-        if (ny <= b.minY + 0.5) edges.top = true;
-        if (ny + m.height >= b.maxY - 0.5) edges.bottom = true;
+        if (nx <= b.minX + EDGE_CONTACT_EPSILON_MM) edges.left = true;
+        if (nx + m.width >= b.maxX - EDGE_CONTACT_EPSILON_MM) edges.right = true;
+        if (ny <= b.minY + EDGE_CONTACT_EPSILON_MM) edges.top = true;
+        if (ny + m.height >= b.maxY - EDGE_CONTACT_EPSILON_MM) edges.bottom = true;
       });
 
       setEdgeHighlight(edges);
@@ -1178,7 +1215,7 @@ export default function CanvasItem({ item, readOnly = false }) {
       draggedRef.current = true;
       // Prompt 22: raw screen-pixel mouse delta -> page units, BEFORE it
       // ever reaches resizeRotatedBox's own width/height/position math.
-      const raw = resizeRotatedBox(start, handle, (ev.clientX - startMouse.x) / scale, (ev.clientY - startMouse.y) / scale);
+      const raw = resizeRotatedBox(start, handle, pxToMm((ev.clientX - startMouse.x) / scale), pxToMm((ev.clientY - startMouse.y) / scale));
 
       // Snap only the edge this handle actually moves, keeping the other
       // (fixed) edge untouched — e.g. dragging the W handle may shift x
@@ -1233,15 +1270,15 @@ export default function CanvasItem({ item, readOnly = false }) {
       const labels = [];
       const gapX = nearestGap(box.x, box.width, rowNeighbors);
       if (gapX.before !== null && (gapX.after === null || gapX.before <= gapX.after)) {
-        labels.push({ x: box.x - gapX.before / 2, y: box.y + box.height / 2, text: `${Math.round(gapX.before)}px` });
+        labels.push({ x: box.x - gapX.before / 2, y: box.y + box.height / 2, text: `${(gapX.before).toFixed(1)}mm` });
       } else if (gapX.after !== null) {
-        labels.push({ x: box.x + box.width + gapX.after / 2, y: box.y + box.height / 2, text: `${Math.round(gapX.after)}px` });
+        labels.push({ x: box.x + box.width + gapX.after / 2, y: box.y + box.height / 2, text: `${(gapX.after).toFixed(1)}mm` });
       }
       const gapY = nearestGap(box.y, box.height, colNeighbors);
       if (gapY.before !== null && (gapY.after === null || gapY.before <= gapY.after)) {
-        labels.push({ x: box.x + box.width / 2, y: box.y - gapY.before / 2, text: `${Math.round(gapY.before)}px` });
+        labels.push({ x: box.x + box.width / 2, y: box.y - gapY.before / 2, text: `${(gapY.before).toFixed(1)}mm` });
       } else if (gapY.after !== null) {
-        labels.push({ x: box.x + box.width / 2, y: box.y + box.height + gapY.after / 2, text: `${Math.round(gapY.after)}px` });
+        labels.push({ x: box.x + box.width / 2, y: box.y + box.height + gapY.after / 2, text: `${(gapY.after).toFixed(1)}mm` });
       }
 
       setGuides({ vertical: lineX ? [lineX] : [], horizontal: lineY ? [lineY] : [], labels, spacing: [] });
@@ -1357,7 +1394,7 @@ export default function CanvasItem({ item, readOnly = false }) {
       // (rotateVector is linear, so dividing before or after is
       // equivalent — doing it before keeps every downstream value in
       // page units consistently, matching every other gesture here).
-      const local = rotateVector((ev.clientX - startMouse.x) / scale, (ev.clientY - startMouse.y) / scale, -rotation);
+      const local = rotateVector(pxToMm((ev.clientX - startMouse.x) / scale), pxToMm((ev.clientY - startMouse.y) / scale), -rotation);
       const deltaPct = (local.x / item.width) * 100;
       const widths = [...startWidths];
       let a = startWidths[colIndex] + deltaPct;
@@ -1382,17 +1419,17 @@ export default function CanvasItem({ item, readOnly = false }) {
       const draggedDividerPct = cumulativePct[colIndex];
       const leftStartPct = colIndex === 0 ? 0 : cumulativePct[colIndex - 1];
       const labels = [
-        { xPct: (leftStartPct + draggedDividerPct) / 2, yPct: 42, text: `${Math.round((a / 100) * item.width)}px` },
+        { xPct: (leftStartPct + draggedDividerPct) / 2, yPct: 42, text: `${((a / 100) * item.width).toFixed(1)}mm` },
         {
           xPct: (draggedDividerPct + cumulativePct[colIndex + 1]) / 2,
           yPct: 42,
-          text: `${Math.round((b / 100) * item.width)}px`,
+          text: `${((b / 100) * item.width).toFixed(1)}mm`,
         },
       ];
       cumulativePct.slice(0, -1).forEach((pct, i) => {
         if (i === colIndex) return; // the dragged divider itself — nothing to measure against it
-        const distancePx = (Math.abs(pct - draggedDividerPct) / 100) * item.width;
-        labels.push({ xPct: (pct + draggedDividerPct) / 2, yPct: 68, text: `${Math.round(distancePx)}px` });
+        const distanceMm = (Math.abs(pct - draggedDividerPct) / 100) * item.width;
+        labels.push({ xPct: (pct + draggedDividerPct) / 2, yPct: 68, text: `${distanceMm.toFixed(1)}mm` });
       });
       setColumnDragLabels(labels);
     };
@@ -1434,9 +1471,9 @@ export default function CanvasItem({ item, readOnly = false }) {
   const frameStyle =
     item.kind === 'content' || item.kind === 'image'
       ? {
-          borderRadius: logoRadius !== null ? logoRadius : item.cornerRadius ?? 0,
+          borderRadius: logoRadius !== null ? logoRadius : mm(item.cornerRadius ?? 0),
           borderColor: current.borderColor,
-          borderWidth: item.borderWidth ? `${item.borderWidth}px` : undefined,
+          borderWidth: item.borderWidth ? mm(item.borderWidth) : undefined,
           borderStyle: item.borderWidth ? 'solid' : undefined,
           color: current.textColor,
           background: current.bgColor,
@@ -1455,15 +1492,15 @@ export default function CanvasItem({ item, readOnly = false }) {
       className={`item item--${item.kind}${def ? ` item--${def.variant}` : ''}${isSelected ? ' item--selected' : ''}${showHoverWhole ? ' item--hover-preview' : ''}`}
       style={{
         position: 'absolute',
-        left: current.x,
-        top: current.y,
+        left: mm(current.x),
+        top: mm(current.y),
         // The item's own border/background/selection-outline all live on
         // THIS frame, so growing it (not just the inner `.item__scale`) is
         // what makes an under-sized text box visually contain its content
         // instead of just having the content spill past an unchanged
         // border (Prompt 14).
-        width: effectiveWidth,
-        height: effectiveHeight,
+        width: mm(effectiveWidth),
+        height: mm(effectiveHeight),
         transform: rotation ? `rotate(${rotation}deg)` : undefined,
         cursor: readOnly ? 'default' : item.locked ? 'default' : 'grab',
         ...frameStyle,
@@ -1483,8 +1520,8 @@ export default function CanvasItem({ item, readOnly = false }) {
       <div
         className="item__scale"
         style={{
-          width: scaleWrapperWidth,
-          height: scaleWrapperHeight,
+          width: mm(scaleWrapperWidth),
+          height: mm(scaleWrapperHeight),
           transform: skipBoxScale ? undefined : `scale(${scaleX}, ${scaleY})`,
           // A box smaller than its text's natural footprint should show
           // that (spill past the box, still fully visible) rather than
@@ -1565,7 +1602,7 @@ export default function CanvasItem({ item, readOnly = false }) {
               visibility: 'hidden',
               pointerEvents: 'none',
               zIndex: -1,
-              width: Math.max(current.width, minWidth ?? current.width),
+              width: mm(Math.max(current.width, minWidth ?? current.width)),
             }}
           >
             <ContentBody item={current} isPartSelected={() => false} onSelectPart={() => {}} isPartHovered={() => false} onPartHoverEnter={() => {}} onPartHoverLeave={() => {}} onPartContextMenu={() => {}} />
@@ -1617,8 +1654,8 @@ export default function CanvasItem({ item, readOnly = false }) {
                 key={h.key}
                 className="item__resize-handle"
                 style={{
-                  left: `calc(${h.fx * 100}% + ${adaptiveHandleOffset(h.fx, clearance.left, clearance.right)}px)`,
-                  top: `calc(${h.fy * 100}% + ${adaptiveHandleOffset(h.fy, clearance.top, clearance.bottom)}px)`,
+                  left: `calc(${h.fx * 100}% + ${adaptiveHandleOffset(h.fx, clearance.left, clearance.right)})`,
+                  top: `calc(${h.fy * 100}% + ${adaptiveHandleOffset(h.fy, clearance.top, clearance.bottom)})`,
                   cursor: h.cursor,
                 }}
                 onMouseDown={(e) => beginResize(e, h)}

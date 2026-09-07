@@ -1,6 +1,6 @@
 import { ELEMENT_TYPES } from '../data/elementCatalog';
 import { SHAPE_TYPES } from '../data/shapeCatalog';
-import { rotatedBoundingBox, getItemBounds, getFooterTop, isImagePixelated, COLLISION_MARGIN } from './geometry';
+import { rotatedBoundingBox, getItemBounds, getFooterTop, isImagePixelated, COLLISION_MARGIN, EDGE_CONTACT_EPSILON_MM } from './geometry';
 import { resolveItemTheme } from './theme';
 
 // A manually-set width/height is a MINIMUM for text (Prompt 14) — the
@@ -83,10 +83,10 @@ function checkBounds(template, effectiveSizes, issues) {
       const bounds = getItemBounds(sized, template.page, footerTop);
       const bbox = rotatedBoundingBox(sized);
       const outside =
-        bbox.minX < bounds.minX - 0.5 ||
-        bbox.maxX > bounds.maxX + 0.5 ||
-        bbox.minY < bounds.minY - 0.5 ||
-        bbox.maxY > bounds.maxY + 0.5;
+        bbox.minX < bounds.minX - EDGE_CONTACT_EPSILON_MM ||
+        bbox.maxX > bounds.maxX + EDGE_CONTACT_EPSILON_MM ||
+        bbox.minY < bounds.minY - EDGE_CONTACT_EPSILON_MM ||
+        bbox.maxY > bounds.maxY + EDGE_CONTACT_EPSILON_MM;
       if (outside) {
         issues.push({ level: 'error', message: `"${itemLabel(sized)}" is positioned outside the page's allowed area.` });
       }

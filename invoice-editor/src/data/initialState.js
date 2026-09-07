@@ -5,7 +5,16 @@ import { DEFAULT_THEME } from '../utils/theme';
 // resize) — shapes ignore this and can still sit flush at the true edge
 // (a decorative bar/divider along a page edge is a legitimate design
 // choice on its own merits, independent of any padding rule). Easy to tune.
-export const PAGE_PADDING = 24;
+//
+// Phase 2a: was 24px (~6.35mm at the CSS 96/25.4 mm<->px ratio). Retuned
+// to a clean 6mm rather than the raw conversion — a deliberate print
+// margin value (roughly what "a comfortable invoice margin" means in mm,
+// the unit a real print/PDF margin is actually specified in), not a
+// mechanically-rounded px artifact. Close enough to the original 6.35mm
+// that the existing default layout (elementCatalog.js's defaultBoxes,
+// converted the same pass) still clears it with the same margin it
+// always had.
+export const PAGE_PADDING = 6;
 
 // Build the starting item list: every content type with defaultOn:true gets
 // one instance, in catalog order. Shapes start empty — the user adds those
@@ -25,11 +34,15 @@ export const initialTemplateState = {
   // utils/zorder.js's normalizeZOrder rather than by two hardcoded render
   // groups.
   items: buildInitialItems(),
-  // ~A4 at 96dpi, used for the boundary clamp. backgroundColor is a
-  // per-template value (not the global --page-bg token) so different
-  // templates can have different page colors; this default matches the
-  // token's current cream tone so existing templates don't visually change.
-  page: { width: 794, height: 1123, backgroundColor: '#FAF9F6' },
+  // Phase 2a: genuine A4 in mm (210 x 297) — the old 794 x 1123 was
+  // already just a px-at-96dpi APPROXIMATION of A4 (793.7 x 1122.5), used
+  // only because px was the editor's sole unit; production's own
+  // design_data page.width_mm/height_mm is the real thing this now
+  // matches exactly. backgroundColor is a per-template value (not the
+  // global --page-bg token) so different templates can have different
+  // page colors; this default matches the token's current cream tone so
+  // existing templates don't visually change.
+  page: { width: 210, height: 297, backgroundColor: '#FAF9F6' },
   // Prompt 28: template-level theme — primary/secondary colors + a
   // heading/body font pairing that per-item style fields can link to
   // instead of holding a literal value (see utils/theme.js). Both fonts

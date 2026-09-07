@@ -12,7 +12,10 @@ import {
   getFooterTop,
   snapRotation,
   rotateVector,
+  MIN_ITEM_SIZE_MM,
+  MIN_SCALED_ITEM_SIZE_MM,
 } from '../../utils/geometry';
+import { pxToMm, mm } from '../../utils/units';
 
 // Prompt 24 item 3: square handles straddling the group box's own visible
 // selection outline (`.group-selection-box::after`, same `-4px` inset as
@@ -142,7 +145,7 @@ export default function GroupSelectionOverlay() {
     const onMove = (ev) => {
       // Prompt 22: screen-pixel delta -> page units before it reaches the
       // group box's own resize math.
-      const raw = resizeRotatedBox(startBox, handle, (ev.clientX - startMouse.x) / scale, (ev.clientY - startMouse.y) / scale, 16);
+      const raw = resizeRotatedBox(startBox, handle, pxToMm((ev.clientX - startMouse.x) / scale), pxToMm((ev.clientY - startMouse.y) / scale), MIN_ITEM_SIZE_MM);
       let box = { x: raw.x, y: raw.y, width: raw.width, height: raw.height, rotation: 0 };
       let edges = null;
       if (bounds) {
@@ -168,8 +171,8 @@ export default function GroupSelectionOverlay() {
         patches.set(s.id, {
           x: anchorX + (s.origX - anchorX) * scaleX,
           y: anchorY + (s.origY - anchorY) * scaleY,
-          width: Math.max(4, s.origWidth * scaleX),
-          height: Math.max(4, s.origHeight * scaleY),
+          width: Math.max(MIN_SCALED_ITEM_SIZE_MM, s.origWidth * scaleX),
+          height: Math.max(MIN_SCALED_ITEM_SIZE_MM, s.origHeight * scaleY),
           ...scaleItemStyle(s.item, fontScale),
         });
       });
@@ -269,7 +272,7 @@ export default function GroupSelectionOverlay() {
   return (
     <div
       className="group-selection-box"
-      style={{ position: 'absolute', left: groupBox.x, top: groupBox.y, width: groupBox.width, height: groupBox.height }}
+      style={{ position: 'absolute', left: mm(groupBox.x), top: mm(groupBox.y), width: mm(groupBox.width), height: mm(groupBox.height) }}
     >
       {RESIZE_HANDLES.map((h) => (
         <div

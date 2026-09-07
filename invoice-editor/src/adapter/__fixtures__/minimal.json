@@ -1,0 +1,446 @@
+{
+  "schema_version": 2,
+  "page": {
+    "size": "A4",
+    "width_mm": 210,
+    "height_mm": 297,
+    "margin_top_mm": 20,
+    "margin_right_mm": 18,
+    "margin_bottom_mm": 16,
+    "margin_left_mm": 18,
+    "background_color": "#fdfdfb"
+  },
+  "header": {
+    "elements": [
+      {
+        "kind": "semantic",
+        "type": "logo",
+        "x": 0,
+        "y": 6,
+        "width": 12,
+        "height": 12,
+        "style": {},
+        "overrides": {}
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 17,
+        "y": 0,
+        "width": 90,
+        "height": 4,
+        "style": {
+          "font": "IBM Plex Mono",
+          "font_size_pt": 7.5,
+          "letter_spacing_em": 0.22,
+          "text_transform": "uppercase",
+          "color": "theme_primary",
+          "text": "Invoice"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 17,
+        "y": 5,
+        "width": 90,
+        "height": 9,
+        "style": {
+          "font": "IBM Plex Sans",
+          "font_size_pt": 19,
+          "font_weight": 600,
+          "color": "theme_secondary"
+        },
+        "overrides": {},
+        "binding": "business.name"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 130,
+        "y": 0,
+        "width": 44,
+        "height": 6,
+        "style": {
+          "font": "IBM Plex Mono",
+          "font_size_pt": 10,
+          "font_weight": 600,
+          "align": "right",
+          "color": "theme_secondary"
+        },
+        "overrides": {},
+        "binding": "invoice.number"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 130,
+        "y": 7,
+        "width": 17,
+        "height": 6,
+        "style": {
+          "font_size_pt": 8.5,
+          "text": "Issue date"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 148,
+        "y": 7,
+        "width": 26,
+        "height": 6,
+        "style": {
+          "font_weight": 600,
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "invoice.issue_date"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 130,
+        "y": 17,
+        "width": 17,
+        "height": 6,
+        "style": {
+          "font_size_pt": 8.5,
+          "text": "Due date"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 148,
+        "y": 17,
+        "width": 26,
+        "height": 6,
+        "style": {
+          "font_weight": 600,
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "invoice.due_date"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 42,
+        "width": 80,
+        "height": 3,
+        "style": {
+          "font": "IBM Plex Mono",
+          "font_size_pt": 7.5,
+          "letter_spacing_em": 0.16,
+          "text_transform": "uppercase",
+          "color": "theme_primary",
+          "align": "left",
+          "text": "Bill to"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 46,
+        "width": 80,
+        "height": 5,
+        "style": {
+          "font_size_pt": 11,
+          "font_weight": 600
+        },
+        "overrides": {},
+        "binding": "client.name"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 51,
+        "width": 80,
+        "height": 4,
+        "style": {},
+        "overrides": {},
+        "binding": "client.company"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 55,
+        "width": 80,
+        "height": 6,
+        "style": {},
+        "overrides": {},
+        "binding": "client.address"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 61,
+        "width": 80,
+        "height": 4,
+        "style": {},
+        "overrides": {},
+        "binding": "client.email"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 95,
+        "y": 42,
+        "width": 79,
+        "height": 4,
+        "style": {
+          "font": "IBM Plex Mono",
+          "font_size_pt": 7.5,
+          "letter_spacing_em": 0.16,
+          "text_transform": "uppercase",
+          "color": "theme_primary",
+          "align": "right",
+          "text": "From"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 95,
+        "y": 47,
+        "width": 79,
+        "height": 5,
+        "style": {
+          "font_size_pt": 11,
+          "font_weight": 600,
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "business.name"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 95,
+        "y": 53,
+        "width": 79,
+        "height": 4,
+        "style": {
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "business.address_line1"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 95,
+        "y": 58,
+        "width": 79,
+        "height": 7,
+        "style": {
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "business.email"
+      }
+    ]
+  },
+  "flow": {
+    "elements": [
+      {
+        "kind": "generic",
+        "type": "divider",
+        "x": 0,
+        "y": 67,
+        "width": 174,
+        "height": 1,
+        "style": {
+          "thickness_mm": 0.3,
+          "color": "theme_secondary"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "structural",
+        "type": "table",
+        "x": 0,
+        "y": 75,
+        "width": 174,
+        "height": 45,
+        "style": {
+          "header_border_color": "theme_secondary",
+          "row_border_color": "#e8e6de",
+          "font": "IBM Plex Mono",
+          "columns": [
+            "description",
+            "quantity",
+            "unit_price",
+            "total"
+          ]
+        },
+        "overrides": {},
+        "binding": null,
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "totals",
+        "x": 112,
+        "y": 128.34,
+        "width": 62,
+        "height": 7.7,
+        "style": {
+          "align": "right",
+          "rows": [
+            "subtotal"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "totals",
+        "x": 112,
+        "y": 136.04,
+        "width": 62,
+        "height": 7.7,
+        "style": {
+          "align": "right",
+          "rows": [
+            "tax"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "totals",
+        "x": 112,
+        "y": 143.74,
+        "width": 62,
+        "height": 7.7,
+        "style": {
+          "align": "right",
+          "rows": [
+            "discount"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "totals",
+        "x": 79,
+        "y": 153.44,
+        "width": 95.0,
+        "height": 24.0,
+        "style": {
+          "align": "right",
+          "rows": [
+            "total"
+          ],
+          "variant": "total_due_display",
+          "font_size_pt": 34
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "notes",
+        "x": 0,
+        "y": 180,
+        "width": 97,
+        "height": 12.4,
+        "style": {
+          "sections": [
+            "notes"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "notes",
+        "x": 0,
+        "y": 194.4,
+        "width": 97,
+        "height": 12.4,
+        "style": {
+          "sections": [
+            "terms"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "payment_info",
+        "x": 104,
+        "y": 180,
+        "width": 70,
+        "height": 42.5,
+        "style": {
+          "label": "Payment methods",
+          "variant": "bank_methods"
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "qr_code",
+        "x": 0,
+        "y": 239,
+        "width": 20,
+        "height": 20,
+        "style": {},
+        "overrides": {}
+      },
+      {
+        "kind": "semantic",
+        "type": "online_payment_link",
+        "x": 22,
+        "y": 245,
+        "width": 90,
+        "height": 12,
+        "style": {
+          "label": "Pay online"
+        },
+        "overrides": {}
+      },
+      {
+        "kind": "semantic",
+        "type": "signature",
+        "x": 119,
+        "y": 250,
+        "width": 55,
+        "height": 7,
+        "style": {
+          "label": "Authorised signature",
+          "has_signature_image": true,
+          "align": "right"
+        },
+        "overrides": {}
+      }
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { useEditor } from '../../state/EditorContext';
 import CanvasLayer from './CanvasLayer';
+import { mmToPx } from '../../utils/units';
 
 // `readOnly` is how PreviewModal reuses this exact tree without leaking the
 // live editor's selection into it: Preview shares the SAME EditorContext
@@ -81,7 +82,7 @@ export default function EditorCanvas({ readOnly = false }) {
     >
       <div
         className="page-zoom-wrapper"
-        style={{ width: template.page.width * scale, height: template.page.height * scale }}
+        style={{ width: mmToPx(template.page.width) * scale, height: mmToPx(template.page.height) * scale }}
       >
         <div
           ref={pageFrameRef}

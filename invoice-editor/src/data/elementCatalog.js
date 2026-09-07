@@ -1,4 +1,19 @@
 import { create as createQRCode } from 'qrcode/lib/core/qrcode.js';
+import { pxToMm, roundMm } from '../utils/units';
+
+// Phase 2a: every defaultBox below is still AUTHORED at its original px
+// value (preserving this file's own historical layout comments, which all
+// reason in px) and converted to mm once, here, at module load — the same
+// boundary conversion every other px->mm crossing in this app goes
+// through (see utils/units.js). A mechanical conversion is the right call
+// specifically for these: they're seed/demo layout positions, not a
+// tuned UX-feel constant the way geometry.js's PAGE_PADDING/
+// COLLISION_MARGIN are (those were deliberately retuned to clean mm
+// values instead — see that file's own comments for why the two cases
+// call for different treatment).
+function boxMm(x, y, width, height) {
+  return { x: roundMm(pxToMm(x)), y: roundMm(pxToMm(y)), width: roundMm(pxToMm(width)), height: roundMm(pxToMm(height)) };
+}
 
 // Every content element the editor knows about. Elements are FIXED WIDGETS —
 // users never type invoice data, they only toggle, restyle, position, resize
@@ -46,7 +61,7 @@ export const ELEMENT_TYPES = {
     defaultOn: true,
     variant: 'image',
     shapeOptions: ['square', 'rounded', 'circle'],
-    defaultBox: { x: 32, y: 32, width: 42, height: 42 },
+    defaultBox: boxMm(32, 32, 42, 42),
     render: () => ({ kind: 'image', placeholder: 'logo' }),
   },
   // The small eyebrow label the original Django template placed above the
@@ -57,7 +72,7 @@ export const ELEMENT_TYPES = {
     required: false,
     defaultOn: true,
     variant: 'text',
-    defaultBox: { x: 90, y: 24, width: 60, height: 16 },
+    defaultBox: boxMm(90, 24, 60, 16),
     render: () => 'Invoice',
   },
   businessName: {
@@ -75,7 +90,7 @@ export const ELEMENT_TYPES = {
     // variance can never tip these two into an actual collision. The
     // whole header row shifted down together with it (invoiceNumber,
     // issueDate, dueDate) to keep the row's own baseline aligned.
-    defaultBox: { x: 90, y: 46, width: 130, height: 18 },
+    defaultBox: boxMm(90, 46, 130, 18),
     render: () => 'Business Name',
   },
   invoiceNumber: {
@@ -83,7 +98,7 @@ export const ELEMENT_TYPES = {
     required: true,
     defaultOn: true,
     variant: 'text',
-    defaultBox: { x: 236, y: 46, width: 90, height: 18 },
+    defaultBox: boxMm(236, 46, 90, 18),
     render: () => 'INV-0001',
   },
   // 'label-value' is a styling split only — the label ("Issue date:") and
@@ -96,7 +111,7 @@ export const ELEMENT_TYPES = {
     required: true,
     defaultOn: true,
     variant: 'label-value',
-    defaultBox: { x: 342, y: 46, width: 150, height: 18 },
+    defaultBox: boxMm(342, 46, 150, 18),
     render: () => ({ label: 'Issue date:', value: '01-01-2026' }),
   },
   dueDate: {
@@ -104,7 +119,7 @@ export const ELEMENT_TYPES = {
     required: true,
     defaultOn: true,
     variant: 'label-value',
-    defaultBox: { x: 508, y: 46, width: 150, height: 18 },
+    defaultBox: boxMm(508, 46, 150, 18),
     render: () => ({ label: 'Due Date:', value: '15-01-2026' }),
   },
   // block-variant `render()` returns { title, lines }: `title` is the
@@ -118,7 +133,7 @@ export const ELEMENT_TYPES = {
     required: true,
     defaultOn: true,
     variant: 'block',
-    defaultBox: { x: 32, y: 100, width: 170, height: 56 },
+    defaultBox: boxMm(32, 100, 170, 56),
     render: () => ({
       title: { key: 'title', label: 'Title', text: 'Bill To' },
       lines: [
@@ -134,7 +149,7 @@ export const ELEMENT_TYPES = {
     required: true,
     defaultOn: true,
     variant: 'block',
-    defaultBox: { x: 222, y: 100, width: 170, height: 46 },
+    defaultBox: boxMm(222, 100, 170, 46),
     render: () => ({
       title: { key: 'title', label: 'Title', text: 'From' },
       lines: [
@@ -149,7 +164,7 @@ export const ELEMENT_TYPES = {
     required: true,
     defaultOn: true,
     variant: 'table',
-    defaultBox: { x: 32, y: 220, width: 730, height: 150 },
+    defaultBox: boxMm(32, 220, 730, 150),
     render: () => ({
       columns: ['Description', 'Qty', 'Rate', 'Amount'],
       rows: [
@@ -177,7 +192,7 @@ export const ELEMENT_TYPES = {
     defaultOn: true,
     variant: 'label-value',
     spread: true,
-    defaultBox: { x: 542, y: 390, width: 220, height: 14 },
+    defaultBox: boxMm(542, 390, 220, 14),
     render: () => ({ label: 'Subtotal', value: '$2,930.00' }),
   },
   tax: {
@@ -186,7 +201,7 @@ export const ELEMENT_TYPES = {
     defaultOn: true,
     variant: 'label-value',
     spread: true,
-    defaultBox: { x: 542, y: 416, width: 220, height: 14 },
+    defaultBox: boxMm(542, 416, 220, 14),
     render: () => ({ label: 'Tax (5%)', value: '$146.50' }),
   },
   discount: {
@@ -195,7 +210,7 @@ export const ELEMENT_TYPES = {
     defaultOn: true,
     variant: 'label-value',
     spread: true,
-    defaultBox: { x: 542, y: 442, width: 220, height: 14 },
+    defaultBox: boxMm(542, 442, 220, 14),
     render: () => ({ label: 'Discount', value: '−$100.00' }),
   },
   // `strong: true` on top of `spread` is what used to be `row-strong` —
@@ -208,7 +223,7 @@ export const ELEMENT_TYPES = {
     variant: 'label-value',
     spread: true,
     strong: true,
-    defaultBox: { x: 542, y: 468, width: 220, height: 20 },
+    defaultBox: boxMm(542, 468, 220, 20),
     render: () => ({ label: 'Total due', value: '$2,976.50' }),
   },
   currencyConversion: {
@@ -216,7 +231,7 @@ export const ELEMENT_TYPES = {
     required: false,
     defaultOn: true,
     variant: 'note',
-    defaultBox: { x: 542, y: 498, width: 220, height: 16 },
+    defaultBox: boxMm(542, 498, 220, 16),
     render: () => '≈ PKR 826,000 at rate 278.0',
   },
   // Prompt 21: the lower section (notes/terms/payment methods/pay online/
@@ -232,7 +247,7 @@ export const ELEMENT_TYPES = {
     required: false,
     defaultOn: true,
     variant: 'block',
-    defaultBox: { x: 32, y: 700, width: 340, height: 26 },
+    defaultBox: boxMm(32, 700, 340, 26),
     // A single-line block: that one line is `required` (not individually
     // removable) since deleting it would just leave an empty card behind —
     // removing the whole thing is what the top-level toggle is for.
@@ -248,7 +263,7 @@ export const ELEMENT_TYPES = {
     required: false,
     defaultOn: true,
     variant: 'block',
-    defaultBox: { x: 32, y: 746, width: 340, height: 26 },
+    defaultBox: boxMm(32, 746, 340, 26),
     render: () => ({
       title: { key: 'title', label: 'Title', text: 'Terms' },
       lines: [
@@ -261,7 +276,7 @@ export const ELEMENT_TYPES = {
     required: false,
     defaultOn: true,
     variant: 'block',
-    defaultBox: { x: 400, y: 700, width: 340, height: 36 },
+    defaultBox: boxMm(400, 700, 340, 36),
     render: () => ({
       title: { key: 'title', label: 'Title', text: 'Payment methods' },
       lines: [
@@ -275,7 +290,7 @@ export const ELEMENT_TYPES = {
     required: false,
     defaultOn: true,
     variant: 'qr',
-    defaultBox: { x: 400, y: 750, width: 110, height: 130 },
+    defaultBox: boxMm(400, 750, 110, 130),
     render: () => ({ label: 'Pay online', link: PAY_LINK, qrPath: QR_PATH, qrSize: QR_SIZE }),
   },
   // The original template composed a signature out of three stacked
@@ -297,7 +312,7 @@ export const ELEMENT_TYPES = {
     // empty margin inside the item's own bounding box/selection outline
     // (Prompt 16 item 2). Matching the aspect ratio here means the image
     // fills its box edge-to-edge, so the box IS the visible content.
-    defaultBox: { x: 32, y: 800, width: 37, height: 35 },
+    defaultBox: boxMm(32, 800, 37, 35),
     render: () => ({ kind: 'image', placeholder: 'signature' }),
   },
   signatureDivider: {
@@ -309,7 +324,7 @@ export const ELEMENT_TYPES = {
     // below it, visually oversized next to signatureImage's much smaller
     // 37px-wide mark. Sized closer to the image it sits under, thin
     // enough to read as a rule rather than a bar.
-    defaultBox: { x: 32, y: 845, width: 70, height: 2 },
+    defaultBox: boxMm(32, 845, 70, 2),
     render: () => null,
   },
   signatureLabel: {
@@ -317,7 +332,7 @@ export const ELEMENT_TYPES = {
     required: false,
     defaultOn: true,
     variant: 'text',
-    defaultBox: { x: 32, y: 854, width: 110, height: 16 },
+    defaultBox: boxMm(32, 854, 110, 16),
     render: () => 'Authorised Signature',
   },
   // Fixed page chrome, not an optional element: `hidden` keeps it out of the
@@ -333,7 +348,16 @@ export const ELEMENT_TYPES = {
     hidden: true,
     locked: true,
     variant: 'footer',
-    defaultBox: { x: 0, y: 1085, width: 794, height: 38 },
+    // Hand-fixed rather than run through boxMm's mechanical conversion
+    // (unlike every other defaultBox above): footer.y is what getFooterTop
+    // (geometry.js) hands out AS the boundary every other item's own
+    // bottom edge is measured against, and footer.width visually defines
+    // how far the footer bar spans — both deserve to land on the real
+    // page's own exact mm dimensions (210 x 297) rather than a
+    // mechanically-converted 794px/1085px landing 0.03-0.05mm off from
+    // them. Height 38px -> 10.05mm rounds to a clean 10mm; y is then
+    // 297 - 10 = 287 so the bar still sits flush at the true bottom edge.
+    defaultBox: { x: 0, y: 287, width: 210, height: 10 },
     render: () => ({ businessName: FROM_BUSINESS_NAME, email: FROM_EMAIL }),
   },
 };

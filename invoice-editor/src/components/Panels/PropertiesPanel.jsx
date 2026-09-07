@@ -5,6 +5,18 @@ import { getItemBounds, getFooterTop, resolveMoveCollision } from '../../utils/g
 import { FONT_FAMILIES, FONT_WEIGHT_LABELS, fontFamilyById } from '../../data/fonts';
 import { isLinked, resolveColorValue, resolveFontValue } from '../../utils/theme';
 import { CheckIcon, ErrorIcon, WarningIcon } from '../Icons';
+import { pxToMm } from '../../utils/units';
+
+// Phase 2a: every geometric field in this panel is now mm (position/
+// size/border-width/corner-radius/cell-padding — the whole "mm family",
+// see utils/units.js's header comment) or pt (font size, the one
+// production expresses differently — see design_renderer.py's
+// font_size_pt). Displayed to 2 decimal places — matches design_schema.py/
+// constants.js's own stored precision convention exactly — while the
+// full-precision value stays in template state; this only rounds what's
+// SHOWN, never what's committed (typing a new value always commits that
+// exact typed number, full precision, same as before this pass).
+const round2 = (v) => Math.round((v || 0) * 100) / 100;
 
 // Variants whose text is split into independently-styleable parts (see
 // item[part] in CanvasItem.jsx) — kept in sync with CanvasItem:
@@ -261,12 +273,13 @@ function FontControls({ style, onChange, defaultSize, theme }) {
         </>
       )}
       <div className="prop-row">
-        <label>Size</label>
+        <label>Size (pt)</label>
         <input
           type="number"
-          min="6"
-          max="72"
-          value={style.fontSize || defaultSize}
+          min="4.5"
+          max="54"
+          step="0.5"
+          value={round2(style.fontSize || defaultSize)}
           onChange={(e) => onChange({ fontSize: Number(e.target.value) })}
         />
       </div>
@@ -398,15 +411,17 @@ function partLabel(def, part) {
   return 'Body'; // qr's image half
 }
 
-// Part-level font-size fallback: label-value's two spans share its
-// container size (11 for a `strong` item like Total due, 10 otherwise),
-// title uses the block-title 8px default, everything else is a block body
-// line at 9px — mirrors the fallbacks CanvasItem.jsx's ContentBody passes
-// to partInlineStyle() for the same parts.
+// Part-level font-size fallback (pt): label-value's two spans share its
+// container size (8.25pt for a `strong` item like Total due, 7.5pt
+// otherwise), title uses the block-title 6pt default, everything else is
+// a block body line at 6.75pt — mirrors the fallbacks CanvasItem.jsx's
+// ContentBody passes to partInlineStyle() for the same parts EXACTLY
+// (Phase 2a converted both files' numbers by the same px->pt factor,
+// 0.75, so they'd stay in sync rather than drift independently).
 function partDefaultFontSize(def, part) {
-  if (def.variant === 'label-value') return def.strong ? 11 : 10;
-  if (part === 'title') return 8;
-  return 9;
+  if (def.variant === 'label-value') return def.strong ? 8.25 : 7.5;
+  if (part === 'title') return 6;
+  return 6.75;
 }
 
 function PartProperties({ item, part, pageAlignItem }) {
@@ -427,7 +442,7 @@ function PartProperties({ item, part, pageAlignItem }) {
       <div className="panel__section-title">Fill &amp; border</div>
       <LinkableColorRow label="Background" theme={theme} value={partStyle.bgColor} onChange={(v) => updateItemPart(item.id, part, { bgColor: v })} />
       <LinkableColorRow label="Border color" theme={theme} value={partStyle.borderColor} onChange={(v) => updateItemPart(item.id, part, { borderColor: v })} fallback="#262420" />
-      <SliderRow label="Border width" min={0} max={6} value={partStyle.borderWidth || 0} onChange={(v) => updateItemPart(item.id, part, { borderWidth: v })} />
+      <SliderRow label="Border width (mm)" min={0} max={1.6} step={0.1} value={partStyle.borderWidth || 0} onChange={(v) => updateItemPart(item.id, part, { borderWidth: v })} />
 
       <div className="panel__section-title">Typography</div>
       <LinkableColorRow label="Text color" theme={theme} value={partStyle.textColor} onChange={(v) => updateItemPart(item.id, part, { textColor: v })} fallback={defaultColor} />
@@ -472,9 +487,9 @@ function PartProperties({ item, part, pageAlignItem }) {
 // own dedicated panel below has its own header-size field, but body font
 // size is this same generic control now — see Prompt 23 item 10.)
 function variantDefaultFontSize(variant) {
-  if (variant === 'table') return 8.5;
-  if (variant === 'footer') return 7;
-  return 10; // text, note
+  if (variant === 'table') return 6.375;
+  if (variant === 'footer') return 5.25;
+  return 7.5; // text, note
 }
 
 function ContentProperties({ items, pageAlignItem }) {
@@ -524,12 +539,12 @@ function ContentProperties({ items, pageAlignItem }) {
         <>
           <div className="panel__section-title">Position &amp; size</div>
           <div className="prop-row">
-            <label>Width</label>
-            <input type="number" value={Math.round(first.width)} onChange={(e) => updateItems(ids, () => ({ width: Number(e.target.value) }))} />
+            <label>Width (mm)</label>
+            <input type="number" step="0.1" value={round2(first.width)} onChange={(e) => updateItems(ids, () => ({ width: Number(e.target.value) }))} />
           </div>
           <div className="prop-row">
-            <label>Height</label>
-            <input type="number" value={Math.round(first.height)} onChange={(e) => updateItems(ids, () => ({ height: Number(e.target.value) }))} />
+            <label>Height (mm)</label>
+            <input type="number" step="0.1" value={round2(first.height)} onChange={(e) => updateItems(ids, () => ({ height: Number(e.target.value) }))} />
           </div>
           <SliderRow label="Rotation" min={-180} max={180} value={first.rotation || 0} onChange={(v) => updateItems(ids, () => ({ rotation: v }))} />
         </>
@@ -542,7 +557,7 @@ function ContentProperties({ items, pageAlignItem }) {
       <div className="panel__section-title">Fill &amp; border</div>
       <LinkableColorRow label="Background" theme={theme} value={first.bgColor} onChange={(v) => updateItems(ids, () => ({ bgColor: v }))} />
       <LinkableColorRow label="Border color" theme={theme} value={first.borderColor} onChange={(v) => updateItems(ids, () => ({ borderColor: v }))} fallback="#262420" />
-      <SliderRow label="Border width" min={0} max={6} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
+      <SliderRow label="Border width (mm)" min={0} max={1.6} step={0.1} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
       {isLogo && (
         <div className="prop-row">
           <label>Shape</label>
@@ -561,7 +576,7 @@ function ContentProperties({ items, pageAlignItem }) {
         </div>
       )}
       {showCornerRadius && (
-        <SliderRow label="Corner radius" min={0} max={24} value={first.cornerRadius ?? 0} onChange={(v) => updateItems(ids, () => ({ cornerRadius: v }))} />
+        <SliderRow label="Corner radius (mm)" min={0} max={6.4} step={0.1} value={first.cornerRadius ?? 0} onChange={(v) => updateItems(ids, () => ({ cornerRadius: v }))} />
       )}
 
       {!hideTextControls && (
@@ -640,8 +655,8 @@ function TableProperties({ item }) {
         </select>
       </div>
       <div className="prop-row">
-        <label>Size</label>
-        <input type="number" min="6" max="72" value={item.headerFontSize || 7} onChange={(e) => patch({ headerFontSize: Number(e.target.value) })} />
+        <label>Size (pt)</label>
+        <input type="number" min="4.5" max="54" step="0.5" value={round2(item.headerFontSize || 5.25)} onChange={(e) => patch({ headerFontSize: Number(e.target.value) })} />
       </div>
 
       <div className="panel__section-title">Table — Body rows</div>
@@ -649,7 +664,7 @@ function TableProperties({ item }) {
         <label>Row border color</label>
         <input type="color" value={item.rowBorderColor || '#e5e1d6'} onChange={(e) => patch({ rowBorderColor: e.target.value })} />
       </div>
-      <SliderRow label="Row border width" min={0} max={3} step={0.5} value={item.rowBorderWidth ?? 0.5} onChange={(v) => patch({ rowBorderWidth: v })} />
+      <SliderRow label="Row border width (mm)" min={0} max={1} step={0.05} value={item.rowBorderWidth ?? 0.25} onChange={(v) => patch({ rowBorderWidth: v })} />
       <div className="prop-row">
         <label>Alternating shading</label>
         <input type="checkbox" checked={!!item.altRowShading} onChange={(e) => patch({ altRowShading: e.target.checked })} />
@@ -662,7 +677,7 @@ function TableProperties({ item }) {
       )}
 
       <div className="panel__section-title">Table — Columns</div>
-      <SliderRow label="Cell padding" min={0} max={16} value={item.cellPadding ?? 4} onChange={(v) => patch({ cellPadding: v })} />
+      <SliderRow label="Cell padding (mm)" min={0} max={4.2} step={0.1} value={item.cellPadding ?? pxToMm(4)} onChange={(v) => patch({ cellPadding: v })} />
       {ELEMENT_TYPES[item.type].render().columns.map((col, j) => {
         const align = item.columnAlign?.[j] || (j === 0 ? 'left' : 'right');
         const setAlign = (v) => {
@@ -806,21 +821,21 @@ function ShapeProperties({ items, pageAlignItem }) {
 
       <div className="panel__section-title">Position &amp; size</div>
       <div className="prop-row">
-        <label>Width</label>
-        <input type="number" value={Math.round(first.width)} onChange={(e) => updateItems(ids, () => ({ width: Number(e.target.value) }))} />
+        <label>Width (mm)</label>
+        <input type="number" step="0.1" value={round2(first.width)} onChange={(e) => updateItems(ids, () => ({ width: Number(e.target.value) }))} />
       </div>
       <div className="prop-row">
-        <label>Height</label>
-        <input type="number" value={Math.round(first.height)} onChange={(e) => updateItems(ids, () => ({ height: Number(e.target.value) }))} />
+        <label>Height (mm)</label>
+        <input type="number" step="0.1" value={round2(first.height)} onChange={(e) => updateItems(ids, () => ({ height: Number(e.target.value) }))} />
       </div>
       <SliderRow label="Rotation" min={-180} max={180} value={first.rotation} onChange={(v) => updateItems(ids, () => ({ rotation: v }))} />
 
       <div className="panel__section-title">Fill &amp; border</div>
       <LinkableColorRow label="Fill" theme={theme} value={first.fill} onChange={(v) => updateItems(ids, () => ({ fill: v }))} fallback="#7152F5" />
       <LinkableColorRow label="Border color" theme={theme} value={first.borderColor} onChange={(v) => updateItems(ids, () => ({ borderColor: v }))} fallback="#262420" />
-      <SliderRow label="Border width" min={0} max={8} value={first.borderWidth} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
+      <SliderRow label="Border width (mm)" min={0} max={2.1} step={0.1} value={first.borderWidth} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
       {first.type === 'roundedRect' && (
-        <SliderRow label="Corner radius" min={0} max={60} value={first.radius} onChange={(v) => updateItems(ids, () => ({ radius: v }))} />
+        <SliderRow label="Corner radius (mm)" min={0} max={15.9} step={0.1} value={first.radius} onChange={(v) => updateItems(ids, () => ({ radius: v }))} />
       )}
 
       <AlignmentSection pageAlignItem={pageAlignItem} />
@@ -848,12 +863,12 @@ function ImageProperties({ items, pageAlignItem }) {
         <>
           <div className="panel__section-title">Position &amp; size</div>
           <div className="prop-row">
-            <label>Width</label>
-            <input type="number" value={Math.round(first.width)} onChange={(e) => updateItems(ids, () => ({ width: Number(e.target.value) }))} />
+            <label>Width (mm)</label>
+            <input type="number" step="0.1" value={round2(first.width)} onChange={(e) => updateItems(ids, () => ({ width: Number(e.target.value) }))} />
           </div>
           <div className="prop-row">
-            <label>Height</label>
-            <input type="number" value={Math.round(first.height)} onChange={(e) => updateItems(ids, () => ({ height: Number(e.target.value) }))} />
+            <label>Height (mm)</label>
+            <input type="number" step="0.1" value={round2(first.height)} onChange={(e) => updateItems(ids, () => ({ height: Number(e.target.value) }))} />
           </div>
           <SliderRow label="Rotation" min={-180} max={180} value={first.rotation || 0} onChange={(v) => updateItems(ids, () => ({ rotation: v }))} />
         </>
@@ -862,8 +877,8 @@ function ImageProperties({ items, pageAlignItem }) {
       <div className="panel__section-title">Fill &amp; border</div>
       <LinkableColorRow label="Background" theme={theme} value={first.bgColor} onChange={(v) => updateItems(ids, () => ({ bgColor: v }))} />
       <LinkableColorRow label="Border color" theme={theme} value={first.borderColor} onChange={(v) => updateItems(ids, () => ({ borderColor: v }))} fallback="#262420" />
-      <SliderRow label="Border width" min={0} max={6} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
-      <SliderRow label="Corner radius" min={0} max={24} value={first.cornerRadius ?? 0} onChange={(v) => updateItems(ids, () => ({ cornerRadius: v }))} />
+      <SliderRow label="Border width (mm)" min={0} max={1.6} step={0.1} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
+      <SliderRow label="Corner radius (mm)" min={0} max={6.4} step={0.1} value={first.cornerRadius ?? 0} onChange={(v) => updateItems(ids, () => ({ cornerRadius: v }))} />
 
       <AlignmentSection pageAlignItem={pageAlignItem} />
     </>
@@ -915,7 +930,7 @@ function MixedProperties({ items }) {
         <label>Border color</label>
         <input type="color" value={firstBorderColor} onChange={(e) => updateItems(ids, () => ({ borderColor: e.target.value }))} />
       </div>
-      <SliderRow label="Border width" min={0} max={8} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
+      <SliderRow label="Border width (mm)" min={0} max={2.1} step={0.1} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
       <p className="empty-hint" style={{ marginTop: 10 }}>
         Move, resize, and rotate this selection together using the shared handles on the canvas.
       </p>

@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "page": {
+    "size": "A4",
+    "width_mm": 210,
+    "height_mm": 297,
+    "margin_top_mm": 16,
+    "margin_right_mm": 16,
+    "margin_bottom_mm": 16,
+    "margin_left_mm": 20,
+    "spine": {
+      "width_mm": 3,
+      "color": "theme_primary",
+      "accent_color": "#d9c9a8"
+    },
+    "background_color": "#faf9f6"
+  },
+  "header": {
+    "elements": []
+  },
+  "flow": {
+    "elements": [
+      {
+        "kind": "structural",
+        "type": "table",
+        "x": 0,
+        "y": 20,
+        "width": 174,
+        "height": 45,
+        "style": {
+          "header_border_color": "theme_primary",
+          "row_border_color": "#e5e1d6",
+          "font": "IBM Plex Mono",
+          "columns": [
+            "description",
+            "quantity",
+            "unit_price",
+            "total"
+          ]
+        },
+        "overrides": {},
+        "binding": null,
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "totals",
+        "x": 112,
+        "y": 75,
+        "width": 62,
+        "height": 13.5,
+        "style": {
+          "align": "right",
+          "rows": [
+            "total"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      }
+    ]
+  }
+}

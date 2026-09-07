@@ -4,6 +4,15 @@ import { ELEMENT_TYPES, createContentItem } from '../data/elementCatalog';
 import { createShape } from '../data/shapeCatalog';
 import { validateTemplate } from '../utils/validation';
 import { normalizeZOrder, appendRespectingZOrder, stepSelectionOnce } from '../utils/zorder';
+import { MIN_ITEM_SIZE_MM } from '../utils/geometry';
+import { roundMm } from '../utils/units';
+
+// Phase 2a: the visible nudge applied to a duplicated/pasted item so the
+// copy doesn't land exactly on top of its source (duplicateItems/
+// addItemsFromClipboard below) — was a bare 16px. 16px is ~4.23mm at the
+// straight conversion; retuned to a clean 4mm, a comfortably visible
+// offset at any normal zoom level without being conversion-noise-precise.
+const DUPLICATE_OFFSET_MM = 4;
 
 const EditorStateContext = createContext(null);
 
@@ -270,8 +279,8 @@ export function EditorProvider({ children }) {
       const copies = source.map((i) => ({
         ...i,
         id: `${i.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        x: i.x + 16,
-        y: i.y + 16,
+        x: i.x + DUPLICATE_OFFSET_MM,
+        y: i.y + DUPLICATE_OFFSET_MM,
       }));
       // Prompt 26: a plain append would land these AFTER any existing
       // content in the array, i.e. rendered ON TOP of it — appending at
@@ -308,8 +317,8 @@ export function EditorProvider({ children }) {
       const pasted = shapesOnly.map((itemData, i) => ({
         ...itemData,
         id: `${itemData.kind}-${stamp}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-        x: itemData.x + 16,
-        y: itemData.y + 16,
+        x: itemData.x + DUPLICATE_OFFSET_MM,
+        y: itemData.y + DUPLICATE_OFFSET_MM,
       }));
       // Prompt 26: see duplicateItems' own comment — pasted shapes need
       // the same z-order-respecting insertion, not a plain end-append.
@@ -356,16 +365,24 @@ export function EditorProvider({ children }) {
   // from moving it later anyway.
   const addImageItem = useCallback(
     (dataUrl, sourceWidth, sourceHeight) => {
-      const MAX_DISPLAY_DIM = 200;
-      const scale = Math.min(1, MAX_DISPLAY_DIM / Math.max(sourceWidth, sourceHeight));
-      const width = Math.max(16, Math.round(sourceWidth * scale));
-      const height = Math.max(16, Math.round(sourceHeight * scale));
+      // Phase 2a: `sourceWidth`/`sourceHeight` stay real image PIXELS
+      // (they always were, and always will be — see this function's own
+      // comment above on what they're actually for), but the display cap
+      // this scale is computed against now needs to land in mm, not px —
+      // was a bare 200 (page-unit == px, before this pass). Retuned to a
+      // clean 50mm (a sensible max initial size for a pasted image on an
+      // invoice page) rather than the raw conversion's 52.92mm — this is
+      // a UX default, not a precision-sensitive constant.
+      const MAX_DISPLAY_DIM_MM = 50;
+      const scale = Math.min(1, MAX_DISPLAY_DIM_MM / Math.max(sourceWidth, sourceHeight));
+      const width = Math.max(MIN_ITEM_SIZE_MM, roundMm(sourceWidth * scale));
+      const height = Math.max(MIN_ITEM_SIZE_MM, roundMm(sourceHeight * scale));
       const item = {
         id: `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         kind: 'image',
         dataUrl,
-        x: Math.round((template.page.width - width) / 2),
-        y: Math.round((template.page.height - height) / 2),
+        x: roundMm((template.page.width - width) / 2),
+        y: roundMm((template.page.height - height) / 2),
         width,
         height,
         naturalWidth: width,

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useEditor } from '../../state/EditorContext';
 import { LogoSVG, WordmarkSVG } from '../Brand';
+import { mmToPx } from '../../utils/units';
 
 export default function Toolbar({ onPreview }) {
   const {
@@ -20,7 +21,13 @@ export default function Toolbar({ onPreview }) {
     const margin = 48;
     const availW = Math.max(50, vp.clientWidth - margin * 2);
     const availH = Math.max(50, vp.clientHeight - margin * 2);
-    const fit = Math.min(availW / template.page.width, availH / template.page.height);
+    // Phase 2a: template.page.width/height are mm now — vp.clientWidth/
+    // Height are real screen px (a live DOM measurement), so the page's
+    // own mm dimensions convert to their px equivalent before this ratio
+    // is computed; leaving them as bare mm here would make "Fit to
+    // screen" wildly wrong (dividing a several-hundred-px viewport by
+    // ~210, not ~794).
+    const fit = Math.min(availW / mmToPx(template.page.width), availH / mmToPx(template.page.height));
     setZoom(fit * 100);
   };
   const ZOOM_PRESETS = [50, 75, 100, 125, 150, 200];

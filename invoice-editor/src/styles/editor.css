@@ -550,14 +550,15 @@ body {
    in inline style to the page's TRUE dimensions times the current zoom
    factor, so `.canvas-scroll`'s overflow/scroll math sees the real
    on-screen (zoomed) size. `.page-frame` inside it keeps its natural,
-   UNSCALED 794x1123 layout box (every item inside it stores/reads plain
-   page-unit coordinates, same as before zoom existed) and is scaled
-   purely visually via CSS `transform` (set inline, alongside the zoom
-   factor) — `position: absolute` pulls it out of normal flow so its own
-   unscaled box never affects the wrapper's (already explicitly sized)
-   layout; it still establishes the same containing block its own
-   absolutely-positioned children (`.page-edge-glow` etc.) already relied
-   on `position: relative` for. */
+   UNSCALED 210mm x 297mm layout box (Phase 2a — was 794x1123px; every
+   item inside it stores/reads plain mm coordinates now, same "unscaled
+   natural box, scaled purely visually" relationship to zoom as before
+   that pass) and is scaled purely visually via CSS `transform` (set
+   inline, alongside the zoom factor) — `position: absolute` pulls it out
+   of normal flow so its own unscaled box never affects the wrapper's
+   (already explicitly sized) layout; it still establishes the same
+   containing block its own absolutely-positioned children
+   (`.page-edge-glow` etc.) already relied on `position: relative` for. */
 .page-zoom-wrapper {
   position: relative;
   flex-shrink: 0;
@@ -567,8 +568,17 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  width: 794px;
-  height: 1123px;
+  /* Phase 2a: was 794px x 1123px (a px-at-96dpi approximation of A4) —
+     now the real thing, in CSS's own native `mm` unit. This is what
+     makes every item's inline `left/top/width/height` (authored in mm
+     via utils/units.js's mm() helper) land in the correct LOCAL space:
+     CSS defines 1mm as exactly 96/25.4 reference px, so this frame's own
+     rendered box is now pixel-identical to what the old 794x1123 literal
+     produced, just expressed in the unit the rest of the app's geometry
+     actually is now, instead of a separately-maintained px approximation
+     of it. */
+  width: 210mm;
+  height: 297mm;
   transform-origin: top left;
   background: var(--page-bg);
   color: var(--page-text);

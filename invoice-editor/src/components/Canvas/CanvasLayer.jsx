@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useEditor } from '../../state/EditorContext';
 import { beginDragSelectGuard } from '../../utils/dragGuard';
 import { rotatedBoundingBox } from '../../utils/geometry';
+import { pxToMm, mm } from '../../utils/units';
 import CanvasItem from './CanvasItem';
 import GroupSelectionOverlay from './GroupSelectionOverlay';
 
@@ -35,14 +36,15 @@ export default function CanvasLayer({ readOnly = false }) {
     // Prompt 22: `.canvas-layer` is itself a child of the CSS-zoomed
     // `.page-frame`, so its OWN getBoundingClientRect() already comes
     // back at the current on-screen (zoomed) size — dividing by `scale`
-    // here converts the cursor's screen-pixel offset within it into true
-    // PAGE units, which is what `marquee` is now tracked in throughout
-    // (matching every item's own x/y/width/height) so both the live
-    // rendering below and the final hit-test compare page-units to
-    // page-units consistently, not screen-pixels to page-units.
+    // here converts the cursor's screen-pixel offset within it into
+    // page-frame-local CSS px; Phase 2a additionally converts THAT into
+    // true mm (pxToMm) before it ever reaches `marquee`, which is what
+    // every item's own x/y/width/height are now stored in — so both the
+    // live rendering below and the final hit-test compare mm to mm
+    // consistently, not screen-pixels to mm.
     const scale = zoom / 100;
     const rect = e.currentTarget.getBoundingClientRect();
-    const start = { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
+    const start = { x: pxToMm((e.clientX - rect.left) / scale), y: pxToMm((e.clientY - rect.top) / scale) };
     setSelection({ ids: [], part: null });
 
     let currentBox = null; // tracked locally, not via React state, so onUp can
@@ -50,7 +52,7 @@ export default function CanvasLayer({ readOnly = false }) {
     // setSelection call inside setMarquee's own updater function.
 
     const onMove = (ev) => {
-      const cur = { x: (ev.clientX - rect.left) / scale, y: (ev.clientY - rect.top) / scale };
+      const cur = { x: pxToMm((ev.clientX - rect.left) / scale), y: pxToMm((ev.clientY - rect.top) / scale) };
       currentBox = {
         x: Math.min(start.x, cur.x),
         y: Math.min(start.y, cur.y),
@@ -97,14 +99,14 @@ export default function CanvasLayer({ readOnly = false }) {
     if (selectedItems.length < 2) return;
     const scale = zoom / 100;
     const rect = e.currentTarget.getBoundingClientRect();
-    const px = (e.clientX - rect.left) / scale;
-    const py = (e.clientY - rect.top) / scale;
+    const cursorXMm = pxToMm((e.clientX - rect.left) / scale);
+    const cursorYMm = pxToMm((e.clientY - rect.top) / scale);
     const boxes = selectedItems.map(rotatedBoundingBox);
     const minX = Math.min(...boxes.map((b) => b.minX));
     const maxX = Math.max(...boxes.map((b) => b.maxX));
     const minY = Math.min(...boxes.map((b) => b.minY));
     const maxY = Math.max(...boxes.map((b) => b.maxY));
-    if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+    if (cursorXMm >= minX && cursorXMm <= maxX && cursorYMm >= minY && cursorYMm <= maxY) {
       e.preventDefault();
       e.stopPropagation();
       setContextMenu({ x: e.clientX, y: e.clientY });
@@ -126,7 +128,7 @@ export default function CanvasLayer({ readOnly = false }) {
       {!readOnly && marquee && (
         <div
           className="selection-box"
-          style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
+          style={{ left: mm(marquee.x), top: mm(marquee.y), width: mm(marquee.w), height: mm(marquee.h) }}
         />
       )}
 
@@ -142,13 +144,13 @@ export default function CanvasLayer({ readOnly = false }) {
           match (see geometry.js's guideSpan) — so a guide reads as "these
           two things align," not decoration stretched across empty page. */}
       {!readOnly && guides?.vertical.map((g, i) => (
-        <div key={`gv-${i}`} className="align-guide align-guide--vertical" style={{ left: g.value, top: g.from, height: g.to - g.from }} />
+        <div key={`gv-${i}`} className="align-guide align-guide--vertical" style={{ left: mm(g.value), top: mm(g.from), height: mm(g.to - g.from) }} />
       ))}
       {!readOnly && guides?.horizontal.map((g, i) => (
-        <div key={`gh-${i}`} className="align-guide align-guide--horizontal" style={{ top: g.value, left: g.from, width: g.to - g.from }} />
+        <div key={`gh-${i}`} className="align-guide align-guide--horizontal" style={{ top: mm(g.value), left: mm(g.from), width: mm(g.to - g.from) }} />
       ))}
       {!readOnly && guides?.labels.map((l, i) => (
-        <div key={`gl-${i}`} className="align-guide-label" style={{ left: l.x, top: l.y }}>{l.text}</div>
+        <div key={`gl-${i}`} className="align-guide-label" style={{ left: mm(l.x), top: mm(l.y) }}>{l.text}</div>
       ))}
       {/* Equal-spacing markers (Prompt 19 item 2, the flagship feature;
           per-segment rendering fixed in Prompt 20 item 1): ONE short
@@ -167,8 +169,8 @@ export default function CanvasLayer({ readOnly = false }) {
           className={`align-guide ${s.axis === 'x' ? 'align-guide--horizontal' : 'align-guide--vertical'}`}
           style={
             s.axis === 'x'
-              ? { top: s.cross, left: s.from, width: s.to - s.from }
-              : { left: s.cross, top: s.from, height: s.to - s.from }
+              ? { top: mm(s.cross), left: mm(s.from), width: mm(s.to - s.from) }
+              : { left: mm(s.cross), top: mm(s.from), height: mm(s.to - s.from) }
           }
         />
       ))}
@@ -177,8 +179,8 @@ export default function CanvasLayer({ readOnly = false }) {
           key={`gs-label-${i}`}
           className="align-guide-label"
           style={{
-            left: s.axis === 'x' ? (s.from + s.to) / 2 : s.cross,
-            top: s.axis === 'x' ? s.cross : (s.from + s.to) / 2,
+            left: mm(s.axis === 'x' ? (s.from + s.to) / 2 : s.cross),
+            top: mm(s.axis === 'x' ? s.cross : (s.from + s.to) / 2),
           }}
         >
           {s.text}

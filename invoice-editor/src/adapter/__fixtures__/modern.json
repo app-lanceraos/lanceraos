@@ -1,0 +1,423 @@
+{
+  "schema_version": 2,
+  "page": {
+    "size": "A4",
+    "width_mm": 210,
+    "height_mm": 297,
+    "margin_top_mm": 14,
+    "margin_right_mm": 16,
+    "margin_bottom_mm": 16,
+    "margin_left_mm": 16,
+    "sidebar": {
+      "width_mm": 42,
+      "color": null
+    }
+  },
+  "header": {
+    "elements": [
+      {
+        "kind": "semantic",
+        "type": "logo",
+        "x": 6,
+        "y": 14,
+        "width": 15,
+        "height": 15,
+        "style": {
+          "sidebar": true
+        },
+        "overrides": {}
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 6,
+        "y": 35,
+        "width": 30,
+        "height": 8,
+        "style": {
+          "sidebar": true,
+          "font": "Space Grotesk",
+          "font_size_pt": 14,
+          "font_weight": 700
+        },
+        "overrides": {},
+        "binding": "business.name"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 0,
+        "width": 60,
+        "height": 8,
+        "style": {
+          "font": "Space Grotesk",
+          "font_size_pt": 22,
+          "font_weight": 700,
+          "color": "theme_primary"
+        },
+        "overrides": {},
+        "binding": "invoice.number"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 76,
+        "y": 0,
+        "width": 30,
+        "height": 6,
+        "style": {
+          "font_size_pt": 8.5,
+          "align": "right",
+          "text": "Issue date"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 106,
+        "y": 0,
+        "width": 30,
+        "height": 6,
+        "style": {
+          "font_weight": 600,
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "invoice.issue_date"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 76,
+        "y": 10,
+        "width": 30,
+        "height": 6,
+        "style": {
+          "font_size_pt": 8.5,
+          "align": "right",
+          "text": "Due date"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 106,
+        "y": 10,
+        "width": 30,
+        "height": 6,
+        "style": {
+          "font_weight": 600,
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "invoice.due_date"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 35,
+        "width": 63,
+        "height": 3,
+        "style": {
+          "font": "IBM Plex Mono",
+          "font_size_pt": 7.5,
+          "letter_spacing_em": 0.16,
+          "text_transform": "uppercase",
+          "color": "theme_primary",
+          "align": "left",
+          "text": "Bill to"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 39,
+        "width": 63,
+        "height": 5,
+        "style": {
+          "font_size_pt": 11,
+          "font_weight": 700
+        },
+        "overrides": {},
+        "binding": "client.name"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 45,
+        "width": 63,
+        "height": 4,
+        "style": {},
+        "overrides": {},
+        "binding": "client.company"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 50,
+        "width": 63,
+        "height": 6,
+        "style": {},
+        "overrides": {},
+        "binding": "client.address"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 0,
+        "y": 57,
+        "width": 63,
+        "height": 4,
+        "style": {},
+        "overrides": {},
+        "binding": "client.email"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 73,
+        "y": 35,
+        "width": 63,
+        "height": 4,
+        "style": {
+          "font": "IBM Plex Mono",
+          "font_size_pt": 7.5,
+          "letter_spacing_em": 0.16,
+          "text_transform": "uppercase",
+          "color": "theme_primary",
+          "align": "right",
+          "text": "From"
+        },
+        "overrides": {},
+        "binding": null
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 73,
+        "y": 40,
+        "width": 63,
+        "height": 5,
+        "style": {
+          "font_size_pt": 11,
+          "font_weight": 700,
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "business.name"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 73,
+        "y": 46,
+        "width": 63,
+        "height": 4,
+        "style": {
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "business.address_line1"
+      },
+      {
+        "kind": "generic",
+        "type": "text",
+        "x": 73,
+        "y": 51,
+        "width": 63,
+        "height": 4,
+        "style": {
+          "align": "right"
+        },
+        "overrides": {},
+        "binding": "business.email"
+      }
+    ]
+  },
+  "flow": {
+    "elements": [
+      {
+        "kind": "semantic",
+        "type": "qr_code",
+        "x": 6,
+        "y": 60,
+        "width": 20,
+        "height": 20,
+        "style": {
+          "sidebar": true
+        },
+        "overrides": {}
+      },
+      {
+        "kind": "semantic",
+        "type": "online_payment_link",
+        "x": 6,
+        "y": 82,
+        "width": 30,
+        "height": 10,
+        "style": {
+          "sidebar": true,
+          "label": "Pay online"
+        },
+        "overrides": {}
+      },
+      {
+        "kind": "structural",
+        "type": "table",
+        "x": 0,
+        "y": 72,
+        "width": 136,
+        "height": 45,
+        "style": {
+          "header_bg": "theme_primary",
+          "header_color": "#ffffff",
+          "font": "IBM Plex Mono",
+          "columns": [
+            "description",
+            "quantity",
+            "unit_price",
+            "total"
+          ]
+        },
+        "overrides": {},
+        "binding": null,
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "totals",
+        "x": 74,
+        "y": 122.23,
+        "width": 62,
+        "height": 7.7,
+        "style": {
+          "align": "right",
+          "rows": [
+            "subtotal"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "totals",
+        "x": 74,
+        "y": 129.93,
+        "width": 62,
+        "height": 7.7,
+        "style": {
+          "align": "right",
+          "rows": [
+            "tax"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "totals",
+        "x": 74,
+        "y": 137.63,
+        "width": 62,
+        "height": 7.7,
+        "style": {
+          "align": "right",
+          "rows": [
+            "discount"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "totals",
+        "x": 74,
+        "y": 145.33,
+        "width": 62,
+        "height": 16.5,
+        "style": {
+          "align": "right",
+          "rows": [
+            "total"
+          ],
+          "variant": "total_pill",
+          "pill_color": "theme_secondary"
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "notes",
+        "x": 0,
+        "y": 164,
+        "width": 76,
+        "height": 12.4,
+        "style": {
+          "sections": [
+            "notes"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "notes",
+        "x": 0,
+        "y": 178.4,
+        "width": 76,
+        "height": 12.4,
+        "style": {
+          "sections": [
+            "terms"
+          ]
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "payment_info",
+        "x": 82,
+        "y": 164,
+        "width": 54,
+        "height": 45,
+        "style": {
+          "label": "Payment methods",
+          "variant": "bank_methods"
+        },
+        "overrides": {},
+        "layout_mode": "flow"
+      },
+      {
+        "kind": "semantic",
+        "type": "signature",
+        "x": 76,
+        "y": 223,
+        "width": 60,
+        "height": 7,
+        "style": {
+          "label": "Authorised signature",
+          "has_signature_image": true,
+          "align": "right"
+        },
+        "overrides": {}
+      }
+    ]
+  }
+}

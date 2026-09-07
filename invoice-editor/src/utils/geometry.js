@@ -1,4 +1,31 @@
 import { PAGE_PADDING } from '../data/initialState';
+import { pxToMm, roundMm, mmToPx } from './units';
+
+// Phase 2a: every constant below now expresses a real mm quantity — the
+// unit boundary conversion (pxToMm) is applied ONCE, here, at module
+// load, from the ORIGINAL px value each constant was tuned/verified at
+// (kept as the literal argument, not silently replaced with a rounded mm
+// number, so the history/reasoning in each constant's own comment stays
+// legible and auditable against the value it actually produces). See
+// each constant's own comment below for whether that direct conversion
+// was the right call, or whether it was deliberately retuned to a
+// cleaner mm value instead — the two cases have different reasoning and
+// are called out individually, not applied uniformly.
+const mmFromPx = (px) => roundMm(pxToMm(px));
+
+// Minimum on-canvas item size — was a bare `16` (px) threaded through
+// resizeRotatedBox/clampResizeToPage/resolveResizeCollision's own hard
+// floors. 16px -> 4.23mm; retuned to a clean 4mm (a small but still
+// real, grabbable element on an actual invoice page) rather than kept at
+// the raw conversion's extra digit of precision that was never
+// deliberate in the first place (16 was itself just a round px number).
+export const MIN_ITEM_SIZE_MM = 4;
+// The SMALLER absolute floor used only during a proportional GROUP
+// resize (GroupSelectionOverlay's own scale-down floor, was a bare `4`
+// px there — a last-resort "never quite reach zero" guard, not a
+// meaningful minimum size in its own right) — converted the same way,
+// 4px -> 1.06mm, rounded to a clean 1mm.
+export const MIN_SCALED_ITEM_SIZE_MM = 1;
 
 // The footer is fixed/locked (never moved or resized by the user), so its
 // top edge — where every other item's reserved bottom space begins — is
@@ -87,7 +114,7 @@ export const RESIZE_HANDLES = [
 // move the dragged point there while the fixed point stays put, derive
 // the new width/height/center from those two local points, then rotate
 // the resulting center back out to page space.
-export function resizeRotatedBox(start, handle, dx, dy, minSize = 16) {
+export function resizeRotatedBox(start, handle, dx, dy, minSize = MIN_ITEM_SIZE_MM) {
   const { x, y, width, height, rotation = 0 } = start;
   const cx = x + width / 2;
   const cy = y + height / 2;
@@ -202,8 +229,21 @@ export function findNearestSnap(pos, size, candidates, tolerance) {
 // gesture — inherently per-gesture, per-axis state a pure function can't
 // hold itself, so the caller (CanvasItem) tracks it across mousemove
 // frames and passes it back in each call.
-export const SNAP_ENGAGE_TOLERANCE = 4;
-export const SNAP_RELEASE_TOLERANCE = 10;
+// Phase 2a: was 4px/10px (page-unit == px, before this pass). Converted
+// via the STRAIGHT pxToMm conversion, deliberately NOT rounded to a
+// "nicer" mm number the way PAGE_PADDING/COLLISION_MARGIN were — these
+// two specific values were already tuned and explicitly verified to feel
+// right (Prompt 19/22's own comment: "felt identically sticky at every
+// level tried" across 50/100/150% zoom), so preserving the EXACT screen-
+// pixel feel they were tuned at is the correct goal here, not picking a
+// cleaner-looking number that would subtly change it. See resolveAxisSnap
+// (CanvasItem.jsx) for how dividing by zoom scale still keeps this a
+// constant SCREEN-pixel tolerance after the mm conversion — the same
+// division that did this job for the old px constant does it here too,
+// unchanged in shape, because it's mm (a fixed physical unit) not being
+// re-scaled by zoom, exactly like px wasn't inherently either.
+export const SNAP_ENGAGE_TOLERANCE = mmFromPx(4); // -> 1.06mm
+export const SNAP_RELEASE_TOLERANCE = mmFromPx(10); // -> 2.65mm
 // Prompt 22: `engageTolerance`/`releaseTolerance` are optional overrides
 // of the two constants above — the caller (CanvasItem's resolveAxisSnap)
 // divides them by the current canvas zoom's scale factor before passing
@@ -234,10 +274,14 @@ export function guideSpan(boxCrossMin, boxCrossMax, candidate, pageCrossSize) {
   return [Math.min(boxCrossMin, candidate.crossMin), Math.max(boxCrossMax, candidate.crossMax)];
 }
 
-// How far away (px) a neighboring item can be for its gap to still be
+// How far away (mm) a neighboring item can be for its gap to still be
 // worth showing as a live distance label — beyond this it's not "nearby"
-// in any visually useful sense. Unchanged from Prompt 6/14.
-const DISTANCE_LABEL_RANGE = 160;
+// in any visually useful sense. Was 160px (42.33mm at the straight
+// conversion); retuned to a clean 42mm — this is a physical "still close
+// on the page" judgment call (like PAGE_PADDING), not a screen-feel
+// tolerance the way SNAP_ENGAGE/RELEASE above are, so a clean round mm
+// number is the right call here rather than preserving conversion noise.
+const DISTANCE_LABEL_RANGE = 42;
 
 // The plain "nearest gap on either side" reading Prompt 6/14 already
 // showed — kept as the fallback for whichever axis ISN'T currently doing
@@ -391,14 +435,35 @@ export function detectEqualSpacing(draggedPos, draggedSize, rowItems, tolerance)
 
 // ---------- Content-vs-content collision (Prompt 12) ----------
 //
-// Content items may never overlap. Each item claims a 1px margin on every
+// Content items may never overlap. Each item claims a margin on every
 // side that no OTHER item's own box may cross, so when two items are as
-// close as the constraint allows, there's 1px (mover) + 1px (neighbor) =
-// 2px of real empty space between their actual borders. Shapes are exempt
-// — same exemption as the Prompt 5 edge-padding rule, since a decorative
-// shape is meant to sit flush against/behind content, not be pushed away
-// by it.
-export const COLLISION_MARGIN = 1;
+// close as the constraint allows, there's real empty space between their
+// actual borders (margin x2, mover + neighbor). Shapes are exempt — same
+// exemption as the Prompt 5 edge-padding rule, since a decorative shape
+// is meant to sit flush against/behind content, not be pushed away by it.
+//
+// Phase 2a: was a bare 1px. Rather than convert that number in isolation
+// (1px -> 0.26mm), this now REUSES production's own OVERLAP_EPSILON_MM
+// (frontend/src/lib/designEditor/constants.js) = 0.3mm directly — the
+// exact same tolerance the backend's own _validate_page_bounds/
+// boxes_overlap checks enforce for this exact same purpose (absorbing
+// mm<->px<->mm round-trip noise at a shared edge). Using a DIFFERENT
+// number here would mean this editor's own live "no overlap" guarantee
+// could disagree with what the backend will actually accept the instant
+// this schema is wired up — the two are correct only if they match
+// exactly, so this deliberately isn't an independently-chosen value.
+export const COLLISION_MARGIN = 0.3;
+
+// Phase 2a: the "close enough to the page/footer boundary to count as
+// edge contact" tolerance (drives the edge-glow highlight in clampToPage/
+// clampResizeToPage below, the outside-bounds check in validation.js, and
+// the group-move edge highlight in CanvasItem.jsx) — was a bare 0.5px
+// scattered across all three call sites. Consolidated into one shared,
+// exported constant (it never was one before) and given the same 0.3mm
+// value as COLLISION_MARGIN just above — both exist to absorb the exact
+// same class of noise (mm<->px<->mm round-trip / sub-pixel measurement
+// jitter), so they should move together rather than drift independently.
+export const EDGE_CONTACT_EPSILON_MM = 0.3;
 
 // The axis-aligned box that encloses a (possibly rotated) item — two
 // rotated items can visually overlap well before their unrotated x/y/
@@ -709,10 +774,10 @@ export function resolveResizeCollision(startBox, candidateBox, handle, neighbors
       const { edge, pushed } = cascadeEdge('x', dir, startEdge, desiredEdge, rowMinY, rowMaxY, neighbors, boundaryEdge, gap);
       if (dir > 0) {
         x = fixedX;
-        width = Math.max(16, edge - fixedX);
+        width = Math.max(MIN_ITEM_SIZE_MM, edge - fixedX);
       } else {
         x = edge;
-        width = Math.max(16, fixedX - edge);
+        width = Math.max(MIN_ITEM_SIZE_MM, fixedX - edge);
       }
       pushed.forEach((v, id) => pushedX.set(id, v));
     } else {
@@ -735,10 +800,10 @@ export function resolveResizeCollision(startBox, candidateBox, handle, neighbors
       const { edge, pushed } = cascadeEdge('y', dir, startEdge, desiredEdge, colMinX, colMaxX, shiftedNeighbors, boundaryEdge, gap);
       if (dir > 0) {
         y = fixedY;
-        height = Math.max(16, edge - fixedY);
+        height = Math.max(MIN_ITEM_SIZE_MM, edge - fixedY);
       } else {
         y = edge;
-        height = Math.max(16, fixedY - edge);
+        height = Math.max(MIN_ITEM_SIZE_MM, fixedY - edge);
       }
       pushed.forEach((v, id) => pushedY.set(id, v));
     } else {
@@ -775,10 +840,10 @@ export function clampToPage(box, bounds) {
     width,
     height,
     edges: {
-      left: x <= bounds.minX + 0.5,
-      right: x + width >= bounds.maxX - 0.5,
-      top: y <= bounds.minY + 0.5,
-      bottom: y + height >= bounds.maxY - 0.5,
+      left: x <= bounds.minX + EDGE_CONTACT_EPSILON_MM,
+      right: x + width >= bounds.maxX - EDGE_CONTACT_EPSILON_MM,
+      top: y <= bounds.minY + EDGE_CONTACT_EPSILON_MM,
+      bottom: y + height >= bounds.maxY - EDGE_CONTACT_EPSILON_MM,
     },
   };
 }
@@ -792,9 +857,22 @@ export function clampToPage(box, bounds) {
 // per-item badge and validation.js's save-time check can import it
 // without CanvasItem's own EditorContext dependency creating a cycle.
 export const PIXELATION_THRESHOLD = 1.5;
+// Phase 2a: `width`/`height` are now the item's RENDERED size in mm, but
+// `item.sourceWidth/Height` (the image's true decoded pixel dimensions —
+// see addImageItem in EditorContext.jsx) are, and always were, raw raster
+// pixels — a unit that has nothing to do with the page's own mm geometry.
+// Before this pass the two happened to share a unit (both px) purely
+// because the page itself was px-denominated; now that it isn't, the
+// rendered size has to be converted back to an equivalent PIXEL size
+// (via the same 96/25.4 CSS reference-pixel ratio the rest of this app's
+// mm<->px boundary uses) before comparing it against the source image's
+// own real pixel count — comparing mm directly against raw px would have
+// made this warning fire on nearly every image, at any size.
 export function isImagePixelated(item, width, height) {
   if (!item.sourceWidth || !item.sourceHeight) return false;
-  return width / item.sourceWidth > PIXELATION_THRESHOLD || height / item.sourceHeight > PIXELATION_THRESHOLD;
+  const widthPx = mmToPx(width);
+  const heightPx = mmToPx(height);
+  return widthPx / item.sourceWidth > PIXELATION_THRESHOLD || heightPx / item.sourceHeight > PIXELATION_THRESHOLD;
 }
 
 // Hard boundary constraint for a RESIZE, against the same kind-aware
@@ -804,7 +882,7 @@ export function isImagePixelated(item, width, height) {
 // position-only clampToPage here would incorrectly slide the fixed edge
 // inward instead, breaking the "opposite corner/edge stays put" contract
 // of a resize gesture.
-export function clampResizeToPage(box, handle, bounds, minSize = 16) {
+export function clampResizeToPage(box, handle, bounds, minSize = MIN_ITEM_SIZE_MM) {
   let { x, y, width, height } = box;
 
   if (handle.fx === 1) {
@@ -831,10 +909,10 @@ export function clampResizeToPage(box, handle, bounds, minSize = 16) {
     width,
     height,
     edges: {
-      left: x <= bounds.minX + 0.5,
-      right: x + width >= bounds.maxX - 0.5,
-      top: y <= bounds.minY + 0.5,
-      bottom: y + height >= bounds.maxY - 0.5,
+      left: x <= bounds.minX + EDGE_CONTACT_EPSILON_MM,
+      right: x + width >= bounds.maxX - EDGE_CONTACT_EPSILON_MM,
+      top: y <= bounds.minY + EDGE_CONTACT_EPSILON_MM,
+      bottom: y + height >= bounds.maxY - EDGE_CONTACT_EPSILON_MM,
     },
   };
 }
