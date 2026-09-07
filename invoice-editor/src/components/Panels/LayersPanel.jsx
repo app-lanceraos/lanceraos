@@ -4,6 +4,7 @@ import { ELEMENT_TYPES } from '../../data/elementCatalog';
 import { SHAPE_TYPES } from '../../data/shapeCatalog';
 import { EyeIcon, EyeOffIcon, LockIcon, UnlockIcon } from '../Icons';
 import Tooltip from '../Tooltip';
+import { bindingLabel } from '../../data/bindings';
 
 // Prompt 26 item 2: every item's display label — the catalog's own name
 // for content (single-instance per type, so it's already unambiguous),
@@ -13,19 +14,38 @@ import Tooltip from '../Tooltip';
 // group peers in `template.items` (back-to-front array order), not
 // against however the panel currently displays them — reordering
 // unrelated items never renumbers a shape or image.
+//
+// (text/bindings prompt): a multiInstance content item (customText) is no
+// longer unambiguous by type alone either — a BOUND instance gets a real,
+// specific label ("Text — Client email") since its binding already says
+// what it is; an UNBOUND (static) instance falls through to the same
+// running-number disambiguation shapes/images already use, via
+// numberingGroup below, since "Text 1"/"Text 2" is the only thing that
+// can distinguish two independently-typed static captions without
+// reading their content.
 function baseLabel(item) {
   if (item.kind === 'shape') return SHAPE_TYPES[item.type]?.label || item.type;
   if (item.kind === 'image') return 'Image';
-  return ELEMENT_TYPES[item.type]?.label || item.type;
+  const def = ELEMENT_TYPES[item.type];
+  if (def?.multiInstance && item.binding) return `${def.label} — ${bindingLabel(item.binding)}`;
+  return def?.label || item.type;
 }
 
 // A grouping key for the "how many of this exact thing exist" count —
 // every image shares one group ('image', no per-type split the way
 // shapes have roundedRect/ellipse/line), a shape groups by its own type.
+// A BOUND multiInstance content item is excluded (returns null, "never
+// numbered") since its own binding already makes baseLabel unambiguous on
+// its own — numbering it too would just add a redundant "(1)" to a label
+// that's already unique. An UNBOUND multiInstance item groups by its own
+// type, same as a shape does — genuinely indistinguishable static
+// captions need the running number.
 function numberingGroup(item) {
   if (item.kind === 'shape') return `shape:${item.type}`;
   if (item.kind === 'image') return 'image';
-  return null; // content: never numbered, single-instance per type already
+  const def = ELEMENT_TYPES[item.type];
+  if (def?.multiInstance && !item.binding) return `content:${item.type}`;
+  return null; // content: never numbered, single-instance per type (or self-labeled via its binding) already
 }
 
 function computeLabels(items) {

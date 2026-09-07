@@ -6,16 +6,24 @@
   preview rows) — this partial doesn't care which, same "one real
   computation, reused" principle as resolve_table_columns itself.
 {% endcomment %}
+{% comment %}
+  Phase 3a (07 September 2026) — `row_bg` (alternating-row shading,
+  design_renderer.prepare_element's `zebra_row_bg`, cycled per-row by the
+  caller) and each column's own `col.align` (per-column text-align
+  override, resolve_table_columns) — both emit nothing when unset/"",
+  which is the state of every existing design, so this is a strict,
+  byte-identical-by-default addition.
+{% endcomment %}
 <tr>
   {% for col in table_columns %}
     {% if col.key == 'description' %}
-      <td style="{{ row_cell_css }}">{{ row.description }}</td>
+      <td style="{% if row_bg %}background:{{ row_bg }};{% endif %}{% if col.align %}text-align:{{ col.align }};{% endif %}{{ row_cell_css }}">{{ row.description }}</td>
     {% elif col.key == 'quantity' %}
-      <td class="v2-num-col" style="{{ row_cell_css }}">{{ row.quantity|floatformat:"-2" }}</td>
+      <td class="v2-num-col" style="{% if row_bg %}background:{{ row_bg }};{% endif %}{% if col.align %}text-align:{{ col.align }};{% endif %}{{ row_cell_css }}">{{ row.quantity|floatformat:"-2" }}</td>
     {% elif col.key == 'unit_price' %}
-      <td class="v2-num-col" style="{{ row_cell_css }}">{{ currency_symbol }}{{ row.unit_price|floatformat:2|intcomma }}</td>
+      <td class="v2-num-col" style="{% if row_bg %}background:{{ row_bg }};{% endif %}{% if col.align %}text-align:{{ col.align }};{% endif %}{{ row_cell_css }}">{{ currency_symbol }}{{ row.unit_price|floatformat:2|intcomma }}</td>
     {% elif col.key == 'total' %}
-      <td class="v2-num-col" style="{{ row_cell_css }}">{{ currency_symbol }}{{ row.total|floatformat:2|intcomma }}</td>
+      <td class="v2-num-col" style="{% if row_bg %}background:{{ row_bg }};{% endif %}{% if col.align %}text-align:{{ col.align }};{% endif %}{{ row_cell_css }}">{{ currency_symbol }}{{ row.total|floatformat:2|intcomma }}</td>
     {% endif %}
   {% endfor %}
 </tr>

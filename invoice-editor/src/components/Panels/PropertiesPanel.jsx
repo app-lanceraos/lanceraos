@@ -6,6 +6,7 @@ import { FONT_FAMILIES, FONT_WEIGHT_LABELS, fontFamilyById } from '../../data/fo
 import { isLinked, resolveColorValue, resolveFontValue } from '../../utils/theme';
 import { CheckIcon, ErrorIcon, WarningIcon } from '../Icons';
 import { pxToMm } from '../../utils/units';
+import { BINDING_OPTIONS, bindingLabel } from '../../data/bindings';
 
 // Phase 2a: every geometric field in this panel is now mm (position/
 // size/border-width/corner-radius/cell-padding — the whole "mm family",
@@ -704,6 +705,106 @@ function TableProperties({ item }) {
   );
 }
 
+// customText-only controls (gated to that one item type, same pattern as
+// Table/Footer's own dedicated panels below) — this is where the
+// "reverses the no-text-entry rule" content actually lives: a real
+// content field in the properties panel, not inline-on-canvas editing.
+//
+// Why the properties panel, not inline editing: every other editable
+// property in this app (position, color, font, alignment, ...) is
+// already a properties-panel control — there is no OTHER inline-on-canvas
+// editing pattern anywhere in this codebase to be consistent with, and
+// building one here would be a second, bespoke interaction model for
+// exactly one field. More concretely, contentEditable-on-canvas would
+// collide head-on with CanvasItem's own onMouseDown-starts-a-drag
+// handling on the same element (beginMove/beginResize both fire on
+// mousedown at the item's outer frame) — entering edit mode would need a
+// whole separate double-click-to-edit-then-blur-to-commit state machine,
+// competing with drag/resize/rotate/part-select for the same pointer
+// events, for a benefit (typing "in place") this app's own established
+// pattern doesn't need. A plain textarea here is simpler, keeps text
+// entry fully separate from every drag gesture, and reuses the exact
+// commit-on-change data flow every other field in this panel already
+// uses (updateItem, one entry per keystroke — same as the existing
+// Width/Height number inputs, not gated behind a separate save step).
+//
+// Binding picker: real bindings from bindings.js (itself sourced from
+// apps/invoices/design_schema.py's SUPPORTED_BINDINGS — see that file's
+// own header comment). Selecting a binding calls setItemBinding
+// (EditorContext), which enforces the split instance rule's bound half
+// (single-instance per binding) and returns false when another item
+// already holds that exact binding — surfaced here as a real, visible
+// inline message (never a silent no-op), and the select is reset back to
+// its prior value since the write didn't happen.
+function CustomTextProperties({ item }) {
+  const { updateItem, setItemBinding } = useEditor();
+  const [bindingError, setBindingError] = useState(null);
+
+  const handleBindingChange = (e) => {
+    const v = e.target.value;
+    const binding = v === '' ? null : v;
+    setBindingError(null);
+    const ok = setItemBinding(item.id, binding);
+    if (!ok) {
+      setBindingError(`"${bindingLabel(binding)}" is already used by another text element on this page — each binding can only be used once.`);
+    }
+  };
+
+  // If this item's own current binding isn't one of the known
+  // BINDING_OPTIONS (e.g. imported from a hand-authored production
+  // design — see elementCatalog.js's createGenericTextItem), it still
+  // needs to appear as a selectable, non-destructive option in the
+  // picker rather than silently vanishing/resetting the moment the
+  // panel opens.
+  const currentBinding = item.binding || '';
+  const knownValues = new Set(BINDING_OPTIONS.map((b) => b.value));
+  const hasUnknownCurrent = currentBinding && !knownValues.has(currentBinding);
+
+  return (
+    <>
+      <div className="panel__section-title">Content</div>
+      <div className="prop-row">
+        <label>Binding</label>
+        <select value={currentBinding} onChange={handleBindingChange}>
+          <option value="">No binding (static text)</option>
+          {hasUnknownCurrent && <option value={currentBinding}>{currentBinding} (custom)</option>}
+          {BINDING_OPTIONS.map((b) => (
+            <option key={b.value} value={b.value}>{b.label}</option>
+          ))}
+        </select>
+      </div>
+      {bindingError && (
+        <p className="empty-hint" style={{ color: 'var(--danger)' }}>{bindingError}</p>
+      )}
+      {item.binding ? (
+        <p className="empty-hint">
+          This text shows a live value ({bindingLabel(item.binding)}) once the invoice is generated — sample text shown here is a preview only.
+        </p>
+      ) : (
+        <div className="prop-row" style={{ alignItems: 'flex-start' }}>
+          <label style={{ marginTop: 6 }}>Text</label>
+          <textarea
+            value={item.text || ''}
+            onChange={(e) => updateItem(item.id, { text: e.target.value })}
+            rows={3}
+            style={{
+              width: 160,
+              resize: 'vertical',
+              fontFamily: 'inherit',
+              fontSize: 12,
+              padding: '6px 8px',
+              borderRadius: 4,
+              border: '1px solid var(--border-glass)',
+              background: 'var(--bg-panel-raised)',
+              color: 'var(--text-primary)',
+            }}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
 // Footer-only controls (gated to that one item type, same pattern as
 // Prompt 8's table controls). Text color and background are already
 // covered by the generic ContentProperties above (which now works for the
@@ -960,6 +1061,9 @@ export default function PropertiesPanel() {
               )}
               {selectedItems.length === 1 && selectedItems[0].type === 'footer' && (
                 <FooterProperties item={selectedItems[0]} />
+              )}
+              {selectedItems.length === 1 && selectedItems[0].type === 'customText' && (
+                <CustomTextProperties item={selectedItems[0]} />
               )}
             </>
           )}

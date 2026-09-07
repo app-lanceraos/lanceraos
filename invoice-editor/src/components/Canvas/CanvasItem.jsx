@@ -199,7 +199,12 @@ function partInlineStyle(item, part, fallbackColor, fallbackWeight, fallbackSize
 // everything else is a single unstyled-by-part run of content.
 function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPartHoverEnter, onPartHoverLeave, onPartContextMenu }) {
   const def = ELEMENT_TYPES[item.type];
-  const data = def.render();
+  // Every OTHER catalog entry's `render()` ignores the extra `item`
+  // argument (their content is fixed/baked-in, see elementCatalog.js) —
+  // `customText` is the one entry that actually reads it, to render the
+  // user's own typed text or a bound placeholder sample (see that file's
+  // own comment on ELEMENT_TYPES.customText).
+  const data = def.render(item);
 
   // Applied directly on the leaf text-bearing element (not inherited down
   // from the outer frame) so a variant with its own baked-in default weight
@@ -225,7 +230,16 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
 
   switch (def.variant) {
     case 'text':
-      return <div className="item__text" style={{ height: 'auto', ...fontStyle(undefined, 7.5), ...alignStyle() }}>{data}</div>;
+      // `whiteSpace: 'pre-wrap'` — a real, user-typeable field
+      // (customText) can contain literal newlines; this renders them as
+      // actual line breaks (matching production's own
+      // `{{ el.resolved_text|linebreaksbr }}` — Django's linebreaksbr
+      // converts \n to <br> after auto-escaping) without ever building
+      // HTML from user content on this side either. `{data}` is plain
+      // JSX text content — React escapes it exactly like Django's
+      // auto-escaping does; this was never a raw-HTML injection point on
+      // any existing catalog type and stays that way for customText too.
+      return <div className="item__text" style={{ height: 'auto', whiteSpace: 'pre-wrap', ...fontStyle(undefined, 7.5), ...alignStyle() }}>{data}</div>;
     case 'label-value': {
       const fallbackWeight = def.strong ? 700 : undefined;
       const fallbackSize = def.strong ? 8.25 : 7.5;

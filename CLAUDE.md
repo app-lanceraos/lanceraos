@@ -1725,6 +1725,43 @@ asset). See DATABASE.md's own "Phase 1 schema additions" entry under `invoice_de
 full schema shape, and DECISIONS.md's 07 September 2026 entry for the full verification evidence
 (real WeasyPrint renders, not just schema validation).
 
+**07 September 2026 (Phase 3a — editor capability parity, the reverse-direction gap)**: a
+follow-up pass closing the OTHER direction of drift between the standalone editor and production's
+schema/renderer — gaps where the editor already has a capability the production side would
+silently drop on export, rather than Phase 1's own "the schema had a hole the editor's own math
+would fall into." 5 more additive capabilities: font theming (a new, optional top-level
+`design_data.theme` object — heading/body font family + weight — plus 2 new `'theme_heading_font'`/
+`'theme_body_font'` sentinel values an element's `style.font`/`style.font_weight` can carry, the
+direct font analog of the existing `theme_primary`/`theme_secondary` color sentinels, resolved via
+new `design_renderer.resolve_theme_font_family`/`resolve_theme_font_weight`); rectangle/container
+corner radius (`style.border_radius_mm`, the same field `logo` already used, now also read by
+`rectangle`/`container`); 3 new table-styling `style` keys on the mandatory table element
+(`column_alignments` — per-column text alignment, cycling through the list by index modulo when
+its length doesn't match the real column count, rather than clamping or silently falling back;
+`zebra_enabled`/`zebra_color` — alternating-row shading; `cell_padding_mm` — configurable cell
+padding, previously only settable by editing a shared CSS class rule directly); image border +
+corner radius (the same `border_color`/`border_width_mm`/`border_radius_mm` fields rectangle/logo
+already use); and 2 new bindings, `invoice.client_currency_conversion` (reproduces the exact
+"≈ {symbol}{converted} at rate {rate}" text the 3 static templates already render) and
+`invoice.tax_rate` (the plain field, sibling of the already-bindable tax/discount amounts) —
+`SUPPORTED_BINDINGS` grew from 26 to 28. Unlike Phase 1, this pass DID need `design_canvas.py`
+changes (font theming's context threading, table styling's cell-padding/zebra mirroring) so the
+editor's own live canvas preview stays in sync with the canonical renderer, and it found and fixed
+2 real bugs along the way: a `TypeError` crash resolving `invoice.tax_rate` against
+`design_preview.py`'s own sample invoice (whose `tax_rate` is deliberately `None`), caught by this
+codebase's own pre-existing "every binding resolves without raising" test; and an un-`silent`
+`{% cycle %}` tag that would have leaked a raw hex color string into the visible page body the
+moment zebra shading was ever enabled. A known, deliberately unfixed gap: the StylePanel's own
+single-element live-repaint endpoint (`views_design_editor.design_canvas_element`) has no
+`design_data` parameter at all, so a theme-sentinel font value resolves to nothing there
+specifically (correct again on the next full document reload) — flagged directly in
+`design_canvas.render_canvas_element_content`'s own docstring. Full pre-existing `apps.invoices`
+design-system suite (535 tests) re-verified with zero new regressions (the same 3 pre-existing,
+already-documented intermittent failures, confirmed independently reproducible on the untouched
+baseline first). See DATABASE.md's own "Phase 3a schema additions" entry under `invoice_designs`
+for the full schema shape, and DECISIONS.md's 07 September 2026 "Phase 3a" entry for the full
+verification evidence and the 2 real bugs' before/after.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

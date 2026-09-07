@@ -248,8 +248,18 @@
   <table class="v2-items" style="width:100%;{% if el.style.font %}font-family:'{{ el.style.font }}';{% endif %}">
     {% include 'invoices/canonical/_table_head.html' with table_columns=el.table_columns thead_cell_css=el.thead_cell_css %}
     <tbody>
+      {% comment %}
+        Phase 3a (07 September 2026) — alternating-row shading.
+        `{% cycle %}` alternates between "" (odd, 1-indexed rows) and
+        `el.zebra_row_bg` (even rows) on every iteration; when zebra is
+        disabled `el.zebra_row_bg` is itself "" (design_renderer.py's own
+        prepare_element), so both cycle values are "" and every row
+        renders with no background — byte-identical to before this field
+        existed, for every design that doesn't opt in.
+      {% endcomment %}
       {% for row in el.table_rows %}
-        {% include 'invoices/canonical/_table_row.html' with row=row table_columns=el.table_columns row_cell_css=el.row_cell_css currency_symbol=invoice.currency_symbol %}
+        {% cycle "" el.zebra_row_bg as row_bg silent %}
+        {% include 'invoices/canonical/_table_row.html' with row=row table_columns=el.table_columns row_cell_css=el.row_cell_css currency_symbol=invoice.currency_symbol row_bg=row_bg %}
       {% endfor %}
     </tbody>
   </table>
@@ -257,13 +267,21 @@
   {% if el.type == 'text' %}{{ el.resolved_text|linebreaksbr }}
 
   {% elif el.type == 'image' %}
+    {% comment %}
+      Phase 3a (07 September 2026) — border + corner radius
+      (`el.image_frame_css`, design_renderer.attach_generic_content).
+      Applied to the OUTER overflow:hidden wrapper when cropped (so the
+      radius actually clips the visible box, not the oversized inner
+      <img> most of which sits outside the crop window) or directly on
+      the plain <img> when uncropped (no wrapper exists in that case).
+    {% endcomment %}
     {% if el.image_src %}
       {% if el.crop_css %}
-      <div style="width:100%;height:100%;overflow:hidden;position:relative;">
+      <div style="width:100%;height:100%;overflow:hidden;position:relative;{{ el.image_frame_css }}">
         <img src="{{ el.image_src }}" alt="" style="{{ el.crop_css }}">
       </div>
       {% else %}
-      <img src="{{ el.image_src }}" alt="" style="width:100%;height:100%;object-fit:contain;">
+      <img src="{{ el.image_src }}" alt="" style="width:100%;height:100%;object-fit:contain;{{ el.image_frame_css }}">
       {% endif %}
     {% endif %}
 

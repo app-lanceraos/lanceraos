@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useMemo, useReducer, useRef, useState } from 'react';
 import { historyReducer, initialHistoryState } from './historyReducer';
-import { ELEMENT_TYPES, createContentItem } from '../data/elementCatalog';
+import { ELEMENT_TYPES, createContentItem, isFreelyDuplicable, isBindingTakenIn } from '../data/elementCatalog';
 import { createShape } from '../data/shapeCatalog';
 import { validateTemplate } from '../utils/validation';
 import { normalizeZOrder, appendRespectingZOrder, stepSelectionOnce } from '../utils/zorder';
@@ -129,6 +129,14 @@ export function EditorProvider({ children }) {
   const toggleContentItem = useCallback(
     (type) => {
       const def = ELEMENT_TYPES[type];
+      // Insert-palette rework: a multiInstance type (customText) has no
+      // "on/off" concept — presence/absence stopped being a meaningful
+      // question the moment more than one instance became possible.
+      // ElementLibraryPanel no longer even renders a toggle for these
+      // (it calls insertContentItem instead) — this guard is a defensive
+      // second gate in case some other future caller reaches for the
+      // wrong function.
+      if (def.multiInstance) return;
       const existing = template.items.filter((i) => i.kind === 'content' && i.type === type);
       if (existing.length > 0) {
         if (def.required) return; // required elements can't be removed entirely
@@ -143,6 +151,63 @@ export function EditorProvider({ children }) {
       }
     },
     [template, commit]
+  );
+
+  // Insert-palette counterpart to toggleContentItem, for multiInstance
+  // types only — always adds a genuinely NEW instance (never toggles an
+  // existing one off), same "always insert" behavior addShape already
+  // has. `overrides` lets a caller (a future paste/import path, or a
+  // test) hand-place the new item instead of taking its catalog default
+  // box — see elementCatalog.js's createContentItem for what's accepted.
+  const insertContentItem = useCallback(
+    (type, overrides) => {
+      const def = ELEMENT_TYPES[type];
+      if (!def?.multiInstance) return null; // singleton types go through toggleContentItem instead
+      const item = createContentItem(type, overrides);
+      commit({ ...template, items: [...template.items, item] });
+      setSelection({ ids: [item.id], part: null });
+      return item;
+    },
+    [template, commit]
+  );
+
+  // ---- text binding (split instance rule) ----
+  //
+  // Whether `binding` is available to assign to `excludeItemId` right
+  // now — false only when a DIFFERENT customText item already carries
+  // this exact binding value. Unbound (binding falsy) is never "taken" —
+  // unlimited static-text instances is the entire point of this type;
+  // only the BOUND half of the split instance rule is single-instance.
+  // Scoped to `type === 'customText'` specifically (not "any content
+  // item with a binding field") — the original fixed catalog types
+  // (businessName, invoiceNumber, issueDate, dueDate, ...) already
+  // enforce their own single-instance-per-TYPE rule via
+  // toggleContentItem/ELEMENT_TYPES[type].required and don't carry an
+  // item.binding field at all; unifying the two mechanisms is a real,
+  // separate, larger change (not attempted here — see this prompt's own
+  // report for the explicit scope note).
+  const isBindingTaken = useCallback(
+    (binding, excludeItemId) => isBindingTakenIn(template.items, binding, excludeItemId),
+    [template]
+  );
+
+  // Returns true on success, false when the binding is already taken by
+  // another item (the caller — PropertiesPanel's binding picker — is
+  // responsible for surfacing that as a real, visible message; this
+  // function itself just refuses the write rather than silently letting
+  // two items share a binding). Clearing a binding (binding falsy) always
+  // succeeds and hands the item back a real, empty editable `text` field.
+  const setItemBinding = useCallback(
+    (itemId, binding) => {
+      if (binding) {
+        if (isBindingTaken(binding, itemId)) return false;
+        updateItem(itemId, { binding, text: undefined });
+        return true;
+      }
+      updateItem(itemId, { binding: null, text: itemsById.get(itemId)?.text || '' });
+      return true;
+    },
+    [isBindingTaken, updateItem, itemsById]
   );
 
   // ---- unified item actions (shape or content) ----
@@ -270,11 +335,14 @@ export function EditorProvider({ children }) {
   // Prompt 27: `image` items are single-instance in the same sense a
   // shape is (freely multipliable, no "one Logo only" rule) — included
   // here alongside shape, not treated like content.
+  // (text/bindings prompt): a multiInstance, UNBOUND content item
+  // (customText with no binding) joins that same freely-multipliable set
+  // — see elementCatalog.js's isFreelyDuplicable for the full reasoning,
+  // including why a BOUND customText item stays excluded (single-instance
+  // per binding).
   const duplicateItems = useCallback(
     (ids) => {
-      const source = template.items.filter(
-        (i) => ids.includes(i.id) && !i.locked && (i.kind === 'shape' || i.kind === 'image')
-      );
+      const source = template.items.filter((i) => ids.includes(i.id) && !i.locked && isFreelyDuplicable(i));
       if (source.length === 0) return;
       const copies = source.map((i) => ({
         ...i,
@@ -310,8 +378,10 @@ export function EditorProvider({ children }) {
     (itemsData) => {
       // Prompt 27: `image` travels through the same internal item
       // clipboard shapes already use — copy/paste is a "shape-like"
-      // capability, per duplicateItems' own comment above.
-      const shapesOnly = (itemsData || []).filter((d) => d.kind === 'shape' || d.kind === 'image');
+      // capability, per duplicateItems' own comment above. (text/bindings
+      // prompt): an unbound multiInstance content item joins the same
+      // set, same isFreelyDuplicable reasoning as duplicateItems.
+      const shapesOnly = (itemsData || []).filter(isFreelyDuplicable);
       if (shapesOnly.length === 0) return;
       const stamp = Date.now();
       const pasted = shapesOnly.map((itemData, i) => ({
@@ -504,9 +574,18 @@ export function EditorProvider({ children }) {
 
   // Page background is a per-template value (not the global --page-bg
   // token), so different templates can each have their own page color.
+  // Phase 3c: a template imported from a real production design_data
+  // that omitted `page.background_color` entirely (e.g. Modern, which
+  // relies on the renderer's own default) carries
+  // `page._backgroundColorExplicit === false` so the adapter's own
+  // export can omit the key again, byte-for-byte, on an untouched
+  // re-save (see designDataAdapter.js's templateToDesignData). The
+  // instant a user actually picks a color here, that byte-for-byte
+  // omission is no longer what they want — flip the flag true so it
+  // exports explicitly from now on.
   const updatePageBackground = useCallback(
     (color) => {
-      commit({ ...template, page: { ...template.page, backgroundColor: color } });
+      commit({ ...template, page: { ...template.page, backgroundColor: color, _backgroundColorExplicit: true } });
     },
     [template, commit]
   );
@@ -561,6 +640,9 @@ export function EditorProvider({ children }) {
     toggleRightPanel,
     zOrderClamped,
     toggleContentItem,
+    insertContentItem,
+    isBindingTaken,
+    setItemBinding,
     updateItem,
     updateItems,
     updateItemPart,

@@ -1262,6 +1262,85 @@ Full verification (real WeasyPrint renders, real page-count assertions across si
 multi-page documents, real visual PNG inspection) is in DECISIONS.md's own Phase 1 entry —
 `apps/invoices/tests/test_design_phase1_extensions.py` is the permanent pinned coverage.
 
+### Phase 3a schema additions (editor capability parity, 07 September 2026)
+
+Five more additive extensions to the production (schema_version 2) shape, closing gaps found
+while adapting the standalone `invoice-editor/` project onto this schema (a real capability the
+editor already has that production's schema/renderer would otherwise silently drop on export).
+Every addition here is optional/opt-in; every pre-existing row (v2 or legacy) renders
+byte-identical, since none of the new keys are ever written by anything that predates this phase.
+
+- **`design_data.theme`** (optional top-level object, sibling of `page`/`header`/`flow`; absent
+  means no theme — every existing design): `{ "heading_font_family": <string>, "heading_font_weight":
+  <number>, "body_font_family": <string>, "body_font_weight": <number> }`, all 4 keys independently
+  optional. The font analog of the existing `theme_primary`/`theme_secondary` color-sentinel
+  pattern (`design_renderer.resolve_theme_color`): an element's `style.font`/`style.font_weight`
+  may carry the literal sentinel string `"theme_heading_font"` or `"theme_body_font"` instead of a
+  real font name/weight, resolved against this object at render time
+  (`design_renderer.resolve_theme_font_family`/`resolve_theme_font_weight`). Lives INSIDE
+  `design_data` itself (unlike color, which is resolved from the OUTSIDE-design_data
+  `base_template`/`color_variant` model fields via `COLOR_VARIANTS`) because there is no per-design
+  "font_variant" concept on the model to reuse — see `design_schema._validate_theme`'s own
+  docstring for the full reasoning. A literal (non-sentinel) `style.font`/`style.font_weight` value
+  is untouched by this resolution — zero-risk for every existing element.
+- **`generic:rectangle`/`generic:container` corner radius** — `style.border_radius_mm` (the same
+  field name/mm-unit convention `logo` already established), now also honored by `rectangle`/
+  `container` (`design_renderer.attach_generic_content`'s `SHAPE_TYPES_WITH_OWN_FILL` branch).
+  Declared before `ellipse`'s own forced `border-radius:50%` in the same CSS string, so an
+  ellipse's required round shape always wins over a stray `border_radius_mm` value via CSS's
+  last-declaration-wins rule — never fights with it.
+- **`structural:table` styling** — 3 new, independent `style` keys on the mandatory table element:
+  - `column_alignments`: an optional list of `"left"`/`"center"`/`"right"` strings, one intended
+    per visible column in final (narrowed/reordered) display order. **Column-count mismatch
+    policy**: the i-th visible column reads `column_alignments[i % len(column_alignments)]` —
+    a shorter list simply repeats from its own start (2 entries applied to 4 columns reuses
+    entries 0,1,0,1); a longer list's extra trailing entries are silently unused. Absent (every
+    existing design) means every column's `align` resolves to `None`, which emits no inline
+    override at all — the pre-existing `.v2-num-col` CSS-class-driven default (right-aligned
+    numeric columns, left-aligned description) is completely unaffected. See
+    `design_renderer.resolve_table_columns`'s own docstring for the 2 rejected alternatives.
+  - `zebra_enabled` (bool) + `zebra_color` (string, default `#f5f3ee`, theme-sentinel-aware via
+    `resolve_theme_color`): alternating-row shading, applied per-cell via `{% cycle %}` in
+    `_table_row.html`, alternating between `""` and the resolved color starting with `""` on the
+    first row. Absent/false means every cycle value is `""` — no background anywhere, byte-
+    identical to before this field.
+  - `cell_padding_mm` (number): overrides both head and body cell padding (previously a fixed,
+    un-overridable value baked into `_page_styles.html`'s class rules) via a real inline
+    `padding:{n}mm` appended by `thead_cell_css`/`row_cell_css` — inline style on the cell itself
+    always wins over the shared class rule. Absent emits nothing; the class's own default padding
+    is unaffected.
+- **`generic:image` border + corner radius** — the same `border_color`/`border_width_mm`/
+  `border_radius_mm` field names `rectangle`/`logo` already use, computed once into
+  `image_frame_css` (`design_renderer.attach_generic_content`) and applied to whichever element
+  actually needs the visible frame: the `overflow:hidden` crop wrapper when `crop` is present (so
+  the radius genuinely clips the visible box, not the oversized, mostly-offscreen inner `<img>`),
+  or directly on the `<img>` itself when uncropped.
+- **2 new bindings** (`design_schema.SUPPORTED_BINDINGS`, `design_renderer.BINDING_RESOLVERS`):
+  `invoice.client_currency_conversion` (formats `Invoice.client_currency_conversion`'s real dict
+  into the exact `"≈ {symbol}{converted_total} at rate {rate}"` text every one of the 3 static
+  templates + `legacy_design_renderer.py` already renders verbatim; resolves to `''` — never a raw
+  dict, never a crash — for every one of that property's own documented None-cases, so the bound
+  element correctly collapses via the existing blank-bound-text rule) and `invoice.tax_rate`
+  (the plain `Invoice.tax_rate` field, the direct sibling of the already-bindable
+  `invoice.tax_amount`/`invoice.discount_amount`; formatted to match the existing
+  `floatformat:"-2"` percentage display — `"10%"`, not `"10.00%"` — and resolves to `''` when
+  `tax_rate` is `None`, the real sentinel `design_preview.py`'s own sample invoice uses).
+  `business.city`/`business.country`/`business.phone`/`client.phone` were checked directly and
+  confirmed to already exist in `SUPPORTED_BINDINGS` (Phase 4B) — no change needed for those 4.
+
+A known, deliberately unfixed gap found while adding font theming: `views_design_editor.
+design_canvas_element` (the StylePanel's own single-element live-repaint endpoint) builds its
+`context` from `base_template`/`color_variant` alone — it has no `design_data` parameter at all —
+so a `style.font` set to a theme sentinel resolves to `None` there even when the live document's
+own `design_data.theme` has real values (a live repaint would flash unstyled until the next full
+document reload, which DOES thread theme through via `design_canvas.build_canvas_document`).
+Fixing this needs a real, separate widening of that endpoint's own request contract — flagged in
+`design_canvas.render_canvas_element_content`'s own docstring rather than silently patched around.
+
+Full verification (real WeasyPrint renders per addition, zero regression across every pre-existing
+builtin/golden test) is in DECISIONS.md's own 07 September 2026 "Phase 3a" entry —
+`apps/invoices/tests/test_design_phase3a_extensions.py` is the permanent pinned coverage.
+
 ---
 
 ## `invoice_design_versions` (`InvoiceDesignVersion`, in `apps.invoices`)

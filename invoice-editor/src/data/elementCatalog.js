@@ -1,5 +1,6 @@
 import { create as createQRCode } from 'qrcode/lib/core/qrcode.js';
 import { pxToMm, roundMm } from '../utils/units';
+import { bindingSample } from './bindings';
 
 // Phase 2a: every defaultBox below is still AUTHORED at its original px
 // value (preserving this file's own historical layout comments, which all
@@ -335,6 +336,51 @@ export const ELEMENT_TYPES = {
     defaultBox: boxMm(32, 854, 110, 16),
     render: () => 'Authorised Signature',
   },
+  // Reverses this catalog's original "closed, fixed-content, single-
+  // instance" rule for exactly this one type — see this file's own
+  // header comment and the Phase (text/bindings) prompt report for the
+  // full reasoning. `multiInstance: true` is the flag that opts a
+  // catalog type OUT of the toggle-based single-instance model
+  // (EditorContext's toggleContentItem/insertContentItem,
+  // ElementLibraryPanel's insert-vs-toggle split, LayersPanel's
+  // per-group numbering) — every OTHER entry in this file is
+  // implicitly single-instance (multiInstance defaults to falsy/absent).
+  //
+  // Two independent content modes live on the SAME catalog type, chosen
+  // per-item via `item.binding`:
+  //   - `item.binding` unset/null: STATIC text — `item.text` is the
+  //     user's own typed string (unlimited instances; each one is a
+  //     wholly independent copy, editable in PropertiesPanel).
+  //   - `item.binding` set to one of bindings.js's BINDING_OPTIONS (or,
+  //     for a design imported from production, ANY string at all — see
+  //     bindingSample's own unfamiliar-binding fallback): BOUND text —
+  //     content is the binding's own placeholder sample (this editor has
+  //     no real invoice/client to resolve a live value from, same
+  //     "baked-in placeholder" convention as invoiceNumber's 'INV-0001'
+  //     etc.), and this is single-instance PER BINDING VALUE (enforced
+  //     in EditorContext, not here — this file has no notion of "what
+  //     else is currently on canvas").
+  //
+  // `render(item)` — unlike every sibling entry above, this one actually
+  // reads its `item` argument (every other entry's `render()` ignores
+  // the extra parameter ContentBody now always passes — see
+  // CanvasItem.jsx). Text is rendered as plain JSX text content
+  // (`{data}`), never dangerouslySetInnerHTML — React escapes it exactly
+  // the way Django's own `{{ el.resolved_text|linebreaksbr }}` in
+  // apps/invoices/templates/invoices/canonical/_element_content.html
+  // auto-escapes (confirmed directly: Django template variables
+  // auto-escape by default, and linebreaksbr itself autoescapes its
+  // input before converting newlines to <br> — same net effect, same
+  // "escape untrusted content, still allow real line breaks" contract).
+  customText: {
+    label: 'Text',
+    required: false,
+    defaultOn: false,
+    multiInstance: true,
+    variant: 'text',
+    defaultBox: boxMm(32, 520, 220, 16),
+    render: (item) => (item?.binding ? bindingSample(item.binding) : (item?.text ?? 'Text')),
+  },
   // Fixed page chrome, not an optional element: `hidden` keeps it out of the
   // elements library panel entirely, `locked` (propagated onto the created
   // item below) is the one mechanism CanvasItem/deleteItems/duplicateItems
@@ -427,9 +473,34 @@ function defaultPartStyles(def) {
   return {};
 }
 
-export const createContentItem = (type) => {
+// Drops undefined-valued keys from `obj` — spreading `{ x: undefined }`
+// over a default still WRITES the `x` key (as undefined), silently
+// clobbering the default it was meant to leave alone. Used below so a
+// caller (e.g. createGenericTextItem) can pass a sparse overrides object
+// without every unset field blowing away its catalog default.
+function stripUndefined(obj) {
+  const out = {};
+  Object.entries(obj).forEach(([k, v]) => {
+    if (v !== undefined) out[k] = v;
+  });
+  return out;
+}
+
+// `overrides` (added for `customText`/generic construction — see
+// createGenericTextItem below) is a sparse patch applied on top of the
+// catalog default: x/y/width/height override the box (and, since
+// naturalWidth/naturalHeight are computed from the box AFTER the merge,
+// stay consistent with whatever box actually lands, not the catalog's own
+// unrelated default); any other field (text, binding, rotation, locked,
+// fontFamily, ...) is just an extra property on the created item. `id` is
+// never accepted from `overrides` — every created item gets its own fresh
+// id, always.
+export const createContentItem = (type, overrides = {}) => {
   const def = ELEMENT_TYPES[type];
-  const { x, y, width, height } = def.defaultBox;
+  const clean = stripUndefined(overrides);
+  delete clean.id;
+  const box = { ...def.defaultBox, ...clean };
+  const { x, y, width, height } = box;
   return {
     id: `content-${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     kind: 'content',
@@ -444,5 +515,88 @@ export const createContentItem = (type) => {
     locked: !!def.locked,
     ...defaultWholeItemStyle(def),
     ...defaultPartStyles(def),
+    ...clean,
   };
 };
+
+// ── Generic construction from arbitrary production data ────────────────
+//
+// The later adapter's IMPORT path (a separate, dependent prompt — not
+// built here) needs to construct a working, editable canvas item from ANY
+// valid production `generic:text` element, including one bound to a
+// binding this editor's own bindings.js has never seen before (e.g. a
+// hand-authored design_data payload, or SUPPORTED_BINDINGS growing after
+// this editor's own copy was last synced — see bindings.js's own
+// docstring). `createContentItem('customText', ...)` above already
+// accepts an arbitrary x/y/width/height/binding/text combination with NO
+// validation against BINDING_OPTIONS at all (bindingSample's own
+// unfamiliar-binding fallback renders `[binding.value]` rather than
+// throwing) — this function is a thin, intention-revealing wrapper over
+// that same general-purpose path, exported here (not inside the adapter
+// file, which doesn't exist as an import path yet) so it's directly
+// testable and reusable independently of the later adapter-integration
+// prompt that will actually call it from designDataToTemplate.
+//
+// Deliberately narrow in scope, matching this prompt's own acceptance
+// criterion ("a hand-constructed arbitrary production-shaped element,
+// e.g. a generic:text with an unfamiliar binding") — constructing a
+// working item from every OTHER production element kind/type (shapes,
+// images, semantic bundles) is what designDataAdapter.js's existing
+// import* functions already do for the types the closed catalog
+// recognizes; this only closes the one new gap that opened by making text
+// genuinely open (an unbound OR arbitrarily-bound generic:text).
+// Shared "is this item freely multipliable" predicate — shapes and images
+// always were (Prompt 27's own comment: "freely multipliable, no
+// single-instance rule"); a multiInstance content item joins them, but
+// ONLY while unbound (`!item.binding`) — a BOUND customText item is
+// single-instance per its own binding value (the split instance rule),
+// so duplicating/copying one would immediately create a second item
+// sharing that binding, exactly the state EditorContext's
+// isBindingTaken guard exists to prevent. Every OTHER content item
+// (single-instance per TYPE, the original rule) stays excluded here,
+// same as before this type existed — duplicateItems/addItemsFromClipboard/
+// the keyboard Ctrl+C handler/ContextMenu's canDuplicate+canCopy all read
+// this one function now, rather than each re-deriving the same
+// kind==='shape'||kind==='image' check and silently missing the new case.
+export function isFreelyDuplicable(item) {
+  if (item.kind === 'shape' || item.kind === 'image') return true;
+  return item.kind === 'content' && !!ELEMENT_TYPES[item.type]?.multiInstance && !item.binding;
+}
+
+// Pure predicate — "does any item in `items` (other than `excludeItemId`)
+// already carry this exact binding" — extracted out of EditorContext so
+// it's directly unit-testable with a plain array, no React state/
+// provider needed (EditorContext's own isBindingTaken is a thin wrapper
+// over this, called with `template.items`). Scoped to `type ===
+// 'customText'` specifically — see EditorContext's own isBindingTaken
+// comment for why the fixed legacy catalog types (businessName,
+// invoiceNumber, ...) aren't unified into this same check.
+export function isBindingTakenIn(items, binding, excludeItemId) {
+  if (!binding) return false;
+  return items.some(
+    (i) => i.id !== excludeItemId && i.kind === 'content' && i.type === 'customText' && i.binding === binding
+  );
+}
+
+export function createGenericTextItem({
+  x, y, width, height, rotation, binding = null, text = '',
+  fontFamily, fontWeight, fontSize, textColor, contentAlign, locked, hidden,
+} = {}) {
+  return createContentItem('customText', {
+    x, y, width, height,
+    rotation: rotation || 0,
+    binding: binding || null,
+    // A bound item's content comes from the binding, not typed text — no
+    // point carrying stale/irrelevant text alongside a binding (mirrors
+    // how the properties panel disables/hides the text field once a
+    // binding is set, see PropertiesPanel.jsx).
+    text: binding ? undefined : text,
+    fontFamily,
+    fontWeight,
+    fontSize,
+    textColor,
+    contentAlign,
+    locked: !!locked,
+    hidden: !!hidden,
+  });
+}

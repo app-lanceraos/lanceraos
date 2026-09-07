@@ -138,6 +138,22 @@ def build_canvas_document(design_data, context, content_mode='alias'):
     if errors:
         raise DesignRenderError('design_data failed v2 schema validation: ' + '; '.join(errors))
 
+    # Phase 3a (07 September 2026) — font theming. Identical extraction to
+    # design_renderer.render_design_html's own (design_data.theme, absent
+    # for every existing design), threaded into `context` so a theme-
+    # sentinel font resolves identically here and in the real render —
+    # the same "no parallel copy to drift out of sync" rule this module's
+    # own docstring already states for every other piece of geometry/style
+    # resolution.
+    theme = design_data.get('theme') or {}
+    context = {
+        **context,
+        'theme_heading_font_family': theme.get('heading_font_family'),
+        'theme_heading_font_weight': theme.get('heading_font_weight'),
+        'theme_body_font_family': theme.get('body_font_family'),
+        'theme_body_font_weight': theme.get('body_font_weight'),
+    }
+
     page = design_data['page']
 
     # Identical fallback chain to render_design_html — the canvas must
@@ -227,6 +243,22 @@ def render_canvas_element_content(kind, el_type, style, overrides, context, cont
     into the constructed `element` dict, exactly where
     `attach_generic_content` already expects to find it (unchanged there
     — this fixes the caller's own omission, not a gap in that function).
+
+    Phase 3a (07 September 2026) — a real, DELIBERATELY UNFIXED gap found
+    while adding font theming: this endpoint's own `context`
+    (views_design_editor.design_canvas_element) is built from
+    build_render_context(base_template, color_variant) alone — it never
+    receives the live document's own design_data.theme (this endpoint has
+    no design_data parameter at all, only a single element's style/
+    overrides), so a `style.font`/`style.font_weight` set to the
+    'theme_heading_font'/'theme_body_font' sentinel resolves to None here
+    (no font-family/font-weight applied) even when the document's real
+    theme has real values — a StylePanel live-repaint of a theme-linked
+    font would flash unstyled until the next full document reload
+    (build_canvas_document, which DOES thread theme through). Fixing this
+    would mean widening this endpoint's own request contract to accept
+    the document's theme — a real, separate, larger API change, flagged
+    here rather than silently patched around.
     """
     if el_type not in CANVAS_ELEMENT_TYPES:
         raise DesignRenderError(f'Unknown element type "{el_type}" — must be one of {sorted(CANVAS_ELEMENT_TYPES)}.')
@@ -256,9 +288,19 @@ def render_canvas_element_content(kind, el_type, style, overrides, context, cont
     if kind_for_type == 'structural' and el_type == 'table':
         from apps.invoices.design_renderer import ALIAS_SAMPLE_TABLE_ITEMS, resolve_table_columns, row_cell_css, thead_cell_css
         table_style = style or {}
+        # Phase 3a (07 September 2026) — cell_padding_mm/zebra_row_bg kept
+        # in sync with design_renderer.prepare_element's own identical
+        # table-preparation block, so the StylePanel's live canvas repaint
+        # shows the same padding/alternating-row-shading a real render
+        # would produce, not a second, independently-drifting computation.
+        cell_padding_mm = table_style.get('cell_padding_mm')
         prepared['table_columns'] = resolve_table_columns(table_style)
-        prepared['thead_cell_css'] = thead_cell_css(table_style, context)
-        prepared['row_cell_css'] = row_cell_css(table_style, context)
+        prepared['thead_cell_css'] = thead_cell_css(table_style, context, cell_padding_mm)
+        prepared['row_cell_css'] = row_cell_css(table_style, context, cell_padding_mm)
+        prepared['zebra_row_bg'] = (
+            resolve_theme_color(table_style.get('zebra_color', '#f5f3ee'), context)
+            if table_style.get('zebra_enabled') else ''
+        )
         prepared['table_rows'] = ALIAS_SAMPLE_TABLE_ITEMS if content_mode == 'alias' else list(context['invoice'].items.all())
     attach_generic_content(prepared, element, context, content_mode)
     return _render_element_content(prepared, context)

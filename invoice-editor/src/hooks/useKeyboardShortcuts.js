@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useEditor } from '../state/EditorContext';
 import { copyToClipboard, readClipboard } from '../state/clipboard';
 import { loadImageFile } from '../utils/imageFile';
+import { isFreelyDuplicable } from '../data/elementCatalog';
 
 // Prompt 30 item 5 guarded shortcuts behind "is the user typing?", but
 // answered it with `tagName === 'INPUT'` — which is true of plenty of
@@ -68,7 +69,7 @@ export function useKeyboardShortcuts({ onPreviewToggle } = {}) {
         e.preventDefault();
         const canDuplicate = selection.ids.some((id) => {
           const item = template.items.find((i) => i.id === id);
-          return item && (item.kind === 'shape' || item.kind === 'image') && !item.locked;
+          return item && isFreelyDuplicable(item) && !item.locked;
         });
         if (canDuplicate) duplicateItems(selection.ids);
         return;
@@ -80,12 +81,12 @@ export function useKeyboardShortcuts({ onPreviewToggle } = {}) {
       // copies nothing (and leaves whatever was already on the
       // clipboard untouched, rather than clobbering it with an empty
       // payload). Prompt 27: `image` travels through this same
-      // clipboard, alongside shapes.
+      // clipboard, alongside shapes. (text/bindings prompt): an unbound
+      // multiInstance content item (customText) joins the same set — see
+      // elementCatalog.js's isFreelyDuplicable.
       if (mod && e.key.toLowerCase() === 'c') {
         if (selection.ids.length > 0) {
-          const items = template.items.filter(
-            (i) => selection.ids.includes(i.id) && (i.kind === 'shape' || i.kind === 'image')
-          );
+          const items = template.items.filter((i) => selection.ids.includes(i.id) && isFreelyDuplicable(i));
           if (items.length > 0) copyToClipboard({ items });
         }
         return;

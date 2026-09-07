@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useEditor } from '../state/EditorContext';
 import { copyToClipboard } from '../state/clipboard';
 import { copyFormatting, readFormatting, captureFormatting, formattingPatch } from '../state/formatting';
+import { isFreelyDuplicable } from '../data/elementCatalog';
 
 // A single item's own available actions, independent of what else is
 // selected — the menu shown for a multi-selection is the genuine
@@ -77,14 +78,17 @@ export default function ContextMenu() {
   // selection; `canCopy` narrows the existing single-whole-item scope to
   // shapes only, since copying a lone content item would do nothing.
   // Prompt 27: `image` is "shape-like" for duplicate/copy purposes too —
-  // freely multipliable, no single-instance rule.
-  const canDuplicate = selectedItems.some((i) => (i.kind === 'shape' || i.kind === 'image') && !i.locked);
+  // freely multipliable, no single-instance rule. (text/bindings prompt):
+  // an unbound multiInstance content item (customText) joins the same
+  // set via isFreelyDuplicable — a BOUND customText item stays excluded
+  // (single-instance per binding).
+  const canDuplicate = selectedItems.some((i) => isFreelyDuplicable(i) && !i.locked);
   // Prompt 25: same "some, not every" shape canDuplicate uses — a mixed
   // selection of deletable and required/locked items should still offer
   // Delete and act on just the deletable member(s), not disappear because
   // one member can't go.
   const canDelete = canDeleteSelection(selection.ids);
-  const canCopy = !!single && !part && (single.kind === 'shape' || single.kind === 'image');
+  const canCopy = !!single && !part && isFreelyDuplicable(single);
   const canCopyFormatting = !!single;
   const canPasteFormatting = !!formatClip && selectedItems.length > 0;
   const canSelectWholeContainer = !!single && !!part;

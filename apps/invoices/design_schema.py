@@ -191,6 +191,28 @@ SUPPORTED_BINDINGS = {
     # the built-in templates.
     'business.bank_name', 'business.bank_account_number',
     'business.jazzcash_number', 'business.easypaisa_number', 'business.payoneer_email',
+    # Phase 3a (07 September 2026, editor capability parity) — the
+    # standalone invoice-editor project (invoice-editor/, see CLAUDE.md's
+    # 07 September 2026 entry) can already express these two on a generic
+    # text element; production had no binding for either. Both are real,
+    # already-existing Invoice model surface (apps/invoices/models.py):
+    # `client_currency_conversion` (a computed property — the freelancer's
+    # own informational cross-check of the invoice total in the client's
+    # preferred currency, already rendered as a fixed, non-editable line
+    # by all 3 static templates and legacy_design_renderer's own
+    # `_dynamic_element_content.html`) and `tax_rate` (a plain model
+    # field, the direct sibling of the 3 tax/discount amount bindings
+    # already here — `invoice.tax_amount`/`invoice.discount_amount` were
+    # bindable but the RATE itself, unlike those two amounts, never was).
+    # See design_renderer.BINDING_RESOLVERS for exactly how each resolves,
+    # including client_currency_conversion's own "resolves to an empty
+    # string (never a raw dict, never a crash) whenever the property
+    # itself returns None" contract — the same None-means-nothing-to-show
+    # cases that property's own docstring documents (one-time client, same
+    # currency, no snapshot, etc.), which _element_has_real_content then
+    # correctly treats as "this element has no real content" exactly like
+    # any other blank bound text field.
+    'invoice.client_currency_conversion', 'invoice.tax_rate',
 }
 
 REQUIRED_PAGE_KEYS = {'size', 'width_mm', 'height_mm'}
@@ -379,6 +401,40 @@ def _validate_footer(footer, errors):
         errors.append('page.footer.style.font_weight, if present, must be a number.')
     if 'show_wordmark' in style and not isinstance(style['show_wordmark'], bool):
         errors.append('page.footer.style.show_wordmark, if present, must be a boolean.')
+
+
+# Phase 3a (07 September 2026, editor capability parity) — the font
+# analog of `page.sidebar.color`'s `'theme_primary'`/`'theme_secondary'`
+# color-sentinel pattern (resolve_theme_color, design_renderer.py):
+# production had color theming only; the standalone editor already lets a
+# user set a design-wide heading/body typeface, so this closes that gap
+# the same additive way every other Phase 1/3a addition has — a new,
+# entirely OPTIONAL top-level `design_data.theme` object (absent for
+# every existing design, so this is fully backward-compatible with zero
+# migration). Unlike color (which is resolved from the OUTSIDE-design_data
+# base_template/color_variant model fields via COLOR_VARIANTS — there is
+# no per-design "color_variant" concept a design_data payload itself can
+# set), font theming has no equivalent external model-level concept to
+# reuse, so it lives directly on design_data itself instead — the two
+# mechanisms are analogous in USE (a sentinel value an element's style can
+# carry to opt into a shared, centrally-defined value) but differ in WHERE
+# the real value is defined, for that reason.
+THEME_STRING_KEYS = ('heading_font_family', 'body_font_family')
+THEME_NUMBER_KEYS = ('heading_font_weight', 'body_font_weight')
+
+
+def _validate_theme(theme, errors):
+    if not isinstance(theme, dict):
+        errors.append('design_data.theme, if present, must be an object.')
+        return
+    for key in THEME_STRING_KEYS:
+        value = theme.get(key)
+        if value is not None and not (isinstance(value, str) and value):
+            errors.append(f'design_data.theme.{key}, if present, must be a non-empty string.')
+    for key in THEME_NUMBER_KEYS:
+        value = theme.get(key)
+        if value is not None and not _is_number(value):
+            errors.append(f'design_data.theme.{key}, if present, must be a number.')
 
 
 def _validate_binding(element, label, errors):
@@ -737,6 +793,11 @@ def validate_design_data_schema_v2(data):
         errors.append('design_data.page is required.')
     else:
         _validate_page(data['page'], errors)
+
+    # Phase 3a — design_data.theme is entirely optional (see _validate_theme's
+    # own docstring); absent for every design_data payload that predates it.
+    if 'theme' in data and data['theme'] is not None:
+        _validate_theme(data['theme'], errors)
 
     header_elements = []
     if 'header' not in data:

@@ -11,7 +11,13 @@
 <thead>
   <tr>
     {% for col in table_columns %}
-    <th class="{% if col.key != 'description' %}v2-num-col{% endif %}" style="width:{{ col.width_pct }}%;{{ thead_cell_css }}">{{ col.label }}</th>
+    {% comment %}
+      Phase 3a (07 September 2026) — `col.align`, if set (design_renderer.
+      resolve_table_columns), is an explicit per-column override; `None`
+      (every existing design) emits nothing, leaving the class-driven
+      default (`.v2-num-col`: right; else: left) completely unaffected.
+    {% endcomment %}
+    <th class="{% if col.key != 'description' %}v2-num-col{% endif %}" style="width:{{ col.width_pct }}%;{% if col.align %}text-align:{{ col.align }};{% endif %}{{ thead_cell_css }}">{{ col.label }}</th>
     {% endfor %}
   </tr>
 </thead>

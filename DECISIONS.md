@@ -8393,3 +8393,181 @@ were both removed after verification — confirmed via `git diff` that `package.
 `package-lock.json` are back to their pre-phase state.
 
 Docs: this entry.
+
+---
+
+Date: 07 September 2026 (Phase 3a — editor capability parity: font theming, rectangle radius,
+table styling, image border/radius, 2 new bindings)
+Decision: Added 5 more additive capabilities to the production `design_data` schema
+(`apps/invoices/design_schema.py`), the canonical renderer (`apps/invoices/design_renderer.py`),
+the canvas adapter (`apps/invoices/design_canvas.py`), and the shared render partials
+(`templates/invoices/canonical/_element_content.html`/`_table_head.html`/`_table_row.html`) —
+closing gaps a Phase 2b adapter-integration pass found in the direction "the editor already has
+this capability, production's schema/renderer doesn't" (the opposite direction from Phase 1's own
+"schema had a hole the editor's own math would otherwise fall into"). Every addition is purely
+additive; every pre-existing `InvoiceDesign` row (v2 or legacy) validates and renders byte-
+identical, confirmed by re-running the full pre-existing design test suite (test_design_schema,
+test_design_renderer, test_design_renderer_phase3_2, test_design_templates_golden, test_design_canvas,
+test_design_phase1_extensions, test_design_missing_data, test_design_pagination,
+test_design_layout_mode, test_design_color_and_preview, test_design_cutover, test_design_assignment,
+test_designs, test_design_migration, test_design_management_commands,
+test_design_validation_framework, test_design_version_and_snapshot_foundation,
+test_legacy_design_renderer, test_ai_design — 535 tests, only the 3 already-known, pre-existing
+failures this codebase's own docs already flag as an unrelated intermittent/environmental issue,
+confirmed independently reproducible on the untouched baseline via `git stash` before this pass
+touched anything).
+
+**1. Font theming (`design_data.theme`)** — production had color theming only
+(`theme_primary`/`theme_secondary` sentinels, resolved from the OUTSIDE-design_data
+`base_template`/`color_variant` model fields via `COLOR_VARIANTS`); the standalone editor already
+lets a user set a design-wide heading/body typeface. Added an entirely new, optional top-level
+`design_data.theme` object — `{heading_font_family, heading_font_weight, body_font_family,
+body_font_weight}`, every key independently optional — plus 2 new sentinel strings an element's
+`style.font`/`style.font_weight` may carry instead of a literal value: `'theme_heading_font'`/
+`'theme_body_font'`, resolved via new `design_renderer.resolve_theme_font_family`/
+`resolve_theme_font_weight` (the direct font analog of `resolve_theme_color`). Deliberately placed
+INSIDE `design_data` rather than mirroring color's OUTSIDE-design_data mechanism: there is no
+per-design "font_variant" concept on the `InvoiceDesign` model to hang a `FONT_VARIANTS` table off
+of the way `color_variant`/`COLOR_VARIANTS` already exists for color, and inventing one would be a
+materially larger, separate feature (a new model field + migration) for a schema-only phase that
+was told to stay additive with zero migration. `render_design_html` reads `design_data.get('theme')
+or {}` once and threads 4 keys into the same `context` dict every element-preparation call already
+receives (the same place `design_primary_color`/`design_secondary_color` already live) —
+`design_canvas.build_canvas_document` does the identical extraction, so the editor's own live
+canvas preview stays in sync with the canonical renderer, unlike Phase 1 (whose 4 additions needed
+zero `design_canvas.py` changes since they piggybacked on functions the canvas already called
+unconditionally). A literal, non-sentinel font value is untouched by this resolution — confirmed
+with a dedicated no-op test — so this is a strict, zero-risk generalization for every existing
+element. **Known, deliberately unfixed gap** found while wiring this up: `views_design_editor.
+design_canvas_element` (the StylePanel's own single-element live-repaint endpoint, used for a fast
+per-element restyle without a full document reload) builds its own `context` from
+`base_template`/`color_variant` alone — it never receives the live document's own
+`design_data.theme` at all (this endpoint has no `design_data` parameter, only one element's
+style/overrides) — so a theme-sentinel font value resolves to `None` there specifically, even
+though the very next full document reload (which DOES go through `build_canvas_document`) would
+show it correctly. Flagged directly in `design_canvas.render_canvas_element_content`'s own
+docstring rather than silently worked around; fixing it for real means widening that endpoint's
+request contract, a separate, larger change out of this pass's scope.
+
+**2. Rectangle/container corner radius (`style.border_radius_mm`)** — the exact field name/mm-unit
+convention `logo` already established (`_element_content.html`'s pre-existing logo branch), now
+also read by `rectangle`/`container` in `attach_generic_content`'s `SHAPE_TYPES_WITH_OWN_FILL`
+branch. Declared in the shape's CSS string BEFORE `ellipse`'s own forced `border-radius:50%` (which
+appears immediately after in the same branch) — CSS resolves the LAST declaration of a repeated
+property in one string, so an ellipse's required round shape always wins over any stray
+`border_radius_mm` a design might also carry, with zero special-casing needed to suppress it.
+
+**3. Table styling — 3 new independent `style` keys on the mandatory `structural:table` element:**
+- `column_alignments` (optional list of `'left'`/`'center'`/`'right'`) — resolved in
+  `design_renderer.resolve_table_columns` into a new `align` field on each column dict returned
+  (alongside the existing `key`/`label`/`width_pct`), consumed by `_table_head.html`/
+  `_table_row.html` as an inline `text-align:{align}` override that only appears when `align` is
+  non-`None`. **Column-count mismatch policy (the one explicitly required design decision):** the
+  i-th visible column (in final, narrowed/reordered display order) reads
+  `column_alignments[i % len(column_alignments)]` — CYCLING, not clamping or falling back to
+  default per out-of-range index. Two alternatives were considered and rejected (see
+  `resolve_table_columns`'s own docstring for the full reasoning): (a) index-matching against the
+  original, unfiltered `TABLE_COLUMNS` order — rejected because it would silently misapply an
+  alignment meant for one column to a completely different one the moment `columns` reorders
+  anything; (b) falling back to the class-driven default for any index beyond the alignment list's
+  own length — rejected because it would make a design's own explicit alignment choice partially
+  and silently disappear. Cycling at least guarantees every visible column gets SOME author-
+  specified alignment whenever the author supplied any at all. Absent (every existing design) means
+  every column's `align` is `None`, which both partials treat as "emit nothing" — the pre-existing
+  `.v2-num-col` class-driven default (right-aligned numeric columns, left-aligned description) is
+  completely unaffected, confirmed with a dedicated test asserting zero `text-align:` output for
+  the unmodified default.
+- `zebra_enabled` (bool) + `zebra_color` (string, default `'#f5f3ee'` — the same real, existing
+  muted tone `.v2-alias-box` already uses elsewhere in this stylesheet, not an invented new shade;
+  theme-sentinel-aware via `resolve_theme_color`) — alternating-row shading. Implemented via
+  Django's own `{% cycle "" el.zebra_row_bg as row_bg silent %}` tag inside the table's row loop
+  (`_element_content.html`), alternating between `''` and the resolved color, `silent` so the tag's
+  current value is never also printed as visible page text (a real mistake caught and fixed during
+  this pass's own verification — an un-`silent` `{% cycle %}` renders its value inline at the point
+  it's called, which would have leaked a raw hex string into the document body the moment zebra was
+  ever enabled, even though it happened to be harmless for the disabled/default case since `''` is
+  invisible either way). `row_bg` is applied per-CELL inside `_table_row.html` (each of the 4
+  default columns gets its own `<td>` style), not once per `<tr>` — a real thing this pass's own
+  test suite had to get right (a first draft asserted exactly 1 occurrence of the shaded color
+  across a 3-row/4-column table and failed; the correct, now-pinned expectation is 4, one shaded
+  row × 4 columns). Absent/false means every cycled value is `''` — no background anywhere, byte-
+  identical to before this field existed.
+- `cell_padding_mm` (number) — overrides both head (`thead_cell_css`) and body (`row_cell_css`)
+  cell padding, previously a fixed value only ever settable by editing `_page_styles.html`'s own
+  class rules (`table.v2-items thead th { padding: 0 3mm 3mm 0; }` etc.) directly. Appended as a
+  real inline `padding:{n}mm` to each function's own returned CSS string — inline style on the
+  specific `<th>`/`<td>` always wins over the shared class rule regardless of specificity/
+  declaration order, so this is a real, effective override; `None` (every existing `table_style`
+  dict) emits nothing, leaving the class default completely untouched. Both functions gained this
+  as an explicit 3rd parameter (not a `table_style` dict key they read internally) — the real call
+  site (`prepare_element`'s table branch, and `design_canvas.py`'s mirrored block) extracts
+  `table_style.get('cell_padding_mm')` once and passes it explicitly, the same explicit-parameter
+  convention `context` itself already uses on both functions since Phase 6.
+
+**4. Image border + corner radius (`style.border_color`/`border_width_mm`/`border_radius_mm`)** —
+the same 3 field names `rectangle`/`container`/`logo` already use, reused verbatim rather than
+inventing image-specific names, computed once into a new `image_frame_css` string
+(`attach_generic_content`'s image branch). Applied to whichever element actually needs the visible
+frame, decided by `_element_content.html`: the `overflow:hidden` crop wrapper `<div>` when `crop`
+is present (radius/border there is what actually clips the VISIBLE box — putting it on the inner,
+oversized, absolutely-positioned `<img>` itself would round/border mostly-offscreen image edges,
+not the crop window), or directly on the plain `<img>` when uncropped (no wrapper exists in that
+case). Confirmed with 2 dedicated real-render tests, one per branch.
+
+**5. Two new bindings** (`design_schema.SUPPORTED_BINDINGS` grew from 26 to 28,
+`design_renderer.BINDING_RESOLVERS` kept in lockstep — the existing
+`BindingResolversMatchAllowListTests`-style parity assertion in `test_design_renderer.py` was
+updated to the new count, not disabled): `invoice.client_currency_conversion` reproduces, verbatim,
+the exact `"≈ {symbol}{converted_total} at rate {rate}"` text all 3 static templates +
+`legacy_design_renderer.py`'s own `_dynamic_element_content.html` already render for
+`Invoice.client_currency_conversion` — resolving to `''` (never the raw dict, never a crash) for
+every one of that property's own documented None-cases (one-time client, matching currency, no
+snapshot, etc.), so a bound element correctly collapses via the pre-existing blank-bound-text rule
+`_element_has_real_content` already applies to every other optional bound field. `invoice.tax_rate`
+is the plain `Invoice.tax_rate` DecimalField, the direct sibling of the already-bindable
+`invoice.tax_amount`/`invoice.discount_amount` — formatted to reproduce the exact
+`floatformat:"-2"` percentage display those totals-row templates already use (`"10%"`, not
+`"10.00%"`). **A real bug found and fixed during this pass's own full-suite verification, not
+merely during the new tests**: the first version of this resolver crashed with a hard `TypeError`
+(`unsupported format string passed to NoneType.__format__`) the moment it ran against
+`design_preview.py`'s own real sample invoice, whose `tax_rate` is deliberately `None` (a real,
+existing sentinel for "not applicable to this preview," not a Phase 3a invention) — caught by
+`test_design_renderer.py`'s own pre-existing `test_each_approved_binding_resolves_without_raising`
+test, which iterates every real `SUPPORTED_BINDINGS` entry against that exact sample context. Fixed
+with an explicit `is not None` guard resolving to `''`, matching how every other optional bound
+field already degrades. `business.city`/`business.country`/`business.phone`/`client.phone` were
+checked directly against `SUPPORTED_BINDINGS` (not assumed from this document's own prompt) and
+confirmed already present since Phase 4B — no change needed for those 4; no further binding gaps
+were judged clearly justified by existing invoice/profile data, so none were added beyond the 2
+above.
+
+Verification: a real WeasyPrint render (or, for pure per-element CSS checks, `prepare_element`/
+`build_canvas_document` called directly — the same pattern
+`test_design_renderer_phase3_2.py`'s own `CanvasInheritsCanonicalFixesTests` already established,
+adopted here after an early draft's own whole-rendered-HTML substring assertions produced 2 classes
+of false failure: Django's default HTML auto-escaping turns a literal `'` inside `{{ el.css }}`
+into `&#x27;` — completely correct and harmless for a real browser/WeasyPrint (HTML attribute
+entities are decoded before CSS parsing), but a raw-string `assertIn("font-family:'X'", html)`
+against the FINAL escaped HTML never matches; and a bare `assertNotIn('border-radius', html)`
+against the whole document false-positives against the shared stylesheet's own pre-existing,
+unrelated `.v2-total-pill { border-radius: 3mm; }` rule) for every one of the 5 additions above,
+in a new `apps/invoices/tests/test_design_phase3a_extensions.py` (40 tests, all passing). Also
+re-ran the full pre-existing `apps.invoices` design-system test surface (535 tests across 19 test
+modules) both on the untouched baseline (via a scoped `git stash` of only the files this pass
+touched) and again with this pass's changes applied — identical 3 pre-existing failures both times
+(the intermittent WeasyPrint/Celery golden-position/pagination issues this codebase's own docs
+already document as a known, unrelated environmental characteristic), confirming zero regression
+introduced by this pass specifically, not merely "the suite still mostly passes."
+
+Alternatives considered: putting font theming on the `InvoiceDesign` model itself (a
+`font_variant` field mirroring `color_variant`) — rejected as a materially larger, migration-
+requiring change for what was scoped as an additive, no-migration schema/renderer phase; applying
+`column_alignments` by raw index into the ORIGINAL `TABLE_COLUMNS` order rather than the final
+visible order — rejected because a design that narrows/reorders columns would then have alignments
+silently attached to the wrong column; making zebra shading a single `<tr>`-level background
+instead of per-`<td>` — considered, but the existing table markup has no `<tr style="">` hook at
+all (each `<td>` already carries its own `style=`), and adding one would be a larger structural
+change to `_table_row.html` than reusing the per-cell mechanism already in place.
+
+Docs: this entry; DATABASE.md's `invoice_designs` entry (new "Phase 3a schema additions" section);
+CLAUDE.md's Template Builder section.

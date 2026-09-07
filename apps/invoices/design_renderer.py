@@ -144,6 +144,46 @@ BINDING_RESOLVERS = {
     'business.jazzcash_number': lambda ctx: ctx['freelancer'].jazzcash_number or '',
     'business.easypaisa_number': lambda ctx: ctx['freelancer'].easypaisa_number or '',
     'business.payoneer_email': lambda ctx: ctx['freelancer'].payoneer_email or '',
+    # Phase 3a (07 September 2026) — see design_schema.SUPPORTED_BINDINGS'
+    # own comment for the full reasoning. `client_currency_conversion` is
+    # a dict (currency/symbol/converted_total/rate) or None, never a
+    # printable scalar on its own — this resolver reproduces the exact
+    # "≈ {symbol}{converted_total} at rate {rate}" text every one of the
+    # 3 static templates + legacy_design_renderer already renders
+    # (`_dynamic_element_content.html`/`professional.html`/`minimal.html`/
+    # `modern.html`, all four verbatim-identical), so a design using this
+    # binding matches what a user already sees on the templates it's
+    # replacing, not a new, independently-invented format. Resolves to
+    # '' (never a crash, never the raw dict) for every one of the real
+    # None-cases that property's own docstring documents (one-time
+    # client, matching currency, no snapshot, etc.) — `_element_has_real_
+    # content`'s existing blank-string-is-empty check for bound text then
+    # correctly collapses the element, exactly like the static templates'
+    # own `{% if invoice.client_currency_conversion %}` gate already does.
+    'invoice.client_currency_conversion': lambda ctx: (
+        f"≈ {ctx['invoice'].client_currency_conversion['symbol']}"
+        f"{ctx['invoice'].client_currency_conversion['converted_total']:,.2f} "
+        f"at rate {ctx['invoice'].client_currency_conversion['rate']}"
+    ) if ctx['invoice'].client_currency_conversion else '',
+    # `tax_rate` is a plain DecimalField (apps/invoices/models.py) — the
+    # direct sibling of `invoice.tax_amount`/`invoice.discount_amount`
+    # above, which were already bindable; the RATE itself, unlike those
+    # two computed amounts, never was. `floatformat:"-2"`'s own Django
+    # semantics (strip trailing zeros, keep up to 2 decimal places) is
+    # reproduced here in plain Python so "10%" (not "10.00%") matches
+    # exactly what the 3 static templates' own tax-rate label already
+    # shows (`invoice.tax_rate|floatformat:"-2"`, _element_content.html's
+    # totals branch). Real bug found while running the full test suite:
+    # `tax_rate` is nullable in practice (design_preview.py's own sample
+    # invoice sets it to None, matching a real invoice's own optional
+    # tax_rate field) — an unguarded `f"{None:.2f}"` raised a hard
+    # TypeError instead of resolving to '' the way every other optional
+    # bound field already does, so this now mirrors those (e.g.
+    # `invoice.notes`) with an explicit `or Decimal('0')`-style guard.
+    'invoice.tax_rate': lambda ctx: (
+        f"{ctx['invoice'].tax_rate:.2f}".rstrip('0').rstrip('.') + '%'
+        if ctx['invoice'].tax_rate is not None else ''
+    ),
 }
 
 # Phase 4B — the editor's design-time content mode. `content_mode='real'`
@@ -189,6 +229,8 @@ ALIAS_BINDING_LABELS = {
     'business.jazzcash_number': 'JazzCash Number',
     'business.easypaisa_number': 'Easypaisa Number',
     'business.payoneer_email': 'Payoneer Email',
+    'invoice.client_currency_conversion': 'Currency Conversion',
+    'invoice.tax_rate': 'Tax Rate',
 }
 
 
@@ -361,6 +403,41 @@ def resolve_theme_color(value, context):
     return context.get(key) if key else value
 
 
+# Phase 3a (07 September 2026) — the font analog of _THEME_COLOR_TOKENS/
+# resolve_theme_color directly above: two small, generic sentinel tokens
+# ('theme_heading_font'/'theme_body_font') an element's `style.font`/
+# `style.font_weight` may carry instead of a literal value, resolved
+# against `design_data.theme` (see design_schema._validate_theme's own
+# docstring for why font theming lives INSIDE design_data itself rather
+# than being derived from an outside model field the way color_variant
+# is). `context` here always carries these 4 keys (render_design_html
+# populates them from `design_data.get('theme') or {}` before any element
+# is prepared — absent for every design, real value None) — a value that
+# isn't one of the two sentinel strings is returned completely unchanged,
+# exactly like resolve_theme_color's own no-op guarantee for a literal
+# hex; every existing element's `style.font`/`style.font_weight` is
+# already a literal font name/number, never one of these two strings, so
+# this is a strict, zero-risk generalization, not a behavior change.
+_THEME_FONT_FAMILY_TOKENS = {
+    'theme_heading_font': 'theme_heading_font_family',
+    'theme_body_font': 'theme_body_font_family',
+}
+_THEME_FONT_WEIGHT_TOKENS = {
+    'theme_heading_font': 'theme_heading_font_weight',
+    'theme_body_font': 'theme_body_font_weight',
+}
+
+
+def resolve_theme_font_family(value, context):
+    key = _THEME_FONT_FAMILY_TOKENS.get(value)
+    return context.get(key) if key else value
+
+
+def resolve_theme_font_weight(value, context):
+    key = _THEME_FONT_WEIGHT_TOKENS.get(value)
+    return context.get(key) if key else value
+
+
 def is_sidebar_element(element):
     """
     True when an element is flagged `style.sidebar: true` — the real,
@@ -431,6 +508,35 @@ def attach_generic_content(prepared, element, context, content_mode='real'):
                 f'left:{left_pct}%;top:{top_pct}%;'
             )
 
+        # Phase 3a (07 September 2026) — image border + corner radius,
+        # the same 3 field names (border_color/border_width_mm/
+        # border_radius_mm) rectangle/container/logo already established
+        # (see SHAPE_TYPES_WITH_OWN_FILL's own border resolution below,
+        # and _element_content.html's pre-existing logo border_radius_mm
+        # usage) — reused verbatim rather than inventing image-specific
+        # names. Applied to a SEPARATE `image_frame_css` key (never
+        # folded into `crop_css`) because it must land on a different
+        # element depending on whether crop is active: the crop wrapper
+        # div (so overflow:hidden actually clips the rounded corner —
+        # putting radius/border on the inner, oversized, absolutely-
+        # positioned <img> itself would round/border the IMAGE's own
+        # edges, most of which sit outside the visible crop window, not
+        # the visible box) when cropped, or directly on the plain <img>
+        # itself when uncropped (there is no wrapper to put it on).
+        # `_element_content.html` picks the right target; this function
+        # only ever computes the CSS string once, not which element gets
+        # it — the same "one real computation" division of responsibility
+        # every other prepare step in this module already follows.
+        border_color = resolve_theme_color(resolve_style_value(element, 'border_color', None), context)
+        border_width = resolve_style_value(element, 'border_width_mm', 0)
+        border_radius_mm = resolve_style_value(element, 'border_radius_mm')
+        frame_css = ''
+        if border_color and border_width:
+            frame_css += f'border:{border_width}mm solid {border_color};'
+        if border_radius_mm:
+            frame_css += f'border-radius:{border_radius_mm}mm;'
+        prepared['image_frame_css'] = frame_css
+
     elif el_type in SHAPE_TYPES_WITH_OWN_FILL:
         # 30 August 2026 fidelity fix — this branch never called
         # resolve_theme_color (every OTHER color-bearing generic/semantic
@@ -448,6 +554,23 @@ def attach_generic_content(prepared, element, context, content_mode='real'):
         css = f'background:{bg};'
         if border_color and border_width:
             css += f'border:{border_width}mm solid {border_color};'
+        # Phase 3a (07 September 2026) — corner radius for rectangle/
+        # container, the same `border_radius_mm` field/mm-unit convention
+        # `_element_content.html`'s pre-existing logo branch already
+        # established (a rectangle/container previously always rendered
+        # sharp-cornered — there was no code path that ever read this key
+        # for either type). Applied to BOTH rectangle and container (not
+        # rectangle alone) because they share this exact branch/CSS
+        # target and there is no reason a container's own corners
+        # couldn't round too — not a second, parallel implementation.
+        # Placed BEFORE ellipse's own forced `border-radius:50%` below, on
+        # purpose: CSS resolves the LAST `border-radius` declaration in a
+        # single style string, so an ellipse's forced round shape always
+        # wins over a stray/inherited border_radius_mm value, never fights
+        # with it.
+        border_radius_mm = resolve_style_value(element, 'border_radius_mm')
+        if border_radius_mm:
+            css += f'border-radius:{border_radius_mm}mm;'
         # Phase 1 — 'ellipse' reuses this exact same fill/border
         # resolution (never a parallel one) plus one forced addition: a
         # single border-radius:50% renders as a true ellipse (not just a
@@ -549,7 +672,11 @@ def prepare_element(element, context, content_mode='real', *, chain_member=False
     # completeness/parity reason, even though Phase 3.1 didn't separately
     # flag it — v1 applies it in the identical spot and there's no reason
     # for V2 to silently omit it.
-    font = resolve_style_value(element, 'font')
+    # Phase 3a (07 September 2026) — routed through resolve_theme_font_family
+    # so the 'theme_heading_font'/'theme_body_font' sentinels (see that
+    # function's own docstring) actually take effect; a no-op passthrough
+    # for every existing element's literal font name.
+    font = resolve_theme_font_family(resolve_style_value(element, 'font'), context)
     if font:
         css += f"font-family:'{font}';"
     font_size_pt = resolve_style_value(element, 'font_size_pt')
@@ -561,7 +688,9 @@ def prepare_element(element, context, content_mode='real', *, chain_member=False
     # font-weight:700, not the 600 every other template's own real CSS
     # (and `.v2-num`'s own shared default) uses — confirmed by direct
     # inspection of modern.html, not assumed.
-    font_weight = resolve_style_value(element, 'font_weight')
+    # Phase 3a — same theme-sentinel routing as `font` above, for
+    # `font_weight`'s own 'theme_heading_font'/'theme_body_font' values.
+    font_weight = resolve_theme_font_weight(resolve_style_value(element, 'font_weight'), context)
     if font_weight:
         css += f'font-weight:{font_weight};'
     color = resolve_theme_color(resolve_style_value(element, 'color'), context)
@@ -669,9 +798,26 @@ def prepare_element(element, context, content_mode='real', *, chain_member=False
         # once, the same "one real computation, reused" way every other
         # per-type prepared field already works.
         table_style = element.get('style') or {}
+        cell_padding_mm = table_style.get('cell_padding_mm')
         prepared['table_columns'] = resolve_table_columns(table_style)
-        prepared['thead_cell_css'] = thead_cell_css(table_style, context)
-        prepared['row_cell_css'] = row_cell_css(table_style, context)
+        prepared['thead_cell_css'] = thead_cell_css(table_style, context, cell_padding_mm)
+        prepared['row_cell_css'] = row_cell_css(table_style, context, cell_padding_mm)
+        # Phase 3a (07 September 2026) — alternating-row shading. `''`
+        # (falsy) whenever `zebra_enabled` is absent/false — every
+        # existing table_style dict — so `_table_row.html`'s own
+        # `{% cycle "" el.zebra_row_bg %}` alternates between two empty
+        # strings and never emits a background, byte-identical to before
+        # this field existed. `zebra_color` defaults to a real, existing
+        # muted tone already used elsewhere in this stylesheet
+        # (`.v2-alias-box`'s own background, _page_styles.html) rather
+        # than inventing a new shade, and is routed through
+        # resolve_theme_color so the 'theme_primary'/'theme_secondary'
+        # sentinels work here too, exactly like every other themeable
+        # color in this module.
+        prepared['zebra_row_bg'] = (
+            resolve_theme_color(table_style.get('zebra_color', '#f5f3ee'), context)
+            if table_style.get('zebra_enabled') else ''
+        )
         if content_mode == 'alias':
             # A design environment, not a live invoice preview (same rule
             # every other binding already follows) — generic placeholder
@@ -687,7 +833,7 @@ def prepare_element(element, context, content_mode='real', *, chain_member=False
     return prepared
 
 
-def thead_cell_css(table_style, context):
+def thead_cell_css(table_style, context, cell_padding_mm=None):
     """
     Phase 3.2 fix (LANCERAOS_TEMPLATE_BUILDER_2_PHASE3_1.md Finding 4):
     a direct, one-to-one port of v1's own real, already-correct
@@ -714,6 +860,19 @@ def thead_cell_css(table_style, context):
     text, never variant-derived — confirmed directly against
     design_templates.py, left as a literal on purpose) or on a
     hand-authored design that sets a genuine custom literal color.
+
+    Phase 3a (07 September 2026) — `cell_padding_mm`, if given, is a real
+    configurable cell padding override (the standalone editor already
+    lets a user set this; the canonical renderer's own header/row padding
+    was previously a fixed, un-overridable value baked into
+    `_page_styles.html`'s class rules — `table.v2-items thead th { padding:
+    0 3mm 3mm 0; }`). Appended as an inline `padding:{n}mm;` — inline
+    style on the `<th>`/`<td>` itself always wins over the shared class
+    rule regardless of CSS specificity/declaration order, so this is a
+    real, effective override, not a no-op fighting the class. `None`
+    (absent — every existing table_style dict) emits nothing, so the
+    class's own default padding is completely unaffected for any design
+    that predates this field.
     """
     parts = []
     header_bg = resolve_theme_color(table_style.get('header_bg'), context)
@@ -725,10 +884,12 @@ def thead_cell_css(table_style, context):
     border_color = resolve_theme_color(table_style.get('header_border_color'), context)
     if border_color:
         parts.append(f"border-bottom:0.5mm solid {border_color}")
+    if cell_padding_mm is not None:
+        parts.append(f"padding:{cell_padding_mm}mm")
     return '; '.join(parts)
 
 
-def row_cell_css(table_style, context):
+def row_cell_css(table_style, context, cell_padding_mm=None):
     """
     Phase 3.2 fix — the direct v1-equivalent port of `_row_cell_css`, same
     reasoning as thead_cell_css above.
@@ -742,9 +903,17 @@ def row_cell_css(table_style, context):
     here today, not a behavior change; the mechanism is wired through
     generically so a future genuinely-themed row-border color would work
     without a second signature change.
+
+    Phase 3a — `cell_padding_mm`, same override as thead_cell_css above,
+    applied identically to every body cell.
     """
+    parts = []
     color = resolve_theme_color(table_style.get('row_border_color'), context)
-    return f"border-bottom:0.25mm solid {color};" if color else ''
+    if color:
+        parts.append(f"border-bottom:0.25mm solid {color}")
+    if cell_padding_mm is not None:
+        parts.append(f"padding:{cell_padding_mm}mm")
+    return '; '.join(parts) + (';' if parts else '')
 
 
 # Phase 4B (item 11/§A.5 of the plan) — every real column the line-items
@@ -775,7 +944,7 @@ ALIAS_SAMPLE_TABLE_ITEMS = [
 def resolve_table_columns(table_style):
     """
     Returns the ordered, width-renormalized list of visible table columns
-    for a given `flow.table.style` dict — `[{'key','label','width_pct'}, ...]`.
+    for a given `flow.table.style` dict — `[{'key','label','width_pct','align'}, ...]`.
     `table_style.columns` (new, optional — absent/empty/all-invalid means
     "all 4", today's unconditional behavior, unchanged for every existing
     design) may narrow or reorder which columns show; widths are
@@ -784,6 +953,34 @@ def resolve_table_columns(table_style):
     function is the single source of truth for BOTH the canonical renderer
     (canonical.html) and the editor canvas (design_canvas.py) — see
     this module's own docstring's "one real computation, reused" rule.
+
+    Phase 3a (07 September 2026) — `align`: `table_style.column_alignments`
+    (new, optional — a list of 'left'/'center'/'right' strings) lets a
+    design override per-column text alignment; `align` is `None` when it's
+    absent (every existing design), which `_table_head.html`/
+    `_table_row.html` both treat as "emit no inline text-align override at
+    all" — the existing CSS-class-driven default (`.v2-num-col`: right;
+    everything else: left, `_page_styles.html`) is completely unaffected,
+    so this is a strict, zero-risk addition.
+
+    COLUMN-COUNT MISMATCH POLICY (a real, decided trade-off, not an
+    oversight): `column_alignments`' own length need not match the real
+    resolved column count (a design might store 4 alignment entries but
+    `table_style.columns` narrows the table to 2 real columns, or vice
+    versa) — resolved by CYCLING the given list with `i % len(alignments)`
+    for the i-th visible column, left-to-right in final display order
+    (after narrowing/reordering). A shorter list simply repeats from its
+    own start (e.g. 2 entries applied to 4 columns reuses entries 0,1,0,1);
+    a longer list has its extra trailing entries silently unused. Chosen
+    over two rejected alternatives: (a) index-matching against the
+    ORIGINAL, unfiltered TABLE_COLUMNS order would silently misapply an
+    alignment meant for one column to a completely different one the
+    moment `columns` reorders anything; (b) falling back to the class-
+    driven default for any out-of-range index would make a design's own
+    explicit alignment choice partially disappear with no visible error —
+    cycling at least guarantees every visible column gets SOME author-
+    specified alignment when the author supplied any at all, which is the
+    more predictable failure mode of the two.
     """
     requested = (table_style or {}).get('columns') or TABLE_COLUMNS
     seen = set()
@@ -795,14 +992,17 @@ def resolve_table_columns(table_style):
     if not columns:
         columns = list(TABLE_COLUMNS)
 
+    alignments = (table_style or {}).get('column_alignments') or None
+
     total_default_width = sum(TABLE_COLUMN_DEFAULT_WIDTHS[key] for key in columns)
     return [
         {
             'key': key,
             'label': TABLE_COLUMN_LABELS[key],
             'width_pct': round(TABLE_COLUMN_DEFAULT_WIDTHS[key] / total_default_width * 100, 2),
+            'align': alignments[i % len(alignments)] if alignments else None,
         }
-        for key in columns
+        for i, key in enumerate(columns)
     ]
 
 
@@ -1146,6 +1346,24 @@ def render_design_html(design_data, context, *, for_pdf=False):
     errors = validate_design_data_schema_v2(design_data)
     if errors:
         raise DesignRenderError('design_data failed v2 schema validation: ' + '; '.join(errors))
+
+    # Phase 3a (07 September 2026) — font theming. `design_data.theme`
+    # (optional, absent for every existing design) is resolved into the
+    # SAME `context` dict every element-preparation call below already
+    # threads through (the same place `design_primary_color`/
+    # `design_secondary_color` already live) — `resolve_theme_font_family`/
+    # `resolve_theme_font_weight` read these 4 keys back out again. Absent
+    # theme -> every value here is None -> `if font:`/`if font_weight:`
+    # guards in prepare_element simply skip emitting anything, matching
+    # today's behavior exactly.
+    theme = design_data.get('theme') or {}
+    context = {
+        **context,
+        'theme_heading_font_family': theme.get('heading_font_family'),
+        'theme_heading_font_weight': theme.get('heading_font_weight'),
+        'theme_body_font_family': theme.get('body_font_family'),
+        'theme_body_font_weight': theme.get('body_font_weight'),
+    }
 
     page = design_data['page']
     # Pagination fix (28 August 2026) — header.elements and flow.elements
