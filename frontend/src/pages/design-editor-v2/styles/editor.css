@@ -1194,6 +1194,57 @@
 
 .modal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Phase 5 — the real backend-rendered preview frame. Sized in real CSS mm
+   (browsers resolve `mm` directly, same conversion basis every other
+   mm<->px boundary in this editor already uses), scrollable when the
+   viewport is smaller than a full page, with a real drop shadow so the
+   page reads as paper on the dark backdrop rather than sitting flush
+   against it. */
+.v2-preview-frame-wrap {
+  max-height: 92vh;
+  overflow: auto;
+  border-radius: 4px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.v2-preview-iframe {
+  display: block;
+  width: 210mm;
+  height: 297mm;
+  border: none;
+  background: #fff;
+}
+
+.v2-preview-status {
+  width: 210mm;
+  min-height: 297mm;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+  background: #fff;
+  color: var(--text-primary);
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.v2-preview-status--error { color: var(--danger); }
+
+.v2-preview-status--pdf {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto;
+  min-height: 0;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
 /* ---------- Real-load route status (loading/error/legacy) ---------- */
 /* Rendered instead of the editor shell entirely while a real design is
    being fetched, or when it can't be opened here at all — see

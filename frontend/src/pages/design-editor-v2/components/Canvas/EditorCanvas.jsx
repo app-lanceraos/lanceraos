@@ -3,19 +3,9 @@ import { useEditor } from '../../state/EditorContext';
 import CanvasLayer from './CanvasLayer';
 import { mmToPx } from '../../utils/units';
 
-// `readOnly` is how PreviewModal reuses this exact tree without leaking the
-// live editor's selection into it: Preview shares the SAME EditorContext
-// (deliberately — no separate render path to drift from what's actually on
-// the page), so without this flag, whatever's selected behind the modal
-// would still show its outline/handles/guides inside the "clean" preview.
-// Prompt 22: zoom is likewise a live-editor-only concern — Preview forces
-// `scale` to 1 regardless of the editor's current zoom (it already has its
-// own independent 0.85 scale wrapper in PreviewModal.jsx; compounding that
-// with whatever the editor happens to be zoomed to would be a surprising,
-// unrelated visual side effect, not a real feature).
-export default function EditorCanvas({ readOnly = false }) {
+export default function EditorCanvas() {
   const { template, setSelection, edgeHighlight, zoom, setZoom, canvasViewportRef } = useEditor();
-  const scale = readOnly ? 1 : zoom / 100;
+  const scale = zoom / 100;
   const pageFrameRef = useRef(null);
   // Holds the cursor-relative anchor point captured the instant a wheel-
   // zoom fires, consumed by the layout effect below once the DOM has
@@ -30,7 +20,7 @@ export default function EditorCanvas({ readOnly = false }) {
   // be left completely alone (no preventDefault) so the page still pans
   // normally.
   const handleWheel = (e) => {
-    if (readOnly || !(e.ctrlKey || e.metaKey)) return;
+    if (!(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     const scrollEl = canvasViewportRef.current;
     const frameEl = pageFrameRef.current;
@@ -75,11 +65,7 @@ export default function EditorCanvas({ readOnly = false }) {
   }, [zoom]);
 
   return (
-    <div
-      className="canvas-scroll"
-      ref={readOnly ? undefined : canvasViewportRef}
-      onWheel={readOnly ? undefined : handleWheel}
-    >
+    <div className="canvas-scroll" ref={canvasViewportRef} onWheel={handleWheel}>
       <div
         className="page-zoom-wrapper"
         style={{ width: mmToPx(template.page.width) * scale, height: mmToPx(template.page.height) * scale }}
@@ -88,24 +74,20 @@ export default function EditorCanvas({ readOnly = false }) {
           ref={pageFrameRef}
           className="page-frame"
           style={{ background: template.page.backgroundColor, transform: `scale(${scale})` }}
-          onMouseDown={
-            readOnly
-              ? undefined
-              : (e) => {
-                  // Prompt 29 item 6: a right/middle-click headed for the
-                  // native contextmenu event must never clear the
-                  // selection first — see CanvasLayer's startMarquee for
-                  // the matching fix on the layer just inside this frame.
-                  if (e.button !== 0) return;
-                  setSelection({ ids: [], part: null });
-                }
-          }
+          onMouseDown={(e) => {
+            // Prompt 29 item 6: a right/middle-click headed for the
+            // native contextmenu event must never clear the selection
+            // first — see CanvasLayer's startMarquee for the matching
+            // fix on the layer just inside this frame.
+            if (e.button !== 0) return;
+            setSelection({ ids: [], part: null });
+          }}
         >
-          <CanvasLayer readOnly={readOnly} />
-          {!readOnly && edgeHighlight?.top && <div className="page-edge-glow page-edge-glow--top" />}
-          {!readOnly && edgeHighlight?.bottom && <div className="page-edge-glow page-edge-glow--bottom" />}
-          {!readOnly && edgeHighlight?.left && <div className="page-edge-glow page-edge-glow--left" />}
-          {!readOnly && edgeHighlight?.right && <div className="page-edge-glow page-edge-glow--right" />}
+          <CanvasLayer />
+          {edgeHighlight?.top && <div className="page-edge-glow page-edge-glow--top" />}
+          {edgeHighlight?.bottom && <div className="page-edge-glow page-edge-glow--bottom" />}
+          {edgeHighlight?.left && <div className="page-edge-glow page-edge-glow--left" />}
+          {edgeHighlight?.right && <div className="page-edge-glow page-edge-glow--right" />}
         </div>
       </div>
     </div>

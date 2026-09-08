@@ -15,7 +15,7 @@ import GroupSelectionOverlay from './GroupSelectionOverlay';
 // what actually lets an allowFreeLayering item (e.g. a user-placed image)
 // interleave above content — painting two fixed groups back-to-front could
 // never do that no matter what the array said.
-export default function CanvasLayer({ readOnly = false }) {
+export default function CanvasLayer() {
   const { template, selection, setSelection, guides, zoom, setContextMenu } = useEditor();
   const [marquee, setMarquee] = useState(null); // {x,y,w,h} while dragging on empty canvas, in PAGE units
 
@@ -93,7 +93,6 @@ export default function CanvasLayer({ readOnly = false }) {
   // meaningful "bounding area" to be "inside," and only when nothing
   // closer to the actual target already handled it.
   const handleContextMenu = (e) => {
-    if (readOnly) return;
     if (selection.ids.length < 2) return;
     const selectedItems = template.items.filter((i) => selection.ids.includes(i.id));
     if (selectedItems.length < 2) return;
@@ -114,18 +113,14 @@ export default function CanvasLayer({ readOnly = false }) {
   };
 
   return (
-    <div
-      className="canvas-layer"
-      onMouseDown={readOnly ? undefined : startMarquee}
-      onContextMenu={readOnly ? undefined : handleContextMenu}
-    >
+    <div className="canvas-layer" onMouseDown={startMarquee} onContextMenu={handleContextMenu}>
       {visibleItems.map((item) => (
-        <CanvasItem key={item.id} item={item} readOnly={readOnly} />
+        <CanvasItem key={item.id} item={item} />
       ))}
 
-      {!readOnly && <GroupSelectionOverlay />}
+      <GroupSelectionOverlay />
 
-      {!readOnly && marquee && (
+      {marquee && (
         <div
           className="selection-box"
           style={{ left: mm(marquee.x), top: mm(marquee.y), width: mm(marquee.w), height: mm(marquee.h) }}
@@ -135,21 +130,18 @@ export default function CanvasLayer({ readOnly = false }) {
       {/* Smart guides (Prompt 6/14, rebuilt Prompt 19): transient, only
           while a drag/resize gesture is active (see CanvasItem's
           resolveAxisSnap use) — alignment lines, equal-spacing markers,
-          and live distance labels. Explicitly gated on readOnly too, not
-          just left to "guides is null outside a drag" — Preview must
-          never show them even if a gesture somehow left stale guide
-          state behind in the shared context.
+          and live distance labels.
           Line spans are bounded (`from`/`to`) rather than page-edge-to-
           edge — full page width/height only for a genuine page-center
           match (see geometry.js's guideSpan) — so a guide reads as "these
           two things align," not decoration stretched across empty page. */}
-      {!readOnly && guides?.vertical.map((g, i) => (
+      {guides?.vertical.map((g, i) => (
         <div key={`gv-${i}`} className="align-guide align-guide--vertical" style={{ left: mm(g.value), top: mm(g.from), height: mm(g.to - g.from) }} />
       ))}
-      {!readOnly && guides?.horizontal.map((g, i) => (
+      {guides?.horizontal.map((g, i) => (
         <div key={`gh-${i}`} className="align-guide align-guide--horizontal" style={{ top: mm(g.value), left: mm(g.from), width: mm(g.to - g.from) }} />
       ))}
-      {!readOnly && guides?.labels.map((l, i) => (
+      {guides?.labels.map((l, i) => (
         <div key={`gl-${i}`} className="align-guide-label" style={{ left: mm(l.x), top: mm(l.y) }}>{l.text}</div>
       ))}
       {/* Equal-spacing markers (Prompt 19 item 2, the flagship feature;
@@ -163,7 +155,7 @@ export default function CanvasLayer({ readOnly = false }) {
           gap reading e.g. "24px" here means every OTHER marker sharing
           that same rhythm reads the same value, at the instant they
           actually match. */}
-      {!readOnly && guides?.spacing.map((s, i) => (
+      {guides?.spacing.map((s, i) => (
         <div
           key={`gs-line-${i}`}
           className={`align-guide ${s.axis === 'x' ? 'align-guide--horizontal' : 'align-guide--vertical'}`}
@@ -174,7 +166,7 @@ export default function CanvasLayer({ readOnly = false }) {
           }
         />
       ))}
-      {!readOnly && guides?.spacing.map((s, i) => (
+      {guides?.spacing.map((s, i) => (
         <div
           key={`gs-label-${i}`}
           className="align-guide-label"

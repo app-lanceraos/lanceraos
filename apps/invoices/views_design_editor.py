@@ -18,6 +18,7 @@ user). The actual invoice PDF/portal/preview-as-client render paths
 (apps/invoices/views.py, views_portal.py) call pdf_generator.py directly,
 which dispatches to design_renderer.py — not through this module.
 """
+import json
 import logging
 
 from django.http import HttpResponse
@@ -56,6 +57,21 @@ def design_render_preview(request):
     to see how an existing real design would look through the V2 renderer
     without touching that design's own stored row at all.
 
+    `design_data` also accepts a JSON-encoded STRING, not only a real JSON
+    body's native object (Phase 5, design-editor-v2's own Preview) — a
+    real, in-memory (possibly never-saved) design can be arbitrarily
+    large, and the only way to have a BROWSER embed this endpoint's own
+    output in an iframe via a genuine navigation (matching
+    DesignLivePreview.jsx's own real-navigation `<iframe src>` convention,
+    rather than fetching the HTML text and injecting it via `srcDoc` —
+    which a real, direct comparison found silently breaks this design's
+    own custom @font-face loads: an `srcDoc` iframe's document is treated
+    as a distinct, cross-origin document from wherever the HTML text was
+    fetched, so its font requests back to this same endpoint's own origin
+    get CORS-blocked even though the URLs themselves resolve correctly)
+    is a real `<form method="post" target="...">` submission — which can
+    only ever send flat string fields, never a nested JSON object.
+
     ?output=pdf returns a real PDF (application/pdf); otherwise HTML
     (never `?format=`, deliberately — that query parameter name is
     reserved by DRF's own content-negotiation mechanism and using it
@@ -66,6 +82,11 @@ def design_render_preview(request):
     in views.py, since this is meant to be embeddable the same way).
     """
     design_data = request.data.get('design_data')
+    if isinstance(design_data, str):
+        try:
+            design_data = json.loads(design_data)
+        except ValueError:
+            return Response({'error': 'design_data, when sent as a string, must be valid JSON.'}, status=400)
     if not isinstance(design_data, dict):
         return Response({'error': 'design_data is required and must be an object.'}, status=400)
 
