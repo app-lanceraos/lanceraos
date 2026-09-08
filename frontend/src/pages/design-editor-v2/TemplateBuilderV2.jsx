@@ -1,11 +1,18 @@
 // The LanceraOS Template Builder, v2 — a standalone project merged into
 // frontend/ (see DECISIONS.md's merge entry). Reached via
-// /invoices/designs/editor-v2 (App.jsx), shell-less like the existing
-// GrapesJS DesignEditor.jsx — both editors coexist; this one is not yet
-// wired to the backend (see that entry for what's deliberately excluded).
-import { useState } from 'react';
+// /invoices/designs/editor-v2 (a sandbox, no real design behind it — the
+// hardcoded initial state, unchanged) and, for real backend integration,
+// /invoices/designs/editor-v2/:id (a real, owned InvoiceDesign row).
+// Shell-less like the existing GrapesJS DesignEditor.jsx — both editors
+// coexist; this route is not linked from anywhere in the product UI yet
+// and is not the default editor (see DECISIONS.md's merge entry).
+import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import useTitle from '@/hooks/useTitle';
+import api from '@/lib/api';
+import FosAlert from '@/components/FosAlert';
 import { EditorProvider, useEditor } from './state/EditorContext';
+import { designDataToTemplate } from './adapter/designDataAdapter';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import Toolbar from './components/Toolbar/Toolbar';
 import ElementLibraryPanel from './components/Panels/ElementLibraryPanel';
@@ -34,7 +41,24 @@ function EditorShell() {
   const togglePreview = () => setPreviewOpen((v) => !v);
   useKeyboardShortcuts({ onPreviewToggle: togglePreview });
 
-  const { leftPanelCollapsed, toggleLeftPanel, rightPanelCollapsed, toggleRightPanel } = useEditor();
+  const { leftPanelCollapsed, toggleLeftPanel, rightPanelCollapsed, toggleRightPanel, dirty, designId } = useEditor();
+
+  // Unsaved-changes browser warning — matches DesignEditor.jsx's own
+  // convention exactly. Only meaningful in real (designId) mode: the bare
+  // sandbox route has nothing server-side to lose. Only catches an actual
+  // tab close/refresh/URL navigation — an in-app client-side navigate()
+  // bypasses beforeunload entirely, which is why Toolbar's own "Back to
+  // designs" button carries its own separate window.confirm guard.
+  useEffect(() => {
+    if (!designId) return;
+    function handleBeforeUnload(e) {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [designId, dirty]);
 
   return (
     <div className="app-shell">
@@ -110,8 +134,90 @@ function EditorShell() {
   );
 }
 
+// Loads a real, owned InvoiceDesign (production schema_version: 2 only)
+// from the backend before the editor ever mounts, and owns every honest
+// failure state this route can hit — a legacy-shape design (predates
+// this editor; designDataToTemplate itself throws on anything that
+// isn't real schema_version: 2, see that function's own guard), a
+// design that doesn't exist or isn't this user's (GET /invoices/designs/
+// {id}/ is scoped to request.user and returns a real 404 for both cases
+// — this backend has no separate 403 for "exists but not yours"), and a
+// genuine network/5xx failure — never a silently blank editor.
+function LoadedTemplateBuilder({ id }) {
+  const [state, setState] = useState({ status: 'loading', template: null, meta: null, message: '' });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: 'loading', template: null, meta: null, message: '' });
+
+    async function load() {
+      let data;
+      try {
+        const res = await api.get(`/invoices/designs/${id}/`);
+        data = res.data;
+      } catch (err) {
+        if (cancelled) return;
+        if (err.response?.status === 404) {
+          setState({ status: 'error', message: "This design doesn't exist, or isn't yours to edit." });
+        } else if (err.response) {
+          setState({ status: 'error', message: 'Something went wrong loading this design. Please try again.' });
+        } else {
+          setState({ status: 'error', message: 'Could not reach the server. Check your connection and try again.' });
+        }
+        return;
+      }
+
+      try {
+        const { template } = designDataToTemplate(data.design_data);
+        if (cancelled) return;
+        setState({
+          status: 'ready',
+          template,
+          meta: { name: data.name, base_template: data.base_template, color_variant: data.color_variant },
+          message: '',
+        });
+      } catch {
+        if (cancelled) return;
+        setState({
+          status: 'legacy',
+          message:
+            "This design was built before this editor existed and uses an older format it can't open. " +
+            'Duplicate a ready-made template to start a new design here, or use the original Template Builder to keep editing this one.',
+        });
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (state.status === 'loading') {
+    return <div className="v2-route-status">Loading design…</div>;
+  }
+
+  if (state.status === 'error' || state.status === 'legacy') {
+    return (
+      <div className="v2-route-status">
+        <FosAlert type={state.status === 'legacy' ? 'warning' : 'error'}>{state.message}</FosAlert>
+      </div>
+    );
+  }
+
+  return (
+    <EditorProvider key={id} initialTemplate={state.template} designId={id} designMeta={state.meta}>
+      <EditorShell />
+    </EditorProvider>
+  );
+}
+
 export default function TemplateBuilderV2() {
   useTitle('Template Builder v2 — LanceraOS');
+  const { id } = useParams();
+
+  if (id) return <LoadedTemplateBuilder id={id} />;
+
   return (
     <EditorProvider>
       <EditorShell />

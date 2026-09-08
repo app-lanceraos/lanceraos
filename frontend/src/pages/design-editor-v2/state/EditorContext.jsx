@@ -1,5 +1,7 @@
 import React, { createContext, useCallback, useContext, useMemo, useReducer, useRef, useState } from 'react';
+import api from '@/lib/api';
 import { historyReducer, initialHistoryState } from './historyReducer';
+import { initialTemplateState } from '../data/initialState';
 import {
   ELEMENT_TYPES,
   createContentItem,
@@ -9,6 +11,7 @@ import {
 } from '../data/elementCatalog';
 import { createShape } from '../data/shapeCatalog';
 import { validateTemplate } from '../utils/validation';
+import { templateToDesignData, designDataToTemplate } from '../adapter/designDataAdapter';
 import { normalizeZOrder, appendRespectingZOrder, stepSelectionOnce } from '../utils/zorder';
 import { MIN_ITEM_SIZE_MM } from '../utils/geometry';
 import { roundMm } from '../utils/units';
@@ -22,15 +25,46 @@ const DUPLICATE_OFFSET_MM = 4;
 
 const EditorStateContext = createContext(null);
 
-export function EditorProvider({ children }) {
-  const [history, dispatch] = useReducer(historyReducer, initialHistoryState);
+// Backend integration: `initialTemplate`/`designId`/`designMeta` are only
+// ever passed by TemplateBuilderV2 once a real GET /invoices/designs/{id}/
+// has already succeeded and been converted via designDataToTemplate — this
+// provider never fetches anything itself. `designId` absent (the bare
+// /invoices/designs/editor-v2 sandbox route, still reachable and
+// unchanged) means Save stays a purely local validation pass, exactly as
+// before this integration — there is nowhere to persist to.
+export function EditorProvider({ children, initialTemplate, designId = null, designMeta = null }) {
+  const [history, dispatch] = useReducer(
+    historyReducer,
+    undefined,
+    () => ({ past: [], present: initialTemplate || initialTemplateState, future: [] }),
+  );
+  // The exact template object reference last confirmed to match the
+  // server (or, in sandbox mode, the one this session started from) —
+  // `dirty` below is real reference inequality against this, not a
+  // separate boolean that could itself drift out of sync. Updated after
+  // the initial load, after every successful real save, and after a
+  // version restore (all three are "the canvas now matches something
+  // real and already-persisted").
+  const savedSnapshotRef = useRef(initialTemplate || initialTemplateState);
+  // Design metadata from the real GET this session loaded — name/
+  // base_template/color_variant are all real InvoiceDesign columns the v2
+  // editor has no UI to change; they're carried through unedited on every
+  // real PUT so a no-op round trip touches none of them.
+  const [meta] = useState(designMeta);
+  const [versions, setVersions] = useState([]);
   // Selection is intentionally NOT part of undo history — selecting things
   // isn't a content edit. `ids` are unified item ids (shape or content,
   // doesn't matter which — look up `kind` on the item itself when it
   // matters). `part` is only ever set for a single selected content item
   // whose title/body sub-part is being styled: { id, key: 'title'|'body' }.
   const [selection, setSelectionRaw] = useState({ ids: [], part: null });
-  const [saveState, setSaveState] = useState({ status: 'idle', issues: [] }); // idle | saved | blocked
+  // idle | saving | saved | blocked (client-side validation errors) |
+  // error (server rejected the save, or the request itself failed) —
+  // `message`, when present, is a real user-facing string for the
+  // `error` status (a generic server/network message, since specific
+  // server-side validation failures are already represented as their own
+  // `error`-level entries in `issues` instead).
+  const [saveState, setSaveState] = useState({ status: 'idle', issues: [] });
   // Transient, not history: which page edge(s) an in-progress drag/resize
   // is currently touching, for the edge-contact highlight. null when idle.
   const [edgeHighlight, setEdgeHighlight] = useState(null);
@@ -216,6 +250,35 @@ export function EditorProvider({ children }) {
     [template]
   );
 
+  // ---- unified item actions (shape or content) ----
+  // Real-backend-integration fix: these two were declared BELOW
+  // setItemBinding below despite setItemBinding referencing `updateItem`
+  // both in its own body and its useCallback dependency array — a
+  // genuine pre-existing `const` temporal-dead-zone bug (evaluating that
+  // dependency array reads `updateItem` before its own `const` runs),
+  // confirmed live: it threw "Cannot access 'updateItem' before
+  // initialization" and crashed the whole EditorProvider the moment this
+  // editor was actually opened in a real browser for the first time (this
+  // route was never live-browser-tested before this integration pass —
+  // every existing automated test mocks or never reaches this far).
+  // Moved above setItemBinding, unchanged otherwise.
+  const updateItem = useCallback(
+    (id, patch) => {
+      commit({ ...template, items: template.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) });
+    },
+    [template, commit]
+  );
+
+  const updateItems = useCallback(
+    (ids, patchFn) => {
+      commit({
+        ...template,
+        items: template.items.map((i) => (ids.includes(i.id) ? { ...i, ...patchFn(i) } : i)),
+      });
+    },
+    [template, commit]
+  );
+
   // Returns true on success, false when the binding is already taken by
   // another item (the caller — PropertiesPanel's binding picker — is
   // responsible for surfacing that as a real, visible message; this
@@ -233,25 +296,6 @@ export function EditorProvider({ children }) {
       return true;
     },
     [isBindingTaken, updateItem, itemsById]
-  );
-
-  // ---- unified item actions (shape or content) ----
-
-  const updateItem = useCallback(
-    (id, patch) => {
-      commit({ ...template, items: template.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) });
-    },
-    [template, commit]
-  );
-
-  const updateItems = useCallback(
-    (ids, patchFn) => {
-      commit({
-        ...template,
-        items: template.items.map((i) => (ids.includes(i.id) ? { ...i, ...patchFn(i) } : i)),
-      });
-    },
-    [template, commit]
   );
 
   // Sub-part style (title/body) for block/qr-variant content items — kept
@@ -628,18 +672,131 @@ export function EditorProvider({ children }) {
     [template, commit]
   );
 
-  const runSave = useCallback(() => {
+  // Real backend save. Client-side validation (validateTemplate) always
+  // runs first and is authoritative for blocking — an `error`-level issue
+  // stops the save outright (status: 'blocked'), matching this app's
+  // existing pre-integration behavior exactly; a `warning`-level issue is
+  // shown but never blocks, also unchanged. Only once that local check
+  // passes does this actually reach the network — with no `designId`
+  // (the bare sandbox route) there is nothing to PUT to, so it stops
+  // there too, exactly as before this integration (status: 'saved',
+  // purely local).
+  const runSave = useCallback(async () => {
     const issues = validateTemplate(template, effectiveSizes);
     const hasErrors = issues.some((i) => i.level === 'error');
-    setSaveState({ status: hasErrors ? 'blocked' : 'saved', issues });
-    return !hasErrors;
-  }, [template, effectiveSizes]);
+    if (hasErrors) {
+      setSaveState({ status: 'blocked', issues });
+      return false;
+    }
+    if (!designId) {
+      setSaveState({ status: 'saved', issues });
+      return true;
+    }
+
+    setSaveState({ status: 'saving', issues });
+    const { designData, warnings } = templateToDesignData(template);
+    const exportIssues = warnings.map((w) => ({ level: 'warning', message: w }));
+    try {
+      await api.put(`/invoices/designs/${designId}/`, {
+        name: meta?.name,
+        base_template: meta?.base_template,
+        color_variant: meta?.color_variant || '',
+        design_data: designData,
+      });
+      savedSnapshotRef.current = template;
+      setSaveState({ status: 'saved', issues: [...issues, ...exportIssues] });
+      return true;
+    } catch (err) {
+      // InvoiceDesignSerializer.validate_design_data raises a plain list
+      // of specific violation strings, which DRF surfaces as
+      // {"design_data": ["...", "..."]} — the real, specific messages a
+      // v2-shape payload could still fail on server-side (this adapter is
+      // verified round-trip-correct for real builtin seeds, but a
+      // hand-edited canvas is real new input the server has never seen).
+      const serverDesignDataErrors = err.response?.data?.design_data;
+      const serverErrors = Array.isArray(serverDesignDataErrors)
+        ? serverDesignDataErrors.map((m) => ({ level: 'error', message: String(m) }))
+        : [];
+      const message = serverErrors.length
+        ? null
+        : err.response
+          ? 'The server rejected this save. Please try again.'
+          : 'Could not reach the server. Check your connection and try again.';
+      setSaveState({
+        status: 'error',
+        issues: [...issues, ...exportIssues, ...serverErrors],
+        message,
+      });
+      return false;
+    }
+  }, [template, effectiveSizes, designId, meta]);
+
+  // Version history — real GET/POST against
+  // apps.invoices.views.design_versions_list/design_version_restore.
+  // Meaningless (and never called) without a real designId.
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [restoringVersionId, setRestoringVersionId] = useState(null);
+  const [versionsError, setVersionsError] = useState(null);
+
+  const fetchVersions = useCallback(async () => {
+    if (!designId) return;
+    setVersionsLoading(true);
+    setVersionsError(null);
+    try {
+      const { data } = await api.get(`/invoices/designs/${designId}/versions/`);
+      setVersions(data);
+    } catch {
+      setVersionsError('Could not load version history right now.');
+    } finally {
+      setVersionsLoading(false);
+    }
+  }, [designId]);
+
+  // design_version_restore is non-destructive on the server (confirmed
+  // directly in apps/invoices/views.py: it copies the chosen version's
+  // design_data onto the live row and saves, which itself creates a NEW
+  // version for the restored content via InvoiceDesign's own
+  // _create_version_if_content_changed — so restoring never deletes or
+  // overwrites history, "undo the restore" is just restoring whichever
+  // version came right before it, and the version list only ever grows).
+  const restoreVersion = useCallback(
+    async (versionId) => {
+      if (!designId) return false;
+      setRestoringVersionId(versionId);
+      setVersionsError(null);
+      try {
+        const { data } = await api.post(`/invoices/designs/${designId}/versions/${versionId}/restore/`);
+        const { template: restored } = designDataToTemplate(data.design_data);
+        dispatch({ type: 'LOAD', template: restored });
+        savedSnapshotRef.current = restored;
+        setSelection({ ids: [], part: null });
+        setSaveState({ status: 'idle', issues: [] });
+        await fetchVersions();
+        return true;
+      } catch {
+        setVersionsError('Could not restore this version right now.');
+        return false;
+      } finally {
+        setRestoringVersionId(null);
+      }
+    },
+    [designId, fetchVersions]
+  );
 
   const value = {
     template,
     itemsById,
     saveState,
     runSave,
+    designId,
+    designMeta: meta,
+    dirty: template !== savedSnapshotRef.current,
+    versions,
+    versionsLoading,
+    versionsError,
+    restoringVersionId,
+    fetchVersions,
+    restoreVersion,
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
     undo,

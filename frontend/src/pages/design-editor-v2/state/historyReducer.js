@@ -44,6 +44,19 @@ export function historyReducer(state, action) {
     case 'RESET': {
       return initialHistoryState;
     }
+    case 'LOAD': {
+      // Real-backend integration: replaces the whole document (used only
+      // by version restore, mid-session — the initial real load from
+      // GET /invoices/designs/{id}/ instead seeds a fresh EditorProvider's
+      // lazy useReducer initializer, so it never needs this action at
+      // all). Deliberately wipes past/future rather than pushing onto
+      // them — the restored content isn't a further edit of what was on
+      // screen, it's a wholesale replacement, so undoing "back into" the
+      // pre-restore canvas would be confusing; the pre-restore state is
+      // still real and recoverable as its own actual version on the
+      // server if needed.
+      return { past: [], present: action.template, future: [] };
+    }
     default:
       return state;
   }

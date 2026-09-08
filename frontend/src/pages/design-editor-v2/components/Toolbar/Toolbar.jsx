@@ -1,15 +1,21 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useEditor } from '../../state/EditorContext';
 import { LogoSVG, WordmarkSVG } from '../Brand';
 import { mmToPx } from '../../utils/units';
+import VersionHistoryModal from '../VersionHistoryModal';
 
 export default function Toolbar({ onPreview }) {
   const {
-    canUndo, canRedo, undo, redo, runSave,
+    canUndo, canRedo, undo, redo, runSave, saveState,
     template, selection, deleteItems, canDeleteSelection, deleteBlockLine, canDeleteBlockLine,
     duplicateItems,
     zoom, setZoom, canvasViewportRef,
+    designId, designMeta, dirty,
   } = useEditor();
+  const navigate = useNavigate();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const saving = saveState.status === 'saving';
 
   // Prompt 22 item 4: fits `template.page.width/height` into whatever the
   // canvas viewport currently measures, whichever axis is more
@@ -68,6 +74,33 @@ export default function Toolbar({ onPreview }) {
         <WordmarkSVG width={107} height={16} />
       </div>
 
+      {/* Only present in real, backend-loaded mode (a real designId) —
+          the bare /invoices/designs/editor-v2 sandbox route has nowhere
+          to navigate back to and no server-side name to show. Mirrors
+          DesignEditor.jsx's own "Back to designs" convention exactly,
+          including the same in-app-navigation unsaved-changes guard
+          (beforeunload only catches an actual tab close/refresh — a
+          client-side navigate() bypasses it entirely). */}
+      {designId && (
+        <>
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)', marginRight: 12, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {designMeta?.name}
+          </span>
+          <button
+            className="tbtn"
+            onClick={() => {
+              if (dirty && !window.confirm('You have unsaved changes. Leave this page and discard them?')) return;
+              navigate('/invoices/designs');
+            }}
+          >
+            Back to designs
+          </button>
+          <button className="tbtn" onClick={() => setHistoryOpen(true)}>
+            History
+          </button>
+        </>
+      )}
+
       <button className="tbtn" disabled={!canUndo} onClick={undo}>
         Undo <span className="tbtn__key">⌘Z</span>
       </button>
@@ -106,9 +139,18 @@ export default function Toolbar({ onPreview }) {
       <button className="tbtn" onClick={onPreview}>
         Preview <span className="tbtn__key">P</span>
       </button>
-      <button className="tbtn tbtn--primary" onClick={runSave}>
-        Save <span className="tbtn__key" style={{ borderColor: 'rgba(255,255,255,0.3)', color: 'rgba(255,255,255,0.8)' }}>⌘S</span>
+      <button className="tbtn tbtn--primary" onClick={runSave} disabled={saving}>
+        {saving ? 'Saving…' : 'Save'}{' '}
+        <span className="tbtn__key" style={{ borderColor: 'rgba(255,255,255,0.3)', color: 'rgba(255,255,255,0.8)' }}>⌘S</span>
       </button>
+      {designId && saveState.status === 'saved' && (
+        <span style={{ fontSize: 12, color: 'var(--success, #2f9e44)', marginLeft: 8 }}>Saved</span>
+      )}
+      {designId && saveState.status === 'error' && saveState.message && (
+        <span style={{ fontSize: 12, color: 'var(--danger, #e03131)', marginLeft: 8 }}>{saveState.message}</span>
+      )}
+
+      {historyOpen && <VersionHistoryModal onClose={() => setHistoryOpen(false)} />}
     </div>
   );
 }

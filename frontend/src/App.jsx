@@ -146,6 +146,15 @@ export default function App() {
           path="/invoices/designs/editor-v2"
           element={<PrivateRoute><TemplateBuilderV2 /></PrivateRoute>}
         />
+        {/* Real backend integration: opens a real, owned InvoiceDesign
+            (production schema_version: 2 only — see
+            TemplateBuilderV2.jsx's LoadedTemplateBuilder) through this
+            same editor. Still not linked from anywhere in the product UI
+            and still not the default Template Builder route. */}
+        <Route
+          path="/invoices/designs/editor-v2/:id"
+          element={<PrivateRoute><TemplateBuilderV2 /></PrivateRoute>}
+        />
 
         {/* No dedicated landing page yet (separate future work) — send
             the root straight to Profile; PrivateRoute bounces to /login

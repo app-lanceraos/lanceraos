@@ -1193,3 +1193,22 @@
 }
 
 .modal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------- Real-load route status (loading/error/legacy) ---------- */
+/* Rendered instead of the editor shell entirely while a real design is
+   being fetched, or when it can't be opened here at all — see
+   TemplateBuilderV2.jsx's LoadedTemplateBuilder. */
+.v2-route-status {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  background: var(--page-bg, #0f0e13);
+  color: var(--text-primary, #fff);
+  font-size: 14px;
+}
+
+.v2-route-status .fos-alert {
+  max-width: 520px;
+}

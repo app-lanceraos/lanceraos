@@ -1,6 +1,6 @@
 import { ELEMENT_TYPES } from '../data/elementCatalog';
 import { SHAPE_TYPES } from '../data/shapeCatalog';
-import { rotatedBoundingBox, getItemBounds, getFooterTop, isImagePixelated, COLLISION_MARGIN, EDGE_CONTACT_EPSILON_MM } from './geometry';
+import { rotatedBoundingBox, getItemBounds, getFooterTop, isImagePixelated, EDGE_CONTACT_EPSILON_MM } from './geometry';
 import { resolveItemTheme } from './theme';
 
 // A manually-set width/height is a MINIMUM for text (Prompt 14) — the
@@ -31,21 +31,38 @@ function itemLabel(item) {
 // adapter). Shapes and images are collision-exempt by design, same as
 // during a live gesture — only content items are checked against each
 // other. Reuses the same rotated-bounding-box math the live gesture uses
-// (`rotatedBoundingBox`) rather than a second axis-aligned approximation,
-// and the same per-side collision margin (`COLLISION_MARGIN`) so "overlap"
-// here means exactly what it means during a drag.
+// (`rotatedBoundingBox`) rather than a second axis-aligned approximation —
+// but NOT the live gesture's own breathing-room margin (see this
+// function's own real-backend-integration-fix comment below for why).
 function checkOverlaps(template, effectiveSizes, issues) {
   const contentItems = template.items
     .filter((i) => i.kind === 'content' && !i.hidden)
     .map((i) => withEffectiveSize(i, effectiveSizes));
 
+  // Real-backend-integration fix: this used to expand every box by
+  // +COLLISION_MARGIN (the same small buffer a LIVE DRAG gesture keeps as
+  // breathing room so two items don't visually glue together) before
+  // testing intersection — correct for a drag-in-progress, but wrong here.
+  // Every real production seed (design_templates.py's BUILTIN_DESIGNS)
+  // places its totals rows (subtotal/tax/discount/total due) flush,
+  // zero-gap, by design — a real, first-real-backend-integration-test
+  // finding: importing ANY of them and calling this unmodified reliably
+  // flagged every adjacent flush pair as "overlapping" and blocked Save
+  // outright, even with zero edits and zero measurement drift (verified
+  // directly with effectiveSizes={}, ruling out text-measurement as the
+  // cause). This is the SAME "touching is fine, only genuine intersection
+  // isn't" tolerance checkBounds already applies at its own page-edge
+  // boundary via EDGE_CONTACT_EPSILON_MM — applied here as a shrink
+  // instead of a grow, so two items that are merely flush/touching no
+  // longer register as overlapping, while two that genuinely intersect
+  // still do.
   const expanded = contentItems.map((item) => {
     const b = rotatedBoundingBox(item);
     return {
-      minX: b.minX - COLLISION_MARGIN,
-      maxX: b.maxX + COLLISION_MARGIN,
-      minY: b.minY - COLLISION_MARGIN,
-      maxY: b.maxY + COLLISION_MARGIN,
+      minX: b.minX + EDGE_CONTACT_EPSILON_MM,
+      maxX: b.maxX - EDGE_CONTACT_EPSILON_MM,
+      minY: b.minY + EDGE_CONTACT_EPSILON_MM,
+      maxY: b.maxY - EDGE_CONTACT_EPSILON_MM,
     };
   });
 
