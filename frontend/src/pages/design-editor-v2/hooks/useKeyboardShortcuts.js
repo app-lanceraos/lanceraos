@@ -143,7 +143,11 @@ export function useKeyboardShortcuts({ onPreviewToggle } = {}) {
       if (!imageItem) return; // no image in this paste — leave it to the internal-clipboard handler
       e.preventDefault();
       const file = imageItem.getAsFile();
-      if (file) loadImageFile(file, addImageItem);
+      // Real image upload — same File handed through to addImageItem
+      // alongside the local data URL as the file-picker path does (see
+      // ShapeLibraryPanel.jsx's own comment), so a pasted image gets a
+      // real background upload too.
+      if (file) loadImageFile(file, (dataUrl, w, h) => addImageItem(dataUrl, w, h, file));
     };
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);

@@ -142,7 +142,11 @@ export default function SignatureCard({ initialSignatureUrl }) {
   const [signatureUrl, setSignatureUrl] = useState(initialSignatureUrl || '')
   const [method, setMethod] = useState('upload') // 'upload' | 'draw'
   const [pendingFile, setPendingFile] = useState(null) // File/Blob sent to the backend
-  const [threshold, setThreshold] = useState(null) // upload-path only; null = let the backend auto-detect (Otsu)
+  const [threshold, setThreshold] = useState(null) // upload-path only; null = still on the backend's auto (Otsu) value
+  const [autoThreshold, setAutoThreshold] = useState(128) // the real Otsu-computed value echoed back by the last
+  // preview response (`used_threshold`) — shown/used whenever `threshold` is still null (auto), so the slider's
+  // initial position is real rather than a guessed constant. Never overwrites `threshold` once the user has moved
+  // the slider themselves (that would fight their override on the very next preview response).
   const [previewUri, setPreviewUri] = useState('')
   const [previewSource, setPreviewSource] = useState(null) // 'upload' | 'drawn' — whichever produced previewUri
   const [loadingPreview, setLoadingPreview] = useState(false)
@@ -175,6 +179,13 @@ export default function SignatureCard({ initialSignatureUrl }) {
       })
       setPreviewUri(res.data.preview_data_uri)
       setPreviewSource(source)
+      // 'used_threshold' is only ever present for source='upload' (omitted entirely for 'drawn',
+      // per signature_upload's own docstring). Only adopt it when the caller hasn't already sent
+      // an explicit override this round — otherwise this would just echo the override back, which
+      // is harmless, but skip it anyway for clarity: it's the real auto value only when thresholdOverride is null.
+      if (source === 'upload' && thresholdOverride == null && res.data.used_threshold != null) {
+        setAutoThreshold(res.data.used_threshold)
+      }
     } catch (err) {
       show('error', err.response?.data?.error || 'Could not process that signature.')
       setPreviewUri('')
@@ -365,7 +376,7 @@ export default function SignatureCard({ initialSignatureUrl }) {
           {/* Threshold override — upload path only. Nothing to threshold on
               an already-clean drawn PNG, per signature_upload's own docstring. */}
           {previewSource === 'upload' && (
-            <ThresholdSlider value={threshold ?? 128} onCommit={handleThresholdChange} disabled={busy} />
+            <ThresholdSlider value={threshold ?? autoThreshold} onCommit={handleThresholdChange} disabled={busy} />
           )}
 
           <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>

@@ -763,6 +763,45 @@
   box-shadow: 0 0 0 2px white;
 }
 
+/* Real image upload — an overlay centered on the item's own frame
+   (unlike the pixelation badge above, this covers the whole box, not
+   just a corner: it's communicating the item's real content isn't
+   settled yet, a more central concern than a soft size warning). */
+.item__image-upload-badge {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 18, 28, 0.35);
+  border: none;
+  padding: 0;
+  font: inherit;
+}
+
+.item__image-upload-spinner {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.4);
+  border-top-color: white;
+  animation: item-image-upload-spin 0.7s linear infinite;
+}
+
+@keyframes item-image-upload-spin {
+  to { transform: rotate(360deg); }
+}
+
+.item__image-upload-badge--error {
+  background: rgba(178, 34, 34, 0.55);
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .item__divider {
   width: 100%;
   height: 100%;
@@ -1230,6 +1269,38 @@
 }
 
 .v2-preview-status--error { color: var(--danger); }
+
+/* ---------- Crop modal ---------- */
+/* Reuses `.modal-backdrop`/`.modal-actions`/`.modal-btn` above (the same
+   convention CropModal's own file comment cites) and `.item__resize-
+   handle` (styles/editor.css, shared with the live canvas's own 8-point
+   resize) for the crop rectangle's own handles — no separate handle
+   styling exists here on purpose. */
+.crop-modal__stage {
+  position: relative;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.crop-modal__image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* The 9999px box-shadow spread is the standard "dim everything outside
+   this box" trick — cheaper and simpler than a 4-piece overlay, and it
+   scales/repositions itself automatically as the rect's own left/top/
+   width/height change on every drag frame. */
+.crop-modal__rect {
+  position: absolute;
+  border: 1.5px solid var(--purple-500);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  cursor: move;
+}
 
 .v2-preview-status--pdf {
   position: absolute;

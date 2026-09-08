@@ -44,6 +44,18 @@ export function historyReducer(state, action) {
     case 'RESET': {
       return initialHistoryState;
     }
+    case 'SILENT_PATCH': {
+      // Real-image-upload integration: swaps `present` in place with NO
+      // push onto `past`/`future` — used exclusively by EditorContext's
+      // background image-upload completion to replace an item's local
+      // `data:` URI with the real Cloudinary `secure_url` once the
+      // upload finishes. That swap isn't a user-initiated content edit
+      // (the user never touched anything when the network call happened
+      // to resolve) — it shouldn't consume an undo step or be something
+      // Ctrl+Z walks back through, unlike every other template mutation
+      // in this file, which the user directly caused via COMMIT.
+      return { ...state, present: action.next };
+    }
     case 'LOAD': {
       // Real-backend integration: replaces the whole document (used only
       // by version restore, mid-session — the initial real load from

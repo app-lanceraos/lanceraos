@@ -599,7 +599,16 @@ function ShapeBody({ item }) {
 // gesture — a transparent full-box layer on top is what actually
 // receives the click/drag, bubbling to this frame's own onMouseDown
 // (beginMove) exactly like every other item's empty space does.
-function ImageBody({ item }) {
+// Real image upload — `uploadStatus` ('uploading' | 'error' | undefined)
+// renders a subtle overlay on top of the same local preview the image
+// has always shown instantly, so the item never looks broken/blank
+// while its real Cloudinary upload is in flight: 'uploading' is a small
+// spinner badge (the upload is expected to finish on its own); 'error'
+// is a clear, clickable retry affordance — this pass's own "don't
+// silently leave the item stuck with an unresolvable local blob"
+// requirement. Both sit on top of `.item__image-interaction` (still
+// present so the item stays draggable/selectable while this is showing).
+function ImageBody({ item, uploadStatus, onRetry }) {
   return (
     <div className="item__image-wrap">
       <img
@@ -610,6 +619,25 @@ function ImageBody({ item }) {
         style={{ objectFit: 'contain', pointerEvents: 'none' }}
       />
       <div className="item__image-interaction" />
+      {uploadStatus === 'uploading' && (
+        <div className="item__image-upload-badge" title="Uploading…">
+          <span className="item__image-upload-spinner" />
+        </div>
+      )}
+      {uploadStatus === 'error' && (
+        <button
+          type="button"
+          className="item__image-upload-badge item__image-upload-badge--error"
+          title="Upload failed — click to retry"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRetry?.();
+          }}
+        >
+          Retry upload
+        </button>
+      )}
     </div>
   );
 }
@@ -686,6 +714,8 @@ export default function CanvasItem({ item, readOnly = false }) {
     setPushPreview,
     setContextMenu,
     zoom,
+    imageUploads,
+    retryImageUpload,
   } = useEditor();
   const def = item.kind === 'content' ? ELEMENT_TYPES[item.type] : null;
 
@@ -1589,7 +1619,11 @@ export default function CanvasItem({ item, readOnly = false }) {
         {item.kind === 'shape' ? (
           <ShapeBody item={current} />
         ) : item.kind === 'image' ? (
-          <ImageBody item={current} />
+          <ImageBody
+            item={current}
+            uploadStatus={imageUploads[item.id]}
+            onRetry={() => retryImageUpload(item.id)}
+          />
         ) : (
           <ContentBody
             item={current}

@@ -7,6 +7,7 @@ import { isLinked, resolveColorValue, resolveFontValue } from '../../utils/theme
 import { CheckIcon, ErrorIcon, WarningIcon } from '../Icons';
 import { pxToMm } from '../../utils/units';
 import { BINDING_OPTIONS, bindingLabel } from '../../data/bindings';
+import CropModal from '../CropModal';
 
 // Phase 2a: every geometric field in this panel is now mm (position/
 // size/border-width/corner-radius/cell-padding — the whole "mm family",
@@ -950,11 +951,18 @@ function ShapeProperties({ items, pageAlignItem }) {
 // page alignment. No Typography (no text at all) and no content-align
 // (nothing to align within the box — the picture just fills it).
 function ImageProperties({ items, pageAlignItem }) {
-  const { template, updateItems } = useEditor();
+  const { template, updateItems, imageUploads, setItemCrop } = useEditor();
   const theme = template.theme;
   const ids = items.map((i) => i.id);
   const first = items[0];
   const allUnlocked = items.every((i) => !i.locked);
+  // Crop is single-item only — a rectangle cropped against ITS OWN source
+  // image doesn't generalize to "crop N images at once" the way a shared
+  // width/border edit does, so this action (and its modal) simply isn't
+  // offered for a multi-image selection, same scope line MixedProperties'
+  // own comment draws for corner radius.
+  const [cropOpen, setCropOpen] = useState(false);
+  const uploading = items.length === 1 && imageUploads[first.id] === 'uploading';
 
   return (
     <>
@@ -975,6 +983,34 @@ function ImageProperties({ items, pageAlignItem }) {
         </>
       )}
 
+      {items.length === 1 && !first.locked && (
+        <>
+          <div className="panel__section-title">Crop</div>
+          <button
+            className="tbtn"
+            style={{ width: '100%', justifyContent: 'center' }}
+            disabled={uploading}
+            onClick={() => setCropOpen(true)}
+          >
+            {first.crop ? 'Edit crop' : 'Crop image'}
+          </button>
+          {first.crop && (
+            <button
+              className="tbtn"
+              style={{ width: '100%', justifyContent: 'center', marginTop: 6 }}
+              onClick={() => setItemCrop(first.id, null)}
+            >
+              Remove crop
+            </button>
+          )}
+          {uploading && (
+            <p className="empty-hint" style={{ marginTop: 6 }}>
+              Cropping is available once this image finishes uploading.
+            </p>
+          )}
+        </>
+      )}
+
       <div className="panel__section-title">Fill &amp; border</div>
       <LinkableColorRow label="Background" theme={theme} value={first.bgColor} onChange={(v) => updateItems(ids, () => ({ bgColor: v }))} />
       <LinkableColorRow label="Border color" theme={theme} value={first.borderColor} onChange={(v) => updateItems(ids, () => ({ borderColor: v }))} fallback="#262420" />
@@ -982,6 +1018,17 @@ function ImageProperties({ items, pageAlignItem }) {
       <SliderRow label="Corner radius (mm)" min={0} max={6.4} step={0.1} value={first.cornerRadius ?? 0} onChange={(v) => updateItems(ids, () => ({ cornerRadius: v }))} />
 
       <AlignmentSection pageAlignItem={pageAlignItem} />
+
+      {cropOpen && items.length === 1 && (
+        <CropModal
+          item={first}
+          onApply={(crop) => {
+            setItemCrop(first.id, crop);
+            setCropOpen(false);
+          }}
+          onClose={() => setCropOpen(false)}
+        />
+      )}
     </>
   );
 }

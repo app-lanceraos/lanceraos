@@ -49,6 +49,9 @@ urlpatterns = [
     path('designs/canvas-element/', views_design_editor.design_canvas_element, name='design_canvas_element'),
     # Green-Light directive — the Template Health endpoint (Layers A/C/D, see design_validation.py).
     path('designs/validate/', views_design_editor.design_validate, name='design_validate'),
+    # Editor-authored canvas images (file picker / clipboard paste) — real
+    # Cloudinary upload, own folder, no replace-on-upload semantics.
+    path('designs/upload-image/', views_design_editor.design_upload_image, name='design_upload_image'),
     path('designs/<uuid:pk>/', views.design_detail, name='design_detail'),
     path('designs/<uuid:pk>/set-default/', views.design_set_default, name='design_set_default'),
     # Green-Light directive — version history + rollback.

@@ -149,6 +149,78 @@ export function EditorProvider({ children, initialTemplate, designId = null, des
 
   const template = history.present;
 
+  // Real image upload — a per-item, transient (not history) status for
+  // the background upload every newly-added image item now kicks off:
+  // 'uploading' | 'error' | absent (settled: either it finished — the
+  // item's own `dataUrl` is already the real Cloudinary URL by then, see
+  // uploadImageForItem below — or it was never a real upload to begin
+  // with, e.g. an item restored from a saved design that already carries
+  // a real URL). Deliberately outside `template`/history, same category
+  // as `effectiveSizes`/`pushPreview` above — this is infrastructure
+  // catching up to something the user already did, not a new edit of
+  // its own.
+  const [imageUploads, setImageUploads] = useState({});
+  // Always-current template, read by uploadImageForItem's async
+  // callback — that callback can resolve long after the render that
+  // started it, so closing over `template` directly would risk
+  // clobbering every edit made in between with a stale snapshot.
+  const templateRef = useRef(template);
+  templateRef.current = template;
+  // The real File object behind each in-flight/failed upload, keyed by
+  // item id — kept in a ref (never triggers a render on its own) purely
+  // so retryImageUpload can re-send the exact same bytes without asking
+  // the caller to hand the File back a second time (the properties
+  // panel/canvas retry affordance only knows the item id).
+  const pendingFilesRef = useRef({});
+
+  // Uploads one image item's real file to the design-image endpoint and,
+  // on success, silently swaps that item's `dataUrl` from the local
+  // `data:` URI to the real returned `secure_url` — `exportImage`
+  // (designDataAdapter.js) needs no change since it already just reads
+  // `item.dataUrl` directly. On failure, leaves `dataUrl` exactly as it
+  // was (the local preview keeps working) and flags 'error' so the
+  // canvas can offer a retry — calling this again with the same
+  // (itemId, file) is exactly that retry.
+  const uploadImageForItem = useCallback((itemId, file) => {
+    pendingFilesRef.current[itemId] = file;
+    setImageUploads((prev) => ({ ...prev, [itemId]: 'uploading' }));
+    const formData = new FormData();
+    formData.append('image', file);
+    api
+      .post('/invoices/designs/upload-image/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then(({ data }) => {
+        const current = templateRef.current;
+        dispatch({
+          type: 'SILENT_PATCH',
+          next: {
+            ...current,
+            items: current.items.map((i) => (i.id === itemId ? { ...i, dataUrl: data.secure_url } : i)),
+          },
+        });
+        delete pendingFilesRef.current[itemId];
+        setImageUploads((prev) => {
+          const next = { ...prev };
+          delete next[itemId];
+          return next;
+        });
+      })
+      .catch(() => {
+        setImageUploads((prev) => ({ ...prev, [itemId]: 'error' }));
+      });
+  }, []);
+
+  // Retries an item's upload using the exact same File this session
+  // already has in hand (pendingFilesRef) — a no-op if that item was
+  // never a real pending upload (e.g. stale id, or a double-click on the
+  // retry affordance racing its own success).
+  const retryImageUpload = useCallback((itemId) => {
+    const file = pendingFilesRef.current[itemId];
+    if (!file) return;
+    uploadImageForItem(itemId, file);
+  }, [uploadImageForItem]);
+
   // Every consumer in this app reaches selection-setting through this one
   // wrapper (exposed below as `setSelection`, same name/shape as before —
   // no call site elsewhere needed to change) so the signature trio's
@@ -502,8 +574,21 @@ export function EditorProvider({ children, initialTemplate, designId = null, des
   // end by default, since new-item-on-top is the sensible default
   // absent any other instruction, and nothing stops the layers panel
   // from moving it later anyway.
+  // Real image upload: `file` (added this pass) is the actual browser
+  // File behind `dataUrl` (a file-picker File, or a Blob reconstructed
+  // from an OS clipboard paste — both are real File/Blob instances
+  // FormData can send directly) — when present, a real background
+  // upload to POST /invoices/designs/upload-image/ starts immediately
+  // after the item is created, so the local data: URI this function has
+  // always used for instant canvas feedback gets replaced with the real
+  // Cloudinary secure_url the moment it's ready (uploadImageForItem
+  // above), rather than staying a data: URI (and getting exported/saved
+  // as one — designDataAdapter.js's own exportImage warning) forever.
+  // `file` stays optional so a caller with no real File (there is none
+  // today, but nothing forces every future caller to have one) still
+  // gets exactly the old local-only behavior.
   const addImageItem = useCallback(
-    (dataUrl, sourceWidth, sourceHeight) => {
+    (dataUrl, sourceWidth, sourceHeight, file) => {
       // Phase 2a: `sourceWidth`/`sourceHeight` stay real image PIXELS
       // (they always were, and always will be — see this function's own
       // comment above on what they're actually for), but the display cap
@@ -534,8 +619,23 @@ export function EditorProvider({ children, initialTemplate, designId = null, des
       };
       commit({ ...template, items: appendRespectingZOrder(template.items, [item]) });
       setSelection({ ids: [item.id], part: null });
+      if (file) uploadImageForItem(item.id, file);
+      return item;
     },
-    [template, commit]
+    [template, commit, uploadImageForItem]
+  );
+
+  // Real crop UI: commits `item.crop` (fractions 0-1 of the source
+  // image's own sourceWidth/sourceHeight, exactly what design_data.crop
+  // and design_renderer.py's own crop_css math already expect — see
+  // designDataAdapter.js's exportImage) — `null` clears it back to
+  // uncropped, same as any other optional-field clear elsewhere in this
+  // file. A genuine user content edit, so this goes through the normal
+  // updateItem -> commit -> history path, unlike the silent upload-URL
+  // swap above.
+  const setItemCrop = useCallback(
+    (itemId, crop) => updateItem(itemId, { crop }),
+    [updateItem]
   );
 
   // Prompt 26 item 2/3: moves the current SELECTION's stacking position.
@@ -682,6 +782,23 @@ export function EditorProvider({ children, initialTemplate, designId = null, des
   // there too, exactly as before this integration (status: 'saved',
   // purely local).
   const runSave = useCallback(async () => {
+    // Real image upload: refuse to save (and, critically, to export/PUT
+    // whatever `dataUrl` an in-flight item currently holds) while any
+    // image is still mid-upload — that item's real Cloudinary URL isn't
+    // known yet, so a save started right now would persist the throwaway
+    // local data: URI as if it were final. A settled 'error' state does
+    // NOT block (its dataUrl is still the perfectly valid local preview —
+    // the user can retry the upload later, or just save with the local
+    // preview if they don't care about that specific asset being
+    // permanent), matching this function's own existing "client-side
+    // issues block, nothing else does" shape.
+    if (Object.values(imageUploads).some((status) => status === 'uploading')) {
+      setSaveState({
+        status: 'blocked',
+        issues: [{ level: 'error', message: 'An image is still uploading — wait a moment and try again.' }],
+      });
+      return false;
+    }
     const issues = validateTemplate(template, effectiveSizes);
     const hasErrors = issues.some((i) => i.level === 'error');
     if (hasErrors) {
@@ -729,7 +846,7 @@ export function EditorProvider({ children, initialTemplate, designId = null, des
       });
       return false;
     }
-  }, [template, effectiveSizes, designId, meta]);
+  }, [template, effectiveSizes, designId, meta, imageUploads]);
 
   // Version history — real GET/POST against
   // apps.invoices.views.design_versions_list/design_version_restore.
@@ -836,6 +953,9 @@ export function EditorProvider({ children, initialTemplate, designId = null, des
     addItemsFromClipboard,
     addShape,
     addImageItem,
+    imageUploads,
+    retryImageUpload,
+    setItemCrop,
     moveSelectionZ,
     reorderItems,
     toggleItemLocked,

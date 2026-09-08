@@ -68,7 +68,9 @@ from .serializers import (
 )
 from .serializers_claims import PaymentClaimSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
-from .signature_tool import DEFAULT_FEATHER, crop_signature_to_content, remove_signature_background
+from .signature_tool import (
+    DEFAULT_FEATHER, compute_otsu_threshold, crop_signature_to_content, remove_signature_background,
+)
 
 # Reference images for AI design seeding — a narrower set than logo uploads
 # (screenshots/photos of an existing design, not decorative image formats):
@@ -2722,7 +2724,15 @@ def signature_upload(request):
 
     POST without `commit` — returns a cleaned (or, for source='drawn',
     just cropped) transparent-background PNG preview as a data URI, and
-    does NOT touch Cloudinary or FreelancerProfile yet.
+    does NOT touch Cloudinary or FreelancerProfile yet. The preview
+    response also includes `used_threshold` — the actual gray-level
+    cutoff applied (the explicit `threshold` override if one was given,
+    otherwise the real per-image Otsu-computed value) — so a frontend
+    slider has a genuine starting value to show instead of guessing.
+    This only ever applies to source='upload' (Otsu never runs for
+    source='drawn', since there's no thresholding at all in that path);
+    for a drawn signature, `used_threshold` is omitted from the response
+    entirely.
     POST again with the same `image`/`source`/`threshold`/`feather` plus
     `commit=true` — re-runs the same processing for real, uploads it, and
     saves it as the user's one signature (replacing any previous one, per
@@ -2762,15 +2772,30 @@ def signature_upload(request):
         source = 'upload'
 
     raw_bytes = file.read()
+    # None for source='drawn' (Otsu never runs there) — populated below
+    # for source='upload' with whichever threshold actually got applied,
+    # explicit override or real Otsu-computed default.
+    used_threshold = None
     try:
         if source == 'drawn':
             cleaned_png_bytes = crop_signature_to_content(raw_bytes)
         else:
             threshold = request.data.get('threshold')
             feather = request.data.get('feather')
+            if threshold not in (None, ''):
+                used_threshold = int(threshold)
+            else:
+                # Compute the same Otsu default remove_signature_background
+                # would compute internally, so the caller can be told the
+                # real value used — passed through explicitly below rather
+                # than left for remove_signature_background to re-derive,
+                # so there's exactly one source of truth for "what
+                # threshold actually got applied" on this call.
+                probe_grayscale = PILImage.open(io.BytesIO(raw_bytes)).convert('RGB').convert('L')
+                used_threshold = compute_otsu_threshold(probe_grayscale)
             cleaned_png_bytes = remove_signature_background(
                 raw_bytes,
-                threshold=int(threshold) if threshold not in (None, '') else None,
+                threshold=used_threshold,
                 feather=int(feather) if feather not in (None, '') else DEFAULT_FEATHER,
             )
     except Exception:
@@ -2780,7 +2805,10 @@ def signature_upload(request):
     commit = str(request.data.get('commit', '')).lower() in ('true', '1', 'yes')
     if not commit:
         preview_data_uri = f'data:image/png;base64,{base64.b64encode(cleaned_png_bytes).decode("ascii")}'
-        return Response({'preview_data_uri': preview_data_uri})
+        preview_response = {'preview_data_uri': preview_data_uri}
+        if used_threshold is not None:
+            preview_response['used_threshold'] = used_threshold
+        return Response(preview_response)
 
     try:
         prof = request.user.profile

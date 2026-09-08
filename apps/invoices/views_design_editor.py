@@ -20,9 +20,12 @@ which dispatches to design_renderer.py — not through this module.
 """
 import json
 import logging
+import os
 
 from django.http import HttpResponse
 from django.views.decorators.clickjacking import xframe_options_exempt
+from PIL import Image, UnidentifiedImageError
+from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -39,6 +42,7 @@ from apps.invoices.design_schema import ELEMENT_KINDS, SCHEMA_VERSION_V2, get_sc
 from apps.invoices.design_templates import BUILTIN_DESIGNS, get_blank_design_data, get_builtin_design_data
 from apps.invoices.design_validation import run_validation
 from apps.invoices.views import _check_moderate_rate_limit, _too_many_requests
+from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -329,3 +333,72 @@ def design_validate(request):
     context = build_render_context(request.user, base_template, color_variant)
     result = run_validation(design_data, invoice_context=context)
     return Response(result)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def design_upload_image(request):
+    """
+    Uploads an editor-authored canvas image (a real image element added
+    via the file picker or a clipboard paste while building a design) to
+    Cloudinary, so `design_data.style.src` can store a real, permanent
+    URL instead of an in-memory `data:` URI baked directly into the
+    design row (and duplicated again in every InvoiceDesignVersion
+    snapshot on every save — a real, confirmed problem this endpoint
+    exists to fix; the canvas's own frontend wiring to actually call this
+    instead of embedding base64 is a separate, later task).
+
+    Uses its own Cloudinary folder (`lanceraos/design-images`), distinct
+    from `lanceraos/logos`/`lanceraos/signatures` — this is a different
+    asset class (many images per design, arbitrarily many designs per
+    user, no "one canonical image per user" replace-on-upload semantics
+    the way a logo/signature has), so there is deliberately no
+    destroy-the-previous-one step here at all.
+
+    Request (multipart/form-data): image (file, required).
+    Response: {"secure_url": "...", "public_id": "..."}. `public_id` is
+    returned for future cleanup/reference use only — nothing reads it
+    back yet, and no cleanup logic is built in this pass.
+
+    Rate-limited at the same Moderate tier (30/hour/user) every other
+    editor-support action in this module already shares
+    (_check_moderate_rate_limit/_too_many_requests, apps/invoices/views.py)
+    — a canvas image can reasonably be added several times per editing
+    session, unlike the strict one-per-profile logo/signature limit.
+    """
+    if _check_moderate_rate_limit('design_upload_image', request.user):
+        return _too_many_requests('Too many uploads. Please try again later.')
+
+    file = request.FILES.get('image')
+    if not file:
+        return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    extension = os.path.splitext(file.name)[1].lower()
+    if extension not in ALLOWED_LOGO_EXTENSIONS:
+        return Response(
+            {'error': f'Unsupported file type. Allowed: {", ".join(sorted(ALLOWED_LOGO_EXTENSIONS))}'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if file.size > MAX_LOGO_SIZE_BYTES:
+        return Response({'error': 'File too large. Maximum size is 10MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Same content-validation discipline as upload_logo/signature_upload —
+    # extension alone doesn't confirm the file's actual content.
+    try:
+        Image.open(file).verify()
+    except (UnidentifiedImageError, OSError):
+        return Response({'error': "That doesn't look like a valid image file."}, status=status.HTTP_400_BAD_REQUEST)
+    file.seek(0)
+
+    import cloudinary.uploader
+
+    try:
+        result = cloudinary.uploader.upload(file, folder='lanceraos/design-images', resource_type='image')
+    except Exception:
+        logger.exception('[INVOICES] Cloudinary design-image upload failed for user_id=%s', request.user.pk)
+        return Response({'error': 'Upload failed. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+    return Response({
+        'secure_url': result.get('secure_url', ''),
+        'public_id': result.get('public_id', ''),
+    })

@@ -14,16 +14,18 @@ export default function ShapeLibraryPanel() {
   const { addShape, addImageItem } = useEditor();
   const fileInputRef = useRef(null);
 
-  // Prompt 27 item 2: standard file-picker flow — no network call
-  // involved, the file is read straight into an in-memory data URL
-  // (loadImageFile) and handed to addImageItem. Resetting the input's
-  // own value afterward is what lets picking the SAME file again still
-  // fire onChange (the browser otherwise treats an unchanged selection
-  // as a no-op change event).
+  // Prompt 27 item 2: standard file-picker flow — the file is read
+  // straight into an in-memory data URL (loadImageFile) for instant
+  // canvas feedback, handed to addImageItem alongside the real File
+  // itself so it can also kick off the real background upload (Real
+  // image upload pass — addImageItem's own comment). Resetting the
+  // input's own value afterward is what lets picking the SAME file again
+  // still fire onChange (the browser otherwise treats an unchanged
+  // selection as a no-op change event).
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (file) loadImageFile(file, addImageItem);
+    if (file) loadImageFile(file, (dataUrl, w, h) => addImageItem(dataUrl, w, h, file));
   };
 
   return (

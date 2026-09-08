@@ -20,7 +20,7 @@ import SignatureCard from './SignatureCard'
 // rather than after a wasted upload round-trip. The backend remains the
 // real authority; this is just the same rule checked earlier.
 const ALLOWED_LOGO_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tiff', 'svg'])
-const MAX_LOGO_SIZE_BYTES = 5 * 1024 * 1024
+const MAX_LOGO_SIZE_BYTES = 10 * 1024 * 1024
 
 function calcCompletion(profile) {
   if (!profile) return 0
@@ -183,7 +183,7 @@ export default function Profile() {
       return
     }
     if (file.size > MAX_LOGO_SIZE_BYTES) {
-      show('error', 'Image must be under 5MB.')
+      show('error', 'Image must be under 10MB.')
       e.target.value = ''
       return
     }
@@ -275,7 +275,7 @@ export default function Profile() {
           </div>
           <div>
             <p style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Business Logo</p>
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 2 }}>JPG, PNG, or GIF. Max 5MB.</p>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 2 }}>JPG, PNG, or GIF. Max 10MB.</p>
           </div>
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} style={{ display: 'none' }} />
         </div>
