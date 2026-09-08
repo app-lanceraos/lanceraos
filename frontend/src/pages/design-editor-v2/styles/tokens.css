@@ -2,13 +2,29 @@
    was dark-only until now, with its own private, single-palette token
    file. It now follows LanceraOS's OWN real theme mechanism
    (`frontend/src/hooks/useTheme.js`): a `data-theme="light"|"dark"`
-   attribute on `<html>`, no separate switching system of its own — see
-   theme-bridge.js for how this standalone project applies that
-   attribute for its own dev server (reading the same real
-   `lanceraos-theme` localStorage key and system-preference fallback the
-   main app's hook uses), which becomes a pure no-op the moment this
-   editor is actually mounted inside the main app and something else is
-   already setting that attribute on the shared `<html>`.
+   attribute on `<html>`, no separate switching system of its own —
+   theme-bridge.js (the standalone project's own dev-server bridge for
+   this same attribute) was deleted at merge time since useTheme.js now
+   sets it directly on the real, shared `<html>`.
+
+   Merge-time fix (see DECISIONS.md's merge entry): every rule below was
+   rescoped from `:root`/`[data-theme]` (which target `<html>` itself)
+   to `.app-shell`/`html[data-theme="dark"] .app-shell` (this editor's
+   own root element). Reusing `:root` directly would have redeclared
+   --text-primary, --text-secondary, --text-tertiary, --danger,
+   --logo-body, --logo-mark, --wordmark, --radius-sm/-md/-lg, and --t —
+   every one of them a REAL, same-named token frontend/src/styles/
+   theme.css already defines at `:root` for the whole app. Several of
+   this file's own fallback expressions are self-referencing
+   (`--text-primary: var(--text-primary, #0e0e1a)`) — declared at the
+   same `:root` theme.css already uses, that becomes a genuine CSS custom-
+   property reference cycle (guaranteed-invalid per spec), corrupting
+   --text-primary/--text-secondary/--danger/--wordmark app-wide the
+   moment this stylesheet loaded, not just within the editor. Scoping to
+   `.app-shell` makes every `var(--text-primary, ...)` here resolve
+   against theme.css's real ancestor value instead of against itself,
+   which is what this file's own "one palette" framing below actually
+   requires to be true rather than accidentally broken.
 
    Every token below that has a real LanceraOS equivalent (`frontend/
    src/styles/theme.css`) is defined as `var(--<lanceraos-name>,
@@ -37,8 +53,7 @@
    `--purple-300` is byte-identical to LanceraOS's own theme-invariant
    `--nav-active`/`--icon-active` brand purple). */
 
-:root,
-[data-theme="light"] {
+.app-shell {
   color-scheme: light;
 
   /* ── App chrome — mapped onto LanceraOS's real shell/surface tokens ── */
@@ -118,8 +133,9 @@
 /* ══════════════════════════════════════════════════════════════
    DARK MODE — the editor's original palette, now the explicit
    [data-theme="dark"] half rather than the only palette that exists.
-   ══════════════════════════════════════════════════════════════ */
-[data-theme="dark"] {
+   Scoped via the ancestor (`<html>`) attribute, since `.app-shell`
+   itself never carries `data-theme` — see the file header. ══════ */
+html[data-theme="dark"] .app-shell {
   color-scheme: dark;
 
   --bg-base:          var(--bg-page, #0d0d16);

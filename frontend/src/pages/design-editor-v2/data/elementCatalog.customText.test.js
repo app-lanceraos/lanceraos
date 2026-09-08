@@ -9,7 +9,7 @@
 // React, matching this repo's existing test convention (see
 // adapter/designDataAdapter.test.js, also a pure-function test file with
 // no React renderer involved).
-import { test, describe } from 'node:test';
+import { test, describe } from 'vitest';
 import assert from 'node:assert/strict';
 
 import {

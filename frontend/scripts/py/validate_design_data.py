@@ -17,7 +17,7 @@ import json
 import sys
 from pathlib import Path
 
-# invoice-editor/scripts/py/ -> invoice-editor/scripts/ -> invoice-editor/ -> repo root
+# frontend/scripts/py/ -> frontend/scripts/ -> frontend/ -> repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 

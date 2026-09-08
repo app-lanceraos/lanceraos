@@ -1,13 +1,16 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Doto:wght@600&family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;700&display=swap');
 
-* { box-sizing: border-box; }
-
-html, body, #root {
-  height: 100%;
-  margin: 0;
-}
-
-body {
+/* Merged into frontend/ from the standalone invoice-editor/ project (see
+   DECISIONS.md's merge entry). The standalone project's own global
+   `* { box-sizing: border-box }` and `html, body, #root { height: 100%;
+   margin: 0 }` rules are dropped here — frontend/src/styles/theme.css
+   already applies an equivalent reset (`*, *::before, *::after {
+   box-sizing: border-box; margin: 0; padding: 0 }`) to the WHOLE app,
+   and re-declaring `body`'s own background/color/font here would leak
+   this editor's palette onto every other page's <body>. `.app-shell`
+   (this editor's own root element, styled below) already fills the full
+   viewport (`height: 100vh`) and owns its own background instead. */
+.app-shell {
   background: var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-display);

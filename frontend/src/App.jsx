@@ -25,6 +25,7 @@ import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
 import DesignGallery from '@/pages/DesignGallery'
 import DesignEditor from '@/pages/design-editor/DesignEditor'
+import TemplateBuilderV2 from '@/pages/design-editor-v2/TemplateBuilderV2'
 import Onboarding from '@/pages/Onboarding'
 import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
@@ -132,6 +133,18 @@ export default function App() {
         <Route
           path="/invoices/designs/:id/edit"
           element={<PrivateRoute><DesignEditor /></PrivateRoute>}
+        />
+
+        {/* The standalone invoice-editor/ project, physically merged into
+            frontend/ (see DECISIONS.md's merge entry) — a second,
+            newer Template Builder that will eventually replace
+            DesignEditor.jsx above, but does not yet: this route exists
+            side by side with it, not wired to the backend, not linked
+            from anywhere in the product UI yet. Shell-less + PrivateRoute-
+            gated, matching DesignEditor.jsx's own treatment exactly. */}
+        <Route
+          path="/invoices/designs/editor-v2"
+          element={<PrivateRoute><TemplateBuilderV2 /></PrivateRoute>}
         />
 
         {/* No dedicated landing page yet (separate future work) — send

@@ -1,4 +1,10 @@
-import React, { useState } from 'react';
+// The LanceraOS Template Builder, v2 — a standalone project merged into
+// frontend/ (see DECISIONS.md's merge entry). Reached via
+// /invoices/designs/editor-v2 (App.jsx), shell-less like the existing
+// GrapesJS DesignEditor.jsx — both editors coexist; this one is not yet
+// wired to the backend (see that entry for what's deliberately excluded).
+import { useState } from 'react';
+import useTitle from '@/hooks/useTitle';
 import { EditorProvider, useEditor } from './state/EditorContext';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import Toolbar from './components/Toolbar/Toolbar';
@@ -11,6 +17,8 @@ import PreviewModal from './components/PreviewModal';
 import ContextMenu from './components/ContextMenu';
 import Tooltip from './components/Tooltip';
 import { ChevronLeftIcon, ChevronRightIcon } from './components/Icons';
+import './styles/tokens.css';
+import './styles/editor.css';
 
 const LEFT_WIDTH = 240;
 const RIGHT_WIDTH = 280;
@@ -102,7 +110,8 @@ function EditorShell() {
   );
 }
 
-export default function App() {
+export default function TemplateBuilderV2() {
+  useTitle('Template Builder v2 — LanceraOS');
   return (
     <EditorProvider>
       <EditorShell />

@@ -8,10 +8,15 @@ dumps get_blank_design_data('professional') as a 4th fixture, since it
 exercises the "minimal, mostly-empty design" shape the 3 builtins don't
 (empty header.elements).
 
-Run from anywhere; writes into invoice-editor/src/adapter/__fixtures__/,
-overwriting whatever was there — these files are generated output, never
-hand-edited (each one's own header records the exact command that
-produced it, so a stale-looking diff is immediately traceable).
+Run from anywhere; writes into
+frontend/src/pages/design-editor-v2/adapter/__fixtures__/, overwriting
+whatever was there — these files are generated output, never hand-edited
+(each one's own header records the exact command that produced it, so a
+stale-looking diff is immediately traceable).
+
+Merged into frontend/ from the standalone invoice-editor/ project (see
+DECISIONS.md's merge entry) — OUT_DIR updated for the new nesting depth,
+everything else unchanged.
 """
 import json
 import sys
@@ -22,7 +27,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from apps.invoices.design_templates import BUILTIN_DESIGNS, get_blank_design_data  # noqa: E402
 
-OUT_DIR = Path(__file__).resolve().parents[2] / 'src' / 'adapter' / '__fixtures__'
+OUT_DIR = Path(__file__).resolve().parents[2] / 'src' / 'pages' / 'design-editor-v2' / 'adapter' / '__fixtures__'
 
 
 def main():

@@ -8,7 +8,7 @@
 // CanvasItem.jsx's beginMove both call, so proving it here proves the
 // selection-state behavior independent of React, matching this repo's own
 // established pure-function test convention (see elementCatalog.customText.test.js).
-import { test, describe } from 'node:test';
+import { test, describe } from 'vitest';
 import assert from 'node:assert/strict';
 
 import { createContentItem, expandLinkedGroupSelection, SIGNATURE_GROUP_TYPES } from './elementCatalog.js';

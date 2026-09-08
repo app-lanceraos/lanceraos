@@ -2,11 +2,16 @@
 // validate_design_data_schema_by_version) as a subprocess, rather than
 // reimplementing it in JS (explicit phase instruction). Test-only: never
 // imported by the actual editor app.
+//
+// Merged into frontend/ from the standalone invoice-editor/ project (see
+// DECISIONS.md's merge entry) — this file now sits 4 levels below
+// frontend/ (adapter -> design-editor-v2 -> pages -> src), not 2, so the
+// relative path up to frontend/scripts/py/ was updated accordingly.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts', 'py', 'validate_design_data.py');
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', 'scripts', 'py', 'validate_design_data.py');
 
 export function validateDesignDataAgainstPython(designData) {
   const result = spawnSync('python3', [SCRIPT], {

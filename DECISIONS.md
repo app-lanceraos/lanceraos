@@ -8571,3 +8571,110 @@ change to `_table_row.html` than reusing the per-cell mechanism already in place
 
 Docs: this entry; DATABASE.md's `invoice_designs` entry (new "Phase 3a schema additions" section);
 CLAUDE.md's Template Builder section.
+
+---
+
+Date: 08 September 2026
+Decision: Merged the standalone `invoice-editor/` project physically into `frontend/`, as a new,
+second route (`/invoices/designs/editor-v2` → `frontend/src/pages/design-editor-v2/
+TemplateBuilderV2.jsx`) coexisting alongside the existing GrapesJS `DesignEditor.jsx` — neither
+replaces the other yet. Structural/physical merge only: no behavior change, no backend wiring, no
+new features. Shell-less + `PrivateRoute`-gated, matching `DesignEditor.jsx`'s own existing
+treatment exactly (both are full-screen editing surfaces, not AppShell pages).
+Reason: `invoice-editor/` was a separate Vite/React project with its own `package.json`, build, and
+Node-test-runner test suite, verified (previous phase) to have full round-trip parity with the
+production `design_data` schema but never connected to the real app. Physically merging it now
+(ahead of the later phase that actually swaps it in for `DesignEditor.jsx`) means there is exactly
+one frontend project, one build, one test command, going forward.
+
+Styling — kept ONE editor-wide stylesheet (`styles/tokens.css` + `styles/editor.css`), imported only
+by `TemplateBuilderV2.jsx` itself, rather than converting ~1200 lines of grid/flex layout CSS to
+inline `style={{}}` objects. CLAUDE.md's frontend rule 1 / DESIGN.md Section 0 say styling is inline
+objects with CSS-variable tokens, and DESIGN.md Section 0 further restricts `.css` files to "custom
+property definitions, keyframe animations, media queries, and the small set of global utility
+classes listed in Section 6" — this editor's CSS is none of those by the letter of that rule. Kept
+it as one file anyway: (1) rewriting a large, already-verified, interaction-heavy layout (drag/
+resize/panels/canvas) to inline styles is a real behavior-change risk this task was explicitly
+scoped to avoid — "no behavior changes, no bug fixes beyond what's strictly needed to make the move
+work"; (2) there is already a live precedent for a whole-page visual-tool exception:
+`DesignEditor.jsx` itself statically imports `grapesjs/dist/css/grapes.min.css`, a large third-party
+stylesheet, directly into this same app, because a complex embedded editor widget isn't naturally
+expressible as per-element inline styles either. This editor's CSS is treated the same way — a
+self-contained tool's own stylesheet, not "a separate CSS file per component" (the literal thing the
+rule prohibits; this is one file for one whole page, matching `theme.css`'s own "one global
+stylesheet" precedent, not many small per-component files). This is a disclosed exception, not a
+silent violation — flagged here rather than assumed away.
+
+A real, necessary fix was required to make even that minimal choice safe: `tokens.css` originally
+declared its light/dark palette at `:root`/`[data-theme="light"]`/`[data-theme="dark"]` — the exact
+same selectors `frontend/src/styles/theme.css` already uses for the whole app. 11 of its custom
+property names collide with real, already-defined LanceraOS tokens of the same name (`--text-
+primary`, `--text-secondary`, `--text-tertiary`, `--danger`, `--logo-body`, `--logo-mark`,
+`--wordmark`, `--radius-sm`, `--radius-md`, `--radius-lg`, `--t`). Several of tokens.css's own
+declarations are self-referencing fallbacks (`--text-primary: var(--text-primary, #0e0e1a)`) —
+written under the assumption that, once merged, `var(--text-primary)` would resolve to theme.css's
+real value. Declared at the same `:root` theme.css also uses, that instead becomes a genuine CSS
+custom-property reference cycle (spec: guaranteed-invalid), which would have silently corrupted
+`--text-primary`/`--text-secondary`/`--danger`/`--wordmark` (and shadowed `--radius-*`/`--t` outright)
+for the ENTIRE app, not just this editor's own page, the moment `TemplateBuilderV2.jsx` was ever
+mounted once in the same session. Fixed by rescoping every rule from `:root`/`[data-theme]` to
+`.app-shell` (this editor's own root div) / `html[data-theme="dark"] .app-shell` — confirmed no
+existing `.app-shell` (or any other editor.css class name) collides with anything elsewhere in
+`frontend/src` first. `editor.css`'s own global `* { box-sizing: border-box }` / `html, body, #root
+{ height: 100%; margin: 0 }` / `body { background/color/font-family }` rules were dropped for the
+same reason (theme.css already resets box-sizing app-wide; the body rule would have repainted every
+other page's background/text/font) — the equivalent cosmetic rule now targets `.app-shell` directly,
+which already has `height: 100vh` from its own pre-existing layout rule.
+
+`theme-bridge.js` (the standalone project's own dev-server-only theme observer, reading the same
+`lanceraos-theme` localStorage key `frontend/src/hooks/useTheme.js` already writes) and `main.jsx`
+(the standalone project's own SPA bootstrap/root-mount) were deleted outright rather than migrated —
+both were already documented, in their own source comments, as becoming pure no-ops the moment this
+editor shared a real `<html>` with the real `useTheme.js`; this merge is exactly that moment.
+
+Dependencies: added `html-to-image` (PreviewModal's PNG export) and `qrcode` (a bindings-catalog QR
+sample) to `frontend/package.json` — both new, no existing equivalent, no conflict. `react`/
+`react-dom` stayed on `frontend/`'s existing `^19.2.0` (invoice-editor asked for `^19.2.8`, same
+major, no code in the merged editor needs anything newer) rather than bumping the whole app's React
+version for one page. `vite`/`@vitejs/plugin-react` stayed on `frontend/`'s existing `^7.3.1`/
+`^5.1.1` (invoice-editor's own standalone `vite.config.js` asked for `vite@^8.2.2`/
+`@vitejs/plugin-react@^6.1.0`) — the editor's source has no dependency on anything Vite-8-specific;
+using the app's one existing build toolchain avoids running two Vite majors in one project.
+`oxlint`/`@types/react`/`@types/react-dom` (invoice-editor's own standalone lint/type-hint
+devDependencies) were dropped rather than migrated — the merged app already lints everything under
+`frontend/src` with its own `eslint` config, and this is a plain-JS (no TypeScript) project.
+
+Tests: consolidated onto `frontend/`'s existing `vitest run` — the standalone project's 3
+`node --test` files (`adapter/designDataAdapter.test.js`, `data/elementCatalog.customText.test.js`,
+`data/elementCatalog.signatureGroup.test.js`) needed only their `import { test, describe } from
+'node:test'` line changed to `from 'vitest'`; every assertion already used plain `node:assert/
+strict`, which runs unmodified under vitest since it's an assertion library, not a test-runner API.
+The standalone project's own Node ESM loader hooks (`scripts/register-loader.mjs`/
+`resolve-extensionless.mjs`, needed only because Node's own resolver — unlike Vite's — can't resolve
+the codebase's extensionless relative imports) were deleted as dead weight once vitest (running on
+Vite's own resolver) made them unnecessary. The Python subprocess bridge
+(`adapter/pyValidate.js` → `scripts/py/validate_design_data.py`, which shells out to the real
+`apps.invoices.design_schema.validate_design_data_schema_by_version` rather than reimplementing it
+in JS) was preserved as-is in mechanism; only its relative path depth was updated for the new,
+deeper nesting (`frontend/src/pages/design-editor-v2/adapter/` is 4 levels below `frontend/`, not 2)
+— verified working under vitest directly, not assumed.
+
+Assets: `public/signature.png` (a real, referenced placeholder asset) moved to `frontend/public/`.
+`public/favicon.svg` was NOT copied — byte-identical to `frontend/public/favicon.svg`, already at
+the same `/favicon.svg` path the moved code references. `public/icons.svg` and `src/assets/
+{hero.png,vite.svg}` were confirmed genuinely unreferenced (Vite scaffold leftovers, not wired to
+anything) and dropped rather than carried forward, per this project's own dead-code-gets-removed-on-
+discovery convention (STANDARDS.md).
+
+`invoice-editor/` no longer exists as a separate project — its content now lives entirely under
+`frontend/src/pages/design-editor-v2/` and `frontend/scripts/`.
+
+Alternatives considered: converting all editor CSS to inline `style={{}}` objects to satisfy DESIGN.md
+Section 0 to the letter — rejected for this pass as an unscoped, high-regression-risk rewrite of
+already-verified interaction code, with the GrapesJS CSS import already establishing a real
+precedent for this category of exception; lazy-loading the new route via `React.lazy` to keep its
+JS/CSS out of every other page's bundle — not done, since `DesignEditor.jsx`'s own existing route
+is a plain static import and this pass's brief was to match that page's existing treatment, not
+introduce a new pattern; leaving `tokens.css` at `:root` and hoping the self-referencing fallbacks
+degrade gracefully — rejected once the guaranteed-invalid custom-property cycle was actually traced
+through the CSS spec rather than assumed harmless.
