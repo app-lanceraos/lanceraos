@@ -57,7 +57,7 @@ def upload_comment_attachment(file):
             status=status.HTTP_400_BAD_REQUEST,
         )
     if file.size > MAX_LOGO_SIZE_BYTES:
-        return Response({'error': 'File too large. Maximum size is 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': 'File too large. Maximum size is 10MB.'}, status=status.HTTP_400_BAD_REQUEST)
 
     if extension == '.pdf':
         import fitz  # PyMuPDF — lazy import, matches this app's other lazy-import conventions

@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 # risk once logos are shown to people outside the account (future
 # invoice/proposal recipients). A logo doesn't need to be a vector format.
 ALLOWED_LOGO_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff'}
-MAX_LOGO_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_LOGO_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB — shared by logo upload (here), the
+# signature tool (apps/invoices/views.py's signature_upload), and comment
+# attachments (apps/invoices/comments.py) — raising it affects all three,
+# not just logos. Raised from 5MB per the signature-tool follow-up task:
+# a real phone photo of a signature can comfortably exceed 5MB.
 
 # Security Alerts has no entry here, deliberately — CLAUDE.md requires it
 # can never be disabled, so there is simply no field for it to toggle.
@@ -121,7 +125,7 @@ def upload_logo(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     if file.size > MAX_LOGO_SIZE_BYTES:
-        return Response({'error': 'File too large. Maximum size is 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': 'File too large. Maximum size is 10MB.'}, status=status.HTTP_400_BAD_REQUEST)
 
     # Extension alone doesn't confirm the file's actual content — verify it's
     # a genuine, decodable image. Image.verify() can leave the file object in

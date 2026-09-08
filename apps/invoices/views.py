@@ -68,7 +68,7 @@ from .serializers import (
 )
 from .serializers_claims import PaymentClaimSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
-from .signature_tool import remove_signature_background
+from .signature_tool import DEFAULT_FEATHER, crop_signature_to_content, remove_signature_background
 
 # Reference images for AI design seeding — a narrower set than logo uploads
 # (screenshots/photos of an existing design, not decorative image formats):
@@ -2666,9 +2666,13 @@ def design_ai_seed(request):
 
 # ══════════════════════════════════════════════════════════════════
 # SIGNATURE TOOL — Step 9. Classical image processing (Pillow luminance
-# thresholding, apps/invoices/signature_tool.py), not AI — a single stored
+# thresholding via a per-image Otsu-computed threshold, plus a bounding-
+# box crop — apps/invoices/signature_tool.py), not AI — a single stored
 # signature per user (FreelancerProfile.signature_url/signature_public_id,
 # Step 7b's fields), reused across every design/invoice, same as the logo.
+# A `source` field ('upload' vs 'drawn') distinguishes a photographed
+# signature (thresholded + cropped) from an already-transparent
+# canvas-drawn one (cropped only — see signature_upload's own docstring).
 #
 # Preview-then-commit via a `commit` flag on the SAME endpoint, rather than
 # a separate confirm endpoint with server-side staged state: background
@@ -2692,14 +2696,38 @@ def _check_signature_rate_limit(user):
 @permission_classes([IsAuthenticated])
 def signature_upload(request):
     """
-    POST with `image` (multipart file) — returns a cleaned, transparent-
-    background PNG preview as a data URI, and does NOT touch Cloudinary or
-    FreelancerProfile yet.
-    POST again with the same `image` plus `commit=true` — re-runs the same
-    processing for real, uploads it, and saves it as the user's one
-    signature (replacing any previous one, per Step 7b's single-field
-    lifecycle — destroys the old Cloudinary asset first, same pattern as
-    upload_logo).
+    Request (multipart/form-data):
+    - image (file, required) — the signature image, either a photograph
+      of a physical signature or an already-transparent PNG exported from
+      a drawing canvas.
+    - source (string, optional) — 'upload' or 'drawn'. 'upload' (also the
+      default when this field is missing or any other/legacy value, so no
+      existing caller breaks) means `image` is a real photo/scan on an
+      opaque background: runs the full remove_signature_background
+      pipeline (RGB-flatten, threshold to build an alpha mask, crop to the
+      ink's bounding box). 'drawn' means `image` is ALREADY a clean
+      transparent PNG (e.g. drawn on a canvas) — background removal is
+      skipped entirely (flattening it to RGB first would destroy the real
+      alpha channel against an arbitrary background), but the same
+      bounding-box crop still runs (a drawn signature's canvas often has
+      real empty margin worth trimming too), and the same PIL validity
+      check below still applies to both.
+    - threshold, feather (optional, ints) — only meaningful when
+      source='upload'. Bypass the automatic per-image Otsu threshold with
+      an explicit value; feather still defaults to
+      signature_tool.DEFAULT_FEATHER if only threshold is given. Ignored
+      for source='drawn', since no thresholding happens there at all.
+    - commit (existing) — 'true'/'1'/'yes' to persist for real; omitted or
+      falsy for a preview-only call.
+
+    POST without `commit` — returns a cleaned (or, for source='drawn',
+    just cropped) transparent-background PNG preview as a data URI, and
+    does NOT touch Cloudinary or FreelancerProfile yet.
+    POST again with the same `image`/`source`/`threshold`/`feather` plus
+    `commit=true` — re-runs the same processing for real, uploads it, and
+    saves it as the user's one signature (replacing any previous one, per
+    Step 7b's single-field lifecycle — destroys the old Cloudinary asset
+    first, same pattern as upload_logo).
     """
     if _check_signature_rate_limit(request.user):
         return Response({'error': 'Too many uploads. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -2715,19 +2743,36 @@ def signature_upload(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     if file.size > MAX_LOGO_SIZE_BYTES:
-        return Response({'error': 'File too large. Maximum size is 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': 'File too large. Maximum size is 10MB.'}, status=status.HTTP_400_BAD_REQUEST)
 
     # Same content-validation discipline as upload_logo — extension alone
-    # doesn't confirm the file's actual content.
+    # doesn't confirm the file's actual content. Applies to BOTH source
+    # values — a drawn signature still has to be a real, decodable image.
     try:
         PILImage.open(file).verify()
     except (UnidentifiedImageError, OSError):
         return Response({'error': "That doesn't look like a valid image file."}, status=status.HTTP_400_BAD_REQUEST)
     file.seek(0)
 
+    # Explicit client signal only — never inferred from the image's own
+    # content. Missing/legacy values fall back to 'upload' so no existing
+    # caller (which never sent this field) changes behavior.
+    source = request.data.get('source', 'upload')
+    if source not in ('upload', 'drawn'):
+        source = 'upload'
+
     raw_bytes = file.read()
     try:
-        cleaned_png_bytes = remove_signature_background(raw_bytes)
+        if source == 'drawn':
+            cleaned_png_bytes = crop_signature_to_content(raw_bytes)
+        else:
+            threshold = request.data.get('threshold')
+            feather = request.data.get('feather')
+            cleaned_png_bytes = remove_signature_background(
+                raw_bytes,
+                threshold=int(threshold) if threshold not in (None, '') else None,
+                feather=int(feather) if feather not in (None, '') else DEFAULT_FEATHER,
+            )
     except Exception:
         logger.exception('[INVOICES] Signature background removal failed for user %s.', request.user.pk)
         return Response({'error': 'Could not process that image. Please try a different photo.'}, status=status.HTTP_400_BAD_REQUEST)

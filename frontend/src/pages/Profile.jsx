@@ -13,6 +13,7 @@ import FosAlert from '@/components/FosAlert'
 import SaveButton from '@/components/SaveButton'
 import { validators } from './settings/validators'
 import { getCroppedImageBlob } from './profileCropUtils'
+import SignatureCard from './SignatureCard'
 
 // Matches apps/users/views/profile.py exactly — ALLOWED_LOGO_EXTENSIONS
 // and MAX_LOGO_SIZE_BYTES — so an obviously-invalid file is caught here
@@ -113,6 +114,7 @@ export default function Profile() {
   const orig = useRef({ display_name: '', business_name: '', phone: '' })
 
   const [logoPreview, setLogoPreview] = useState('')
+  const [signatureUrl, setSignatureUrl] = useState('')
   const [cropSrc, setCropSrc] = useState(null)
   const [logoUploading, setLogoUploading] = useState(false)
   const [avatarHover, setAvatarHover] = useState(false)
@@ -130,6 +132,7 @@ export default function Profile() {
         setDraft(data)
         orig.current = data
         setLogoPreview(res.data.logo || '')
+        setSignatureUrl(res.data.signature_url || '')
       })
       .catch(() => show('error', 'Failed to load your profile.'))
       .finally(() => setLoading(false))
@@ -300,6 +303,8 @@ export default function Profile() {
           />
         </div>
       </Card>
+
+      <SignatureCard initialSignatureUrl={signatureUrl} />
     </div>
   )
 }

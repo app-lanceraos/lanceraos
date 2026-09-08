@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ELEMENT_TYPES, expandLinkedGroupSelection } from '../../data/elementCatalog';
 import { useEditor } from '../../state/EditorContext';
+import useProfileAssets from '@/hooks/useProfileAssets';
 import { WordmarkSVG } from '../Brand';
 import { WarningIcon } from '../Icons';
 import Tooltip from '../Tooltip';
@@ -199,6 +200,11 @@ function partInlineStyle(item, part, fallbackColor, fallbackWeight, fallbackSize
 // everything else is a single unstyled-by-part run of content.
 function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPartHoverEnter, onPartHoverLeave, onPartContextMenu }) {
   const def = ELEMENT_TYPES[item.type];
+  // Real logo/signature for the `logo`/`signatureImage` variants below —
+  // fetched once (module-cached, see useProfileAssets) regardless of how
+  // many ContentBody instances mount. Called unconditionally, per the
+  // Rules of Hooks, even though only those two variants read the result.
+  const { logo: realLogoUrl, signatureUrl: realSignatureUrl } = useProfileAssets();
   // Every OTHER catalog entry's `render()` ignores the extra `item`
   // argument (their content is fixed/baked-in, see elementCatalog.js) —
   // `customText` is the one entry that actually reads it, to render the
@@ -333,9 +339,11 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
       // No border/background of its own — the outer frame (CanvasItem)
       // already renders the item's border/background, and this placeholder
       // is that same box's content, not a second nested one. Real assets
-      // (public/favicon.svg, public/signature.png) — not illustrative
-      // currentColor art — so the frame's Text color control is hidden for
-      // these two types in the properties panel (PropertiesPanel.jsx);
+      // (the user's own uploaded logo/signature, falling back to
+      // public/favicon.svg / public/signature.png when genuinely unset)
+      // — not illustrative currentColor art — so the frame's Text color
+      // control is hidden for these two types in the properties panel
+      // (PropertiesPanel.jsx);
       // `object-fit: contain` keeps each asset's own aspect ratio intact
       // through a non-uniform resize instead of stretching it.
       // Prompt 16 item 5: the <img> itself never receives pointer events —
@@ -349,7 +357,17 @@ function ContentBody({ item, isPartSelected, onSelectPart, isPartHovered, onPart
       // this frame's own onMouseDown (beginMove) exactly like clicking
       // empty space anywhere else in the item already does.
       if (item.type === 'logo' || item.type === 'signatureImage') {
-        const src = item.type === 'logo' ? '/favicon.svg' : '/signature.png';
+        // Real asset when the current user actually has one set (the
+        // exact same `logo`/`signature_url` fields GET /auth/profile/
+        // already returns), falling back to the illustrative placeholder
+        // ONLY when genuinely unset — never a broken <img> for a null/
+        // empty value. Previously this always rendered the placeholder
+        // regardless of the user's real profile data (a confirmed bug —
+        // only the separate Preview feature, which calls the real
+        // backend renderer, ever showed real assets).
+        const realUrl = item.type === 'logo' ? realLogoUrl : realSignatureUrl;
+        const placeholderSrc = item.type === 'logo' ? '/favicon.svg' : '/signature.png';
+        const src = realUrl || placeholderSrc;
         const alt = item.type === 'logo' ? 'Logo' : 'Signature';
         return (
           <div className="item__image-wrap">
