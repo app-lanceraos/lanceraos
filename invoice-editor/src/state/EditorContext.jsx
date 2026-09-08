@@ -1,6 +1,12 @@
 import React, { createContext, useCallback, useContext, useMemo, useReducer, useRef, useState } from 'react';
 import { historyReducer, initialHistoryState } from './historyReducer';
-import { ELEMENT_TYPES, createContentItem, isFreelyDuplicable, isBindingTakenIn } from '../data/elementCatalog';
+import {
+  ELEMENT_TYPES,
+  createContentItem,
+  isFreelyDuplicable,
+  isBindingTakenIn,
+  expandLinkedGroupSelection,
+} from '../data/elementCatalog';
 import { createShape } from '../data/shapeCatalog';
 import { validateTemplate } from '../utils/validation';
 import { normalizeZOrder, appendRespectingZOrder, stepSelectionOnce } from '../utils/zorder';
@@ -23,7 +29,7 @@ export function EditorProvider({ children }) {
   // doesn't matter which — look up `kind` on the item itself when it
   // matters). `part` is only ever set for a single selected content item
   // whose title/body sub-part is being styled: { id, key: 'title'|'body' }.
-  const [selection, setSelection] = useState({ ids: [], part: null });
+  const [selection, setSelectionRaw] = useState({ ids: [], part: null });
   const [saveState, setSaveState] = useState({ status: 'idle', issues: [] }); // idle | saved | blocked
   // Transient, not history: which page edge(s) an in-progress drag/resize
   // is currently touching, for the edge-contact highlight. null when idle.
@@ -108,6 +114,25 @@ export function EditorProvider({ children }) {
   }, []);
 
   const template = history.present;
+
+  // Every consumer in this app reaches selection-setting through this one
+  // wrapper (exposed below as `setSelection`, same name/shape as before —
+  // no call site elsewhere needed to change) so the signature trio's
+  // "always select/transform together" rule (elementCatalog.js's
+  // expandLinkedGroupSelection) is enforced at the single real choke point
+  // selection ever passes through, accepting the exact same object-or-
+  // updater-function argument the raw setState already did.
+  const setSelection = useCallback(
+    (update) => {
+      setSelectionRaw((prev) => {
+        const next = typeof update === 'function' ? update(prev) : update;
+        if (!next || !next.ids) return next;
+        const expandedIds = expandLinkedGroupSelection(next.ids, template.items);
+        return expandedIds === next.ids ? next : { ...next, ids: expandedIds };
+      });
+    },
+    [template.items]
+  );
 
   const commit = useCallback((next) => dispatch({ type: 'COMMIT', next }), []);
   const undo = useCallback(() => dispatch({ type: 'UNDO' }), []);

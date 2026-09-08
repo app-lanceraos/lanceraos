@@ -7,6 +7,7 @@ const SWATCH_CLASS = {
   roundedRect: 'shape-swatch shape-swatch--rect',
   ellipse: 'shape-swatch shape-swatch--ellipse',
   line: 'shape-swatch shape-swatch--line',
+  container: 'shape-swatch shape-swatch--container',
 };
 
 export default function ShapeLibraryPanel() {

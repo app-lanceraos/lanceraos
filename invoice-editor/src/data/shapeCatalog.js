@@ -23,6 +23,27 @@ export const SHAPE_TYPES = {
     defaultSize: { width: toMm(200), height: toMm(4) },
     defaultProps: { fill: '#7152F5', borderColor: 'transparent', borderWidth: 0 },
   },
+  // Production's `generic:container` (design_schema.GENERIC_TYPES,
+  // design_renderer.SHAPE_TYPES_WITH_OWN_FILL) is a real, tested,
+  // functioning background/grouping box — the exact same fill/border/
+  // corner-radius resolution `rectangle` gets (design_renderer.py's
+  // attach_generic_content shares one code path for both types), just
+  // under its own semantic name for "a background panel behind other
+  // content" rather than "a decorative shape." No real BUILTIN_DESIGNS
+  // seed uses one yet, but it's genuine, live-rendering, schema-validated
+  // production surface (apps/invoices/tests/test_design_renderer.py's own
+  // test_generic_container_renders_as_a_background_box), not dead code —
+  // importing a hand-authored design that uses one used to drop it
+  // silently (designDataAdapter.js's own importGenericShape previously
+  // warned "no editor equivalent" and discarded it). Defaults sized/
+  // colored as a large, subtle background panel (rather than
+  // roundedRect's smaller accent-purple default) to read as a distinct
+  // catalog choice, not a duplicate of Rounded rectangle.
+  container: {
+    label: 'Container',
+    defaultSize: { width: toMm(300), height: toMm(200) },
+    defaultProps: { fill: '#F4F2ED', borderColor: 'transparent', borderWidth: 0, radius: 0 },
+  },
 };
 
 export const createShape = (type, position = { x: toMm(40), y: toMm(40) }) => {

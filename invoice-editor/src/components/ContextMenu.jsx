@@ -28,7 +28,7 @@ function itemCapabilities(item) {
   // Prompt 27: `image` styles its corner radius exactly like a content
   // item (frameStyle's `item.cornerRadius` — see CanvasItem.jsx), so it
   // gets the same reset-to-zero affordance.
-  if (item.kind === 'content' || item.kind === 'image' || item.type === 'roundedRect') caps.add('reset-radius');
+  if (item.kind === 'content' || item.kind === 'image' || item.type === 'roundedRect' || item.type === 'container') caps.add('reset-radius');
   return caps;
 }
 

@@ -493,6 +493,13 @@ body {
 .shape-swatch--rect { border-radius: 5px; }
 .shape-swatch--ellipse { border-radius: 50%; }
 .shape-swatch--line { height: 3px; border-radius: 2px; margin: 8px 0; }
+/* Container: a background/grouping panel (design_renderer.py's
+   generic:container — the same fill/border/radius resolution 'rectangle'
+   gets, see shapeCatalog.js's own comment) — an outlined, mostly-empty
+   box rather than the solid accent-purple chip the other 3 primitives
+   use, so its palette entry reads as "a panel to hold things" rather
+   than "another colored shape." */
+.shape-swatch--container { background: transparent; border: 1.5px solid var(--purple-500); border-radius: 3px; }
 
 /* Prompt 27: the "Upload image" action's own swatch — a simple
    picture-frame glyph rather than the flat color chip the primitive

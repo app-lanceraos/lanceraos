@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ELEMENT_TYPES } from '../../data/elementCatalog';
+import { ELEMENT_TYPES, expandLinkedGroupSelection } from '../../data/elementCatalog';
 import { useEditor } from '../../state/EditorContext';
 import { WordmarkSVG } from '../Brand';
 import { WarningIcon } from '../Icons';
@@ -805,6 +805,17 @@ export default function CanvasItem({ item, readOnly = false }) {
       effectiveIds = [item.id];
       setSelection({ ids: effectiveIds, part: null });
     }
+    // The signature trio must move as one unit from the very first drag,
+    // not just from the next render onward — `setSelection` above already
+    // expands the COMMITTED context state via the same function
+    // (EditorContext.jsx), but that update isn't visible to this
+    // synchronous gesture yet, so `effectiveIds` (what groupIds/
+    // groupMembers below actually decide on) needs the identical
+    // expansion applied locally too. Without this, dragging an unselected
+    // signature part would move that one part alone for this one gesture
+    // (only "catching up" to group behavior on the NEXT drag) — exactly
+    // the lossy independent-repositioning case this exists to prevent.
+    effectiveIds = expandLinkedGroupSelection(effectiveIds, template.items);
 
     // Prompt 17 item 3: dragging any one member of a multi-item selection
     // moves the whole group together — but if this shift-click just

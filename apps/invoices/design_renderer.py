@@ -1424,6 +1424,22 @@ def render_design_html(design_data, context, *, for_pdf=False):
     footer_margin_mm = FOOTER_MARGIN_BOX_HEIGHT_MM if footer else 0
     content_min_height_mm = page['height_mm'] - footer_margin_mm
     footer_style = {**FOOTER_STYLE_DEFAULTS, **(footer.get('style') or {})} if footer else None
+    if footer_style:
+        # Font theme-linking retrofit — the footer used to have its own,
+        # earlier, separate style validation (design_schema._validate_footer)
+        # that never resolved the Phase 3a 'theme_heading_font'/
+        # 'theme_body_font' sentinels at all (only design_schema.py's fix
+        # even allows them through validation now) — a theme-linked footer
+        # font previously fell straight through to the template as the
+        # LITERAL sentinel string, `font-family: 'theme_body_font';`, never
+        # the design's real resolved theme font. Retrofitted onto the exact
+        # same resolve_theme_font_family/resolve_theme_font_weight functions
+        # every ordinary element's `style.font`/`style.font_weight` already
+        # goes through above (prepare_element) — not a second, parallel
+        # font-theme mechanism. A no-op for every existing footer (a
+        # literal font_family string, or the default None font_weight).
+        footer_style['font_family'] = resolve_theme_font_family(footer_style['font_family'], context)
+        footer_style['font_weight'] = resolve_theme_font_weight(footer_style['font_weight'], context)
     footer_wordmark_data_uri = None
     if footer and footer_style['show_wordmark'] and _is_premium_branding_enabled(context['freelancer']):
         footer_wordmark_data_uri = _generate_wordmark_data_uri(footer_style['text_color'])

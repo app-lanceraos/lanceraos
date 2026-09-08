@@ -578,6 +578,41 @@ export function isBindingTakenIn(items, binding, excludeItemId) {
   );
 }
 
+// ── Signature trio: constrained to move/resize/rotate as one unit ──────
+//
+// Production's `semantic:signature` is one bundle whose geometry the
+// adapter derives from the union of these 3 editor items' boxes, invertible
+// only while they stay in their DEFAULT relative arrangement (see
+// designDataAdapter.js's exportSignatureGroup/importSignature docstrings) —
+// hand-repositioning any ONE of the three independently makes that
+// union-box export lossy and unrecoverable. Rather than invent a new
+// grouping concept, this reuses the ids-array selection model the app's
+// existing multi-select machinery (GroupSelectionOverlay, CanvasItem's own
+// beginGroupMove, selectedMovableCount) already drives group transforms
+// off of: whenever any one of the 3 signature items is present in a
+// selection, every OTHER currently-visible signature item is folded in
+// too, so a selection touching this trio always contains the whole
+// present set of it, never a subset — the ">=2 selected" branch those
+// existing mechanisms already treat as "transform as a group" is
+// therefore guaranteed to fire for these three, and the single-item
+// transform path (which is what let one part get hand-repositioned away
+// from the other two) becomes unreachable for them.
+export const SIGNATURE_GROUP_TYPES = ['signatureImage', 'signatureDivider', 'signatureLabel'];
+
+export function expandLinkedGroupSelection(ids, items) {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const hasVisibleSignatureMember = ids.some((id) => {
+    const item = byId.get(id);
+    return item && !item.hidden && SIGNATURE_GROUP_TYPES.includes(item.type);
+  });
+  if (!hasVisibleSignatureMember) return ids;
+  const merged = new Set(ids);
+  items.forEach((item) => {
+    if (!item.hidden && SIGNATURE_GROUP_TYPES.includes(item.type)) merged.add(item.id);
+  });
+  return merged.size === ids.length ? ids : Array.from(merged);
+}
+
 export function createGenericTextItem({
   x, y, width, height, rotation, binding = null, text = '',
   fontFamily, fontWeight, fontSize, textColor, contentAlign, locked, hidden,

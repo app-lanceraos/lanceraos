@@ -935,7 +935,7 @@ function ShapeProperties({ items, pageAlignItem }) {
       <LinkableColorRow label="Fill" theme={theme} value={first.fill} onChange={(v) => updateItems(ids, () => ({ fill: v }))} fallback="#7152F5" />
       <LinkableColorRow label="Border color" theme={theme} value={first.borderColor} onChange={(v) => updateItems(ids, () => ({ borderColor: v }))} fallback="#262420" />
       <SliderRow label="Border width (mm)" min={0} max={2.1} step={0.1} value={first.borderWidth} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
-      {first.type === 'roundedRect' && (
+      {(first.type === 'roundedRect' || first.type === 'container') && (
         <SliderRow label="Corner radius (mm)" min={0} max={15.9} step={0.1} value={first.radius} onChange={(v) => updateItems(ids, () => ({ radius: v }))} />
       )}
 

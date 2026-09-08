@@ -84,7 +84,8 @@ export function captureFormatting(item, part) {
 function applicableKeys(target, part) {
   if (part) return new Set(TEXT_STYLE_KEYS);
   if (target.kind === 'shape') {
-    return new Set(target.type === 'roundedRect' ? SHAPE_KEYS : SHAPE_KEYS.filter((k) => k !== 'radius'));
+    const hasRadius = target.type === 'roundedRect' || target.type === 'container';
+    return new Set(hasRadius ? SHAPE_KEYS : SHAPE_KEYS.filter((k) => k !== 'radius'));
   }
   if (target.kind === 'image') {
     return new Set(IMAGE_KEYS);

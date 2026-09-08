@@ -516,24 +516,37 @@ function exportTable(item, ctx) {
   // has no column reordering/narrowing UI, so this is always the same
   // constant default, never omitted.
   el.style.columns = ['description', 'quantity', 'unit_price', 'total'];
-  // Phase 3a additions (column_alignments/zebra_enabled/zebra_color/
-  // cell_padding_mm) — plus `header_border_color`, which despite
-  // predating Phase 3a has NO dedicated editor field of its own either
+  // `header_border_color` has NO dedicated editor field of its own
   // (only `headerTextColor`/`rowBorderColor` are real, live-editable
   // fields; a previous version of this function incorrectly read
   // `header_border_color` from the SAME `headerTextColor` field as
   // `header_color`, which is wrong — confirmed directly against
   // Professional's real seed, which sets header_border_color WITHOUT
-  // header_color at all) — have no editor UI at all: real, constant
-  // passthrough via `item._tableExtra`, captured verbatim at import,
-  // merged back in unchanged. `item.altRowShading`/`columnAlign`/
-  // `cellPadding` are a SEPARATE, pre-existing editor-only preview
-  // concern with no production field of their own (unchanged from
-  // Phase 2b) — still reported, not conflated with the new passthrough.
-  if (item.altRowShading || item.columnAlign || item.cellPadding !== undefined) {
-    ctx.warnings.push('itemsTable: per-column alignment, alternating-row shading, and cell padding (the editor\'s own preview-only controls) have no production table style field and were dropped.');
-  }
+  // header_color at all) — real, constant passthrough via
+  // `item._tableExtra`, captured verbatim at import, merged back in
+  // unchanged.
   Object.assign(el.style, item._tableExtra || {});
+  // Table WYSIWYG parity fix — `item.columnAlign`/`altRowShading`/
+  // `altRowColor`/`cellPadding` used to be treated as "editor-only
+  // preview controls with no production field," dropped on every export
+  // with a warning, even though Phase 3a gave every one of them a real
+  // production field (`column_alignments`/`zebra_enabled`/`zebra_color`/
+  // `cell_padding_mm`, apps/invoices/design_renderer.py's
+  // resolve_table_columns/thead_cell_css/row_cell_css) — that pairing was
+  // simply never wired up. Mapped here for real now, applied AFTER the
+  // `_tableExtra` passthrough merge above so a live edit through these
+  // fields always wins over stale extra data from an earlier import
+  // (importTable below now excludes these 4 keys from `_tableExtra` for
+  // the same reason). Each omitted, not written as a default/falsy value,
+  // whenever the editor's own field was never touched — matching the
+  // established "absent means production's own class-default" rule every
+  // other optional style key in this file already follows.
+  if (item.columnAlign) el.style.column_alignments = item.columnAlign;
+  if (item.altRowShading) {
+    el.style.zebra_enabled = true;
+    if (item.altRowColor) el.style.zebra_color = colorToProduction(item.altRowColor);
+  }
+  if (item.cellPadding !== undefined) el.style.cell_padding_mm = item.cellPadding;
   return [el];
 }
 
@@ -632,13 +645,64 @@ function exportPayOnline(item, ctx) {
 // matching every one of the 3 BUILTIN_DESIGNS seeds exactly (including
 // their real casing, "Authorised signature" — Phase 2b's own
 // "Authorised Signature" was wrong). Geometry: the union of whichever of
-// the 3 editor items exist, exactly as Phase 2b already did — the ONE
-// place in this file that is still a real, honest, reported non-
-// invertible 3-into-1 collapse for a HAND-REPOSITIONED signature group
-// (see this file's own module docstring); the DEFAULT/starter case is
-// exact (see signaturePartsFromBox's own comment).
+// the 3 editor items exist.
+//
+// Signature-group-transform lock (elementCatalog.js's
+// expandLinkedGroupSelection + EditorContext.jsx's setSelection wrapper +
+// CanvasItem.jsx's beginMove) closes what USED to be a real, honest,
+// reported non-invertible 3-into-1 collapse here: hand-repositioning ANY
+// ONE of the 3 parts independently is no longer reachable through the UI
+// at all — selecting one of them always selects every other PRESENT part
+// too, so every MOVE this union is computed from translates all 3 by the
+// same delta (a rigid translation trivially preserves their relative
+// layout), and every RESIZE scales all 3 proportionally from a shared
+// anchor (GroupSelectionOverlay's beginGroupResize) — which, because
+// signaturePartsFromBox's own split is already purely proportional
+// (fixed fractions of the bundle's own width/height, not fixed literal
+// offsets), preserves the exact same fractions after any such resize.
+// Move and resize are therefore always exact here, not merely a
+// best-effort approximation.
+//
+// Rotation: `el.rotation` is now captured (all 3 present parts always
+// carry the SAME rotation value — GroupSelectionOverlay's group-rotate
+// applies one shared delta to every member) rather than silently dropped
+// as it was before this fix. Investigated, not assumed: a fully exact
+// reconstruction of the UN-rotated union box from the CURRENT (rotated)
+// part positions would need the exact same pivot GroupSelectionOverlay's
+// own beginGroupRotate used for whatever sequence of rotate gestures
+// produced this state — that pivot is itself each gesture's own
+// rotationBoundingBox-based groupBox center, RECOMPUTED FRESH at the
+// start of every individual gesture, which cannot be reconstructed from
+// a single snapshot without tracking that gesture history separately
+// (confirmed by direct derivation, not assumed — a naive "un-rotate
+// around the current raw bounding-box center" is only exact for the
+// FIRST rotation away from 0, since it ignores the fact that a real
+// rotated box's TRUE pivot, once any individual rotation is already
+// nonzero, is `rotatedBoundingBox`'s rotation-aware envelope center, not
+// the raw unrotated one). Getting that wrong silently would be worse than
+// leaving a documented gap (no real BUILTIN_DESIGNS seed uses a rotated
+// signature to verify a fix against, confirmed directly) — so the union
+// box below is still the plain, honest raw min/max of the 3 parts' CURRENT
+// positions (unchanged from before this fix for the x/y/width/height
+// derivation itself), with `rotation` now at least surviving rather than
+// being silently discarded. A separate, deeper, PRE-EXISTING gap on the
+// IMPORT side compounds this further: importSignature (below) stamps
+// `el.rotation` onto each of the 3 reconstructed parts directly without
+// first orbiting their positions around the bundle's own center the way a
+// live in-editor rotate does, so a design imported with a nonzero
+// signature rotation won't even visually reconstruct correctly in the
+// first place (production renders the whole bundle as one rotated parent
+// div with the image/label as plain DOM children, `_element_content.html`'s
+// `signature` branch — 3 independently-rotating siblings can't reproduce
+// that just by copying the same rotation number onto each one). Full
+// round-trip fidelity for a ROTATED signature bundle remains a real,
+// flagged, unresolved limitation on both the import and export sides —
+// distinct from, and not required by, this task's own core fix (move/
+// resize/rotate reachable ONLY as a unit through the UI, which holds
+// regardless of this separate export-fidelity question).
 function exportSignatureGroup(imageItem, dividerItem, labelItem, ctx) {
   const parts = [imageItem, dividerItem, labelItem].filter(Boolean);
+  const rotation = parts.reduce((found, p) => found || p.rotation || 0, 0);
   const minX = Math.min(...parts.map((p) => p.x));
   const minY = Math.min(...parts.map((p) => p.y));
   const maxX = Math.max(...parts.map((p) => p.x + p.width));
@@ -648,6 +712,7 @@ function exportSignatureGroup(imageItem, dividerItem, labelItem, ctx) {
     x: roundMm(minX), y: roundMm(minY), width: roundMm(maxX - minX), height: roundMm(maxY - minY),
     style: {}, overrides: {},
   };
+  if (rotation) el.rotation = rotation;
   el.style.label = 'Authorised signature';
   if (labelItem?.contentAlign) el.style.align = labelItem.contentAlign;
   const extraSource = labelItem || dividerItem || imageItem;
@@ -688,6 +753,21 @@ function exportShape(item, ctx) {
     if (item.borderWidth) el.style.border_width_mm = item.borderWidth;
     return [el];
   }
+  if (item.type === 'container') {
+    // Genuinely the same fill/border/radius resolution as 'roundedRect'
+    // above (design_renderer.py shares one code path for rectangle and
+    // container, SHAPE_TYPES_WITH_OWN_FILL) — a distinct editor shape
+    // catalog entry only so a design author can express the semantic
+    // choice, never a second, independently-invented rendering.
+    const el = baseElementFields(item, 'generic', 'container');
+    const bg = colorToProduction(item.fill);
+    if (bg) el.style.background_color = bg;
+    const border = colorToProduction(item.borderColor);
+    if (border) el.style.border_color = border;
+    if (item.borderWidth) el.style.border_width_mm = item.borderWidth;
+    if (item.radius) el.style.border_radius_mm = item.radius;
+    return [el];
+  }
   const el = baseElementFields(item, 'generic', 'divider');
   el.binding = null;
   const color = colorToProduction(item.fill);
@@ -725,35 +805,30 @@ function exportImage(item, ctx) {
   return [el];
 }
 
-// VERIFIED DEVIATION — page.footer's own validator (design_schema.py's
-// `_validate_footer`) requires `style.font_weight` to be a plain number
-// and never calls resolve_theme_font_family/resolve_theme_font_weight at
-// all (confirmed directly): the Phase 3a theme-font-sentinel mechanism
-// was added for ordinary elements only, never retrofitted onto the
-// footer's own, earlier, separate style validation. A theme-linked
-// footer font is therefore RESOLVED to its current literal value here
-// (the same one-directional "resolve, don't sentinel" loss Phase 2b
-// originally had for every element, before Phase 3a closed it
-// everywhere else) — reported, not silent.
+// Font theme-linking retrofit (closes a previously VERIFIED DEVIATION):
+// page.footer's own validator (design_schema.py's `_validate_footer`)
+// used to require `style.font_weight` to be a plain number and never
+// called resolve_theme_font_family/resolve_theme_font_weight at all — the
+// Phase 3a theme-font-sentinel mechanism had been added for ordinary
+// elements only, never retrofitted onto the footer's own, earlier,
+// separate style validation, so a theme-linked footer font used to get
+// silently RESOLVED to its current literal value here and would never
+// re-link if the theme changed later. `design_schema.py` now accepts the
+// same 'theme_heading_font'/'theme_body_font' sentinel on
+// `page.footer.style.font_weight` (font_family already accepted any
+// non-empty string) and `design_renderer.py`'s footer-style construction
+// now resolves both through the exact same resolve_theme_font_family/
+// resolve_theme_font_weight functions every ordinary element already
+// uses — so this export can now reuse `fontToProduction` (the same
+// sentinel-emitting conversion every ordinary text style already goes
+// through) instead of resolving to a literal, exactly like the deviation
+// comment above used to have to do.
 function exportFooter(footerItem, ctx) {
   const style = {};
   if (footerItem.textColor) style.text_color = colorToProduction(footerItem.textColor);
   if (footerItem.bgColor) style.background_color = colorToProduction(footerItem.bgColor);
   if (footerItem.dividerColor) style.divider_color = colorToProduction(footerItem.dividerColor);
-  let familyId = footerItem.fontFamily;
-  let weight = footerItem.fontWeight;
-  if (familyId && typeof familyId === 'object' && familyId.linked) {
-    const slot = familyId.linked === 'heading' ? ctx.theme.headingFont : ctx.theme.bodyFont;
-    familyId = slot.family;
-    weight = slot.weight;
-    ctx.warnings.push(
-      `footer: font was linked to the theme's ${footerItem.fontFamily.linked} font — page.footer has no font-theme-link ` +
-        `concept (design_schema.py's own footer validator requires a plain number for font_weight, never a sentinel), so ` +
-        `this was resolved to its current literal value (${fontIdToProductionName(familyId)}, weight ${weight}) and will ` +
-        'not re-link if the theme changes later.'
-    );
-  }
-  const font = familyId ? fontIdToProductionName(familyId) : undefined;
+  const { font, font_weight: weight } = fontToProduction(footerItem.fontFamily, footerItem.fontWeight);
   if (font) style.font_family = font;
   if (footerItem.fontSize) style.font_size_pt = footerItem.fontSize;
   if (weight) style.font_weight = weight;
@@ -1010,11 +1085,37 @@ function importTable(el, ctx) {
   if (el.style?.columns && JSON.stringify(el.style.columns) !== JSON.stringify(DEFAULT_COLUMNS)) {
     ctx.warnings.push(`itemsTable: production's narrowed/reordered column list (${JSON.stringify(el.style.columns)}) has no editor equivalent — all 4 default columns will show instead.`);
   }
+  // Table WYSIWYG parity fix — `column_alignments`/`zebra_enabled`/
+  // `zebra_color`/`cell_padding_mm` (Phase 3a) now map onto this editor's
+  // own real, already-rendering `columnAlign`/`altRowShading`/
+  // `altRowColor`/`cellPadding` fields (CanvasItem.jsx's table case
+  // already applies all 4 visually — the gap was these fields never
+  // being POPULATED from a real import, not the rendering itself) instead
+  // of silently falling into the opaque `_tableExtra` passthrough bag.
+  //
+  // `column_alignments` cycling: mirrors design_renderer.resolve_table_
+  // columns' own `alignments[i % len(alignments)]` policy EXACTLY, but
+  // applied over the editor's own fixed 4-column DISPLAY order (this
+  // editor can't narrow/reorder columns at all — the warning above
+  // already covers that gap) rather than production's real (possibly
+  // narrowed/reordered) column list, since that's the only column order
+  // this editor could ever paint the result against.
+  if (el.style?.column_alignments?.length) {
+    const alignments = el.style.column_alignments;
+    item.columnAlign = DEFAULT_COLUMNS.map((_, i) => alignments[i % alignments.length]);
+  }
+  if (el.style?.zebra_enabled) {
+    item.altRowShading = true;
+    if (el.style.zebra_color) item.altRowColor = colorFromProduction(el.style.zebra_color);
+  }
+  if (el.style?.cell_padding_mm !== undefined) item.cellPadding = el.style.cell_padding_mm;
   // `header_border_color` has no dedicated editor field (only
   // `headerTextColor`/`rowBorderColor` are real, live-editable fields) —
-  // real, constant passthrough via `_tableExtra`, same as the Phase 3a
-  // additions below, not dropped.
-  const modeled = ['font', 'header_color', 'row_border_color', 'columns'];
+  // real, constant passthrough via `_tableExtra`.
+  const modeled = [
+    'font', 'header_color', 'row_border_color', 'columns',
+    'column_alignments', 'zebra_enabled', 'zebra_color', 'cell_padding_mm',
+  ];
   const extra = {};
   Object.keys(el.style || {}).forEach((k) => {
     if (!modeled.includes(k)) extra[k] = el.style[k];
@@ -1177,8 +1278,12 @@ function importGenericShape(el, ctx) {
     return [shape];
   }
   if (el.type === 'container') {
-    ctx.warnings.push('generic:container: no editor equivalent (not even in the shape catalog) — dropped.');
-    return [];
+    const shape = createShape('container', { x: el.x, y: el.y });
+    Object.assign(shape, importBaseFields(el), { radius: el.style?.border_radius_mm || 0 });
+    if (el.style?.background_color) shape.fill = colorFromProduction(el.style.background_color);
+    if (el.style?.border_color) shape.borderColor = colorFromProduction(el.style.border_color);
+    if (el.style?.border_width_mm) shape.borderWidth = el.style.border_width_mm;
+    return [shape];
   }
   return [];
 }

@@ -91,16 +91,16 @@ describe("the editor's own starter template", () => {
       const cleaned = { ...rest };
       if (!NORMALIZED_LAYOUT_MODE_TYPES.includes(it.type) && layoutMode !== undefined) cleaned.layoutMode = layoutMode;
       if (!['subtotal', 'tax', 'discount', 'totalDue'].includes(it.type) && contentAlign !== undefined) cleaned.contentAlign = contentAlign;
-      // Footer's own font is a further, separately-documented exception
-      // (see exportFooter's own "VERIFIED DEVIATION" comment): production's
-      // page.footer validator requires a plain number for font_weight and
-      // never resolves a theme-font sentinel at all, so a theme-linked
-      // footer font is REPLACED by its resolved literal value on export —
-      // a real, one-directional, reported loss, not a bug to hide here.
-      if (it.type === 'footer') {
-        delete cleaned.fontFamily;
-        delete cleaned.fontWeight;
-      }
+      // Footer font theme-linking (design_schema.py/design_renderer.py's
+      // font theme-link retrofit) closed what used to be a real,
+      // documented, one-directional loss here: a theme-linked footer font
+      // used to get resolved to its current literal value on export
+      // (production's own footer validator never accepted a sentinel), so
+      // this test had to strip fontFamily/fontWeight before comparing.
+      // Both now round-trip losslessly through the same sentinel
+      // mechanism every other themed font already uses — see the
+      // dedicated 'footer font theme-link' test below for direct,
+      // explicit coverage of exactly this.
       Object.keys(cleaned).forEach((k) => {
         const v = cleaned[k];
         if (v && typeof v === 'object' && !Array.isArray(v)) {
@@ -195,6 +195,25 @@ describe('theme links round-trip losslessly', () => {
     const { template: reimported } = designDataToTemplate(designData);
     const reimportedItem = reimported.items.find((i) => i.text === 'Linked font');
     assert.deepEqual(reimportedItem.fontFamily, { linked: 'heading' });
+  });
+
+  test('page.footer font theme-linking round-trips losslessly (retrofit closing the footer-specific gap)', () => {
+    const t = structuredClone(initialTemplateState);
+    const footerItem = t.items.find((i) => i.type === 'footer');
+    footerItem.fontFamily = { linked: 'heading' };
+    const { designData } = templateToDesignData(t);
+    // design_schema.py's own footer validator previously required a
+    // plain number for font_weight and never accepted a sentinel string —
+    // exercise the real backend validator directly, not just this
+    // adapter's own JS logic, to prove that gap is actually closed.
+    const errors = validateDesignDataAgainstPython(designData);
+    assert.deepEqual(errors, []);
+    assert.equal(designData.page.footer.style.font_family, 'theme_heading_font');
+    assert.equal(designData.page.footer.style.font_weight, 'theme_heading_font');
+    const { template: reimported } = designDataToTemplate(designData);
+    const reimportedFooter = reimported.items.find((i) => i.type === 'footer');
+    assert.deepEqual(reimportedFooter.fontFamily, { linked: 'heading' });
+    assert.equal(reimportedFooter.fontWeight, undefined);
   });
 
   test('a literal (unlinked) font/color still resolves and round-trips as a plain value', () => {
@@ -389,7 +408,7 @@ describe('real production element decompositions', () => {
     assert.ok(warnings.some((w) => w.includes('invoice.some_future_field')));
   });
 
-  test('table Phase 3a extras (column_alignments/zebra/cell_padding) round-trip as passthrough', () => {
+  test('table Phase 3a styling (column_alignments/zebra/cell_padding) maps onto real, canvas-rendering editor fields and round-trips', () => {
     const original = loadFixture('professional');
     const withExtras = structuredClone(original);
     const table = withExtras.flow.elements.find((e) => e.type === 'table');
@@ -398,6 +417,17 @@ describe('real production element decompositions', () => {
     table.style.zebra_color = '#eeeeee';
     table.style.cell_padding_mm = 3;
     const { template } = designDataToTemplate(withExtras);
+    // WYSIWYG parity fix: these must land on the SAME real fields
+    // CanvasItem.jsx's own table case already renders with
+    // (columnAlign/altRowShading/altRowColor/cellPadding) — not an opaque
+    // `_tableExtra` passthrough bag invisible to the canvas.
+    const importedTableItem = template.items.find((i) => i.type === 'itemsTable');
+    assert.deepEqual(importedTableItem.columnAlign, ['left', 'right', 'right', 'right']);
+    assert.equal(importedTableItem.altRowShading, true);
+    assert.equal(importedTableItem.altRowColor, '#eeeeee');
+    assert.equal(importedTableItem.cellPadding, 3);
+    assert.equal(importedTableItem._tableExtra?.column_alignments, undefined);
+    assert.equal(importedTableItem._tableExtra?.zebra_enabled, undefined);
     const { designData } = templateToDesignData(template);
     const roundTrippedTable = designData.flow.elements.find((e) => e.type === 'table');
     assert.deepEqual(roundTrippedTable.style.column_alignments, ['left', 'right', 'right', 'right']);
@@ -406,6 +436,19 @@ describe('real production element decompositions', () => {
     assert.equal(roundTrippedTable.style.cell_padding_mm, 3);
     const errors = validateDesignDataAgainstPython(designData);
     assert.deepEqual(errors, []);
+  });
+
+  test('table column_alignments cycles by index modulo when its length does not match the column count, mirroring resolve_table_columns exactly', () => {
+    const original = loadFixture('professional');
+    const withExtras = structuredClone(original);
+    const table = withExtras.flow.elements.find((e) => e.type === 'table');
+    // 2 entries applied to the editor's fixed 4 columns should cycle
+    // 0,1,0,1 — the exact policy design_renderer.resolve_table_columns
+    // documents for a real production render.
+    table.style.column_alignments = ['center', 'left'];
+    const { template } = designDataToTemplate(withExtras);
+    const importedTableItem = template.items.find((i) => i.type === 'itemsTable');
+    assert.deepEqual(importedTableItem.columnAlign, ['center', 'left', 'center', 'left']);
   });
 
   test('rectangle border_radius_mm (Phase 3a) round-trips', () => {
@@ -421,6 +464,37 @@ describe('real production element decompositions', () => {
     const { template: reimported } = designDataToTemplate(designData);
     const reimportedShape = reimported.items.find((i) => i.type === 'roundedRect');
     assert.equal(reimportedShape.radius, 3.5);
+  });
+
+  test('generic:container round-trips as a real editor shape, not dropped (Phase 4 catalog gap closed)', () => {
+    const t = structuredClone(initialTemplateState);
+    const shape = createShape('container', { x: 20, y: 270 });
+    shape.width = 60;
+    shape.height = 40;
+    shape.radius = 4;
+    shape.fill = '#eeeeee';
+    shape.borderColor = '#222222';
+    shape.borderWidth = 0.5;
+    t.items = [...t.items, shape];
+    const { designData } = templateToDesignData(t);
+    const el = designData.flow.elements.find((e) => e.type === 'container');
+    assert.ok(el, 'generic:container must actually be exported, not dropped');
+    assert.equal(el.kind, 'generic');
+    assert.equal(el.style.background_color, '#eeeeee');
+    assert.equal(el.style.border_color, '#222222');
+    assert.equal(el.style.border_width_mm, 0.5);
+    assert.equal(el.style.border_radius_mm, 4);
+    const errors = validateDesignDataAgainstPython(designData);
+    assert.deepEqual(errors, []);
+    const { template: reimported, warnings } = designDataToTemplate(designData);
+    assert.ok(!warnings.some((w) => w.includes('generic:container')), 'container must not warn as unsupported on import');
+    const reimportedShape = reimported.items.find((i) => i.type === 'container');
+    assert.ok(reimportedShape, 'container must be reconstructed as a real editor shape on import');
+    assert.equal(reimportedShape.kind, 'shape');
+    assert.equal(reimportedShape.radius, 4);
+    assert.equal(reimportedShape.fill, '#eeeeee');
+    assert.equal(reimportedShape.borderColor, '#222222');
+    assert.equal(reimportedShape.borderWidth, 0.5);
   });
 
   test('image border_color/border_width_mm/border_radius_mm (Phase 3a) round-trip', () => {

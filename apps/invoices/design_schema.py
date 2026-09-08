@@ -360,6 +360,23 @@ def _validate_page(page, errors):
         _validate_footer(page['footer'], errors)
 
 
+# Phase 3a follow-up (font theme-linking retrofit) — the same two
+# sentinel tokens design_renderer.py's `_THEME_FONT_WEIGHT_TOKENS`/
+# `_THEME_FONT_FAMILY_TOKENS` already resolve for an ordinary element's
+# `style.font`/`style.font_weight`. An ordinary element's `style` dict is
+# never field-validated here at all (only `page.footer.style` gets its
+# own dedicated, type-checked validator, below) — sentinel strings just
+# flow through that generic `style: dict` requirement untouched. The
+# footer's own validator DOES type-check `font_weight` specifically
+# (requiring a plain number), so it needs its own explicit allowance for
+# these two token strings, matching the one real place in this schema
+# where a themed font value is validated field-by-field rather than left
+# to the generic `style: dict` check every other element gets. Hardcoded
+# here rather than imported from design_renderer.py to avoid the circular
+# import that module's own docstring already flags (design_renderer.py
+# imports FROM this module, never the reverse).
+FOOTER_FONT_WEIGHT_TOKENS = ('theme_heading_font', 'theme_body_font')
+
 # Phase 1 — a real per-page-margin-box footer, config only, no x/y/width/
 # height of its own (unlike a regular canvas element): its content is the
 # same fixed 3-slot layout the 3 static templates' own real, working
@@ -393,12 +410,20 @@ def _validate_footer(footer, errors):
         value = style.get(key)
         if value is not None and not (isinstance(value, str) and value):
             errors.append(f'page.footer.style.{key}, if present, must be a non-empty string.')
+        # `font_family` (one of FOOTER_STYLE_STRING_KEYS) already accepts
+        # any non-empty string per the check above — no extra allowance
+        # needed for the 'theme_heading_font'/'theme_body_font' sentinel
+        # tokens (design_renderer.resolve_theme_font_family treats them
+        # exactly like every other font_family value, sentinel or literal).
     font_size_pt = style.get('font_size_pt')
     if font_size_pt is not None and (not _is_number(font_size_pt) or font_size_pt <= 0):
         errors.append('page.footer.style.font_size_pt, if present, must be a positive number.')
     font_weight = style.get('font_weight')
-    if font_weight is not None and not _is_number(font_weight):
-        errors.append('page.footer.style.font_weight, if present, must be a number.')
+    if font_weight is not None and not (_is_number(font_weight) or font_weight in FOOTER_FONT_WEIGHT_TOKENS):
+        errors.append(
+            'page.footer.style.font_weight, if present, must be a number, or one of the '
+            f'theme-font sentinel tokens ({sorted(FOOTER_FONT_WEIGHT_TOKENS)!r}).'
+        )
     if 'show_wordmark' in style and not isinstance(style['show_wordmark'], bool):
         errors.append('page.footer.style.show_wordmark, if present, must be a boolean.')
 
