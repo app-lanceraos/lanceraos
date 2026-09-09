@@ -1421,9 +1421,20 @@ def render_design_html(design_data, context, *, for_pdf=False):
     # declared min-height now exceeds what one page's shrunken content
     # box actually holds — confirmed against a real WeasyPrint render,
     # not assumed (see DECISIONS.md).
-    footer_margin_mm = FOOTER_MARGIN_BOX_HEIGHT_MM if footer else 0
+    # 09 September 2026 fix — `footer` must be tested with `is not None`,
+    # never plain truthiness: `page.footer: {}` is a real, documented-valid
+    # value (this module's own FOOTER_STYLE_STRING_KEYS comment above says
+    # so explicitly — "`{}` ... is valid and means 'show the default-styled
+    # footer'") but an empty dict is FALSY in Python, so every `if footer`
+    # check below was silently treating a real, intentional "show the
+    # footer with default styling" config exactly like "no footer at all"
+    # — found while wiring page.footer into the 3 real builtin seeds (one
+    # of the three, Professional, deliberately uses `{}` since its real
+    # target style is already the shared default), see DECISIONS.md.
+    footer_configured = footer is not None
+    footer_margin_mm = FOOTER_MARGIN_BOX_HEIGHT_MM if footer_configured else 0
     content_min_height_mm = page['height_mm'] - footer_margin_mm
-    footer_style = {**FOOTER_STYLE_DEFAULTS, **(footer.get('style') or {})} if footer else None
+    footer_style = {**FOOTER_STYLE_DEFAULTS, **((footer or {}).get('style') or {})} if footer_configured else None
     if footer_style:
         # Font theme-linking retrofit — the footer used to have its own,
         # earlier, separate style validation (design_schema._validate_footer)
@@ -1441,7 +1452,7 @@ def render_design_html(design_data, context, *, for_pdf=False):
         footer_style['font_family'] = resolve_theme_font_family(footer_style['font_family'], context)
         footer_style['font_weight'] = resolve_theme_font_weight(footer_style['font_weight'], context)
     footer_wordmark_data_uri = None
-    if footer and footer_style['show_wordmark'] and _is_premium_branding_enabled(context['freelancer']):
+    if footer_configured and footer_style['show_wordmark'] and _is_premium_branding_enabled(context['freelancer']):
         footer_wordmark_data_uri = _generate_wordmark_data_uri(footer_style['text_color'])
     # Real WeasyPrint limitation (confirmed directly, same finding
     # professional.html's own @page block already documents): there is no
@@ -1453,7 +1464,7 @@ def render_design_html(design_data, context, *, for_pdf=False):
     # for the static templates) set this in `context`; any other caller
     # (a browser-rendered portal/preview HTML view, where `@page` margin
     # boxes have no visual effect at all) safely defaults to False.
-    single_page_layout = bool(footer and context.get('single_page_layout', False))
+    single_page_layout = bool(footer_configured and context.get('single_page_layout', False))
     spine = page.get('spine')
     spine_color = resolve_theme_color(spine.get('color'), context) if spine else None
     spine_accent_color = spine.get('accent_color') if spine else None
@@ -1512,7 +1523,12 @@ def render_design_html(design_data, context, *, for_pdf=False):
         'spine_accent_color': spine_accent_color,
         'page_background_color': background_color,
         'content_min_height_mm': content_min_height_mm,
-        'footer': footer,
+        # A plain boolean, not the raw `footer` dict — the template only
+        # ever uses this for `{% if footer %}`, and `page.footer: {}` (a
+        # real, documented-valid "show it with default styling" config,
+        # see footer_configured's own comment above) is falsy as a raw
+        # dict but must still gate this True.
+        'footer': footer_configured,
         'footer_style': footer_style,
         'footer_margin_mm': footer_margin_mm,
         'footer_wordmark_data_uri': footer_wordmark_data_uri,
@@ -1559,8 +1575,13 @@ def render_design_pdf_bytes(design_data, context):
     """
     from weasyprint import HTML
 
+    # `footer is None`, not plain truthiness — `page.footer: {}` is a real,
+    # documented-valid "show it with default styling" config (see
+    # render_design_html's own footer_configured comment for the full
+    # reasoning); an empty dict is falsy in Python and was silently being
+    # treated exactly like "no footer at all" here too before this fix.
     footer = (design_data.get('page') or {}).get('footer')
-    if not footer:
+    if footer is None:
         html_string = render_design_html(design_data, context, for_pdf=True)
         return HTML(string=html_string).write_pdf()
 

@@ -11,6 +11,11 @@
     "sidebar": {
       "width_mm": 42,
       "color": null
+    },
+    "footer": {
+      "style": {
+        "text_color": "#a8a5b8"
+      }
     }
   },
   "header": {

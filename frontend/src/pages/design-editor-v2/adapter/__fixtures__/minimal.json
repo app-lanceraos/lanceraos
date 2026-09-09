@@ -8,7 +8,12 @@
     "margin_right_mm": 18,
     "margin_bottom_mm": 16,
     "margin_left_mm": 18,
-    "background_color": "#fdfdfb"
+    "background_color": "#fdfdfb",
+    "footer": {
+      "style": {
+        "text_color": "#a3a099"
+      }
+    }
   },
   "header": {
     "elements": [

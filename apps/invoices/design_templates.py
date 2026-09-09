@@ -302,6 +302,21 @@ PROFESSIONAL_DESIGN_DATA_V2 = {
         # value (confirmed directly: golden PNG background pixel sampled
         # at rgb(249,249,246) vs the V2 render's rgb(255,255,255)).
         'background_color': '#faf9f6',
+        # 09 September 2026 fidelity fix — professional.html's own real
+        # per-page `@bottom-left`/`@bottom-center`/`@bottom-right` footer
+        # (business identity, a genuine multi-page-only "Page X of N"
+        # counter, and the LanceraOS wordmark) was completely absent from
+        # every V2-rendered invoice — `page.footer`'s own documented
+        # contract is that ITS ABSENCE means no footer at all, and this
+        # seed never set the key (found and fixed as part of a real-gap
+        # audit; see DECISIONS.md). `{}` is genuinely sufficient here:
+        # FOOTER_STYLE_DEFAULTS' own `text_color` (#a09a89) is already
+        # byte-identical to this template's real, measured
+        # `@bottom-left { color: #a09a89; }` (design_renderer.py's own
+        # `_WORDMARK_FILL_BY_TEMPLATE['professional']` confirms the same
+        # value independently) — no per-design override needed for an
+        # exact match.
+        'footer': {},
     },
     'header': {
         'elements': [
@@ -444,6 +459,16 @@ MINIMAL_DESIGN_DATA_V2 = {
         # #fdfdfb; }`, silently flattened to the canonical renderer's one
         # shared #ffffff before this.
         'background_color': '#fdfdfb',
+        # 09 September 2026 fidelity fix — see Professional's own identical
+        # comment above (same real gap, same audit, same fix). Unlike
+        # Professional, minimal.html's own real, measured
+        # `@bottom-left { color: #a3a099; }` differs from
+        # FOOTER_STYLE_DEFAULTS' shared default (#a09a89) — an explicit
+        # `text_color` override is needed for an exact match; every other
+        # footer style field (font_family/font_size_pt) is already
+        # byte-identical to minimal.html's own real CSS, so left at the
+        # renderer's own defaults.
+        'footer': {'style': {'text_color': '#a3a099'}},
     },
     'header': {
         'elements': [
@@ -583,6 +608,18 @@ MODERN_DESIGN_DATA_V2 = {
         'size': 'A4', 'width_mm': 210, 'height_mm': 297,
         'margin_top_mm': 14, 'margin_right_mm': 16, 'margin_bottom_mm': 16, 'margin_left_mm': 16,
         'sidebar': {'width_mm': 42, 'color': None},  # None -> renderer falls back to design_primary_color
+        # 09 September 2026 fidelity fix — see Professional's own identical
+        # comment above (same real gap, same audit, same fix). modern.html's
+        # own real, measured `@bottom-left { color: #a8a5b8; }` differs from
+        # FOOTER_STYLE_DEFAULTS' shared default — an explicit `text_color`
+        # override is needed for an exact match, same as Minimal. (The
+        # static template's own `@bottom-left` also carries a
+        # sidebar-avoiding `margin`/`width` offset that the current
+        # page.footer schema has no per-side equivalent for — a real,
+        # narrower cosmetic gap than "no footer at all", left as-is; the
+        # footer box itself, its color, and the wordmark all now render
+        # correctly, which is this fix's actual scope.)
+        'footer': {'style': {'text_color': '#a8a5b8'}},
     },
     'header': {
         'elements': [

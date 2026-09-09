@@ -832,7 +832,15 @@ function exportFooter(footerItem, ctx) {
   if (font) style.font_family = font;
   if (footerItem.fontSize) style.font_size_pt = footerItem.fontSize;
   if (weight) style.font_weight = weight;
-  return { style };
+  // Byte-identical round-trip for the real "default-styled footer" case
+  // (`page.footer: {}`, design_schema.py's own documented-valid shape,
+  // all 3 real builtin seeds' Professional entry uses exactly this) —
+  // an empty `style` object is semantically identical to an absent one
+  // (design_renderer.py's `(footer or {}).get('style') or {}` treats them
+  // the same either way) but only omitting it here matches what
+  // importFooter actually received, rather than always re-wrapping a
+  // no-op `{style: {}}` around it.
+  return Object.keys(style).length ? { style } : {};
 }
 
 // customText: bound -> generic:text with a real binding (any of
@@ -1314,6 +1322,19 @@ function importImage(el, ctx) {
 
 function importFooter(page, ctx) {
   const item = createContentItem('footer');
+  // createContentItem seeds a brand-new footer with a theme-linked
+  // fontFamily default (elementCatalog.js's defaultWholeItemStyle, 'footer'
+  // is one of the 3 variants that gets one) — the same leak
+  // captureTextStyleOnto's own docstring warns about for ordinary text
+  // items, and importFooter used to miss it: a real production footer with
+  // NO font_family key at all (e.g. `page.footer: {}`, the exact shape all
+  // 3 real builtin seeds use, see design_templates.py's 09 September 2026
+  // footer fix) was silently round-tripping back out as an explicit
+  // `theme_body_font` sentinel instead of staying absent. Deleted first,
+  // then re-set only when the source style actually carries a font key —
+  // matching captureTextStyleOnto's own established convention exactly.
+  delete item.fontFamily;
+  delete item.fontWeight;
   const style = page.footer?.style || {};
   if (style.text_color) item.textColor = colorFromProduction(style.text_color);
   if (style.background_color && style.background_color !== 'transparent') item.bgColor = colorFromProduction(style.background_color);
