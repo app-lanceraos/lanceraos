@@ -121,38 +121,62 @@ export default function App() {
           path="/invoices/analytics"
           element={<PrivateRoute><AppShell><InvoiceAnalytics /></AppShell></PrivateRoute>}
         />
-        {/* The LanceraOS Template Builder — deliberately NOT wrapped in
-            AppShell, same shell-less pattern as /account/deletion-review
-            above (a real, focused, full-screen editing surface). Still
-            gated by PrivateRoute — shell-less is a layout choice, not an
-            auth one. Production cutover: this is the one editor route —
-            no separate "v2"/isolated-sandbox route exists anymore; the
-            same component always runs in real-persistence mode here,
-            since a real `:id` route param (including the literal `new`)
-            is always present. */}
+        {/* The LanceraOS Template Builder's original (GrapesJS) editor —
+            deliberately NOT wrapped in AppShell, same shell-less pattern
+            as /account/deletion-review above (a real, focused,
+            full-screen editing surface). Still gated by PrivateRoute —
+            shell-less is a layout choice, not an auth one. Production
+            cutover (29 August 2026): the same component always runs in
+            real-persistence mode here, since a real `:id` route param
+            (including the literal `new`) is always present. As of the
+            gallery-wiring phase below, this is no longer the ONLY real
+            editor route — DesignGallery.jsx now routes a real
+            schema_version: 2 design to the newer editor's own
+            /invoices/designs/:id/build route instead, and reserves this
+            route for a pre-existing legacy-shaped design (which this
+            editor still migrates on demand) and as that newer editor's
+            own fallback link. */}
         <Route
           path="/invoices/designs/:id/edit"
           element={<PrivateRoute><DesignEditor /></PrivateRoute>}
         />
 
         {/* The standalone invoice-editor/ project, physically merged into
-            frontend/ (see DECISIONS.md's merge entry) — a second,
-            newer Template Builder that will eventually replace
-            DesignEditor.jsx above, but does not yet: this route exists
-            side by side with it, not wired to the backend, not linked
-            from anywhere in the product UI yet. Shell-less + PrivateRoute-
-            gated, matching DesignEditor.jsx's own treatment exactly. */}
+            frontend/ (see DECISIONS.md's merge entry) — a second, newer
+            Template Builder that is now real, linked product UI (see
+            DesignGallery.jsx's own handleEdit/handleUseTemplate/
+            handleStartBlank/handleAiSeedUpload): every design creation
+            path (blank/template/AI-seed) always produces real
+            schema_version: 2 design_data (traced directly against
+            design_duplicate/get_blank_design_data/design_ai_seed's own
+            backend code, not assumed), and DesignGallery.jsx routes
+            Edit here for any design whose own design_data already
+            declares schema_version: 2. A legacy-shaped design (no
+            schema_version key) still opens the ORIGINAL /edit route
+            below instead, unchanged — GrapesJS remains the one path
+            that migrates a legacy design on demand, and this editor's
+            own LoadedTemplateBuilder additionally refuses to open one at
+            all (a real, explicit "legacy" status screen with a link
+            back to the classic editor) as a second line of defense.
+            /invoices/designs/editor-v2 (no id) stays a bare, unlinked
+            dev sandbox with no real design behind it. Shell-less +
+            PrivateRoute-gated, matching DesignEditor.jsx's own treatment
+            exactly. */}
         <Route
           path="/invoices/designs/editor-v2"
           element={<PrivateRoute><TemplateBuilderV2 /></PrivateRoute>}
         />
-        {/* Real backend integration: opens a real, owned InvoiceDesign
-            (production schema_version: 2 only — see
-            TemplateBuilderV2.jsx's LoadedTemplateBuilder) through this
-            same editor. Still not linked from anywhere in the product UI
-            and still not the default Template Builder route. */}
+        {/* The new editor's own permanent, real route for an existing,
+            owned InvoiceDesign (production schema_version: 2 only — see
+            TemplateBuilderV2.jsx's LoadedTemplateBuilder). Deliberately
+            NOT /invoices/designs/:id/edit (that path stays GrapesJS's
+            own, untouched) and deliberately NOT renamed away from this
+            editor's own component — "build" reads as this editor's own
+            distinct verb (constructing a design from scratch on a free
+            canvas) next to GrapesJS's "edit". Linked for real from
+            DesignGallery.jsx as of this phase. */}
         <Route
-          path="/invoices/designs/editor-v2/:id"
+          path="/invoices/designs/:id/build"
           element={<PrivateRoute><TemplateBuilderV2 /></PrivateRoute>}
         />
 

@@ -98,6 +98,22 @@ export default function Toolbar({ onPreview }) {
           <button className="tbtn" onClick={() => setHistoryOpen(true)}>
             History
           </button>
+          {/* Soak-period safety net (see App.jsx's own route comment) —
+              not a permanent feature. Opens the SAME design in the
+              original GrapesJS editor, which can always open a real
+              schema_version: 2 design too (it's the superset path: it
+              migrates legacy shapes on demand and renders v2 shapes
+              unmodified) — a plain escape hatch for anyone who hits a
+              rough edge in this newer editor during its rollout. */}
+          <button
+            className="tbtn"
+            onClick={() => {
+              if (dirty && !window.confirm('You have unsaved changes here. Open the classic editor and discard them?')) return
+              navigate(`/invoices/designs/${designId}/edit`)
+            }}
+          >
+            Having trouble? Open in the classic editor
+          </button>
         </>
       )}
 

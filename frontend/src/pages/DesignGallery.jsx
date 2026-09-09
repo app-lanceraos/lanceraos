@@ -9,9 +9,19 @@
 // standard layout already handles well; no reason to break that
 // precedent here the way the canvas itself needed to.
 //
-// Production cutover: there is one editor, reached the same way whether
-// a design started blank, from a template, or from an AI-seeded upload
-// — no "try the new editor" concept, no separate legacy route.
+// Two editors are wired here, routed conditionally by handleEdit based
+// on what a design's OWN design_data actually declares (never on
+// InvoiceDesign.source, which doesn't reliably track this — see
+// design_migration.py's own reasoning): a real, production
+// schema_version: 2 design opens the new design-editor-v2
+// (TemplateBuilderV2, /invoices/designs/:id/build); anything else — a
+// pre-existing legacy-shaped design with no schema_version key — still
+// opens the original GrapesJS DesignEditor (/invoices/designs/:id/edit),
+// which migrates it on demand exactly as before. Every real creation
+// path here (blank, ready-made template, AI-seed) is verified against
+// its own backend implementation to always produce schema_version: 2,
+// so those three always land in the new editor; only a pre-cutover
+// legacy row ever takes the GrapesJS path.
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Copy, LayoutTemplate, Plus, Sparkles, Star, Trash2 } from 'lucide-react'
@@ -171,7 +181,10 @@ export default function DesignGallery() {
         name: 'Untitled design', base_template: 'professional', color_variant: '', design_data: designData,
       })
       setDesigns((prev) => [data, ...prev])
-      navigate(`/invoices/designs/${data.id}/edit`)
+      // get_blank_design_data always returns schema_version: 2 (verified
+      // directly against design_templates.py) — straight to the new
+      // editor, never GrapesJS.
+      navigate(`/invoices/designs/${data.id}/build`)
     } catch {
       setError('Could not start a blank design. Please try again.')
     } finally {
@@ -219,12 +232,15 @@ export default function DesignGallery() {
     }
   }
 
-  // One editor for every design — blank, a ready-made template, an
-  // AI-seeded upload, or a legacy design predating this cutover (the
-  // editor's own load path migrates a legacy-shape design in memory on
-  // open; nothing here needs to know which case it is).
+  // Routes conditionally on the design's OWN design_data, not on how it
+  // was created — a real, production schema_version: 2 design (every
+  // blank/template/AI-seeded design created today, plus any already
+  // migrated) opens the new design-editor-v2; a pre-existing legacy
+  // design (no schema_version key) still opens the original GrapesJS
+  // editor, which migrates it on demand exactly as before this phase.
   function handleEdit(design) {
-    navigate(`/invoices/designs/${design.id}/edit`)
+    const isV2 = design?.design_data?.schema_version === 2
+    navigate(isV2 ? `/invoices/designs/${design.id}/build` : `/invoices/designs/${design.id}/edit`)
   }
 
   // Real, visible "which design is active" state — `is_default` is a

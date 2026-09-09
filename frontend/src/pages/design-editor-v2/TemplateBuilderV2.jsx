@@ -1,13 +1,19 @@
 // The LanceraOS Template Builder, v2 — a standalone project merged into
 // frontend/ (see DECISIONS.md's merge entry). Reached via
-// /invoices/designs/editor-v2 (a sandbox, no real design behind it — the
-// hardcoded initial state, unchanged) and, for real backend integration,
-// /invoices/designs/editor-v2/:id (a real, owned InvoiceDesign row).
-// Shell-less like the existing GrapesJS DesignEditor.jsx — both editors
-// coexist; this route is not linked from anywhere in the product UI yet
-// and is not the default editor (see DECISIONS.md's merge entry).
+// /invoices/designs/editor-v2 (a bare, unlinked dev sandbox, no real
+// design behind it — the hardcoded initial state, unchanged) and, for
+// real backend integration, /invoices/designs/:id/build (a real, owned
+// InvoiceDesign row). As of the gallery-wiring phase, /:id/build IS
+// linked from the real product UI — DesignGallery.jsx's Edit/Use
+// template/Start blank/AI-seed actions all route a real,
+// schema_version: 2 design here; only a pre-existing legacy-shaped
+// design still opens GrapesJS's DesignEditor.jsx (below) instead. Both
+// editors are shell-less and coexist deliberately during this soak
+// period — see this editor's own "Open in the classic editor" fallback
+// (Toolbar.jsx and the legacy-status screen below) and DECISIONS.md's
+// merge entry.
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import useTitle from '@/hooks/useTitle';
 import api from '@/lib/api';
 import FosAlert from '@/components/FosAlert';
@@ -144,6 +150,7 @@ function EditorShell() {
 // — this backend has no separate 403 for "exists but not yours"), and a
 // genuine network/5xx failure — never a silently blank editor.
 function LoadedTemplateBuilder({ id }) {
+  const navigate = useNavigate();
   const [state, setState] = useState({ status: 'loading', template: null, meta: null, message: '' });
 
   useEffect(() => {
@@ -201,6 +208,11 @@ function LoadedTemplateBuilder({ id }) {
     return (
       <div className="v2-route-status">
         <FosAlert type={state.status === 'legacy' ? 'warning' : 'error'}>{state.message}</FosAlert>
+        {state.status === 'legacy' && (
+          <button className="tbtn" style={{ marginTop: 12 }} onClick={() => navigate(`/invoices/designs/${id}/edit`)}>
+            Open in the classic editor
+          </button>
+        )}
       </div>
     );
   }
