@@ -2,7 +2,7 @@
 """
 Production cutover — LanceraOS Template Builder is now the one production
 template system (apps/invoices/design_renderer.py, design_schema.py,
-design_templates.py, design_canvas.py). This module is what's left of the
+design_templates.py). This module is what's left of the
 PRE-CUTOVER design system's own dynamic renderer: kept ONLY as a
 read-compatibility path for any InvoiceDesign row that still holds
 legacy-shape (`zone_1`/`zone_2`) design_data after the one-time production

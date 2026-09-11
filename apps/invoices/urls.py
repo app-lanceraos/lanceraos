@@ -45,8 +45,10 @@ urlpatterns = [
     path('designs/render-preview/', views_design_editor.design_render_preview, name='design_render_preview'),
     path('designs/templates/', views_design_editor.design_templates_list, name='design_templates_list'),
     path('designs/template/', views_design_editor.design_template_data, name='design_template_data'),
-    path('designs/canvas/', views_design_editor.design_canvas_document, name='design_canvas_document'),
-    path('designs/canvas-element/', views_design_editor.design_canvas_element, name='design_canvas_element'),
+    # designs/canvas/ and designs/canvas-element/ (design_canvas_document/
+    # design_canvas_element) served the old GrapesJS editor's own canvas
+    # exclusively — removed along with it, and design_canvas.py with them
+    # (see DECISIONS.md's removal entry). Nothing else ever called them.
     # Green-Light directive — the Template Health endpoint (Layers A/C/D, see design_validation.py).
     path('designs/validate/', views_design_editor.design_validate, name='design_validate'),
     # Editor-authored canvas images (file picker / clipboard paste) — real

@@ -7,7 +7,6 @@ import {
   createContentItem,
   isFreelyDuplicable,
   isBindingTakenIn,
-  expandLinkedGroupSelection,
 } from '../data/elementCatalog';
 import { createShape } from '../data/shapeCatalog';
 import { validateTemplate } from '../utils/validation';
@@ -221,23 +220,24 @@ export function EditorProvider({ children, initialTemplate, designId = null, des
     uploadImageForItem(itemId, file);
   }, [uploadImageForItem]);
 
-  // Every consumer in this app reaches selection-setting through this one
-  // wrapper (exposed below as `setSelection`, same name/shape as before —
-  // no call site elsewhere needed to change) so the signature trio's
-  // "always select/transform together" rule (elementCatalog.js's
-  // expandLinkedGroupSelection) is enforced at the single real choke point
-  // selection ever passes through, accepting the exact same object-or-
-  // updater-function argument the raw setState already did.
+  // Part 7: the signature trio is no longer forced into an always-
+  // together SELECTION — clicking one part selects only that part (its
+  // own handles/properties, independent resize/rotate/align/style), the
+  // same as any other item. The trio still moves as one rigid unit, but
+  // that's enforced purely at the MOVE gesture (CanvasItem.jsx's
+  // beginMove, via a LOCAL call to elementCatalog.js's
+  // expandLinkedGroupSelection scoped to that one gesture's own
+  // groupMembers computation) — never here. This wrapper used to also
+  // expand `next.ids` through that same function on every selection
+  // change, which is what made resize/align/style unreachably grouped
+  // too; removed so `setSelection` is now a plain passthrough, kept as
+  // its own named function only because every consumer already reaches
+  // selection through it (no call site elsewhere needed to change).
   const setSelection = useCallback(
     (update) => {
-      setSelectionRaw((prev) => {
-        const next = typeof update === 'function' ? update(prev) : update;
-        if (!next || !next.ids) return next;
-        const expandedIds = expandLinkedGroupSelection(next.ids, template.items);
-        return expandedIds === next.ids ? next : { ...next, ids: expandedIds };
-      });
+      setSelectionRaw((prev) => (typeof update === 'function' ? update(prev) : update));
     },
-    [template.items]
+    []
   );
 
   const commit = useCallback((next) => dispatch({ type: 'COMMIT', next }), []);

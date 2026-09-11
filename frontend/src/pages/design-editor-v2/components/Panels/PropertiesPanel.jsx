@@ -5,7 +5,7 @@ import { getItemBounds, getFooterTop, resolveMoveCollision } from '../../utils/g
 import { FONT_FAMILIES, FONT_WEIGHT_LABELS, fontFamilyById } from '../../data/fonts';
 import { isLinked, resolveColorValue, resolveFontValue } from '../../utils/theme';
 import { CheckIcon, ErrorIcon, WarningIcon } from '../Icons';
-import { pxToMm } from '../../utils/units';
+import { pxToMm, mmToPxDisplay, pxDisplayToMm } from '../../utils/units';
 import { BINDING_OPTIONS, bindingLabel } from '../../data/bindings';
 import CropModal from '../CropModal';
 
@@ -167,6 +167,43 @@ function SliderRow({ label, min, max, step = 1, value, onChange }) {
         <input type="number" min={min} max={max} step={step} value={value} onChange={handleNumber} />
       </div>
     </div>
+  );
+}
+
+// Prompt 31 item 2: display-in-px wrapper around SliderRow. Every caller
+// below still passes/receives real mm values (min/max/step/value are the
+// same stored mm quantities they always were, and `onChange` still fires
+// with an mm number) — this is purely a display-boundary shim, converting
+// those mm numbers to px for the slider/number pair the user actually
+// sees and types into, then converting a committed value straight back to
+// mm before it ever reaches the caller's own onChange. SliderRow itself
+// still owns the actual gesture semantics (single-undo-step drag, etc.)
+// unchanged — it's just being fed/read in a different unit than before.
+function PxSliderRow({ label, min, max, step, value, onChange }) {
+  return (
+    <SliderRow
+      label={label}
+      min={mmToPxDisplay(min)}
+      max={mmToPxDisplay(max)}
+      step={Math.max(mmToPxDisplay(step), 0.01)}
+      value={mmToPxDisplay(value)}
+      onChange={(px) => onChange(pxDisplayToMm(px))}
+    />
+  );
+}
+
+// Same display-boundary bridge for a plain mm-valued number field (no
+// slider) — Width/Height. `value`/`onChange` are mm on both sides of this
+// component's own boundary; only what's rendered/typed is px.
+function PxNumberField({ value, onChange, step = 1, style }) {
+  return (
+    <input
+      type="number"
+      step={step}
+      value={mmToPxDisplay(value)}
+      onChange={(e) => onChange(pxDisplayToMm(e.target.value))}
+      style={style}
+    />
   );
 }
 
@@ -444,7 +481,7 @@ function PartProperties({ item, part, pageAlignItem }) {
       <div className="panel__section-title">Fill &amp; border</div>
       <LinkableColorRow label="Background" theme={theme} value={partStyle.bgColor} onChange={(v) => updateItemPart(item.id, part, { bgColor: v })} />
       <LinkableColorRow label="Border color" theme={theme} value={partStyle.borderColor} onChange={(v) => updateItemPart(item.id, part, { borderColor: v })} fallback="#262420" />
-      <SliderRow label="Border width (mm)" min={0} max={1.6} step={0.1} value={partStyle.borderWidth || 0} onChange={(v) => updateItemPart(item.id, part, { borderWidth: v })} />
+      <PxSliderRow label="Border width (px)" min={0} max={1.6} step={0.1} value={partStyle.borderWidth || 0} onChange={(v) => updateItemPart(item.id, part, { borderWidth: v })} />
 
       <div className="panel__section-title">Typography</div>
       <LinkableColorRow label="Text color" theme={theme} value={partStyle.textColor} onChange={(v) => updateItemPart(item.id, part, { textColor: v })} fallback={defaultColor} />
@@ -541,12 +578,12 @@ function ContentProperties({ items, pageAlignItem }) {
         <>
           <div className="panel__section-title">Position &amp; size</div>
           <div className="prop-row">
-            <label>Width (mm)</label>
-            <input type="number" step="0.1" value={round2(first.width)} onChange={(e) => updateItems(ids, () => ({ width: Number(e.target.value) }))} />
+            <label>Width (px)</label>
+            <PxNumberField value={first.width} onChange={(mmVal) => updateItems(ids, () => ({ width: mmVal }))} />
           </div>
           <div className="prop-row">
-            <label>Height (mm)</label>
-            <input type="number" step="0.1" value={round2(first.height)} onChange={(e) => updateItems(ids, () => ({ height: Number(e.target.value) }))} />
+            <label>Height (px)</label>
+            <PxNumberField value={first.height} onChange={(mmVal) => updateItems(ids, () => ({ height: mmVal }))} />
           </div>
           <SliderRow label="Rotation" min={-180} max={180} value={first.rotation || 0} onChange={(v) => updateItems(ids, () => ({ rotation: v }))} />
         </>
@@ -559,7 +596,7 @@ function ContentProperties({ items, pageAlignItem }) {
       <div className="panel__section-title">Fill &amp; border</div>
       <LinkableColorRow label="Background" theme={theme} value={first.bgColor} onChange={(v) => updateItems(ids, () => ({ bgColor: v }))} />
       <LinkableColorRow label="Border color" theme={theme} value={first.borderColor} onChange={(v) => updateItems(ids, () => ({ borderColor: v }))} fallback="#262420" />
-      <SliderRow label="Border width (mm)" min={0} max={1.6} step={0.1} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
+      <PxSliderRow label="Border width (px)" min={0} max={1.6} step={0.1} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
       {isLogo && (
         <div className="prop-row">
           <label>Shape</label>
@@ -578,7 +615,7 @@ function ContentProperties({ items, pageAlignItem }) {
         </div>
       )}
       {showCornerRadius && (
-        <SliderRow label="Corner radius (mm)" min={0} max={6.4} step={0.1} value={first.cornerRadius ?? 0} onChange={(v) => updateItems(ids, () => ({ cornerRadius: v }))} />
+        <PxSliderRow label="Corner radius (px)" min={0} max={6.4} step={0.1} value={first.cornerRadius ?? 0} onChange={(v) => updateItems(ids, () => ({ cornerRadius: v }))} />
       )}
 
       {!hideTextControls && (
@@ -666,7 +703,7 @@ function TableProperties({ item }) {
         <label>Row border color</label>
         <input type="color" value={item.rowBorderColor || '#e5e1d6'} onChange={(e) => patch({ rowBorderColor: e.target.value })} />
       </div>
-      <SliderRow label="Row border width (mm)" min={0} max={1} step={0.05} value={item.rowBorderWidth ?? 0.25} onChange={(v) => patch({ rowBorderWidth: v })} />
+      <PxSliderRow label="Row border width (px)" min={0} max={1} step={0.05} value={item.rowBorderWidth ?? 0.25} onChange={(v) => patch({ rowBorderWidth: v })} />
       <div className="prop-row">
         <label>Alternating shading</label>
         <input type="checkbox" checked={!!item.altRowShading} onChange={(e) => patch({ altRowShading: e.target.checked })} />
@@ -679,7 +716,7 @@ function TableProperties({ item }) {
       )}
 
       <div className="panel__section-title">Table — Columns</div>
-      <SliderRow label="Cell padding (mm)" min={0} max={4.2} step={0.1} value={item.cellPadding ?? pxToMm(4)} onChange={(v) => patch({ cellPadding: v })} />
+      <PxSliderRow label="Cell padding (px)" min={0} max={4.2} step={0.1} value={item.cellPadding ?? pxToMm(4)} onChange={(v) => patch({ cellPadding: v })} />
       {ELEMENT_TYPES[item.type].render().columns.map((col, j) => {
         const align = item.columnAlign?.[j] || (j === 0 ? 'left' : 'right');
         const setAlign = (v) => {
@@ -923,21 +960,21 @@ function ShapeProperties({ items, pageAlignItem }) {
 
       <div className="panel__section-title">Position &amp; size</div>
       <div className="prop-row">
-        <label>Width (mm)</label>
-        <input type="number" step="0.1" value={round2(first.width)} onChange={(e) => updateItems(ids, () => ({ width: Number(e.target.value) }))} />
+        <label>Width (px)</label>
+        <PxNumberField value={first.width} onChange={(mmVal) => updateItems(ids, () => ({ width: mmVal }))} />
       </div>
       <div className="prop-row">
-        <label>Height (mm)</label>
-        <input type="number" step="0.1" value={round2(first.height)} onChange={(e) => updateItems(ids, () => ({ height: Number(e.target.value) }))} />
+        <label>Height (px)</label>
+        <PxNumberField value={first.height} onChange={(mmVal) => updateItems(ids, () => ({ height: mmVal }))} />
       </div>
       <SliderRow label="Rotation" min={-180} max={180} value={first.rotation} onChange={(v) => updateItems(ids, () => ({ rotation: v }))} />
 
       <div className="panel__section-title">Fill &amp; border</div>
       <LinkableColorRow label="Fill" theme={theme} value={first.fill} onChange={(v) => updateItems(ids, () => ({ fill: v }))} fallback="#7152F5" />
       <LinkableColorRow label="Border color" theme={theme} value={first.borderColor} onChange={(v) => updateItems(ids, () => ({ borderColor: v }))} fallback="#262420" />
-      <SliderRow label="Border width (mm)" min={0} max={2.1} step={0.1} value={first.borderWidth} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
+      <PxSliderRow label="Border width (px)" min={0} max={2.1} step={0.1} value={first.borderWidth} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
       {(first.type === 'roundedRect' || first.type === 'container') && (
-        <SliderRow label="Corner radius (mm)" min={0} max={15.9} step={0.1} value={first.radius} onChange={(v) => updateItems(ids, () => ({ radius: v }))} />
+        <PxSliderRow label="Corner radius (px)" min={0} max={15.9} step={0.1} value={first.radius} onChange={(v) => updateItems(ids, () => ({ radius: v }))} />
       )}
 
       <AlignmentSection pageAlignItem={pageAlignItem} />
@@ -972,12 +1009,12 @@ function ImageProperties({ items, pageAlignItem }) {
         <>
           <div className="panel__section-title">Position &amp; size</div>
           <div className="prop-row">
-            <label>Width (mm)</label>
-            <input type="number" step="0.1" value={round2(first.width)} onChange={(e) => updateItems(ids, () => ({ width: Number(e.target.value) }))} />
+            <label>Width (px)</label>
+            <PxNumberField value={first.width} onChange={(mmVal) => updateItems(ids, () => ({ width: mmVal }))} />
           </div>
           <div className="prop-row">
-            <label>Height (mm)</label>
-            <input type="number" step="0.1" value={round2(first.height)} onChange={(e) => updateItems(ids, () => ({ height: Number(e.target.value) }))} />
+            <label>Height (px)</label>
+            <PxNumberField value={first.height} onChange={(mmVal) => updateItems(ids, () => ({ height: mmVal }))} />
           </div>
           <SliderRow label="Rotation" min={-180} max={180} value={first.rotation || 0} onChange={(v) => updateItems(ids, () => ({ rotation: v }))} />
         </>
@@ -1014,8 +1051,8 @@ function ImageProperties({ items, pageAlignItem }) {
       <div className="panel__section-title">Fill &amp; border</div>
       <LinkableColorRow label="Background" theme={theme} value={first.bgColor} onChange={(v) => updateItems(ids, () => ({ bgColor: v }))} />
       <LinkableColorRow label="Border color" theme={theme} value={first.borderColor} onChange={(v) => updateItems(ids, () => ({ borderColor: v }))} fallback="#262420" />
-      <SliderRow label="Border width (mm)" min={0} max={1.6} step={0.1} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
-      <SliderRow label="Corner radius (mm)" min={0} max={6.4} step={0.1} value={first.cornerRadius ?? 0} onChange={(v) => updateItems(ids, () => ({ cornerRadius: v }))} />
+      <PxSliderRow label="Border width (px)" min={0} max={1.6} step={0.1} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
+      <PxSliderRow label="Corner radius (px)" min={0} max={6.4} step={0.1} value={first.cornerRadius ?? 0} onChange={(v) => updateItems(ids, () => ({ cornerRadius: v }))} />
 
       <AlignmentSection pageAlignItem={pageAlignItem} />
 
@@ -1078,7 +1115,7 @@ function MixedProperties({ items }) {
         <label>Border color</label>
         <input type="color" value={firstBorderColor} onChange={(e) => updateItems(ids, () => ({ borderColor: e.target.value }))} />
       </div>
-      <SliderRow label="Border width (mm)" min={0} max={2.1} step={0.1} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
+      <PxSliderRow label="Border width (px)" min={0} max={2.1} step={0.1} value={first.borderWidth || 0} onChange={(v) => updateItems(ids, () => ({ borderWidth: v }))} />
       <p className="empty-hint" style={{ marginTop: 10 }}>
         Move, resize, and rotate this selection together using the shared handles on the canvas.
       </p>

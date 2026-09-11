@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useEditor } from '../../state/EditorContext';
 import { beginDragSelectGuard } from '../../utils/dragGuard';
-import { rotatedBoundingBox } from '../../utils/geometry';
+import { isPointInSelectionBounds } from '../../utils/geometry';
 import { pxToMm, mm } from '../../utils/units';
 import CanvasItem from './CanvasItem';
 import GroupSelectionOverlay from './GroupSelectionOverlay';
@@ -32,7 +32,6 @@ export default function CanvasLayer() {
     // handleContextMenu below ever gets a chance to see it.
     if (e.button !== 0) return;
     if (e.target !== e.currentTarget) return; // only start on empty canvas, not on an item
-    const restoreSelection = beginDragSelectGuard();
     // Prompt 22: `.canvas-layer` is itself a child of the CSS-zoomed
     // `.page-frame`, so its OWN getBoundingClientRect() already comes
     // back at the current on-screen (zoomed) size — dividing by `scale`
@@ -45,6 +44,20 @@ export default function CanvasLayer() {
     const scale = zoom / 100;
     const rect = e.currentTarget.getBoundingClientRect();
     const start = { x: pxToMm((e.clientX - rect.left) / scale), y: pxToMm((e.clientY - rect.top) / scale) };
+
+    // Prompt 31 item 1: a left-click landing in the empty gap INSIDE the
+    // current multi-selection's own bounding box (the same box the
+    // right-click group-menu hit-test below already tests against) must
+    // not clear the selection — it used to, unconditionally, since this
+    // handler previously ran setSelection({ids: [], ...}) before ever
+    // checking whether there was anything worth preserving. Only a click
+    // genuinely OUTSIDE that box should deselect and start a marquee-drag.
+    if (selection.ids.length >= 2) {
+      const selectedItems = template.items.filter((i) => selection.ids.includes(i.id));
+      if (isPointInSelectionBounds(start.x, start.y, selectedItems)) return;
+    }
+
+    const restoreSelection = beginDragSelectGuard();
     setSelection({ ids: [], part: null });
 
     let currentBox = null; // tracked locally, not via React state, so onUp can
@@ -100,12 +113,7 @@ export default function CanvasLayer() {
     const rect = e.currentTarget.getBoundingClientRect();
     const cursorXMm = pxToMm((e.clientX - rect.left) / scale);
     const cursorYMm = pxToMm((e.clientY - rect.top) / scale);
-    const boxes = selectedItems.map(rotatedBoundingBox);
-    const minX = Math.min(...boxes.map((b) => b.minX));
-    const maxX = Math.max(...boxes.map((b) => b.maxX));
-    const minY = Math.min(...boxes.map((b) => b.minY));
-    const maxY = Math.max(...boxes.map((b) => b.maxY));
-    if (cursorXMm >= minX && cursorXMm <= maxX && cursorYMm >= minY && cursorYMm <= maxY) {
+    if (isPointInSelectionBounds(cursorXMm, cursorYMm, selectedItems)) {
       e.preventDefault();
       e.stopPropagation();
       setContextMenu({ x: e.clientX, y: e.clientY });

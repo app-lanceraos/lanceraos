@@ -42,11 +42,46 @@ describe('exact round trip against every real BUILTIN_DESIGNS seed', () => {
 // content at all) worth its own round-trip check, kept separate from the
 // SEEDS loop above since it exercises a genuinely different code path
 // (zero groups found).
-test('blank professional starter: design_data -> template -> design_data is deep-equal', () => {
+// Part 6 (per-part signature geometry/style) — `blank`'s own signature
+// element predates `style.parts` entirely (it comes from a separately-
+// generated rich-element fixture, not from BUILTIN_DESIGNS), so it is a
+// genuine LEGACY (no `style.parts`) signature the same way any pre-Part-6
+// saved design is. Exporting it now always writes real, captured
+// `style.parts` (dx/dy/width/height/style per part, taken straight off
+// the reconstructed editor items) — this is the intended, one-way
+// upgrade the whole feature exists for ("no ratio-split math should
+// remain for this element once this lands"), so a bare `deepStrictEqual`
+// against the original (pre-parts) fixture is no longer the right bar
+// for the signature element specifically. Every OTHER element in the
+// same design must still round-trip byte-identical; the signature
+// element's own `style.parts` must be real dicts with a real image/
+// divider/label geometry (never re-inferred via the old ratio split at
+// export time — that function only runs at IMPORT for a legacy element).
+test('blank professional starter: design_data -> template -> design_data is deep-equal (except the legacy signature gaining real style.parts)', () => {
   const original = loadFixture('blank');
   const { template } = designDataToTemplate(original);
   const { designData } = templateToDesignData(template);
-  assert.deepStrictEqual(designData, original);
+
+  const stripSignature = (dd) => ({
+    ...dd,
+    flow: { ...dd.flow, elements: dd.flow.elements.filter((e) => e.type !== 'signature') },
+  });
+  assert.deepStrictEqual(stripSignature(designData), stripSignature(original));
+
+  const originalSig = original.flow.elements.find((e) => e.type === 'signature');
+  const roundTrippedSig = designData.flow.elements.find((e) => e.type === 'signature');
+  assert.equal(originalSig.style.parts, undefined, 'fixture precondition: originally legacy-shaped (no style.parts)');
+  assert.equal(roundTrippedSig.x, originalSig.x);
+  assert.equal(roundTrippedSig.y, originalSig.y);
+  assert.equal(roundTrippedSig.style.label, originalSig.style.label);
+  assert.equal(roundTrippedSig.style.has_signature_image, originalSig.style.has_signature_image);
+  for (const part of ['image', 'divider', 'label']) {
+    assert.ok(roundTrippedSig.style.parts[part], `expected a real style.parts.${part}`);
+    assert.equal(typeof roundTrippedSig.style.parts[part].dx, 'number');
+    assert.equal(typeof roundTrippedSig.style.parts[part].dy, 'number');
+    assert.ok(roundTrippedSig.style.parts[part].width > 0);
+    assert.ok(roundTrippedSig.style.parts[part].height > 0);
+  }
 });
 
 // ── 2. The editor's OWN starter template survives an exact round trip ───
@@ -310,6 +345,191 @@ describe('real production element decompositions', () => {
     assert.deepStrictEqual(roundTrippedSig, originalSig);
   });
 
+  // Part 6 (per-part signature geometry/style) — the actual bar that
+  // matters for this feature: a NON-default arrangement, where each of
+  // the 3 parts has been independently resized/repositioned/restyled
+  // (not just the untouched default the test above already covers).
+  // Grouped movement is still real (all 3 items are dragged as one unit
+  // in the UI, elementCatalog.SIGNATURE_GROUP_TYPES) but is orthogonal to
+  // this test — moving the group after this mutation would translate all
+  // 3 by the same delta and still round-trip exactly, since dx/dy are
+  // relative to the shared anchor.
+  test('signature: an independently resized/repositioned/restyled arrangement round-trips exactly', () => {
+    const original = loadFixture('professional');
+    const { template } = designDataToTemplate(original);
+    const image = template.items.find((i) => i.type === 'signatureImage');
+    const divider = template.items.find((i) => i.type === 'signatureDivider');
+    const label = template.items.find((i) => i.type === 'signatureLabel');
+
+    // Independently different sizes, positions, and styles per part —
+    // real editor (page-relative, margin-inclusive) coordinates, kept
+    // within the original bundle's own real footprint (x 119-174, well
+    // clear of every neighboring element — confirmed directly against
+    // the real professional seed's own element list) so this also
+    // exercises real backend page-bounds/overlap validation below, not
+    // just the JS-side shape check.
+    image.x = 139; image.y = 234; image.width = 40; image.height = 15;
+    image.borderColor = '#ff0000'; image.borderWidth = 0.6; image.cornerRadius = 3;
+    divider.x = 145; divider.y = 252; divider.width = 30; divider.height = 2;
+    divider.bgColor = '#00aa00';
+    label.x = 139; label.y = 257; label.width = 55; label.height = 10;
+    label.fontFamily = 'ibm-plex-mono'; label.fontSize = 10; label.textColor = '#0000ff';
+    label.contentAlign = 'left';
+    // The exact editor-space anchor (min x/y of the 3 parts) this
+    // mutation implies — used below only to relate `dx`/`dy` back to the
+    // SAME coordinate space they were set in (production `sig.x`/`sig.y`
+    // are shifted by the page's real margins, a different space entirely
+    // — see marginsOfEditorPage/shiftToProduction above).
+    const anchorEditorX = Math.min(image.x, divider.x, label.x);
+    const anchorEditorY = Math.min(image.y, divider.y, label.y);
+
+    const { designData } = templateToDesignData(template);
+    const sig = designData.flow.elements.find((e) => e.type === 'signature');
+    assert.ok(sig.style.parts, 'expected a real style.parts dict');
+    const { image: imgPart, divider: divPart, label: lblPart } = sig.style.parts;
+
+    // Each part's own geometry is real, distinct, and relative to the
+    // shared anchor — never a ratio-inferred fraction of a single shared
+    // box (dx/dy computed here in the SAME editor space image/divider/
+    // label.x/y were set in, matching anchorEditorX/Y above).
+    assert.equal(imgPart.dx, image.x - anchorEditorX);
+    assert.equal(imgPart.dy, image.y - anchorEditorY);
+    assert.equal(imgPart.width, 40);
+    assert.equal(imgPart.height, 15);
+    assert.equal(imgPart.border_color, '#ff0000');
+    assert.equal(imgPart.border_width_mm, 0.6);
+    assert.equal(imgPart.border_radius_mm, 3);
+
+    assert.equal(divPart.dx, divider.x - anchorEditorX);
+    assert.equal(divPart.dy, divider.y - anchorEditorY);
+    assert.equal(divPart.width, 30);
+    assert.equal(divPart.height, 2);
+    assert.equal(divPart.color, '#00aa00');
+
+    assert.equal(lblPart.dx, label.x - anchorEditorX);
+    assert.equal(lblPart.dy, label.y - anchorEditorY);
+    assert.equal(lblPart.width, 55);
+    assert.equal(lblPart.height, 10);
+    assert.equal(lblPart.font, 'IBM Plex Mono');
+    assert.equal(lblPart.font_size_pt, 10);
+    assert.equal(lblPart.color, '#0000ff');
+    assert.equal(lblPart.align, 'left');
+
+    // Re-importing must land each part back at its EXACT real editor
+    // position/size — the real, end-to-end proof that no ratio-split
+    // inference is involved for a non-default arrangement.
+    const { template: reimported2 } = designDataToTemplate(designData);
+    const image2 = reimported2.items.find((i) => i.type === 'signatureImage');
+    const divider2 = reimported2.items.find((i) => i.type === 'signatureDivider');
+    const label2 = reimported2.items.find((i) => i.type === 'signatureLabel');
+    assert.equal(image2.x, image.x); assert.equal(image2.y, image.y);
+    assert.equal(image2.width, 40); assert.equal(image2.height, 15);
+    assert.equal(image2.borderColor, '#ff0000');
+    assert.equal(divider2.x, divider.x); assert.equal(divider2.y, divider.y);
+    assert.equal(divider2.width, 30); assert.equal(divider2.height, 2);
+    assert.equal(divider2.bgColor, '#00aa00');
+    assert.equal(label2.x, label.x); assert.equal(label2.y, label.y);
+    assert.equal(label2.width, 55); assert.equal(label2.height, 10);
+    assert.equal(label2.textColor, '#0000ff');
+    assert.equal(label2.contentAlign, 'left');
+
+    // Real backend schema validation, not just a JS-side shape check.
+    const errors = validateDesignDataAgainstPython(designData);
+    assert.deepEqual(errors, []);
+
+    // Exact round trip: re-importing this exact, non-default design_data
+    // must reconstruct every part's real geometry/style exactly, and
+    // re-exporting that must reproduce the identical design_data —
+    // the actual test that matters per this feature's own acceptance
+    // bar, not just the default arrangement (which round-tripped
+    // correctly even before this feature, via the old ratio split).
+    const { template: reimported } = designDataToTemplate(designData);
+    const { designData: reexported } = templateToDesignData(reimported);
+    assert.deepStrictEqual(reexported, designData);
+  });
+
+  // Part 7 (grouped move, independent everything else) — the exact
+  // gesture the editor UI now performs: after the parts already carry a
+  // real non-default per-part arrangement (independent sizes/styles, as
+  // set up above), a GROUP MOVE (CanvasItem.jsx's beginGroupMove)
+  // translates all 3 by the identical shared (dx, dy) delta, never
+  // touching their individual widths/heights/styles or their relative
+  // offsets from one another. Simulated here at the data level (applying
+  // the same delta to all 3 parts' x/y, exactly what beginGroupMove's own
+  // `updateItems` patch does) since this is a pure adapter test file with
+  // no React/DOM — the real drag gesture is covered separately by the
+  // selection/transform behavior tests, this test is the actual save-and-
+  // reload proof that the arrangement it produces round-trips exactly.
+  test('signature: a non-default arrangement, moved as a group, round-trips exactly', () => {
+    const original = loadFixture('professional');
+    const { template } = designDataToTemplate(original);
+    const image = template.items.find((i) => i.type === 'signatureImage');
+    const divider = template.items.find((i) => i.type === 'signatureDivider');
+    const label = template.items.find((i) => i.type === 'signatureLabel');
+
+    // Same independent per-part mutation as the test above (different
+    // sizes/positions/styles per part).
+    image.x = 139; image.y = 234; image.width = 40; image.height = 15;
+    image.borderColor = '#ff0000'; image.borderWidth = 0.6; image.cornerRadius = 3;
+    divider.x = 145; divider.y = 252; divider.width = 30; divider.height = 2;
+    divider.bgColor = '#00aa00';
+    label.x = 139; label.y = 257; label.width = 55; label.height = 10;
+    label.fontFamily = 'ibm-plex-mono'; label.fontSize = 10; label.textColor = '#0000ff';
+    label.contentAlign = 'left';
+
+    // The relative offsets BEFORE the group move — what must survive it.
+    const relBefore = {
+      divX: divider.x - image.x, divY: divider.y - image.y,
+      lblX: label.x - image.x, lblY: label.y - image.y,
+    };
+
+    // Now the group-move gesture itself: one shared delta applied to
+    // every part, exactly what beginGroupMove's onUp does
+    // (`patches.set(id, { x: origX + dx, y: origY + dy })` for every
+    // member) — never a per-part independent shift.
+    const dx = -2; const dy = -3;
+    image.x += dx; image.y += dy;
+    divider.x += dx; divider.y += dy;
+    label.x += dx; label.y += dy;
+
+    // Relative arrangement preserved exactly by the shared translation.
+    assert.equal(divider.x - image.x, relBefore.divX);
+    assert.equal(divider.y - image.y, relBefore.divY);
+    assert.equal(label.x - image.x, relBefore.lblX);
+    assert.equal(label.y - image.y, relBefore.lblY);
+
+    const { designData } = templateToDesignData(template);
+    const errors = validateDesignDataAgainstPython(designData);
+    assert.deepEqual(errors, []);
+
+    // The actual save-and-reload proof: re-importing this exact
+    // post-group-move design_data reconstructs each part at its real,
+    // shifted position/size/style, and re-exporting reproduces the
+    // identical design_data byte-for-byte.
+    const { template: reimported } = designDataToTemplate(designData);
+    const image2 = reimported.items.find((i) => i.type === 'signatureImage');
+    const divider2 = reimported.items.find((i) => i.type === 'signatureDivider');
+    const label2 = reimported.items.find((i) => i.type === 'signatureLabel');
+    assert.equal(image2.x, image.x); assert.equal(image2.y, image.y);
+    assert.equal(image2.width, 40); assert.equal(image2.height, 15);
+    assert.equal(image2.borderColor, '#ff0000');
+    assert.equal(divider2.x, divider.x); assert.equal(divider2.y, divider.y);
+    assert.equal(divider2.width, 30); assert.equal(divider2.height, 2);
+    assert.equal(divider2.bgColor, '#00aa00');
+    assert.equal(label2.x, label.x); assert.equal(label2.y, label.y);
+    assert.equal(label2.width, 55); assert.equal(label2.height, 10);
+    assert.equal(label2.textColor, '#0000ff');
+    assert.equal(label2.contentAlign, 'left');
+    // Relative arrangement still intact after the full round trip.
+    assert.equal(divider2.x - image2.x, relBefore.divX);
+    assert.equal(divider2.y - image2.y, relBefore.divY);
+    assert.equal(label2.x - image2.x, relBefore.lblX);
+    assert.equal(label2.y - image2.y, relBefore.lblY);
+
+    const { designData: reexported } = templateToDesignData(reimported);
+    assert.deepStrictEqual(reexported, designData);
+  });
+
   test('professional: Pay Online imports/exports as two real elements (qr_code + online_payment_link)', () => {
     const original = loadFixture('professional');
     const { template } = designDataToTemplate(original);
@@ -558,7 +778,12 @@ describe('cross-list z-order', () => {
   test('within the flow region, a shape inserted between two flow elements keeps that exact position after a round trip', () => {
     const original = loadFixture('professional');
     const { template } = designDataToTemplate(original);
-    const divider = template.items.find((i) => i.type === 'divider' || i.kind === 'shape');
+    // Part 2 — professional's fixture now carries 2 more real shape
+    // elements (the spine bar + accent line, both `type: 'roundedRect'`)
+    // ahead of this actual divider, so the lookup must target the real
+    // divider specifically (matching `dividerPos` below, which always
+    // did) rather than "whichever shape comes first".
+    const divider = template.items.find((i) => i.type === 'divider');
     const tableIdx = template.items.findIndex((i) => i.type === 'itemsTable');
     const shape = createShape('roundedRect', { x: 60, y: 61 });
     shape.width = 10;

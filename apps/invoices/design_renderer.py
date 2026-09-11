@@ -28,7 +28,7 @@ from types import SimpleNamespace
 
 from django.template.loader import render_to_string
 
-from apps.invoices.design_schema import SUPPORTED_BINDINGS, validate_design_data_schema_v2
+from apps.invoices.design_schema import SUPPORTED_BINDINGS, _is_number, validate_design_data_schema_v2
 from apps.invoices.pdf_generator import (
     FONT_CONTEXT,
     PORTAL_FONT_CONTEXT,
@@ -192,15 +192,18 @@ BINDING_RESOLVERS = {
 # neither accepts a content_mode parameter at all) resolves every binding
 # to genuine invoice/profile data, unchanged from Phase 1-3. `'alias'` is
 # new: it resolves every binding to a fixed, human-readable label instead
-# ("Client Name", "Invoice Number") so the CANVAS EDITOR — a design
-# environment, not a live invoice preview — always shows what a field
-# REPRESENTS rather than today's test-account data, and, critically,
-# never collapses to zero size just because the real underlying field
-# happens to be blank (see the per-branch unconditional-rendering changes
-# in _v2_element_content.html). Only design_canvas.py's own two view-
-# facing entry points ever pass content_mode='alias' — the canonical
-# renderer used for actual PDF/portal output has no code path that could
-# ever receive anything but the 'real' default, by construction, not by
+# ("Client Name", "Invoice Number") so a canvas editor — a design
+# environment, not a live invoice preview — could always show what a
+# field REPRESENTS rather than real account data, and, critically, never
+# collapse to zero size just because the real underlying field happens
+# to be blank (see the per-branch unconditional-rendering changes in
+# _v2_element_content.html). content_mode='alias' currently has no real
+# caller (its two callers, design_canvas.py's own view-facing entry
+# points, were removed along with the GrapesJS editor they served — see
+# DECISIONS.md's removal entry); kept as a supported code path since a
+# future editor could reasonably want it again. The canonical renderer
+# used for actual PDF/portal output has no code path that could ever
+# receive anything but the 'real' default, by construction, not by
 # convention.
 ALIAS_BINDING_LABELS = {
     'invoice.number': 'Invoice Number',
@@ -293,11 +296,11 @@ def _element_has_real_content(element, context, content_mode='real'):
     # Green-Light directive — the Layers panel's "hide" toggle. Checked
     # BEFORE the content_mode early-return below and regardless of it: a
     # user who deliberately hid an element wants it excluded from real
-    # invoice output — the canvas adapter (design_canvas.py) never
-    # calls this function at all, so a hidden element still appears
-    # (dimmed, via editor-only CSS) in the editor canvas either way; this
-    # check only ever affects the canonical renderer's own real/preview
-    # output.
+    # invoice output — the editor's own live canvas never calls this
+    # function at all (it's a pure frontend canvas, not a backend-HTML-
+    # fragment-based one), so a hidden element still appears (dimmed, via
+    # editor-only CSS) there either way; this check only ever affects the
+    # canonical renderer's own real/preview output.
     if element.get('hidden'):
         return False
 
@@ -443,13 +446,40 @@ def is_sidebar_element(element):
     True when an element is flagged `style.sidebar: true` — the real,
     established v1 convention (see design_seeds.py) generalized to V2 by
     Phase 2. A top-level, public helper (Phase 3 addition) rather than
-    the inline closure `render_design_html` used through Phase 2 —
-    promoted for reuse by design_canvas.py's own header/flow
-    page-vs-sidebar split, which needs the exact same rule and must not
-    reimplement it a second time (the same "one real layout computation,
+    the inline closure `render_design_html` used through Phase 2 — this
+    is what let design_canvas.py's own header/flow page-vs-sidebar split
+    reuse the exact same rule rather than reimplement it a second time
+    while that module existed (removed along with the GrapesJS editor
+    it served — see DECISIONS.md's removal entry); kept public since
+    nothing about the rule itself was canvas-specific (the same "one
+    real layout computation,
     reused, not duplicated" principle this module's own docstring states).
     """
     return bool((element.get('style') or {}).get('sidebar'))
+
+
+def is_page_pinned_element(element):
+    """
+    09 September 2026 (Part 2) — True when an element is flagged
+    `style.page_pinned: true`, the new, minimal mechanism backing a real,
+    editable full-page decorative element (Professional's spine bar +
+    accent line, design_templates.py) that needs the exact same
+    "page-absolute coordinates, position:fixed, repeats on every real
+    multi-page PDF" treatment `is_sidebar_element` above already provides
+    — WITHOUT requiring a `page.sidebar` config to exist at all (Professional
+    has none, and giving it one purely to get this treatment would also
+    incorrectly reserve real horizontal space for main content, exactly
+    like a genuine sidebar does — a real, confirmed layout regression this
+    flag exists to avoid). Modern's own sidebar BACKGROUND fill, by
+    contrast, still uses `style.sidebar: true` (not this) — Modern already
+    has a real `page.sidebar` for its logo/business-name/QR/link content,
+    so reusing that existing, already-gated mechanism for its background
+    rectangle too is simpler and has zero side effects (see this module's
+    own render_design_html for exactly how the two are extracted and
+    rendered — same page-absolute treatment, two independent trigger
+    flags, two independent optional page-level gates).
+    """
+    return bool((element.get('style') or {}).get('page_pinned'))
 
 
 # The 3 generic types whose fill/border is resolved authoritatively by
@@ -458,6 +488,115 @@ def is_sidebar_element(element):
 # reads this same tuple to make sure the OUTER `.v2-el` wrapper never
 # also paints an identical, always-sharp-cornered background behind it.
 SHAPE_TYPES_WITH_OWN_FILL = ('rectangle', 'container', 'ellipse')
+
+# Part 6 (per-part signature geometry/style) — mirrors design_schema.py's
+# own SIGNATURE_PART_KEYS (duplicated as a plain literal, not imported,
+# the same "kept in sync by being the same small constant" convention
+# design_schema.py's own _PAGE_MARGIN_*_MM comment documents for the
+# identical reason: this module already imports things FROM
+# design_schema.py in other places, but there is no need to widen that
+# coupling for one 3-item set literal).
+_SIGNATURE_PART_NAMES = ('image', 'divider', 'label')
+
+# Defaults used only when `style.parts` is present but a given part omits
+# a specific geometry/style key — never consulted when `style.parts` is
+# absent altogether (that case is the pre-existing, fully unrelated flow-
+# layout fallback in _element_content.html's own signature branch, and is
+# completely untouched by this feature). Chosen to be a reasonable,
+# visible box for a signature part that was only partially specified,
+# never silently invisible.
+_SIGNATURE_PART_DEFAULT_GEOMETRY = {
+    'image': {'dx': 0, 'dy': 0, 'width': 26, 'height': 12},
+    'divider': {'dx': 0, 'dy': 13, 'width': 40, 'height': 0.3},
+    'label': {'dx': 0, 'dy': 15, 'width': 40, 'height': 6},
+}
+
+
+def _prepare_signature_parts(element, context):
+    """
+    Part 6 — builds the per-part CSS/content dict `_element_content.html`'s
+    signature branch uses when `element.style.parts` is a real dict (see
+    design_schema._validate_signature_style's own docstring for the full
+    "grouped movement, independent resize/style" reasoning). Returns None
+    when `style.parts` is absent — the caller (prepare_element) then leaves
+    the template to fall back to the original, untouched, ratio-free flow
+    layout (image stacked above a bordered label line), exactly as it
+    rendered before this feature existed.
+
+    Each returned part dict carries `css` (position:absolute;left/top/
+    width/height;transform, ready to drop straight into a style attribute
+    — the same convention every other prepared per-element `css` string in
+    this module already follows) plus whatever type-specific fields the
+    template needs (image: `frame_css`, a border/radius string, same 3
+    field names as generic image/rectangle/logo already use, resolved via
+    resolve_theme_color exactly like every other themeable color in this
+    module; divider: `resolved_color`; label: `label_css`, the font/color/
+    letter-spacing/text-transform declarations, plus `resolved_align`).
+
+    `has_signature_image`'s own gate (freelancer.signature_url must be set,
+    checked by _element_has_real_content and re-checked here) is completely
+    unaffected — this function only ever decides WHERE/HOW the image part
+    renders, never WHETHER it does.
+    """
+    style = element.get('style') or {}
+    parts_style = style.get('parts')
+    if not isinstance(parts_style, dict) or not parts_style:
+        return None
+
+    prepared_parts = {}
+    for part_name in _SIGNATURE_PART_NAMES:
+        part = parts_style.get(part_name)
+        if not isinstance(part, dict):
+            continue
+        defaults = _SIGNATURE_PART_DEFAULT_GEOMETRY[part_name]
+        dx = part['dx'] if _is_number(part.get('dx')) else defaults['dx']
+        dy = part['dy'] if _is_number(part.get('dy')) else defaults['dy']
+        width = part['width'] if _is_number(part.get('width')) and part['width'] > 0 else defaults['width']
+        height = part['height'] if _is_number(part.get('height')) and part['height'] > 0 else defaults['height']
+        rotation = part.get('rotation') or 0
+        css = f'position:absolute;left:{dx}mm;top:{dy}mm;width:{width}mm;height:{height}mm;'
+        if rotation:
+            css += f'transform:rotate({rotation}deg);transform-origin:center;'
+        prepared = {'css': css}
+
+        if part_name == 'image':
+            border_color = resolve_theme_color(part.get('border_color'), context)
+            border_width = part.get('border_width_mm') or 0
+            border_radius_mm = part.get('border_radius_mm')
+            frame_css = ''
+            if border_color and border_width:
+                frame_css += f'border:{border_width}mm solid {border_color};'
+            if border_radius_mm:
+                frame_css += f'border-radius:{border_radius_mm}mm;'
+            prepared['frame_css'] = frame_css
+        elif part_name == 'divider':
+            prepared['resolved_color'] = resolve_theme_color(part.get('color', '#cccccc'), context)
+        elif part_name == 'label':
+            label_css = ''
+            font = resolve_theme_font_family(part.get('font'), context)
+            if font:
+                label_css += f"font-family:'{font}';"
+            font_weight = resolve_theme_font_weight(part.get('font_weight'), context)
+            if font_weight:
+                label_css += f'font-weight:{font_weight};'
+            font_size_pt = part.get('font_size_pt')
+            if font_size_pt:
+                label_css += f'font-size:{font_size_pt}pt;'
+            color = resolve_theme_color(part.get('color'), context)
+            if color:
+                label_css += f'color:{color};'
+            letter_spacing_em = part.get('letter_spacing_em')
+            if letter_spacing_em:
+                label_css += f'letter-spacing:{letter_spacing_em}em;'
+            text_transform = part.get('text_transform')
+            if text_transform:
+                label_css += f'text-transform:{text_transform};'
+            prepared['label_css'] = label_css
+            prepared['resolved_align'] = part.get('align') or resolve_style_value(element, 'align', 'left')
+
+        prepared_parts[part_name] = prepared
+
+    return prepared_parts or None
 
 
 def attach_generic_content(prepared, element, context, content_mode='real'):
@@ -601,13 +740,14 @@ def prepare_element(element, context, content_mode='real', *, chain_member=False
     the full reasoning — so they share one preparation function too).
     Absolute positioning in real mm — no px conversion anywhere in this
     module (Part 3's own requirement: the renderer side of the coordinate
-    contract stays in the canonical mm unit throughout; px only ever
-    existed as an editor-internal, GrapesJS-specific concern, out of
-    scope here).
+    contract stays in the canonical mm unit throughout; px is purely an
+    editor-internal concern (mouse-delta/DOM-measurement boundary
+    conversion — see the editor's own units.js), out of scope here).
 
     `content_mode` (Phase 4B, default 'real') — see ALIAS_BINDING_LABELS'
     comment above. render_design_html never passes anything but the
-    default; only design_canvas.py's editor-facing endpoints do.
+    default; see that comment for the (currently unused) 'alias' path's
+    own history.
 
     `chain_member` (Master Blueprint cutover, §B.3) — True only when this
     element is being rendered as a non-first member of a real-flow
@@ -790,6 +930,12 @@ def prepare_element(element, context, content_mode='real', *, chain_member=False
         # independently-invented resolution path.
         prepared['resolved_pill_color'] = resolve_theme_color(resolve_style_value(element, 'pill_color'), context)
 
+    if element.get('kind') == 'semantic' and element.get('type') == 'signature':
+        # Part 6 — None when `style.parts` is absent, which is what tells
+        # the template to fall back to the original flow layout untouched
+        # (see _prepare_signature_parts' own docstring).
+        prepared['signature_parts'] = _prepare_signature_parts(element, context)
+
     if element.get('kind') == 'structural' and element.get('type') == 'table':
         # Phase 4B.2 — the table is now a real positioned element (see
         # design_schema.py's own docstring); its own `style` dict
@@ -950,9 +1096,11 @@ def resolve_table_columns(table_style):
     design) may narrow or reorder which columns show; widths are
     renormalized proportionally from TABLE_COLUMN_DEFAULT_WIDTHS so a
     narrower column set still fills the table's own full width. This one
-    function is the single source of truth for BOTH the canonical renderer
-    (canonical.html) and the editor canvas (design_canvas.py) — see
-    this module's own docstring's "one real computation, reused" rule.
+    function is the single source of truth for the canonical renderer
+    (canonical.html) — see this module's own docstring's "one real
+    computation, reused" rule (it was also the old GrapesJS editor's own
+    canvas's source of truth for this, via design_canvas.py, before that
+    editor was removed — see DECISIONS.md's removal entry).
 
     Phase 3a (07 September 2026) — `align`: `table_style.column_alignments`
     (new, optional — a list of 'left'/'center'/'right' strings) lets a
@@ -1197,14 +1345,15 @@ def _prepare_flow_region(flow_elements_raw, context, content_mode='real', *, hea
     to "relative document-flow order and spacing, derived from the exact
     same numbers".
 
-    Deliberately UNCHANGED by this fix: the editor canvas
-    (design_canvas.py), which keeps rendering every flow element via
-    its own simple, ungrouped, absolutely-positioned design-time preview
-    — the same established "the canvas is a fixed, approximate design-
-    time estimate; the canonical renderer alone applies real, content-
-    driven layout at actual render time" principle this codebase already
-    uses for the table's own height estimate, now extended to real
-    pagination too.
+    Deliberately UNCHANGED by this fix, while it existed: the old
+    GrapesJS editor's own canvas (design_canvas.py, removed along with
+    that editor — see DECISIONS.md's removal entry), which kept
+    rendering every flow element via its own simple, ungrouped,
+    absolutely-positioned design-time preview — the same established
+    "the canvas is a fixed, approximate design-time estimate; the
+    canonical renderer alone applies real, content-driven layout at
+    actual render time" principle this codebase already uses for the
+    table's own height estimate, now extended to real pagination too.
     """
     # Green-Light directive (§18-22) — "missing data must not create ugly
     # empty spaces." Row/chain GROUPING always uses the ORIGINAL, full
@@ -1399,10 +1548,10 @@ def render_design_html(design_data, context, *, for_pdf=False):
     # (a real, confirmed fidelity gap). Deliberately NOT added to
     # design_schema.py's own formal validation (which already tolerates
     # unrecognized `page` keys, confirmed directly — no "extra keys
-    # rejected" check exists) or to design_canvas.py's editor — scoped
-    # exactly to what this pass asked for (the real render output), not
-    # silently expanded into editor support, which would be a real,
-    # separate, larger feature.
+    # rejected" check exists) or to the (now-removed) GrapesJS editor's
+    # own canvas — scoped exactly to what this pass asked for (the real
+    # render output), not silently expanded into editor support, which
+    # would be a real, separate, larger feature.
     # 30 August 2026 fidelity fix — each real template's own genuinely
     # different page background (#faf9f6 professional / #fdfdfb minimal /
     # #ffffff modern) was silently flattened to one hardcoded #ffffff
@@ -1485,10 +1634,23 @@ def render_design_html(design_data, context, *, for_pdf=False):
     # separately (Modern's real seed has sidebar-flagged elements in
     # both — its logo/business-name in `header`, its QR/pay-online in
     # `flow` — this is unchanged from before this fix).
-    header_page_elements_raw = [el for el in header_elements_raw if not is_sidebar_element(el)]
-    flow_page_elements_raw = [el for el in flow_elements_raw if not is_sidebar_element(el)]
+    # 09 September 2026 (Part 2) — `style.page_pinned` elements (see
+    # is_page_pinned_element's own docstring) get the exact same
+    # extraction treatment as sidebar elements, one line down: pulled out
+    # of the ordinary header/flow content BEFORE it's handed to
+    # _prepare_header_region/_prepare_flow_region, so they never
+    # participate in ordinary document flow/pagination either.
+    header_page_elements_raw = [
+        el for el in header_elements_raw if not is_sidebar_element(el) and not is_page_pinned_element(el)
+    ]
+    flow_page_elements_raw = [
+        el for el in flow_elements_raw if not is_sidebar_element(el) and not is_page_pinned_element(el)
+    ]
     sidebar_elements_raw = [
         el for el in header_elements_raw + flow_elements_raw if is_sidebar_element(el)
+    ]
+    pinned_elements_raw = [
+        el for el in header_elements_raw + flow_elements_raw if is_page_pinned_element(el)
     ]
 
     # content_mode is never threaded through this function or its
@@ -1496,11 +1658,16 @@ def render_design_html(design_data, context, *, for_pdf=False):
     # output has no code path that could ever pass anything but
     # prepare_element's own 'real' default (see ALIAS_BINDING_LABELS'
     # comment above for why that's a structural guarantee, not a
-    # convention). Only design_canvas.py's editor-facing endpoints
-    # call prepare_element directly with content_mode='alias'.
+    # convention, and for content_mode='alias''s own currently-unused
+    # status now that its only callers have been removed).
     header_height_mm, header_elements = _prepare_header_region(header_page_elements_raw, context)
     flow_rows = _prepare_flow_region(flow_page_elements_raw, context, header_height_mm=header_height_mm)
     sidebar_elements = [prepare_element(el, context) for el in sidebar_elements_raw]
+    # Page-absolute, same coordinate space as sidebar_elements above (no
+    # margin/sidebar-width offset applied) — rendered inside its own
+    # `.v2-pinned` position:fixed wrapper (canonical.html), independent of
+    # whether `page.sidebar`/`page.spine` are configured at all.
+    pinned_elements = [prepare_element(el, context) for el in pinned_elements_raw]
 
     font_context = FONT_CONTEXT if for_pdf else PORTAL_FONT_CONTEXT
 
@@ -1518,6 +1685,7 @@ def render_design_html(design_data, context, *, for_pdf=False):
         'sidebar': sidebar,
         'sidebar_width_mm': sidebar_width_mm,
         'sidebar_elements': sidebar_elements,
+        'pinned_elements': pinned_elements,
         'spine': spine,
         'spine_color': spine_color,
         'spine_accent_color': spine_accent_color,

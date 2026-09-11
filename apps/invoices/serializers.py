@@ -371,8 +371,8 @@ class InvoiceDesignSerializer(serializers.ModelSerializer):
         validator for a legacy-shape payload (schema_version absent or 1
         — every design saved before this cutover, and still the default
         for a brand-new custom/blank design) or the v2 validator for a
-        real schema_version: 2 payload (design_canvas.py's own editor,
-        or a v1->v2 migrated design) — see
+        real schema_version: 2 payload (the production editor's own
+        save, or a v1->v2 migrated design) — see
         design_schema.validate_design_data_schema_by_version's own
         docstring. This is what lets a v2 design be created/edited/
         deleted/set-default through the exact same real InvoiceDesign

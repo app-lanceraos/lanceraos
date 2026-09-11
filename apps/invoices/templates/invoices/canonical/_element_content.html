@@ -160,7 +160,62 @@
     {% endif %}
 
   {% elif el.type == 'signature' %}
-    {% if el.content_mode == 'alias' %}
+    {% comment %}
+      Part 6 (per-part signature geometry/style) — `el.signature_parts`
+      (design_renderer.py's `_prepare_signature_parts`) is non-None only
+      when the design's own `style.parts` is a real dict: each of the
+      (up to 3) present parts renders as its own absolutely-positioned box
+      relative to this wrapper, with its own resolved geometry/style,
+      instead of the original flow layout below. `freelancer.signature_url`
+      still gates the image the exact same way it always has — this is
+      additive geometry/style structure around it, never a change to how
+      the image itself resolves.
+    {% endcomment %}
+    {% if el.signature_parts and el.content_mode == 'alias' %}
+      {% comment %}
+        The parts' own `css` (design_renderer._prepare_signature_parts)
+        is `position:absolute;left:{dx}mm;top:{dy}mm;...` — relative
+        offsets from the BUNDLE's own x/y, meant to resolve against a
+        wrapper sized/positioned to exactly that box. A signature element
+        that is a real-flow chain member (design_renderer.
+        _group_into_render_chains — e.g. Professional's own
+        QR/link+signature row) has ITS OWN outer `.v2-el` wrapper
+        deliberately WITHOUT position/left/top/width/height (chain
+        members get their real box from a separate chain wrapper div —
+        see prepare_element's own docstring), so nested absolutely-
+        positioned children would otherwise resolve against whatever
+        FAR-AWAY ancestor actually has `position` set instead (a real,
+        confirmed bug this local `position:relative` wrapper fixes,
+        exactly the way `.dyn-payonline`-style local wrappers already
+        avoid the same class of problem elsewhere in this codebase) —
+        this inner wrapper is what actually anchors every part correctly
+        regardless of whether the OUTER element is chain-member or not.
+      {% endcomment %}
+      <div style="position:relative;">
+        {% if el.signature_parts.image %}<div class="v2-alias-box" style="{{ el.signature_parts.image.css }}">Signature</div>{% endif %}
+        {% if el.signature_parts.divider %}<div style="{{ el.signature_parts.divider.css }}background:{{ el.signature_parts.divider.resolved_color }};"></div>{% endif %}
+        {% if el.signature_parts.label %}<div style="{{ el.signature_parts.label.css }}{{ el.signature_parts.label.label_css }}text-align:{{ el.signature_parts.label.resolved_align }};">{{ el.resolved_label|default:"Authorised signature" }}</div>{% endif %}
+      </div>
+    {% elif el.signature_parts and freelancer.signature_url %}
+      {% comment %}
+        The whole bundle — image, divider, AND label — is gated on
+        `freelancer.signature_url` together, exactly like the pre-existing
+        flow-layout fallback below (`{% elif freelancer.signature_url %}`)
+        and `_element_has_real_content`'s own signature branch: an unset
+        signature is a genuinely empty block, not "show the line/label
+        without a real signature to go with them." Same local
+        `position:relative` wrapper as the alias branch above, and for
+        the identical reason (a chain-member signature's own `.v2-el`
+        has no `position` of its own to resolve against).
+      {% endcomment %}
+      <div style="position:relative;">
+        {% if el.signature_parts.image %}
+          <img src="{{ freelancer.signature_url }}" alt="" style="{{ el.signature_parts.image.css }}object-fit:contain;{{ el.signature_parts.image.frame_css }}">
+        {% endif %}
+        {% if el.signature_parts.divider %}<div style="{{ el.signature_parts.divider.css }}background:{{ el.signature_parts.divider.resolved_color }};"></div>{% endif %}
+        {% if el.signature_parts.label %}<div style="{{ el.signature_parts.label.css }}{{ el.signature_parts.label.label_css }}text-align:{{ el.signature_parts.label.resolved_align }};">{{ el.resolved_label|default:"Authorised signature" }}</div>{% endif %}
+      </div>
+    {% elif el.content_mode == 'alias' %}
       <div class="v2-alias-box" style="width:30mm;height:12mm;">Signature</div>
       <div class="v2-sig-line">{{ el.resolved_label|default:"Authorised signature" }}</div>
     {% elif freelancer.signature_url %}

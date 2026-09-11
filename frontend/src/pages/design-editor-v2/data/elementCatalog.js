@@ -578,25 +578,31 @@ export function isBindingTakenIn(items, binding, excludeItemId) {
   );
 }
 
-// ── Signature trio: constrained to move/resize/rotate as one unit ──────
+// ── Signature trio: grouped MOVE only, everything else independent ─────
 //
-// Production's `semantic:signature` is one bundle whose geometry the
-// adapter derives from the union of these 3 editor items' boxes, invertible
-// only while they stay in their DEFAULT relative arrangement (see
-// designDataAdapter.js's exportSignatureGroup/importSignature docstrings) —
-// hand-repositioning any ONE of the three independently makes that
-// union-box export lossy and unrecoverable. Rather than invent a new
-// grouping concept, this reuses the ids-array selection model the app's
-// existing multi-select machinery (GroupSelectionOverlay, CanvasItem's own
-// beginGroupMove, selectedMovableCount) already drives group transforms
-// off of: whenever any one of the 3 signature items is present in a
-// selection, every OTHER currently-visible signature item is folded in
-// too, so a selection touching this trio always contains the whole
-// present set of it, never a subset — the ">=2 selected" branch those
-// existing mechanisms already treat as "transform as a group" is
-// therefore guaranteed to fire for these three, and the single-item
-// transform path (which is what let one part get hand-repositioned away
-// from the other two) becomes unreachable for them.
+// Production's `semantic:signature` is one bundle, but (Part 6) its
+// per-part geometry/style is now captured/restored byte-for-byte via
+// `style.parts.{image,divider,label}` — there is no ratio-split/union-box
+// inference to protect any more, so the 3 editor items backing it
+// (signatureImage/signatureDivider/signatureLabel) are free to differ in
+// size/position/style independently. The one thing that stays grouped
+// (Part 7) is MOVE: dragging any one of the three still translates all
+// three by the same shared delta, so a design author moving "the
+// signature block" as a whole doesn't have to drag each part one at a
+// time and doesn't need to keep them touching for that convenience to
+// work. Selection, resize, rotate, alignment, and styling are all
+// INDEPENDENT per part — clicking one part selects only that part, shows
+// only its own handles/properties, and every transform/style action
+// applies to it alone.
+//
+// This is enforced at exactly one place: CanvasItem.jsx's beginMove calls
+// `expandLinkedGroupSelection` locally, scoped to that one gesture's own
+// groupMembers computation, and only when the item whose mousedown
+// started the gesture is itself one of these three types — never at
+// EditorContext.jsx's `setSelection` (which used to expand every
+// selection change through this same function; that's what made
+// resize/rotate/align/style unreachably grouped too, and is the behavior
+// this function is no longer used for).
 export const SIGNATURE_GROUP_TYPES = ['signatureImage', 'signatureDivider', 'signatureLabel'];
 
 export function expandLinkedGroupSelection(ids, items) {

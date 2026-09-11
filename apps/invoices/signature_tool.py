@@ -16,8 +16,10 @@ wants to bypass the automatic choice.
 
 Two entry points:
 - remove_signature_background(...) — the full pipeline for a photographed/
-  uploaded signature: flattens to RGB, thresholds to build an alpha mask,
-  then crops to the ink's own bounding box.
+  uploaded signature: flattens to RGB (via flatten_to_rgb — see its own
+  docstring for a real, reproduced bug this closes for images that
+  already carry transparency), thresholds to build an alpha mask, then
+  crops to the ink's own bounding box.
 - crop_signature_to_content(...) — crop-only, for a signature that arrives
   ALREADY a clean transparent PNG (e.g. drawn on a canvas, see
   apps/invoices/views.py's signature_upload docstring for the `source`
@@ -116,6 +118,53 @@ def compute_otsu_threshold(grayscale_image):
     return best_split + 1
 
 
+def flatten_to_rgb(img):
+    """
+    Flattens `img` (any PIL mode) to RGB for thresholding, treating real
+    pre-existing transparency as white/paper rather than Pillow's own
+    Image.convert('RGB') default of filling transparent pixels with
+    BLACK.
+
+    This is a real, reproduced bug fix, not a defensive guess: a
+    photographed signature (source='upload's stated case) is always
+    fully opaque — a camera never produces alpha. But 'upload' also
+    genuinely covers someone re-uploading a signature image that
+    ALREADY had its background removed elsewhere (another app, a prior
+    export, a signature generator) — this view has no way to know that
+    in advance, since 'drawn' is reserved for this app's own canvas
+    output. Feeding an RGBA/LA/palette-with-transparency image straight
+    into Image.convert('RGB') fills every transparent pixel with pure
+    black (0,0,0). For a typical mostly-transparent signature PNG, that
+    manufactures a huge black "background" region that is DARKER than
+    the real ink strokes (which are dark but rarely pure (0,0,0)) —
+    Otsu's between-class-variance split then centers itself between
+    that fake black background and the real ink, landing ABOVE the
+    ink's own gray level. Every ink pixel then reads as "the lighter
+    class" and gets classified as background (alpha 0), while the fake
+    black regions (actually meant to be transparent) get a nonzero
+    feathered alpha instead — the mask comes out fully or almost fully
+    empty. See test_signature_tool.py's
+    FlattenToRgbTransparencyTests for a concrete before/after
+    reproduction (getbbox()/opaque-pixel-count on the OLD plain
+    convert('RGB') path vs this one, using the SAME input bytes).
+
+    Compositing onto an opaque white canvas first, instead, makes
+    transparent regions read as light ("paper"), which is what a
+    pre-cleaned signature's transparent surroundings actually represent
+    — correctly keeping them out of Otsu's dark/ink class. An image
+    with no transparency at all (the overwhelmingly common real case —
+    an actual camera photo) takes the plain convert('RGB') path
+    unchanged, since there's nothing to composite.
+    """
+    has_alpha = img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info)
+    if not has_alpha:
+        return img.convert('RGB')
+
+    rgba = img.convert('RGBA')
+    white_background = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
+    return Image.alpha_composite(white_background, rgba).convert('RGB')
+
+
 def build_alpha_mask(grayscale, threshold, feather):
     def alpha_for_gray_level(level):
         if level >= threshold:
@@ -166,7 +215,7 @@ def remove_signature_background(image_bytes, threshold=None, feather=DEFAULT_FEA
     feather: fixed anti-aliasing band width around whichever threshold is
     used (computed or explicit).
     """
-    img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    img = flatten_to_rgb(Image.open(io.BytesIO(image_bytes)))
     grayscale = img.convert('L')
 
     effective_threshold = threshold if threshold is not None else compute_otsu_threshold(grayscale)

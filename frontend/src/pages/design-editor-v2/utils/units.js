@@ -28,9 +28,8 @@
 //      e.g. a future feature — have it available without re-deriving the
 //      constant).
 //
-// This exact factor (not a second, independently-drifting one) mirrors
-// frontend/src/lib/designEditor/constants.js's own MM_TO_PX/PX_TO_MM —
-// the production canvas adapter's identical boundary-conversion constant.
+// This exact factor is CSS's own reference-pixel definition (96px per
+// inch, 25.4mm per inch) — not an independently-chosen value.
 export const MM_TO_PX = 96 / 25.4;
 export const PX_TO_MM = 25.4 / 96;
 
@@ -71,6 +70,28 @@ export function roundMm(mm) {
 // short-circuit.
 export function mm(value) {
   return value === undefined || value === null ? value : `${value}mm`;
+}
+
+// Prompt 31 item 2 — the properties panel's DISPLAY layer: every
+// mm-stored geometric field (position/size/border-width/corner-radius/
+// cell-padding) is now SHOWN and TYPED in px by default, the same
+// document-unit-vs-display-unit separation InDesign/Affinity/Figma all
+// make. This is a display-only bridge, not a second unit boundary —
+// storage, the adapter, validation, and every gesture's own math stay in
+// mm exactly as the rest of this file established; only the properties
+// panel's input/readout components (PropertiesPanel.jsx's PxNumberField/
+// PxSliderRow) call these two.
+// mmToPxDisplay rounds to 2dp for a clean on-screen number (matching
+// this file's own SHOWN-vs-STORED precision convention, see roundMm's
+// comment) — pxDisplayToMm does NOT re-round on the way back in,
+// matching every mm field's pre-existing behavior of committing exactly
+// what was typed, full precision, with no forced rounding on commit.
+export function mmToPxDisplay(mmValue) {
+  return Math.round(mmToPx(mmValue || 0) * 100) / 100;
+}
+
+export function pxDisplayToMm(pxValue) {
+  return pxToMm(Number(pxValue));
 }
 
 // Points — the one field production expresses in a different physical

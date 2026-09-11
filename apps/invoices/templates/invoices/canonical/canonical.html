@@ -13,6 +13,27 @@
 {% endif %}
 {% endif %}
 
+{% if pinned_elements %}
+{% comment %}
+  09 September 2026 (Part 2) — a real, editable replacement for what used
+  to be pure page-level `page.spine` config (Professional's spine bar +
+  accent line, design_templates.py): a `style.page_pinned: true` generic
+  rectangle, rendered here in the exact same page-absolute, always-
+  repeats-on-every-page `position:fixed` space `.v2-sidebar` already
+  uses below, but gated purely on whether any such elements exist — no
+  `page.sidebar`/`page.spine` config required at all (see
+  is_page_pinned_element's own docstring, design_renderer.py, for the
+  full reasoning on why reusing `page.sidebar` for this wasn't safe).
+{% endcomment %}
+<div class="v2-pinned">
+  {% for el in pinned_elements %}
+  <div class="v2-el" style="{{ el.css }}">
+    {% include 'invoices/canonical/_element_content.html' %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% if sidebar %}
 <div class="v2-sidebar" style="width:{{ sidebar_width_mm }}mm;background:{{ sidebar.color|default:design_primary_color }};">
   {% for el in sidebar_elements %}

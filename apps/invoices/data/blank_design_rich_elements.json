@@ -1,35 +1,26 @@
 {
-  "schema_version": 2,
-  "page": {
-    "size": "A4",
-    "width_mm": 210,
-    "height_mm": 297,
-    "margin_top_mm": 16,
-    "margin_right_mm": 16,
-    "margin_bottom_mm": 16,
-    "margin_left_mm": 20,
-    "background_color": "#faf9f6",
-    "footer": {}
-  },
+  "_generated_by": "node frontend/scripts/js/dump_blank_design_elements.mjs",
+  "_source": "frontend/src/pages/design-editor-v2/data/initialState.js (initialTemplateState), converted via frontend/src/pages/design-editor-v2/adapter/designDataAdapter.js (templateToDesignData)",
+  "_do_not_hand_edit": true,
   "header": {
     "elements": [
       {
         "kind": "semantic",
         "type": "logo",
-        "x": 7.31,
-        "y": 7.31,
-        "width": 9.59,
-        "height": 9.59,
+        "x": 8.47,
+        "y": 8.47,
+        "width": 11.11,
+        "height": 11.11,
         "style": {},
         "overrides": {}
       },
       {
         "kind": "generic",
         "type": "text",
-        "x": 20.55,
-        "y": 5.48,
-        "width": 13.7,
-        "height": 3.65,
+        "x": 23.81,
+        "y": 6.35,
+        "width": 15.88,
+        "height": 4.23,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font",
@@ -44,10 +35,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 20.55,
-        "y": 10.5,
-        "width": 29.69,
-        "height": 4.11,
+        "x": 23.81,
+        "y": 12.17,
+        "width": 34.4,
+        "height": 4.76,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font",
@@ -59,10 +50,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 53.89,
-        "y": 10.5,
-        "width": 20.55,
-        "height": 4.11,
+        "x": 62.44,
+        "y": 12.17,
+        "width": 23.81,
+        "height": 4.76,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font",
@@ -74,10 +65,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 78.09,
-        "y": 10.5,
-        "width": 11.42,
-        "height": 4.11,
+        "x": 90.49,
+        "y": 12.17,
+        "width": 13.23,
+        "height": 4.76,
         "style": {
           "text": "Issue date"
         },
@@ -87,10 +78,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 89.51,
-        "y": 10.5,
-        "width": 22.84,
-        "height": 4.11,
+        "x": 103.72,
+        "y": 12.17,
+        "width": 26.46,
+        "height": 4.76,
         "style": {},
         "overrides": {},
         "binding": "invoice.issue_date"
@@ -98,10 +89,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 116.0,
-        "y": 10.5,
-        "width": 11.42,
-        "height": 4.11,
+        "x": 134.41,
+        "y": 12.17,
+        "width": 13.23,
+        "height": 4.76,
         "style": {
           "text": "Due date"
         },
@@ -111,10 +102,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 127.41,
-        "y": 10.5,
-        "width": 22.84,
-        "height": 4.11,
+        "x": 147.64,
+        "y": 12.17,
+        "width": 26.46,
+        "height": 4.76,
         "style": {},
         "overrides": {},
         "binding": "invoice.due_date"
@@ -122,10 +113,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 7.31,
-        "y": 22.84,
-        "width": 38.82,
-        "height": 2.55,
+        "x": 8.47,
+        "y": 26.46,
+        "width": 44.98,
+        "height": 2.96,
         "style": {
           "font": "theme_heading_font",
           "font_weight": "theme_heading_font",
@@ -140,10 +131,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 7.31,
-        "y": 25.39,
-        "width": 38.82,
-        "height": 2.55,
+        "x": 8.47,
+        "y": 29.42,
+        "width": 44.98,
+        "height": 2.96,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font"
@@ -154,10 +145,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 7.31,
-        "y": 27.94,
-        "width": 38.82,
-        "height": 2.55,
+        "x": 8.47,
+        "y": 32.38,
+        "width": 44.98,
+        "height": 2.96,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font"
@@ -168,10 +159,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 7.31,
-        "y": 30.5,
-        "width": 38.82,
-        "height": 2.55,
+        "x": 8.47,
+        "y": 35.34,
+        "width": 44.98,
+        "height": 2.96,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font"
@@ -182,10 +173,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 7.31,
-        "y": 33.05,
-        "width": 38.82,
-        "height": 2.57,
+        "x": 8.47,
+        "y": 38.3,
+        "width": 44.98,
+        "height": 2.98,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font"
@@ -196,10 +187,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 50.69,
-        "y": 22.84,
-        "width": 38.82,
-        "height": 2.62,
+        "x": 58.74,
+        "y": 26.46,
+        "width": 44.98,
+        "height": 3.04,
         "style": {
           "font": "theme_heading_font",
           "font_weight": "theme_heading_font",
@@ -214,10 +205,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 50.69,
-        "y": 25.46,
-        "width": 38.82,
-        "height": 2.62,
+        "x": 58.74,
+        "y": 29.5,
+        "width": 44.98,
+        "height": 3.04,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font"
@@ -228,10 +219,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 50.69,
-        "y": 28.08,
-        "width": 38.82,
-        "height": 2.62,
+        "x": 58.74,
+        "y": 32.54,
+        "width": 44.98,
+        "height": 3.04,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font"
@@ -242,10 +233,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 50.69,
-        "y": 30.71,
-        "width": 38.82,
-        "height": 2.63,
+        "x": 58.74,
+        "y": 35.58,
+        "width": 44.98,
+        "height": 3.05,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font"
@@ -260,10 +251,10 @@
       {
         "kind": "structural",
         "type": "table",
-        "x": 7.31,
-        "y": 50.24,
-        "width": 166.69,
-        "height": 34.25,
+        "x": 8.47,
+        "y": 58.21,
+        "width": 193.15,
+        "height": 39.69,
         "style": {
           "columns": [
             "description",
@@ -279,10 +270,10 @@
       {
         "kind": "semantic",
         "type": "totals",
-        "x": 123.76,
-        "y": 89.05,
-        "width": 50.24,
-        "height": 3.19,
+        "x": 143.4,
+        "y": 103.19,
+        "width": 58.21,
+        "height": 3.7,
         "style": {
           "align": "right",
           "rows": [
@@ -295,10 +286,10 @@
       {
         "kind": "semantic",
         "type": "totals",
-        "x": 123.76,
-        "y": 94.99,
-        "width": 50.24,
-        "height": 3.19,
+        "x": 143.4,
+        "y": 110.07,
+        "width": 58.21,
+        "height": 3.7,
         "style": {
           "align": "right",
           "rows": [
@@ -311,10 +302,10 @@
       {
         "kind": "semantic",
         "type": "totals",
-        "x": 123.76,
-        "y": 100.93,
-        "width": 50.24,
-        "height": 3.19,
+        "x": 143.4,
+        "y": 116.95,
+        "width": 58.21,
+        "height": 3.7,
         "style": {
           "align": "right",
           "rows": [
@@ -327,10 +318,10 @@
       {
         "kind": "semantic",
         "type": "totals",
-        "x": 123.76,
-        "y": 106.87,
-        "width": 50.24,
-        "height": 4.57,
+        "x": 143.4,
+        "y": 123.83,
+        "width": 58.21,
+        "height": 5.29,
         "style": {
           "align": "right",
           "rows": [
@@ -343,10 +334,10 @@
       {
         "kind": "generic",
         "type": "text",
-        "x": 123.76,
-        "y": 113.71,
-        "width": 50.24,
-        "height": 3.65,
+        "x": 143.4,
+        "y": 131.76,
+        "width": 58.21,
+        "height": 4.23,
         "style": {
           "font": "theme_body_font",
           "font_weight": "theme_body_font",
@@ -358,10 +349,10 @@
       {
         "kind": "semantic",
         "type": "notes",
-        "x": 7.31,
-        "y": 159.84,
-        "width": 77.64,
-        "height": 5.94,
+        "x": 8.47,
+        "y": 185.21,
+        "width": 89.96,
+        "height": 6.88,
         "style": {
           "sections": [
             "notes"
@@ -373,10 +364,10 @@
       {
         "kind": "semantic",
         "type": "notes",
-        "x": 7.31,
-        "y": 170.34,
-        "width": 77.64,
-        "height": 5.94,
+        "x": 8.47,
+        "y": 197.38,
+        "width": 89.96,
+        "height": 6.88,
         "style": {
           "sections": [
             "terms"
@@ -388,10 +379,10 @@
       {
         "kind": "semantic",
         "type": "payment_info",
-        "x": 91.33,
-        "y": 159.84,
-        "width": 77.64,
-        "height": 8.22,
+        "x": 105.83,
+        "y": 185.21,
+        "width": 89.96,
+        "height": 9.53,
         "style": {
           "variant": "bank_methods",
           "label": "Payment methods"
@@ -402,20 +393,20 @@
       {
         "kind": "semantic",
         "type": "qr_code",
-        "x": 91.33,
-        "y": 171.26,
-        "width": 17.81,
-        "height": 17.81,
+        "x": 105.83,
+        "y": 198.44,
+        "width": 20.64,
+        "height": 20.64,
         "style": {},
         "overrides": {}
       },
       {
         "kind": "semantic",
         "type": "online_payment_link",
-        "x": 91.33,
-        "y": 189.07,
-        "width": 25.11,
-        "height": 11.88,
+        "x": 105.83,
+        "y": 219.08,
+        "width": 29.1,
+        "height": 13.76,
         "style": {
           "label": "Pay online"
         },
@@ -424,10 +415,10 @@
       {
         "kind": "semantic",
         "type": "signature",
-        "x": 7.31,
-        "y": 182.67,
-        "width": 25.11,
-        "height": 15.97,
+        "x": 8.47,
+        "y": 211.67,
+        "width": 29.1,
+        "height": 18.51,
         "style": {
           "label": "Authorised signature",
           "has_signature_image": true

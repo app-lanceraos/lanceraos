@@ -50,16 +50,21 @@ retired zone_1/zone_2 shape (`legacy_design_schema.py`):
     _group_into_render_chains for the mechanism).
 
 `migrate_v1_to_v2` (design_migration.py) is the one deterministic,
-pure-function converter from the legacy shape into this one — run
-on-demand the moment a user opens a legacy-shaped design in the editor
-(views_design_editor.design_canvas_document), and available as a one-time,
-dry-run-by-default bulk pass via
-`manage.py migrate_invoice_designs_to_production_schema`. A legacy design
-that fails migration (see `_clamp_width`'s own documented, deliberately
-unfixed edge case) is left untouched in its original shape — safely
-renderable via legacy_design_renderer.py, safely readable/deletable
-through the same unified CRUD every design uses — until a user rebuilds it
-from a template instead.
+pure-function converter from the legacy shape into this one — available
+as a one-time, dry-run-by-default bulk pass via
+`manage.py migrate_invoice_designs_to_production_schema` (the real,
+intended way any legacy design reaches v2), and as an in-memory-only
+preview via `design_render_preview` (views_design_editor.py). The
+production editor itself never migrates on open — it refuses to open a
+legacy-shaped design at all (a real "can't open this one" status
+screen), since the mapper isn't guaranteed to succeed (see below) and
+silently saving a migrated-in-memory shape the moment a user's first
+edit lands would be a surprise. A legacy design that fails migration
+(see `_clamp_width`'s own documented, deliberately unfixed edge case)
+is left untouched in its original shape — safely renderable via
+legacy_design_renderer.py, safely readable/deletable through the same
+unified CRUD every design uses — until a user rebuilds it from a
+template instead.
 """
 
 import math
@@ -105,6 +110,18 @@ FLOW_SEMANTIC_TYPES = {'totals', 'notes', 'signature', 'payment_info', 'qr_code'
 # content), plus a forced border-radius:50% — see that function's own
 # comment for why this isn't a parallel resolution path.
 GENERIC_TYPES = {'text', 'image', 'rectangle', 'divider', 'container', 'ellipse'}
+
+# Overlap-check exemption (matches the editor's own checkOverlaps exactly —
+# frontend/src/pages/design-editor-v2/utils/validation.js). The editor
+# builds its `contentItems` overlap list by filtering to `item.kind ===
+# 'content'` only; every `kind === 'shape'` (rectangle/divider/container/
+# ellipse) AND `kind === 'image'` item is entirely excluded from that list
+# — "Shapes and images are collision-exempt by design" (that file's own
+# comment). A generic `text` element maps to the editor's `kind: 'content'`
+# (it's real, bound-or-custom text content, not decoration), so it is NOT
+# exempt here — only the purely decorative/visual generic types are.
+# GENERIC_TYPES minus 'text' is exactly the editor's shape+image set.
+OVERLAP_EXEMPT_GENERIC_TYPES = GENERIC_TYPES - {'text'}
 
 # Phase 4B.2 — the one mandatory, non-deletable structural anchor every
 # design must have exactly one of (the line-items table). A third `kind`,
@@ -473,6 +490,59 @@ def _validate_binding(element, label, errors):
         )
 
 
+# Part 6 (per-part signature geometry/style) — `semantic:signature` bundles
+# an image + a divider line + a label into ONE element, historically moved/
+# resized/rotated only as a unit because the adapter inferred each part's
+# box from a fixed ratio-split of the bundle's own box (only correct while
+# the 3 parts stay in their original default arrangement). This is the
+# additive, optional `style.parts` structure that replaces that inference
+# with real, stored per-part data — grouped movement (the 3 parts still
+# share one anchor, `element.x`/`element.y`) but independently resizable/
+# stylable geometry. Absent entirely (every design predating this field,
+# including any signature element that never opts in) means the exact
+# original single-box, ratio-inferred-by-the-adapter/flow-rendered-by-the-
+# renderer behavior — a strictly additive schema change with zero effect on
+# anything that predates it. `has_signature_image`'s own live-binding
+# behavior (freelancer.signature_url) is completely unaffected by any of
+# this — this only adds WHERE/HOW each part renders, never whether the
+# image itself resolves.
+SIGNATURE_PART_KEYS = {'image', 'divider', 'label'}
+_SIGNATURE_PART_GEOMETRY_KEYS = ('dx', 'dy', 'width', 'height')
+
+
+def _validate_signature_style(element, label, errors):
+    if element.get('type') != 'signature':
+        return
+    style = element.get('style')
+    if not isinstance(style, dict) or 'parts' not in style:
+        # A non-dict style is already reported by _validate_element's own
+        # generic "style must be an object" check; `parts` being absent is
+        # the normal, fully-supported default (see this function's own
+        # module-level comment above) — nothing further to validate.
+        return
+    parts = style['parts']
+    if not isinstance(parts, dict):
+        errors.append(f'{label}.style.parts must be an object, if present.')
+        return
+    for part_name, part in parts.items():
+        part_label = f'{label}.style.parts.{part_name}'
+        if part_name not in SIGNATURE_PART_KEYS:
+            errors.append(f'{part_label} is not a recognized signature part — must be one of {sorted(SIGNATURE_PART_KEYS)}.')
+            continue
+        if not isinstance(part, dict):
+            errors.append(f'{part_label} must be an object.')
+            continue
+        for geo_key in _SIGNATURE_PART_GEOMETRY_KEYS:
+            if geo_key in part and not _is_number(part[geo_key]):
+                errors.append(f'{part_label}.{geo_key} must be a number, if present.')
+        if 'width' in part and _is_number(part['width']) and part['width'] <= 0:
+            errors.append(f'{part_label}.width must be greater than zero, if present.')
+        if 'height' in part and _is_number(part['height']) and part['height'] <= 0:
+            errors.append(f'{part_label}.height must be greater than zero, if present.')
+        if 'rotation' in part and not _is_number(part['rotation']):
+            errors.append(f'{part_label}.rotation must be a number (degrees), if present.')
+
+
 def _validate_element(element, label, errors, *, allowed_types):
     """
     Phase 4B.2 — the ONE element validator, used identically for every
@@ -581,6 +651,7 @@ def _validate_element(element, label, errors, *, allowed_types):
             errors.append(f'{label}.{flag} must be a boolean.')
 
     _validate_binding(element, label, errors)
+    _validate_signature_style(element, label, errors)
 
     return element
 
@@ -639,11 +710,28 @@ def _validate_overlap(all_valid_elements, errors):
     unrotated footprint can look like it collides with a neighbor it
     never actually touches) — so this now always compares real rotated
     footprints, matching the editor's own rotatedBoundingBox exactly.
+
+    Decorative-shape/image exemption (closes the client/server
+    disagreement gap): the editor's own checkOverlaps only ever builds its
+    pairwise list from `kind === 'content'` items — a shape (rectangle/
+    divider/container/ellipse) or an image is never compared against
+    ANYTHING, content or another shape/image, and so freely overlaps by
+    design. Mirrored here: an element whose kind is 'generic' and whose
+    type is in OVERLAP_EXEMPT_GENERIC_TYPES (every GENERIC_TYPES entry
+    except 'text', which the editor treats as real content) skips the
+    pairwise check against every other element, decorative or not. This
+    only narrows what gets checked — real content-vs-content overlap is
+    still fully enforced.
     """
+    def _is_overlap_exempt(element):
+        return element.get('kind') == 'generic' and element.get('type') in OVERLAP_EXEMPT_GENERIC_TYPES
+
     for a_index in range(len(all_valid_elements)):
         for b_index in range(a_index + 1, len(all_valid_elements)):
             list_a, i, a = all_valid_elements[a_index]
             list_b, j, b = all_valid_elements[b_index]
+            if _is_overlap_exempt(a) or _is_overlap_exempt(b):
+                continue
             a_sidebar = bool((a.get('style') or {}).get('sidebar'))
             b_sidebar = bool((b.get('style') or {}).get('sidebar'))
             if a_sidebar != b_sidebar:
@@ -735,8 +823,24 @@ def _validate_page_bounds(all_valid_elements, page, errors):
     content_width_mm = page_width_mm - effective_margin_left_mm - margin_right_mm
 
     for list_name, i, element in all_valid_elements:
-        is_sidebar = bool((element.get('style') or {}).get('sidebar'))
-        bound_w = sidebar_width_mm if is_sidebar else content_width_mm
+        style = element.get('style') or {}
+        is_sidebar = bool(style.get('sidebar'))
+        # 09 September 2026 Part 2 — `style.page_pinned` (design_renderer.
+        # is_page_pinned_element): the new, sidebar-independent mechanism
+        # backing a real, editable spine/sidebar-background rectangle (see
+        # design_templates.py's own PROFESSIONAL_DESIGN_DATA_V2). Like a
+        # sidebar element, its x/y are PAGE-absolute, not content-relative
+        # — but unlike a sidebar element, there's no `page.sidebar.width_mm`
+        # to bound against (a page_pinned element may exist on a design
+        # with no `page.sidebar` at all, e.g. Professional's spine), so the
+        # real page width is the correct, and only sane, bound.
+        is_page_pinned = bool(style.get('page_pinned'))
+        if is_sidebar:
+            bound_w = sidebar_width_mm
+        elif is_page_pinned:
+            bound_w = page_width_mm
+        else:
+            bound_w = content_width_mm
 
         # Phase 1 — bounded against the element's REAL (rotated) footprint,
         # not its raw x/y/width, for the same reason _validate_overlap now

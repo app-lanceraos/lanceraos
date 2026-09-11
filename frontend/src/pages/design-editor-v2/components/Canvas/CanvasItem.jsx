@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ELEMENT_TYPES, expandLinkedGroupSelection } from '../../data/elementCatalog';
+import { ELEMENT_TYPES, expandLinkedGroupSelection, SIGNATURE_GROUP_TYPES } from '../../data/elementCatalog';
 import { useEditor } from '../../state/EditorContext';
 import useProfileAssets from '@/hooks/useProfileAssets';
 import { WordmarkSVG } from '../Brand';
@@ -853,17 +853,20 @@ export default function CanvasItem({ item, readOnly = false }) {
       effectiveIds = [item.id];
       setSelection({ ids: effectiveIds, part: null });
     }
-    // The signature trio must move as one unit from the very first drag,
-    // not just from the next render onward — `setSelection` above already
-    // expands the COMMITTED context state via the same function
-    // (EditorContext.jsx), but that update isn't visible to this
-    // synchronous gesture yet, so `effectiveIds` (what groupIds/
-    // groupMembers below actually decide on) needs the identical
-    // expansion applied locally too. Without this, dragging an unselected
-    // signature part would move that one part alone for this one gesture
-    // (only "catching up" to group behavior on the NEXT drag) — exactly
-    // the lossy independent-repositioning case this exists to prevent.
-    effectiveIds = expandLinkedGroupSelection(effectiveIds, template.items);
+    // Part 7: selection itself is no longer forced to keep the signature
+    // trio together (EditorContext.jsx's setSelection is now a plain
+    // passthrough) — clicking one part selects only that part. MOVE is
+    // still the one gesture where the trio travels together: expansion
+    // only applies here, and only when the item whose own mousedown
+    // STARTED this gesture is itself a signature part — never merely
+    // because some other, unrelated signature part happens to already be
+    // in a multi-selection alongside the item actually being dragged
+    // (e.g. shift-selecting a signature part + an unrelated rectangle,
+    // then dragging the rectangle, must move just those two, not silently
+    // drag the signature's other two siblings in too).
+    if (SIGNATURE_GROUP_TYPES.includes(item.type)) {
+      effectiveIds = expandLinkedGroupSelection(effectiveIds, template.items);
+    }
 
     // Prompt 17 item 3: dragging any one member of a multi-item selection
     // moves the whole group together — but if this shift-click just

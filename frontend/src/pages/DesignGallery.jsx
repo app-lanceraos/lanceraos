@@ -9,19 +9,17 @@
 // standard layout already handles well; no reason to break that
 // precedent here the way the canvas itself needed to.
 //
-// Two editors are wired here, routed conditionally by handleEdit based
-// on what a design's OWN design_data actually declares (never on
-// InvoiceDesign.source, which doesn't reliably track this — see
-// design_migration.py's own reasoning): a real, production
-// schema_version: 2 design opens the new design-editor-v2
-// (TemplateBuilderV2, /invoices/designs/:id/build); anything else — a
-// pre-existing legacy-shaped design with no schema_version key — still
-// opens the original GrapesJS DesignEditor (/invoices/designs/:id/edit),
-// which migrates it on demand exactly as before. Every real creation
-// path here (blank, ready-made template, AI-seed) is verified against
-// its own backend implementation to always produce schema_version: 2,
-// so those three always land in the new editor; only a pre-cutover
-// legacy row ever takes the GrapesJS path.
+// Edit always opens the one production editor (TemplateBuilderV2,
+// /invoices/designs/:id/build) — the old GrapesJS editor has been
+// removed entirely (see DECISIONS.md). A pre-existing legacy-shaped
+// design (no schema_version key) still opens there too; that editor's
+// own load path shows a real "can't open this one" status screen for
+// it, since the one-time migration mapper can't safely convert it (see
+// design_migration.py's own reasoning) — there is no editor left that
+// can open a legacy design directly. Every real creation path here
+// (blank, ready-made template, AI-seed) is verified against its own
+// backend implementation to always produce schema_version: 2, so those
+// three are never affected.
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Copy, LayoutTemplate, Plus, Sparkles, Star, Trash2 } from 'lucide-react'
@@ -30,7 +28,7 @@ import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import FosAlert from '@/components/FosAlert'
 import DesignLivePreview from '@/components/design-editor/DesignLivePreview'
-import { fetchBlankDesignData, fetchDesignTemplates } from '@/lib/designEditor/canvasApi'
+import { fetchBlankDesignData, fetchDesignTemplates } from '@/lib/designTemplatesApi'
 
 // Real, friendly labels for the 3 production base templates — a small,
 // static, never-drifting lookup (the real inventory itself, including
@@ -181,9 +179,6 @@ export default function DesignGallery() {
         name: 'Untitled design', base_template: 'professional', color_variant: '', design_data: designData,
       })
       setDesigns((prev) => [data, ...prev])
-      // get_blank_design_data always returns schema_version: 2 (verified
-      // directly against design_templates.py) — straight to the new
-      // editor, never GrapesJS.
       navigate(`/invoices/designs/${data.id}/build`)
     } catch {
       setError('Could not start a blank design. Please try again.')
@@ -232,15 +227,13 @@ export default function DesignGallery() {
     }
   }
 
-  // Routes conditionally on the design's OWN design_data, not on how it
-  // was created — a real, production schema_version: 2 design (every
-  // blank/template/AI-seeded design created today, plus any already
-  // migrated) opens the new design-editor-v2; a pre-existing legacy
-  // design (no schema_version key) still opens the original GrapesJS
-  // editor, which migrates it on demand exactly as before this phase.
+  // Always the one production editor — GrapesJS has been removed
+  // entirely (see DECISIONS.md). A pre-existing legacy-shaped design (no
+  // schema_version key) still opens here too; that editor's own load
+  // path shows a real "can't open this one" status screen for it,
+  // since the one-time migration mapper can't safely convert it.
   function handleEdit(design) {
-    const isV2 = design?.design_data?.schema_version === 2
-    navigate(isV2 ? `/invoices/designs/${design.id}/build` : `/invoices/designs/${design.id}/edit`)
+    navigate(`/invoices/designs/${design.id}/build`)
   }
 
   // Real, visible "which design is active" state — `is_default` is a

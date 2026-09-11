@@ -1,7 +1,7 @@
 // src/pages/SignatureCard.jsx
 import { useEffect, useRef, useState } from 'react'
 import SignaturePad from 'signature_pad'
-import { Check, PenLine, RotateCcw, Upload, X } from 'lucide-react'
+import { Check, PenLine, RotateCcw, Undo2, Upload, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import { invalidateProfileAssetsCache } from '@/hooks/useProfileAssets'
@@ -9,15 +9,49 @@ import Card from '@/components/Card'
 import FosAlert from '@/components/FosAlert'
 import useTimedMessage from '@/hooks/useTimedMessage'
 
-// Matches apps/invoices/views.py's signature_upload exactly (ALLOWED_LOGO_EXTENSIONS
-// / MAX_LOGO_SIZE_BYTES, shared with logo uploads and comment attachments — see
-// that view's own docstring) — same "catch it here, backend stays the real
-// authority" convention Profile.jsx's own logo picker already established.
-const ALLOWED_SIGNATURE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tiff', 'svg'])
+// Matches apps/invoices/views.py's signature_upload exactly
+// (ALLOWED_LOGO_EXTENSIONS / MAX_LOGO_SIZE_BYTES, shared with logo uploads
+// and comment attachments — see that view's own docstring) — same "catch
+// it here, backend stays the real authority" convention Profile.jsx's own
+// logo picker already established. 'svg' deliberately excluded — a real,
+// confirmed mismatch fix: this set used to include it (implying support),
+// but the backend's own ALLOWED_LOGO_EXTENSIONS never has, and Pillow
+// can't decode SVG at all — every SVG upload was silently guaranteed to
+// pass this client-side check and then fail on the server with a generic
+// "Unsupported file type" round trip. Rejecting it here instead means the
+// user sees the real reason immediately, with no wasted request.
+const ALLOWED_SIGNATURE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tiff'])
 const MAX_SIGNATURE_SIZE_BYTES = 10 * 1024 * 1024
+
+// A fixed, theme-independent light backing for anywhere a signature/logo
+// (dark ink on a transparent PNG background) is actually rendered — never
+// the app's own theme-following surface tokens. Against this app's dark
+// theme, var(--bg-surface-2)/var(--bg-surface-3) are themselves dark
+// (#18181f / #222230), so a dark-ink signature composited over them reads
+// as functionally invisible. This is a real, confirmed bug fix, not a
+// preventative guess — see SignatureCard's own preview box and thumbnail
+// below, and DrawPad's canvas backing (drawing itself was equally
+// unreadable in dark mode, penColor being near-black too).
+const SIGNATURE_LIGHT_BACKING = '#ffffff'
+const SIGNATURE_CHECKERBOARD_BACKGROUND =
+  'repeating-conic-gradient(#e4e4e9 0% 25%, #ffffff 0% 50%) 0 0/16px 16px'
 
 function extOf(filename) {
   return (filename.split('.').pop() || '').toLowerCase()
+}
+
+// Every real failure mode this call can hit gets its own specific message
+// rather than one generic fallback: a real backend-provided `error` string
+// (400/429/502 — bad file, rate limit, Cloudinary failure) always wins;
+// a request that never got a response at all (offline, DNS failure, CORS)
+// is a genuinely different situation from a request the server actively
+// rejected, and is told apart here rather than collapsed into the same
+// message; anything else (a request that did complete, but with no usable
+// error body — e.g. a raw 500) falls back to the caller's own generic text.
+function signatureErrorMessage(err, fallback) {
+  if (err.response?.data?.error) return err.response.data.error
+  if (!err.response) return 'Network error — check your connection and try again.'
+  return fallback
 }
 
 function dataUriToFile(dataUri, filename) {
@@ -94,26 +128,56 @@ function DrawPad({ onReady, disabled }) {
     const canvas = canvasRef.current
     if (!canvas) return undefined
 
+    // Resizing the canvas element's own width/height attributes always
+    // wipes its bitmap — unavoidable, since that's how <canvas> DPI
+    // rescaling works. The bug this fixes: the OLD code called
+    // padRef.current?.clear() unconditionally on every resize (including
+    // the initial mount's own resize() call before padRef.current even
+    // existed), which also fired on every real window resize event
+    // (rotating a phone, a browser window drag, devtools opening) —
+    // silently wiping whatever the user had already drawn, with zero
+    // warning. Saving/restoring via toData()/fromData() (both real
+    // signature_pad APIs) instead means only the bitmap is reset, not
+    // the actual stroke data.
     const resize = () => {
       const ratio = Math.max(window.devicePixelRatio || 1, 1)
       const { offsetWidth, offsetHeight } = canvas
+      const savedStrokes = padRef.current ? padRef.current.toData() : []
       canvas.width = offsetWidth * ratio
       canvas.height = offsetHeight * ratio
       canvas.getContext('2d').scale(ratio, ratio)
-      padRef.current?.clear()
+      if (padRef.current) {
+        padRef.current.fromData(savedStrokes)
+      }
     }
 
     resize()
     padRef.current = new SignaturePad(canvas, {
       backgroundColor: 'rgba(0,0,0,0)', // transparent — the backend's 'drawn'
       // path skips background removal entirely and expects an already-clean
-      // transparent PNG, per signature_upload's own docstring.
+      // transparent PNG, per signature_upload's own docstring. The visible
+      // white canvas backing below (CSS only) is what makes the dark pen
+      // color actually readable while drawing — it never touches the
+      // exported bitmap, which stays genuinely transparent.
       penColor: 'rgb(20, 20, 20)',
-      minWidth: 0.6,
-      maxWidth: 2.6,
+      // A wider min/max spread than the library's own default (0.5/2.5)
+      // so velocity-based tapering — the whole reason this library was
+      // chosen over a plain canvas line — reads as a clearly natural,
+      // human signature rather than a barely-varying uniform stroke.
+      minWidth: 0.5,
+      maxWidth: 3.2,
+      velocityFilterWeight: 0.7,
     })
     onReady({
       clear: () => padRef.current.clear(),
+      // Pops the most recent stroke (signature_pad's own "point group")
+      // and redraws everything else — a real undo, not a full clear.
+      undo: () => {
+        const strokes = padRef.current.toData()
+        if (strokes.length === 0) return
+        strokes.pop()
+        padRef.current.fromData(strokes)
+      },
       isEmpty: () => padRef.current.isEmpty(),
       toDataURL: () => padRef.current.toDataURL('image/png'),
     })
@@ -129,8 +193,13 @@ function DrawPad({ onReady, disabled }) {
     <canvas
       ref={canvasRef}
       style={{
-        width: '100%', height: 160, borderRadius: 'var(--radius-md)',
-        border: '1.5px dashed var(--border-subtle)', background: 'var(--bg-surface-2)',
+        // Fixed white backing, deliberately not a theme token — the same
+        // dark-theme-visibility fix as the preview/thumbnail below. In
+        // dark mode, var(--bg-surface-2) is itself dark, and this pad's
+        // near-black penColor drawn against it would be nearly invisible
+        // to a user actively signing.
+        width: '100%', height: 200, borderRadius: 'var(--radius-md)',
+        border: '1.5px dashed var(--border-subtle)', background: SIGNATURE_LIGHT_BACKING,
         touchAction: 'none', cursor: disabled ? 'not-allowed' : 'crosshair',
         opacity: disabled ? 0.6 : 1,
       }}
@@ -187,7 +256,7 @@ export default function SignatureCard({ initialSignatureUrl }) {
         setAutoThreshold(res.data.used_threshold)
       }
     } catch (err) {
-      show('error', err.response?.data?.error || 'Could not process that signature.')
+      show('error', signatureErrorMessage(err, 'Could not process that signature.'))
       setPreviewUri('')
       setPreviewSource(null)
     } finally {
@@ -250,7 +319,7 @@ export default function SignatureCard({ initialSignatureUrl }) {
       padApiRef.current?.clear()
       show('success', 'Signature saved.')
     } catch (err) {
-      show('error', err.response?.data?.error || 'Could not save your signature.')
+      show('error', signatureErrorMessage(err, 'Could not save your signature.'))
     } finally {
       setCommitting(false)
     }
@@ -284,7 +353,15 @@ export default function SignatureCard({ initialSignatureUrl }) {
         <div
           style={{
             width: 120, height: 60, borderRadius: 'var(--radius-md)', flexShrink: 0,
-            background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)',
+            // Fixed light backing, not var(--bg-surface-2) — a real, confirmed
+            // dark-theme bug: the saved signature is dark ink on a transparent
+            // PNG, and var(--bg-surface-2) is itself dark in dark mode, making
+            // the signature functionally invisible against it. When there's
+            // no signature yet, the empty-state icon still needs to read
+            // clearly against this now-always-light box, so it gets a fixed
+            // dark tone instead of the theme-following --text-tertiary.
+            background: signatureUrl ? SIGNATURE_LIGHT_BACKING : 'var(--bg-surface-2)',
+            border: '1px solid var(--border-subtle)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
           }}
         >
@@ -335,7 +412,7 @@ export default function SignatureCard({ initialSignatureUrl }) {
             <Upload size={15} /> Choose an image
           </button>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: 8 }}>
-            JPG, PNG, WEBP, GIF, BMP, TIFF, or SVG. Max 10MB. A photo on a plain background works best —
+            JPG, PNG, WEBP, GIF, BMP, or TIFF. Max 10MB. A photo on a plain background works best —
             we'll remove the background automatically.
           </p>
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} style={{ display: 'none' }} />
@@ -346,6 +423,9 @@ export default function SignatureCard({ initialSignatureUrl }) {
         <div>
           <DrawPad onReady={(api_) => { padApiRef.current = api_ }} disabled={busy} />
           <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+            <button onClick={() => padApiRef.current?.undo()} disabled={busy} className="fos-btn fos-btn-ghost">
+              <Undo2 size={14} /> Undo
+            </button>
             <button onClick={() => padApiRef.current?.clear()} disabled={busy} className="fos-btn fos-btn-ghost">
               <RotateCcw size={14} /> Clear
             </button>
@@ -366,7 +446,14 @@ export default function SignatureCard({ initialSignatureUrl }) {
           <div
             style={{
               width: '100%', minHeight: 120, borderRadius: 'var(--radius-md)',
-              background: 'repeating-conic-gradient(var(--bg-surface-3) 0% 25%, var(--bg-surface-2) 0% 50%) 0 0/16px 16px',
+              // Fixed light checkerboard (real, literal colors — never
+              // var(--bg-surface-2)/var(--bg-surface-3)), the standard
+              // transparency-preview convention. The old version used
+              // those two theme surface tokens, which are BOTH dark in
+              // dark mode (#18181f / #222230) — the checkerboard itself
+              // stayed visible, but a dark-ink signature composited over
+              // it was still nearly indistinguishable from the squares.
+              background: SIGNATURE_CHECKERBOARD_BACKGROUND,
               border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
             }}
           >

@@ -69,7 +69,7 @@ from .serializers import (
 from .serializers_claims import PaymentClaimSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
 from .signature_tool import (
-    DEFAULT_FEATHER, compute_otsu_threshold, crop_signature_to_content, remove_signature_background,
+    DEFAULT_FEATHER, compute_otsu_threshold, crop_signature_to_content, flatten_to_rgb, remove_signature_background,
 )
 
 # Reference images for AI design seeding — a narrower set than logo uploads
@@ -2527,12 +2527,15 @@ def design_preview(request, pk):
 
 # Production cutover — design_editor_canvas/design_editor_element (the
 # legacy canvas editor's own initial-load render + live per-element
-# content refresh) are retired outright, not replaced: the one production
-# editor's own equivalent endpoints (design_canvas_document/
-# design_canvas_element, this module continues below) already cover this
-# for the production schema, and nothing edits a legacy-shape design
-# anymore (see legacy_design_renderer.py's own module docstring — opening
-# any design for editing migrates a legacy-shape one in-memory first).
+# content refresh) were retired outright at the 29 August 2026 cutover,
+# not replaced; their would-be v2 successors, design_canvas_document/
+# design_canvas_element, were themselves later removed along with the
+# GrapesJS editor that was their only real caller (see DECISIONS.md's
+# removal entry) — the current production editor (design-editor-v2) is
+# a pure frontend canvas with no backend canvas-document endpoint of its
+# own at all. Nothing edits a legacy-shape design directly anymore; a
+# legacy row is left exactly as-is until the one-time migration command
+# converts it or it's rebuilt from a template.
 
 
 @api_view(['POST'])
@@ -2790,8 +2793,13 @@ def signature_upload(request):
                 # real value used — passed through explicitly below rather
                 # than left for remove_signature_background to re-derive,
                 # so there's exactly one source of truth for "what
-                # threshold actually got applied" on this call.
-                probe_grayscale = PILImage.open(io.BytesIO(raw_bytes)).convert('RGB').convert('L')
+                # threshold actually got applied" on this call. Must use
+                # flatten_to_rgb (not a bare .convert('RGB')) here too —
+                # otherwise this probe's threshold would silently diverge
+                # from the real one remove_signature_background computes
+                # internally for any image with real pre-existing
+                # transparency (see flatten_to_rgb's own docstring).
+                probe_grayscale = flatten_to_rgb(PILImage.open(io.BytesIO(raw_bytes))).convert('L')
                 used_threshold = compute_otsu_threshold(probe_grayscale)
             cleaned_png_bytes = remove_signature_background(
                 raw_bytes,
@@ -2801,6 +2809,27 @@ def signature_upload(request):
     except Exception:
         logger.exception('[INVOICES] Signature background removal failed for user %s.', request.user.pk)
         return Response({'error': 'Could not process that image. Please try a different photo.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Detection can succeed (no exception) yet find literally nothing —
+    # a real gap this closes: the old code returned this as an ordinary
+    # 200 preview, so a user would see what looked like a successful
+    # upload with an actually-blank/invisible signature and no
+    # indication anything was wrong. getbbox() on the alpha channel is
+    # None exactly when nothing survived thresholding (source='upload')
+    # or cropping (source='drawn', e.g. a canvas export with no strokes
+    # somehow reaching this endpoint despite the frontend's own isEmpty()
+    # guard) — a real, specific, actionable message instead of a silent
+    # no-op success.
+    cleaned_image = PILImage.open(io.BytesIO(cleaned_png_bytes))
+    if cleaned_image.mode == 'RGBA' and cleaned_image.split()[-1].getbbox() is None:
+        if source == 'drawn':
+            message = "That signature looks empty. Please draw it again."
+        else:
+            message = (
+                "We couldn't detect a signature in that image. Try a clearer "
+                "photo with more contrast between the ink and its background."
+            )
+        return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
 
     commit = str(request.data.get('commit', '')).lower() in ('true', '1', 'yes')
     if not commit:

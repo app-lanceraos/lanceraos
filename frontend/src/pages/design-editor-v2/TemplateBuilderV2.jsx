@@ -3,15 +3,13 @@
 // /invoices/designs/editor-v2 (a bare, unlinked dev sandbox, no real
 // design behind it — the hardcoded initial state, unchanged) and, for
 // real backend integration, /invoices/designs/:id/build (a real, owned
-// InvoiceDesign row). As of the gallery-wiring phase, /:id/build IS
-// linked from the real product UI — DesignGallery.jsx's Edit/Use
-// template/Start blank/AI-seed actions all route a real,
-// schema_version: 2 design here; only a pre-existing legacy-shaped
-// design still opens GrapesJS's DesignEditor.jsx (below) instead. Both
-// editors are shell-less and coexist deliberately during this soak
-// period — see this editor's own "Open in the classic editor" fallback
-// (Toolbar.jsx and the legacy-status screen below) and DECISIONS.md's
-// merge entry.
+// InvoiceDesign row). This is now the ONE production editor —
+// DesignGallery.jsx's Edit/Use template/Start blank/AI-seed actions all
+// route here; the old GrapesJS editor (DesignEditor.jsx) has been
+// removed entirely (see DECISIONS.md's removal entry). A pre-existing
+// legacy-shaped design (no schema_version key) still opens here too;
+// see the legacy-status screen below for what happens when one can't be
+// opened.
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import useTitle from '@/hooks/useTitle';
@@ -143,12 +141,18 @@ function EditorShell() {
 // Loads a real, owned InvoiceDesign (production schema_version: 2 only)
 // from the backend before the editor ever mounts, and owns every honest
 // failure state this route can hit — a legacy-shape design (predates
-// this editor; designDataToTemplate itself throws on anything that
-// isn't real schema_version: 2, see that function's own guard), a
-// design that doesn't exist or isn't this user's (GET /invoices/designs/
-// {id}/ is scoped to request.user and returns a real 404 for both cases
-// — this backend has no separate 403 for "exists but not yours"), and a
-// genuine network/5xx failure — never a silently blank editor.
+// this editor, or the one real row the one-time migration mapper
+// couldn't safely convert — see design_migration.py; designDataToTemplate
+// itself throws on anything that isn't real schema_version: 2, see that
+// function's own guard), a design that doesn't exist or isn't this
+// user's (GET /invoices/designs/{id}/ is scoped to request.user and
+// returns a real 404 for both cases — this backend has no separate 403
+// for "exists but not yours"), and a genuine network/5xx failure — never
+// a silently blank editor. This status screen stays needed even though
+// GrapesJS (the only other thing that could ever open a legacy design)
+// has been removed — a future data import could still produce a legacy-
+// shaped row, and the one real, permanently-unmigratable row already in
+// the database (see DECISIONS.md) hits it today.
 function LoadedTemplateBuilder({ id }) {
   const navigate = useNavigate();
   const [state, setState] = useState({ status: 'loading', template: null, meta: null, message: '' });
@@ -189,7 +193,7 @@ function LoadedTemplateBuilder({ id }) {
           status: 'legacy',
           message:
             "This design was built before this editor existed and uses an older format it can't open. " +
-            'Duplicate a ready-made template to start a new design here, or use the original Template Builder to keep editing this one.',
+            'Duplicate a ready-made template to start a new, fully-editable design instead.',
         });
       }
     }
@@ -209,8 +213,8 @@ function LoadedTemplateBuilder({ id }) {
       <div className="v2-route-status">
         <FosAlert type={state.status === 'legacy' ? 'warning' : 'error'}>{state.message}</FosAlert>
         {state.status === 'legacy' && (
-          <button className="tbtn" style={{ marginTop: 12 }} onClick={() => navigate(`/invoices/designs/${id}/edit`)}>
-            Open in the classic editor
+          <button className="tbtn" style={{ marginTop: 12 }} onClick={() => navigate('/invoices/designs')}>
+            Back to designs
           </button>
         )}
       </div>

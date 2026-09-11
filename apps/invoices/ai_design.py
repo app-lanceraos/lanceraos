@@ -69,9 +69,9 @@ logger = logging.getLogger(__name__)
 # still sitting comfortably under 210mm, so this module's own "defensive"
 # clamp let the *actual* validator at the end of this pipeline reject the
 # whole design instead of the clamp doing its job. _content_width_mm below
-# reproduces design_schema.py's/design_canvas.py's own exact margin+sidebar
-# formula so this stays correct even for a template with custom margins or
-# a sidebar (Modern), never silently drifting from the real bound.
+# reproduces design_schema.py's own exact margin+sidebar formula so this
+# stays correct even for a template with custom margins or a sidebar
+# (Modern), never silently drifting from the real bound.
 
 DEFAULT_COMPRESS_MAX_WIDTH = 700
 DEFAULT_COMPRESS_QUALITY = 78
@@ -211,6 +211,24 @@ def _is_sidebar_element(el):
     return bool((el.get('style') or {}).get('sidebar'))
 
 
+def _is_page_pinned_element(el):
+    """
+    09 September 2026 (Part 2) — local duplicate of design_renderer.
+    is_page_pinned_element (same established convention as
+    `_is_sidebar_element` above, a real, pre-existing duplicate of
+    design_renderer.is_sidebar_element rather than an import). Needed by
+    `_flow_start_y_mm` below: Professional's real spine bar/accent line
+    (design_templates.py) are real `flow.elements` entries sitting at
+    y=0 — genuinely part of `flow.elements` structurally, but never part
+    of ordinary document flow at render time (design_renderer.py
+    extracts them into their own page-absolute, position:fixed space
+    before flow layout ever runs), so they must NOT be read as "the
+    topmost real flow content" the way the mandatory table always was
+    before this fix.
+    """
+    return bool((el.get('style') or {}).get('page_pinned'))
+
+
 def _flow_start_y_mm(flow_elements):
     """
     Phase 5.1 port of the pre-cutover _clamp_zone1_bounds' ZONE_1_HEIGHT_MM
@@ -229,16 +247,29 @@ def _flow_start_y_mm(flow_elements):
     sidebar's own separate, fixed-width coordinate space (see
     design_schema.py's _validate_page_bounds' own sidebar carve-out),
     entirely unrelated to the main content header's vertical extent.
+
+    09 September 2026 (Part 2) — page-pinned flow elements (Professional's
+    real spine bar/accent line) are ALSO excluded now, for the same
+    underlying reason: found as a real, reproduced bug (`_safe_uniform_
+    scale` collapsing every 'spacious'-density header element to a
+    zero-size box) the instant Professional's seed gained 2 new
+    `flow.elements` entries at y=0 — without this exclusion, the spine's
+    own y=0 became "the topmost real flow content", i.e. flow_start_y_mm
+    collapsed to 0, i.e. ANY requested scale > 1.0 was clamped to
+    (0 / bottom_edge) = 0 for every header element. See
+    _is_page_pinned_element's own docstring for why these elements never
+    actually occupy ordinary flow space at render time.
     """
-    non_sidebar_ys = [el['y'] for el in flow_elements if not _is_sidebar_element(el)]
+    non_sidebar_ys = [
+        el['y'] for el in flow_elements if not _is_sidebar_element(el) and not _is_page_pinned_element(el)
+    ]
     return min(non_sidebar_ys) if non_sidebar_ys else PAGE_HEIGHT_MM_FALLBACK
 
 
 def _content_width_mm(page):
     """
-    Reproduces design_schema.py's own _validate_page_bounds (and
-    design_canvas.py's build_canvas_document) margin+sidebar formula
-    exactly — the real bound scaled header elements must fit inside, not
+    Reproduces design_schema.py's own _validate_page_bounds margin+sidebar
+    formula exactly — the real bound scaled header elements must fit inside, not
     the raw page width. A first version of this fix used the raw
     page.width_mm (210mm) directly, and real-tested 'spacious' density
     against the professional template proved that too lenient: several

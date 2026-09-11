@@ -107,6 +107,19 @@
   .v2-spine { position: fixed; top: 0; left: 0; bottom: 0; }
   .v2-spine-accent { position: fixed; top: 0; bottom: 0; width: 0.4mm; }
   {% comment %}
+    09 September 2026 (Part 2) — a real, editable replacement for what used
+    to be page-level `page.spine`/`page.sidebar`-only decorative config:
+    a plain `position:fixed` box, geometry-less on its own (every real
+    `style.page_pinned: true` child element supplies its own real x/y/
+    width/height, page-absolute, exactly like a sidebar element already
+    does) — this class only needs to establish the positioned, full-page-
+    height ancestor `.v2-el`'s own `position:absolute` children resolve
+    against. See canonical.html's own comment for why this exists
+    alongside, not instead of, `.v2-spine`/`.v2-sidebar` (backward
+    compatibility with a pre-existing design still using either).
+  {% endcomment %}
+  .v2-pinned { position: fixed; top: 0; left: 0; bottom: 0; }
+  {% comment %}
     Phase 4B fidelity fix, found via real-browser screenshot verification:
     .v2-line/.v2-link/.v2-alias-box's own shared colors (#55524a dark
     gray / #7a7568) are all correct for main content on a white

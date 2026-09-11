@@ -66,6 +66,7 @@ import { DEFAULT_THEME } from '../utils/theme';
 import { fontIdToProductionName, productionNameToFontId } from './fontMap';
 import { BINDING_OPTIONS } from '../data/bindings';
 import { roundMm } from '../utils/units';
+import { normalizeZOrder } from '../utils/zorder';
 
 const SCHEMA_VERSION_V2 = 2;
 
@@ -262,6 +263,17 @@ function baseElementFields(item, kind, type) {
   if (item.hidden) el.hidden = true;
   if (item.layoutMode && item.layoutMode !== 'pinned') el.layout_mode = item.layoutMode;
   if (item.sidebar) el.style.sidebar = true;
+  // 09 September 2026 (Part 2) — `style.page_pinned` (design_renderer.
+  // is_page_pinned_element): the sidebar-independent sibling of
+  // `style.sidebar` above, backing Professional's real spine bar/accent
+  // line (design_templates.py). Same page-absolute coordinate-space
+  // treatment as `sidebar` throughout this file (see shiftToProduction/
+  // shiftToEditor below) — a real, separate flag because Professional has
+  // no `page.sidebar` config at all, and giving it one purely to reuse
+  // that mechanism would also incorrectly reserve real horizontal space
+  // for main content (a genuine sidebar's own side effect this element
+  // must not have).
+  if (item.pagePinned) el.style.page_pinned = true;
   return el;
 }
 
@@ -272,6 +284,7 @@ function importBaseFields(prodEl) {
   if (prodEl.hidden) patch.hidden = true;
   if (prodEl.layout_mode) patch.layoutMode = prodEl.layout_mode;
   if (prodEl.style?.sidebar) patch.sidebar = true;
+  if (prodEl.style?.page_pinned) patch.pagePinned = true;
   return patch;
 }
 
@@ -394,29 +407,25 @@ function payOnlineLayout(item) {
   };
 }
 
-// signature: image + divider + label, an EXACT ratio split of whatever
-// box the 3 (or fewer) parts currently union to. Derived directly from
-// the editor's own default catalog boxes (elementCatalog.js: image
-// 37x35, divider 70x2 (10mm gap below image), label 110x16 (7mm gap
-// below divider)) — image=35/70 of height, gap1=10/70, divider=2/70,
-// gap2=7/70, and label's height is the REMAINDER of all 4 (not a
-// fraction) so the 5-part sum is always exactly H, matching this file's
-// own "last part is a subtraction" rule. Widths: image=37/110 of width,
-// divider=70/110, label=width itself (labels always span the full box).
-// Because label always supplies both the box's real max-X and (via the
-// height remainder) its real max-Y, and image supplies the real
-// min-X/min-Y, reunioning these 3 sub-boxes ALWAYS recovers the exact
-// original box — for a real seed's single `semantic:signature` element
-// (captured then reunioned, see exportSignatureGroup) just as much as
-// for the editor's own starter template (computed then reimported).
+// Part 6 (per-part signature geometry/style) — signaturePartsFromBox is
+// now a LEGACY-IMPORT-ONLY fallback: the ratio-split it computes is used
+// solely to reconstruct a reasonable starting layout for a production
+// `semantic:signature` element that predates `style.parts` (every design
+// saved before this feature, and any hand-authored design that never sets
+// it) — see importSignature below. It is NEVER used on export any more:
+// a real production element's per-part geometry now comes straight from
+// `style.parts` (round-tripped byte-for-byte via each editor item's own
+// real x/y/width/height/rotation, captured/restored directly — no ratio
+// inference of any kind once a design actually has `style.parts`).
+// Derived directly from the editor's own default catalog boxes
+// (elementCatalog.js: image 37x35, divider 70x2 (10mm gap below image),
+// label 110x16 (7mm gap below divider)) — image=35/70 of height,
+// gap1=10/70, divider=2/70, gap2=7/70, and label's height is the
+// REMAINDER of all 4 (not a fraction) so the 5-part sum is always exactly
+// H, matching this file's own "last part is a subtraction" rule. Widths:
+// image=37/110 of width, divider=70/110, label=width itself (labels
+// always span the full box).
 function signaturePartsFromBox(x, y, width, height) {
-  // Every value rounded to the same 2dp `roundMm` precision the rest of
-  // this file's coordinates use — computed then reunioned (see
-  // exportSignatureGroup) via plain floating-point arithmetic otherwise
-  // reintroduces exactly the kind of binary-float noise shiftToProduction/
-  // shiftToEditor's own comment documents (a real, observed
-  // `6.999999999999972 !== 7` failure caught by this file's own real-seed
-  // round-trip test before this fix).
   const imageH = roundMm(height * 0.5);
   const gap1 = roundMm(height * (10 / 70));
   const dividerH = roundMm(height * (2 / 70));
@@ -647,59 +656,51 @@ function exportPayOnline(item, ctx) {
 // "Authorised Signature" was wrong). Geometry: the union of whichever of
 // the 3 editor items exist.
 //
-// Signature-group-transform lock (elementCatalog.js's
-// expandLinkedGroupSelection + EditorContext.jsx's setSelection wrapper +
-// CanvasItem.jsx's beginMove) closes what USED to be a real, honest,
-// reported non-invertible 3-into-1 collapse here: hand-repositioning ANY
-// ONE of the 3 parts independently is no longer reachable through the UI
-// at all — selecting one of them always selects every other PRESENT part
-// too, so every MOVE this union is computed from translates all 3 by the
-// same delta (a rigid translation trivially preserves their relative
-// layout), and every RESIZE scales all 3 proportionally from a shared
-// anchor (GroupSelectionOverlay's beginGroupResize) — which, because
-// signaturePartsFromBox's own split is already purely proportional
-// (fixed fractions of the bundle's own width/height, not fixed literal
-// offsets), preserves the exact same fractions after any such resize.
-// Move and resize are therefore always exact here, not merely a
-// best-effort approximation.
+// HISTORICAL, SUPERSEDED BY PART 6/PART 7 (kept for context, not current
+// behavior): this used to be a lossy union-box export, "fixed" by forcing
+// selection/move/resize/rotate to always act on the whole trio as one
+// unit through the UI (elementCatalog.js's expandLinkedGroupSelection +
+// EditorContext.jsx's setSelection wrapper + CanvasItem.jsx's beginMove).
+// Part 6 replaced the union-box export itself with exact per-part
+// `style.parts` geometry/style (see the comment below this one), which
+// removed the NEED for that lock — resize/rotate stopped being lossy
+// once each part's own real box round-trips directly. Part 7 then
+// removed the lock everywhere it was no longer earning its keep:
+// EditorContext.jsx's setSelection is now a plain passthrough (clicking
+// one part selects only that part; resize/rotate/align/style all apply
+// to it alone), and `expandLinkedGroupSelection` survives ONLY inside
+// CanvasItem.jsx's beginMove, scoped to keeping the three parts
+// TRANSLATING together on a drag — a deliberate product choice (moving
+// "the signature block" shouldn't require dragging each part
+// separately), not a data-integrity requirement any more.
 //
-// Rotation: `el.rotation` is now captured (all 3 present parts always
-// carry the SAME rotation value — GroupSelectionOverlay's group-rotate
-// applies one shared delta to every member) rather than silently dropped
-// as it was before this fix. Investigated, not assumed: a fully exact
-// reconstruction of the UN-rotated union box from the CURRENT (rotated)
-// part positions would need the exact same pivot GroupSelectionOverlay's
-// own beginGroupRotate used for whatever sequence of rotate gestures
-// produced this state — that pivot is itself each gesture's own
-// rotationBoundingBox-based groupBox center, RECOMPUTED FRESH at the
-// start of every individual gesture, which cannot be reconstructed from
-// a single snapshot without tracking that gesture history separately
-// (confirmed by direct derivation, not assumed — a naive "un-rotate
-// around the current raw bounding-box center" is only exact for the
-// FIRST rotation away from 0, since it ignores the fact that a real
-// rotated box's TRUE pivot, once any individual rotation is already
-// nonzero, is `rotatedBoundingBox`'s rotation-aware envelope center, not
-// the raw unrotated one). Getting that wrong silently would be worse than
-// leaving a documented gap (no real BUILTIN_DESIGNS seed uses a rotated
-// signature to verify a fix against, confirmed directly) — so the union
-// box below is still the plain, honest raw min/max of the 3 parts' CURRENT
-// positions (unchanged from before this fix for the x/y/width/height
-// derivation itself), with `rotation` now at least surviving rather than
-// being silently discarded. A separate, deeper, PRE-EXISTING gap on the
-// IMPORT side compounds this further: importSignature (below) stamps
-// `el.rotation` onto each of the 3 reconstructed parts directly without
-// first orbiting their positions around the bundle's own center the way a
-// live in-editor rotate does, so a design imported with a nonzero
-// signature rotation won't even visually reconstruct correctly in the
-// first place (production renders the whole bundle as one rotated parent
-// div with the image/label as plain DOM children, `_element_content.html`'s
-// `signature` branch — 3 independently-rotating siblings can't reproduce
-// that just by copying the same rotation number onto each one). Full
-// round-trip fidelity for a ROTATED signature bundle remains a real,
-// flagged, unresolved limitation on both the import and export sides —
-// distinct from, and not required by, this task's own core fix (move/
-// resize/rotate reachable ONLY as a unit through the UI, which holds
-// regardless of this separate export-fidelity question).
+// Rotation is captured per part now too (`style.parts.<part>.rotation`,
+// Part 6) rather than forced to one shared bundle-level value — each
+// part's own current rotation IS the real data, no shared-pivot
+// reconstruction needed, and no cross-part rotation coupling exists in
+// the editor any more (Part 7 treats rotation the same as resize/style:
+// independent per part). The bundle-level `el.rotation` field below is
+// therefore only ever set from whichever part happens to report one
+// (`parts.reduce((found, p) => found || p.rotation || 0, 0)`, unchanged
+// from before) — a legacy top-level fallback for callers that don't look
+// inside `style.parts`, not a claim that all 3 parts share one rotation.
+// Part 6 (per-part signature geometry/style) — each of the 3 signature
+// items is a real, independently-positioned/-sized top-level item (unlike
+// billTo/dates/payOnline's own single-item-with-internal-parts shape), so
+// there is no ratio-split or layout function needed here at all: every
+// part's own CURRENT x/y/width/height/rotation IS the real, exact data —
+// captured directly into `style.parts.{image,divider,label}.{dx,dy,width,
+// height,rotation}` (dx/dy relative to the shared anchor, `el.x`/`el.y`,
+// so the group still moves together when the anchor is translated — see
+// design_schema._validate_signature_style's own docstring), plus each
+// part's own real style (image: border_color/border_width_mm/
+// border_radius_mm from the exact same generic borderColor/borderWidth/
+// cornerRadius fields every other content item already exposes; divider:
+// color from item.bgColor, the same field CanvasItem.jsx's own 'divider'
+// case already renders with; label: font/font_weight/font_size_pt/color/
+// align via the same textStyleFromPart every other text-shaped part in
+// this file already uses, so any of its own unmodeled keys still land in
+// a real `.extra` passthrough, never silently dropped).
 function exportSignatureGroup(imageItem, dividerItem, labelItem, ctx) {
   const parts = [imageItem, dividerItem, labelItem].filter(Boolean);
   const rotation = parts.reduce((found, p) => found || p.rotation || 0, 0);
@@ -727,6 +728,41 @@ function exportSignatureGroup(imageItem, dividerItem, labelItem, ctx) {
     el.style.has_signature_image = !!imageItem;
   }
   Object.assign(el.style, extraSource?._extra || {});
+
+  const partsOut = {};
+  if (imageItem) {
+    const image = {
+      dx: roundMm(imageItem.x - minX), dy: roundMm(imageItem.y - minY),
+      width: imageItem.width, height: imageItem.height,
+    };
+    if (imageItem.rotation) image.rotation = imageItem.rotation;
+    const borderColor = colorToProduction(imageItem.borderColor);
+    if (borderColor !== undefined) image.border_color = borderColor;
+    if (imageItem.borderWidth) image.border_width_mm = imageItem.borderWidth;
+    if (imageItem.cornerRadius) image.border_radius_mm = imageItem.cornerRadius;
+    partsOut.image = image;
+  }
+  if (dividerItem) {
+    const divider = {
+      dx: roundMm(dividerItem.x - minX), dy: roundMm(dividerItem.y - minY),
+      width: dividerItem.width, height: dividerItem.height,
+    };
+    if (dividerItem.rotation) divider.rotation = dividerItem.rotation;
+    const color = colorToProduction(dividerItem.bgColor);
+    if (color !== undefined) divider.color = color;
+    partsOut.divider = divider;
+  }
+  if (labelItem) {
+    const label = {
+      dx: roundMm(labelItem.x - minX), dy: roundMm(labelItem.y - minY),
+      width: labelItem.width, height: labelItem.height,
+      ...textStyleFromPart(labelItem, 'signature.label', ctx),
+    };
+    if (labelItem.rotation) label.rotation = labelItem.rotation;
+    partsOut.label = label;
+  }
+  el.style.parts = partsOut;
+
   return el;
 }
 
@@ -934,7 +970,9 @@ export function templateToDesignData(template) {
     }
 
     produced.forEach((el) => {
-      const shifted = shiftToProduction(el.x, el.y, margins, !!el.style?.sidebar);
+      // `page_pinned` (Part 2) shares `sidebar`'s own page-absolute
+      // coordinate space — neither shifts by margin/sidebar-width.
+      const shifted = shiftToProduction(el.x, el.y, margins, !!(el.style?.sidebar || el.style?.page_pinned));
       el.x = shifted.x;
       el.y = shifted.y;
     });
@@ -1232,65 +1270,199 @@ function importPayOnline(qrEl, linkEl, ctx) {
 }
 
 function importSignature(el, ctx) {
-  const parts = signaturePartsFromBox(el.x, el.y, el.width, el.height);
-  const image = createContentItem('signatureImage');
-  Object.assign(image, parts.image);
-  const divider = createContentItem('signatureDivider');
-  Object.assign(divider, parts.divider);
-  const label = createContentItem('signatureLabel');
-  Object.assign(label, parts.label);
-  if (el.rotation) { image.rotation = el.rotation; divider.rotation = el.rotation; label.rotation = el.rotation; }
-  if (el.locked) { image.locked = true; divider.locked = true; label.locked = true; }
-  if (el.style?.align) label.contentAlign = el.style.align;
-  const extra = {};
-  Object.keys(el.style || {}).forEach((k) => {
-    if (!['label', 'align', 'has_signature_image'].includes(k)) extra[k] = el.style[k];
-  });
-  if (Object.keys(extra).length) label._extra = extra;
+  const style = el.style || {};
+  const partsStyle = style.parts;
+  const hasRealParts = partsStyle && typeof partsStyle === 'object';
+
+  // Part 6 (per-part signature geometry/style) — a real `style.parts`
+  // dict means every part's own x/y/width/height/rotation/style is read
+  // straight off the production data, no ratio-split inference at all.
+  // Absent (every design that predates this field) falls all the way
+  // back to the original signaturePartsFromBox ratio-split, completely
+  // unchanged from before this feature existed.
+  const geometry = hasRealParts
+    ? null
+    : signaturePartsFromBox(el.x, el.y, el.width, el.height);
+
+  let image = null;
+  let divider = null;
+  let label = null;
+
+  if (hasRealParts) {
+    const imagePart = partsStyle.image;
+    if (imagePart && typeof imagePart === 'object') {
+      image = createContentItem('signatureImage');
+      image.x = roundMm(el.x + (imagePart.dx || 0));
+      image.y = roundMm(el.y + (imagePart.dy || 0));
+      image.width = imagePart.width;
+      image.height = imagePart.height;
+      if (imagePart.rotation) image.rotation = imagePart.rotation;
+      // Same leak class captureTextStyleOnto's own docstring documents —
+      // `createContentItem` seeds a theme-linked `borderColor` default
+      // for every item; delete it first so it can never survive into a
+      // re-export as a border the source data never actually had.
+      delete image.borderColor;
+      const borderColor = colorFromProduction(imagePart.border_color);
+      if (borderColor !== undefined) image.borderColor = borderColor;
+      if (imagePart.border_width_mm) image.borderWidth = imagePart.border_width_mm;
+      if (imagePart.border_radius_mm) image.cornerRadius = imagePart.border_radius_mm;
+    }
+    const dividerPart = partsStyle.divider;
+    if (dividerPart && typeof dividerPart === 'object') {
+      divider = createContentItem('signatureDivider');
+      divider.x = roundMm(el.x + (dividerPart.dx || 0));
+      divider.y = roundMm(el.y + (dividerPart.dy || 0));
+      divider.width = dividerPart.width;
+      divider.height = dividerPart.height;
+      if (dividerPart.rotation) divider.rotation = dividerPart.rotation;
+      const color = colorFromProduction(dividerPart.color);
+      if (color !== undefined) divider.bgColor = color;
+    }
+    const labelPart = partsStyle.label;
+    if (labelPart && typeof labelPart === 'object') {
+      label = createContentItem('signatureLabel');
+      label.x = roundMm(el.x + (labelPart.dx || 0));
+      label.y = roundMm(el.y + (labelPart.dy || 0));
+      label.width = labelPart.width;
+      label.height = labelPart.height;
+      if (labelPart.rotation) label.rotation = labelPart.rotation;
+      // `align` falls back to the outer bundle's own `style.align` when a
+      // part omits its own — matching the pre-existing top-level
+      // behavior for any design that only ever set the OUTER key.
+      // Real bug found while testing a non-default arrangement: `labelPart`
+      // itself carries geometry keys (dx/dy/width/height/rotation)
+      // alongside its style keys — passing it straight to
+      // captureTextStyleOnto would sweep those geometry keys into
+      // `label.extra` as "unmodeled style," and exportSignatureGroup's
+      // own `textStyleFromPart` (which spreads `.extra` back in) would
+      // then clobber the freshly (and correctly) computed dx/dy/width/
+      // height with these STALE imported values on the very next export.
+      // Only the real style keys are ever passed through.
+      const { dx: _dx, dy: _dy, width: _w, height: _h, rotation: _r, ...labelStyleOnly } = labelPart;
+      captureTextStyleOnto(label, { ...labelStyleOnly, align: labelPart.align ?? style.align }, ctx, 'signature.label');
+    }
+    // Unmodeled OUTER `el.style` keys (anything besides label/align/
+    // has_signature_image/parts, which all have their own real handling
+    // above) — the same passthrough-never-drop guarantee the legacy
+    // branch below already gives, captured onto whichever part exists so
+    // a re-export still merges it back in (exportSignatureGroup's own
+    // `extraSource?._extra` read).
+    const outerExtra = {};
+    Object.keys(style).forEach((k) => {
+      if (!['label', 'align', 'has_signature_image', 'parts'].includes(k)) outerExtra[k] = style[k];
+    });
+    if (Object.keys(outerExtra).length) {
+      const extraTarget = label || divider || image;
+      if (extraTarget) extraTarget._extra = outerExtra;
+    }
+  } else {
+    image = createContentItem('signatureImage');
+    Object.assign(image, geometry.image);
+    // `createContentItem` seeds every item with a theme-LINKED
+    // `borderColor` default (elementCatalog.defaultWholeItemStyle) for a
+    // user building from scratch — this legacy (no `style.parts`) import
+    // path has no real border data to back that default with (the
+    // production element never carried a border at all before this
+    // feature existed), so it must be deleted rather than silently kept
+    // and later leaked into a re-export by exportSignatureGroup's own
+    // real border_color read — the identical class of bug
+    // captureTextStyleOnto's own docstring already documents and guards
+    // against for text styling.
+    delete image.borderColor;
+    divider = createContentItem('signatureDivider');
+    Object.assign(divider, geometry.divider);
+    label = createContentItem('signatureLabel');
+    Object.assign(label, geometry.label);
+    // Same leak, for the label's own theme-linked `fontFamily`/
+    // `textColor` defaults (elementCatalog.defaultWholeItemStyle/
+    // defaultPartStyles — the 'text' variant gets both): no real font/
+    // color data backs them in this legacy path either.
+    delete label.fontFamily;
+    delete label.textColor;
+    delete label.borderColor;
+    if (style.align) label.contentAlign = style.align;
+    const extra = {};
+    Object.keys(style).forEach((k) => {
+      if (!['label', 'align', 'has_signature_image', 'parts'].includes(k)) extra[k] = style[k];
+    });
+    if (Object.keys(extra).length) label._extra = extra;
+  }
+
+  if (el.rotation) {
+    if (image) image.rotation = image.rotation || el.rotation;
+    if (divider) divider.rotation = divider.rotation || el.rotation;
+    if (label) label.rotation = label.rotation || el.rotation;
+  }
+  if (el.locked) {
+    if (image) image.locked = true;
+    if (divider) divider.locked = true;
+    if (label) label.locked = true;
+  }
   // See exportSignatureGroup's own comment: Professional's real seed
   // never sets `has_signature_image` at all (only Minimal/Modern do) —
-  // recorded here so a re-export omits it too, byte for byte, rather
-  // than always (re-)writing it.
-  if (!('has_signature_image' in (el.style || {}))) label._hasSignatureImageKey = false;
-  if (el.style?.label && el.style.label !== 'Authorised signature') {
-    ctx.warnings.push(`signature: custom label "${el.style.label}" has no editor field (signatureLabel's text is fixed) and was dropped.`);
+  // recorded here (on whichever part exists) so a re-export omits it too,
+  // byte for byte, rather than always (re-)writing it.
+  const flagTarget = label || divider || image;
+  if (flagTarget && !('has_signature_image' in style)) flagTarget._hasSignatureImageKey = false;
+  if (style.label && style.label !== 'Authorised signature') {
+    ctx.warnings.push(`signature: custom label "${style.label}" has no editor field (signatureLabel's text is fixed) and was dropped.`);
   }
-  if (el.style?.has_signature_image === false) {
+  if (style.has_signature_image === false) {
     ctx.warnings.push('signature: has_signature_image is explicitly false but a signatureImage editor item was still created (the editor has no way to represent "signature block present but image absent") — reconsider before re-saving if this matters.');
   }
-  return [image, divider, label];
+  return [image, divider, label].filter(Boolean);
+}
+
+// Fix (Part 2, found while importing Professional/Modern's real new
+// generic:rectangle elements — the first real production `rectangle`s
+// ever round-tripped through this path, none of the 3 seeds having used
+// this type before): `createShape` seeds a brand-new shape with
+// sensible theme-LINKED defaults for a user building from scratch
+// (shapeCatalog.js's own `fill`/`borderColor: { linked: 'primary' }`) —
+// those defaults must never leak into an IMPORTED element's real style,
+// exactly the same class of bug captureTextStyleOnto's own docstring
+// already documents and guards against for text styling. A real
+// production rectangle/ellipse/container with NO `border_color` key at
+// all used to round-trip back OUT with a spurious
+// `border_color: 'theme_primary'` it never had, because
+// `colorToProduction({ linked: 'primary' })` is truthy regardless of
+// whether the import step ever explicitly touched `borderColor`. Fixed
+// by deleting both color fields first, then re-setting only when the
+// source style actually carries the corresponding key — never "leave
+// whatever createShape already put there".
+function importShapeFillAndBorder(shape, el) {
+  delete shape.fill;
+  delete shape.borderColor;
+  if (el.style?.background_color) shape.fill = colorFromProduction(el.style.background_color);
+  if (el.style?.border_color) shape.borderColor = colorFromProduction(el.style.border_color);
+  if (el.style?.border_width_mm) shape.borderWidth = el.style.border_width_mm;
 }
 
 function importGenericShape(el, ctx) {
   if (el.type === 'rectangle') {
     const shape = createShape('roundedRect', { x: el.x, y: el.y });
     Object.assign(shape, importBaseFields(el), { radius: el.style?.border_radius_mm || 0 });
-    if (el.style?.background_color) shape.fill = colorFromProduction(el.style.background_color);
-    if (el.style?.border_color) shape.borderColor = colorFromProduction(el.style.border_color);
-    if (el.style?.border_width_mm) shape.borderWidth = el.style.border_width_mm;
+    importShapeFillAndBorder(shape, el);
     return [shape];
   }
   if (el.type === 'ellipse') {
     const shape = createShape('ellipse', { x: el.x, y: el.y });
     Object.assign(shape, importBaseFields(el));
-    if (el.style?.background_color) shape.fill = colorFromProduction(el.style.background_color);
-    if (el.style?.border_color) shape.borderColor = colorFromProduction(el.style.border_color);
-    if (el.style?.border_width_mm) shape.borderWidth = el.style.border_width_mm;
+    importShapeFillAndBorder(shape, el);
     return [shape];
   }
   if (el.type === 'divider') {
     const thickness = el.style?.thickness_mm ?? 0.5;
     const shape = createShape('line', { x: el.x, y: el.y });
     Object.assign(shape, importBaseFields(el), { height: thickness, naturalHeight: thickness });
+    delete shape.fill;
     if (el.style?.color) shape.fill = colorFromProduction(el.style.color);
     return [shape];
   }
   if (el.type === 'container') {
     const shape = createShape('container', { x: el.x, y: el.y });
     Object.assign(shape, importBaseFields(el), { radius: el.style?.border_radius_mm || 0 });
-    if (el.style?.background_color) shape.fill = colorFromProduction(el.style.background_color);
-    if (el.style?.border_color) shape.borderColor = colorFromProduction(el.style.border_color);
-    if (el.style?.border_width_mm) shape.borderWidth = el.style.border_width_mm;
+    importShapeFillAndBorder(shape, el);
     return [shape];
   }
   return [];
@@ -1443,7 +1615,9 @@ export function designDataToTemplate(designData) {
   const margins = marginsOfProductionPage(designData.page);
   let nextOrigIndex = 0;
   const shiftedEl = (el) => {
-    const shifted = shiftToEditor(el.x, el.y, margins, !!el.style?.sidebar);
+    // `page_pinned` (Part 2) shares `sidebar`'s own page-absolute
+    // coordinate space — see shiftToProduction's identical treatment.
+    const shifted = shiftToEditor(el.x, el.y, margins, !!(el.style?.sidebar || el.style?.page_pinned));
     // `_origIndex` — this element's position in the COMBINED header-then-
     // flow sequence, stamped once here before any group extraction
     // reorders the working `pool` array. Used purely to restore the
@@ -1559,11 +1733,29 @@ export function designDataToTemplate(designData) {
   });
 
   ordered.sort((a, b) => a.sortKey - b.sortKey);
-  const items = ordered.map((o) => o.item);
+  let items = ordered.map((o) => o.item);
 
   if (designData.page?.footer) {
     items.push(importFooter(designData.page, ctx));
   }
+
+  // Part 2 — a real shape element (Professional's spine bar/accent line,
+  // Modern's sidebar background rectangle, or any hand-authored design's
+  // own decorative shape) is only guaranteed to reconstruct in its
+  // authored `_origIndex` position, which has no relationship to the
+  // editor's own "a shape never renders above content" invariant
+  // (utils/zorder.js's isConstrainedShape) — that invariant is otherwise
+  // enforced only on an EXPLICIT reorder action (LayersPanel drag,
+  // front/back stepping; see EditorContext.jsx), never automatically on
+  // load. Without this, a freshly imported design with a shape anywhere
+  // but the very front of its own list would visibly paint over real
+  // content the instant it's opened, until the user happened to trigger
+  // any reorder. Safe for exact round-trip: normalizeZOrder only moves
+  // shapes AS A GROUP to the front, preserving both groups' own relative
+  // order — and every real BUILTIN_DESIGNS seed's own shape elements are
+  // already authored at the front of their containing list for exactly
+  // this reason (see design_templates.py's own comments on this).
+  items = normalizeZOrder(items);
 
   const page = {
     width: designData.page?.width_mm,

@@ -1,13 +1,16 @@
 # apps/invoices/views_design_editor.py
 """
 The production Template Builder's own editor-support endpoints: the
-template gallery data (design_templates_list/design_template_data), the
-canvas document/element content the real GrapesJS editor loads
-(design_canvas_document/design_canvas_element — the on-demand legacy-
-design migration also lives in design_canvas_document, see
-design_migration.migrate_v1_to_v2), a render-preview endpoint used by the
-editor's own Preview toggle (design_render_preview), and Template Health
+template gallery data (design_templates_list/design_template_data), a
+render-preview endpoint used by the editor's own Preview toggle
+(design_render_preview — the on-demand legacy-design migration lives
+here, see design_migration.migrate_v1_to_v2), and Template Health
 validation (design_validate, see design_validation.py).
+
+design_canvas_document/design_canvas_element (the canvas-content
+endpoints the old GrapesJS editor loaded) and their own support module,
+design_canvas.py, were removed along with that editor — see
+DECISIONS.md's removal entry. Nothing else ever called them.
 
 None of these write to a real Invoice row or its rendered output — they
 build/preview/validate design_data against build_render_context's real-
@@ -30,7 +33,6 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.invoices.design_canvas import build_canvas_document, render_canvas_element_content
 from apps.invoices.design_migration import migrate_v1_to_v2
 from apps.invoices.design_renderer import (
     DesignRenderError,
@@ -38,7 +40,7 @@ from apps.invoices.design_renderer import (
     render_design_html,
     render_design_pdf_bytes,
 )
-from apps.invoices.design_schema import ELEMENT_KINDS, SCHEMA_VERSION_V2, get_schema_version
+from apps.invoices.design_schema import SCHEMA_VERSION_V2, get_schema_version
 from apps.invoices.design_templates import BUILTIN_DESIGNS, get_blank_design_data, get_builtin_design_data
 from apps.invoices.design_validation import run_validation
 from apps.invoices.views import _check_moderate_rate_limit, _too_many_requests
@@ -176,126 +178,6 @@ def design_template_data(request):
     if request.query_params.get('blank') == 'true':
         return Response({'design_data': get_blank_design_data(base_template)})
     return Response({'design_data': get_builtin_design_data(base_template)})
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def design_canvas_document(request):
-    """
-    The editor canvas's own initial-load payload.
-
-    POST {"design_data": {...}, "base_template": "professional", "color_variant": ""}
-
-    Production cutover: `design_data` may be a real production (v2) shape
-    OR a legacy (pre-cutover) shape — a legacy payload is migrated IN
-    MEMORY ONLY (design_migration.migrate_v1_to_v2, same real mapper the
-    one-time production migration command uses) before building the
-    canvas document, never persisted here. This is what lets "Edit" on
-    ANY saved design — including the rare one the one-time migration
-    couldn't safely convert — open in the one production editor; the
-    migrated shape only ever becomes real, saved v2 data the moment the
-    user explicitly saves.
-
-    Read-only in every sense that matters: design_data always comes from
-    the request's own body (never fetched by id from another user's
-    InvoiceDesign row), and nothing here is ever persisted. Rate-limited
-    like every other moderate-cost design-editor action in this app —
-    same 30/hour-per-user shared helper, not a separately invented limit.
-    """
-    if _check_moderate_rate_limit('design_canvas_document', request.user):
-        return _too_many_requests('Too many actions. Please try again later.')
-
-    design_data = request.data.get('design_data')
-    if not isinstance(design_data, dict):
-        return Response({'design_data': 'design_data is required and must be an object.'}, status=400)
-
-    try:
-        version = get_schema_version(design_data)
-    except ValueError as exc:
-        return Response({'design_data': str(exc)}, status=400)
-
-    if version != SCHEMA_VERSION_V2:
-        migration = migrate_v1_to_v2(design_data)
-        if not migration['success']:
-            return Response(
-                {'design_data': 'This design uses an older format that could not be automatically converted. '
-                                'Please duplicate a ready-made template and rebuild it instead.',
-                 'details': migration['errors']},
-                status=422,
-            )
-        design_data = migration['design_data']
-
-    base_template = request.data.get('base_template', 'professional')
-    color_variant = request.data.get('color_variant', '') or ''
-    # Phase 4B: default 'alias' — a design environment shows what a field
-    # REPRESENTS ("Client Name"), not today's test-account data, and never
-    # collapses to zero size just because real data happens to be blank.
-    # Never affects real invoice rendering — render_design_html has no
-    # code path that accepts this at all.
-    content_mode = request.data.get('content_mode', 'alias')
-    if content_mode not in ('real', 'alias'):
-        return Response({'content_mode': "Must be 'real' or 'alias'."}, status=400)
-
-    try:
-        context = build_render_context(request.user, base_template, color_variant)
-        document = build_canvas_document(design_data, context, content_mode)
-        return Response(document)
-    except DesignRenderError as exc:
-        logger.info('[INVOICES] V2 canvas document build failed: %s', exc)
-        return Response({'error': str(exc)}, status=422)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def design_canvas_element(request):
-    """
-    The canvas's live per-element content refresh — the V2 analog of
-    apps/invoices/views.py's own design_editor_element, same purpose
-    (re-render just one element's content fragment on a style-panel
-    change, without touching any other element's live position).
-    """
-    if _check_moderate_rate_limit('design_canvas_element', request.user):
-        return _too_many_requests('Too many actions. Please try again later.')
-
-    kind = request.data.get('kind')
-    el_type = request.data.get('el_type')
-    style = request.data.get('style')
-    overrides = request.data.get('overrides')
-    base_template = request.data.get('base_template', 'professional')
-    color_variant = request.data.get('color_variant', '') or ''
-    content_mode = request.data.get('content_mode', 'alias')
-    # Phase 4B.3 real bug fix (LANCERAOS_TEMPLATE_BUILDER_2_PHASE4B2_AUDIT.md
-    # finding C1): this endpoint had no way to resolve a bound generic text
-    # element's real/alias value without its own `binding` — every style
-    # edit on a bound field silently blanked the canvas until a full
-    # reload. Optional (None for a static/unbound text element or any
-    # semantic type — every one of those ignores it, same as before);
-    # validated against the same SUPPORTED_BINDINGS allow-list
-    # resolve_binding itself already enforces, so a malformed value fails
-    # loudly (a real DesignRenderError below) rather than silently resolving
-    # to nothing.
-    binding = request.data.get('binding') or None
-
-    if kind not in ELEMENT_KINDS:
-        return Response({'kind': f'Must be one of {sorted(ELEMENT_KINDS)}.'}, status=400)
-    if not isinstance(style, dict):
-        return Response({'style': 'style must be an object.'}, status=400)
-    if overrides is not None and not isinstance(overrides, dict):
-        return Response({'overrides': 'overrides must be an object.'}, status=400)
-    if base_template not in BUILTIN_DESIGNS:
-        return Response({'base_template': f'Must be one of {sorted(BUILTIN_DESIGNS.keys())}.'}, status=400)
-    if content_mode not in ('real', 'alias'):
-        return Response({'content_mode': "Must be 'real' or 'alias'."}, status=400)
-    if binding is not None and not isinstance(binding, str):
-        return Response({'binding': 'binding, if present, must be a string.'}, status=400)
-
-    try:
-        context = build_render_context(request.user, base_template, color_variant)
-        html = render_canvas_element_content(kind, el_type, style, overrides, context, content_mode, binding=binding)
-        return Response({'html': html})
-    except DesignRenderError as exc:
-        logger.info('[INVOICES] V2 canvas element render failed: %s', exc)
-        return Response({'error': str(exc)}, status=422)
 
 
 @api_view(['POST'])

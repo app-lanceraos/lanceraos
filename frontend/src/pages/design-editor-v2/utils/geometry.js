@@ -443,8 +443,7 @@ export function detectEqualSpacing(draggedPos, draggedSize, rowItems, tolerance)
 // is meant to sit flush against/behind content, not be pushed away by it.
 //
 // Phase 2a: was a bare 1px. Rather than convert that number in isolation
-// (1px -> 0.26mm), this now REUSES production's own OVERLAP_EPSILON_MM
-// (frontend/src/lib/designEditor/constants.js) = 0.3mm directly — the
+// (1px -> 0.26mm), this uses 0.3mm directly — the
 // exact same tolerance the backend's own _validate_page_bounds/
 // boxes_overlap checks enforce for this exact same purpose (absorbing
 // mm<->px<->mm round-trip noise at a shared edge). Using a DIFFERENT
@@ -484,6 +483,26 @@ export function rotatedBoundingBox(box) {
   const xs = corners.map((c) => cx + c.x);
   const ys = corners.map((c) => cy + c.y);
   return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+
+// Prompt 31 item 1: shared "is this point inside the current multi-
+// selection's own bounding box" test — used by both the right-click
+// group-context-menu hit-test (CanvasLayer's handleContextMenu, Prompt 29
+// item 6) and the left-click deselect guard (CanvasLayer's startMarquee),
+// so the two can never independently drift on what counts as "inside the
+// selection." Only meaningful for 2+ items — a single selected item has
+// no separate "bounding area" distinct from the item itself, so callers
+// already gate on `items.length >= 2` before this ever needs to; kept as
+// a defensive `< 2` short-circuit here too rather than trusting every
+// caller to remember.
+export function isPointInSelectionBounds(x, y, items) {
+  if (items.length < 2) return false;
+  const boxes = items.map(rotatedBoundingBox);
+  const minX = Math.min(...boxes.map((b) => b.minX));
+  const maxX = Math.max(...boxes.map((b) => b.maxX));
+  const minY = Math.min(...boxes.map((b) => b.minY));
+  const maxY = Math.max(...boxes.map((b) => b.maxY));
+  return x >= minX && x <= maxX && y >= minY && y <= maxY;
 }
 
 // Precomputes every blocking neighbor's rotated bounding box, each already

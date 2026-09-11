@@ -106,8 +106,103 @@ original static templates and like every other real InvoiceDesign in this
 system.
 """
 import copy
+import json
+import os
 
 SCHEMA_VERSION_V2 = 2
+
+# Green-Light directive follow-up (Part 3, "blank design richness") — the
+# rich, collision-verified content `get_blank_design_data` seeds a blank
+# design with, sourced from the frontend's own real default template
+# (design-editor-v2's `initialTemplateState`/elementCatalog.js, "every
+# catalog element present, user removes what they don't want") rather than
+# a second, hand-authored Python approximation of the same idea. Generated
+# by frontend/scripts/js/dump_blank_design_elements.mjs, which runs the
+# ACTUAL frontend adapter (templateToDesignData) against the ACTUAL
+# frontend default template and dumps its real output — the reverse-
+# direction sibling of frontend/scripts/py/dump_fixtures.py (that script
+# goes Python -> JS test fixtures; this file is consumed the other way,
+# JS -> this real runtime seed). Checked in, never hand-edited (its own
+# `_generated_by` field records the exact command); regenerate by re-
+# running that script whenever the frontend's own default layout changes
+# — there is no automatic drift check beyond that discipline, the same
+# trust model this codebase already accepts for dump_fixtures.py's own
+# generated output.
+_BLANK_DESIGN_RICH_ELEMENTS_PATH = os.path.join(os.path.dirname(__file__), 'data', 'blank_design_rich_elements.json')
+_blank_design_rich_elements_cache = None
+
+
+def _load_blank_design_rich_elements():
+    """
+    Lazily loads and caches the JS-generated rich element set (see this
+    module's own header comment above). A fresh deep copy is handed back
+    on every call — same "never a shared mutable value" contract every
+    other seed-returning function in this file already has — so nothing
+    a caller does to the result can mutate what a LATER call sees.
+    """
+    global _blank_design_rich_elements_cache
+    if _blank_design_rich_elements_cache is None:
+        with open(_BLANK_DESIGN_RICH_ELEMENTS_PATH) as f:
+            data = json.load(f)
+        _blank_design_rich_elements_cache = {'header': data['header'], 'flow': data['flow']}
+    return copy.deepcopy(_blank_design_rich_elements_cache)
+
+
+def _content_width_mm_for_page(page):
+    """
+    Reproduces design_schema.py's own `_validate_page_bounds` content-width
+    formula exactly (margin_left + margin_right + sidebar reservation) —
+    the real bound a blank design's rescaled rich content must fit inside,
+    not the raw page width. Mirrors apps/invoices/ai_design.py's own
+    identically-named/identically-reasoned `_content_width_mm` helper (not
+    imported directly — that module's version is scoped to its own
+    header-density-scaling use case and default-margin fallbacks; this one
+    is intentionally simpler, since every BUILTIN_DESIGNS page dict always
+    sets its own real margin_*_mm explicitly).
+    """
+    sidebar = page.get('sidebar')
+    sidebar_width_mm = sidebar['width_mm'] if sidebar else 0
+    effective_margin_left_mm = page['margin_left_mm'] + sidebar_width_mm
+    return page['width_mm'] - effective_margin_left_mm - page['margin_right_mm']
+
+
+def _scale_elements_to_fit(elements, content_width_mm):
+    """
+    Uniform-scale-from-origin, the same overlap-safety technique
+    apps/invoices/ai_design.py's `_safe_uniform_scale` already established
+    for this exact class of problem (rescaling a whole, already collision-
+    verified element set to fit a narrower real template without
+    independently repositioning — and therefore never independently
+    re-overlapping — any single element). That helper only ever scales
+    UP (requested_scale > 1.0); this one only ever scales DOWN (or leaves
+    alone), since the frontend's own default template is authored against
+    a generic, zero-margin 210mm-wide canvas — genuinely wider than every
+    real base_template's own actual content_width_mm once real margins
+    (and, for Modern, its real 42mm sidebar reservation) are subtracted.
+    A single scale factor, computed from the single widest real right edge
+    across the WHOLE set (header + flow together — design_schema.py's own
+    `_validate_page_bounds` bounds both regions against the identical
+    content_width_mm, confirmed directly), applied to x/y/width/height of
+    every element identically. Y is deliberately scaled too (not left
+    alone) purely to keep proportions faithful to the original layout —
+    `_validate_page_bounds` itself only ever bounds the X axis, never Y
+    (see that function's own docstring), so this is a fidelity choice, not
+    a validation requirement.
+    """
+    if not elements:
+        return elements
+    max_right_edge = max(el['x'] + el['width'] for el in elements)
+    if max_right_edge <= 0:
+        return elements
+    scale = min(1.0, content_width_mm / max_right_edge)
+    if scale >= 1.0:
+        return elements
+    for el in elements:
+        el['x'] = round(el['x'] * scale, 2)
+        el['y'] = round(el['y'] * scale, 2)
+        el['width'] = round(el['width'] * scale, 2)
+        el['height'] = round(el['height'] * scale, 2)
+    return elements
 
 # Phase 4B.3 — real, measured (not estimated) alias-mode content heights,
 # each confirmed via live DOM `scrollHeight` against the real backend
@@ -142,8 +237,7 @@ def _totals_row(x, y, width, row, *, align='right', variant=None, extra_style=No
     a given template) into one real chain: a row whose actual amount
     renders taller than its own declared estimate (an unusually large
     tax/discount/total) pushes the NEXT row down for real, at canonical
-    render time, instead of silently overlapping it. The canvas editor is
-    unaffected (design_canvas.py never groups chains) — same documented
+    render time, instead of silently overlapping it — same documented
     design-time-estimate-vs-real-render-time trade-off as the table's own
     _TABLE_HEIGHT_ESTIMATE_MM.
     """
@@ -231,6 +325,92 @@ def _divider(x, y, width, thickness_mm, color):
     }
 
 
+def _signature_parts_style(width, *, align='right', image_width=26, image_height=12):
+    """
+    Part 6 (per-part signature geometry/style) — the real `style.parts`
+    shape for a `semantic:signature` element, at exactly the same visual
+    arrangement the pre-existing flow layout (`_element_content.html`'s
+    now-fallback-only branch: an auto-width, 14mm-tall image, a 0.3mm
+    divider line, then a small uppercase mono label, all right-aligned
+    within the bundle's own box) already produced — see design_renderer.
+    _prepare_signature_parts' own docstring for the render-time mechanics.
+
+    Every one of this codebase's 3 real builtin seeds calls this helper at
+    their own real bundle width so the divider/label span the exact same
+    full width they always have; only the image (the one part whose OLD
+    rendering used an intrinsic, aspect-ratio-preserving auto-width rather
+    than a fixed one) is a real, honestly-documented, narrow deviation —
+    see this module's own docstring update / DECISIONS.md for why an
+    explicit `width`+`object-fit:contain` box (never distorting a real
+    uploaded signature, just possibly letterboxing it slightly if its own
+    aspect ratio isn't close to this box's) is the correct trade-off once
+    a part needs a real, independently-resizable box instead of the
+    browser computing width from the asset's own natural dimensions.
+    `align='right'` (every real seed's own existing `style.align`) shifts
+    the image to the bundle's right edge exactly the way `text-align`
+    used to; divider/label stay full-width either way (their own text-
+    align, not their box position, is what `align` controlled for them).
+    """
+    image_dx = (width - image_width) if align == 'right' else (width - image_width) / 2 if align == 'center' else 0
+    divider_dy = image_height + 1
+    label_dy = divider_dy + 0.3 + 1.2
+    return {
+        'image': {'dx': image_dx, 'dy': 0, 'width': image_width, 'height': image_height},
+        'divider': {'dx': 0, 'dy': divider_dy, 'width': width, 'height': 0.3, 'color': 'theme_secondary'},
+        'label': {
+            'dx': 0, 'dy': label_dy, 'width': width, 'height': 6,
+            'font': 'IBM Plex Mono', 'font_weight': 400, 'font_size_pt': 7.5,
+            'letter_spacing_em': 0.1, 'text_transform': 'uppercase', 'color': '#a09a89',
+            'align': align,
+        },
+    }
+
+
+def _signature_bundle_height(image_height=12, label_height=6):
+    """
+    Part 6 companion to `_signature_parts_style` above — the real, honest
+    total footprint of the 3 parts it lays out (image + 1mm gap + 0.3mm
+    divider + 1.2mm gap + label), used as the OUTER `semantic:signature`
+    element's own declared `height`.
+
+    This is a genuine fidelity fix, not incidental: the pre-existing seed
+    height (7/8mm) was always an inaccurate placeholder — the real visual
+    content (a 14mm-tall image alone) already overflowed it by a wide
+    margin under the old flow layout, silently relying on `.v2-el`'s own
+    `overflow: visible` (design_renderer.py never clips). That overflow
+    guarantee is exactly why the mismatch was harmless for real rendering
+    — but the adapter's own export now derives a real element's box from
+    the union of its 3 real, independently-positioned parts (the same
+    convention every other multi-part decomposition in this codebase
+    already follows), so an editor round-trip of an unedited signature
+    would otherwise silently grow the stored `height` from the old
+    placeholder to this real value the first time a user merely opened
+    and re-saved it. Authoring the seed's OWN declared height to already
+    equal that real value up front means opening+resaving an untouched
+    signature is a genuine no-op, not a silent drift — confirmed to
+    introduce no new overlap with any real seed's neighboring elements
+    (checked directly against all 3 real BUILTIN_DESIGNS seeds).
+    """
+    return image_height + 1 + 0.3 + 1.2 + label_height
+
+
+def _page_pinned_rectangle(x, y, width, height, background_color):
+    """
+    09 September 2026 (Part 2) — a real, editable `generic:rectangle`
+    rendered page-absolute/position:fixed (design_renderer.
+    is_page_pinned_element), backing Professional's real spine bar +
+    accent line (previously pure `page.spine` config — see this module's
+    own PROFESSIONAL_DESIGN_DATA_V2 comment). Deliberately excluded from
+    OVERLAP_EXEMPT_GENERIC_TYPES-driven validation entirely (rectangle
+    already is exempt, unconditionally, regardless of this flag — see
+    design_schema.py's own OVERLAP_EXEMPT_GENERIC_TYPES).
+    """
+    return {
+        'kind': 'generic', 'type': 'rectangle', 'x': x, 'y': y, 'width': width, 'height': height,
+        'style': {'page_pinned': True, 'background_color': background_color}, 'overrides': {},
+    }
+
+
 def _table(x, y, width, height, style):
     """
     Master Blueprint cutover (§B.3): `layout_mode: 'flow'` — the table's
@@ -288,13 +468,20 @@ PROFESSIONAL_DESIGN_DATA_V2 = {
         # own decorative `.spine`/`.spine::after` (professional.html: a
         # 3mm primary-colored bar bled to the true left page edge, plus a
         # thin 0.4mm accent line at its own right edge) was completely
-        # absent from the V2 canonical render before this. `color:
-        # 'theme_primary'` (not a literal hex) so it tracks color_variant
-        # like every other themed element in this seed — the golden
-        # template's own accent_color (#d9c9a8) is a fixed literal there
-        # too (not itself color_variant-aware), so kept literal here for
-        # an exact match rather than invented as a second theme token.
-        'spine': {'width_mm': 3, 'color': 'theme_primary', 'accent_color': '#d9c9a8'},
+        # absent from the V2 canonical render before this.
+        #
+        # 09 September 2026 (Part 2) — REMOVED from here. `page.spine`
+        # config is retired as the SOURCE of this bar for any NEW design
+        # (design_schema.py keeps validating/rendering it for a
+        # PRE-EXISTING design that still has it — full backward
+        # compatibility, nothing about reading an old row changes). The
+        # bar + accent line are now 2 real, selectable, editable
+        # `generic:rectangle` elements at the very start of `flow.elements`
+        # below (`style.page_pinned: true`) — see design_renderer.py's
+        # is_page_pinned_element for the render mechanism this uses
+        # instead (page-absolute, position:fixed, repeats on every real
+        # multi-page PDF — verified directly against a real 5-page render,
+        # not assumed; see DECISIONS.md's 09 September 2026 Part 2 entry).
         # 30 August 2026 fidelity fix — professional.html's own real
         # `body { background: #faf9f6; }` (a warm off-white, not pure
         # white) was silently flattened to the canonical renderer's one
@@ -352,6 +539,21 @@ PROFESSIONAL_DESIGN_DATA_V2 = {
     },
     'flow': {
         'elements': [
+            # 09 September 2026 (Part 2) — Professional's real spine bar +
+            # accent line, now 2 real editable elements (see this seed's
+            # own `page` comment above and _page_pinned_rectangle's
+            # docstring) instead of `page.spine` config. Placed FIRST in
+            # this list deliberately — the adapter's own normalizeZOrder
+            # (frontend/.../utils/zorder.js) groups every real shape
+            # element at the front of the editor's own item stack on load,
+            # so a shape's position within its own list here is what
+            # round-trips byte-for-byte on re-export (see
+            # designDataAdapter.js's own HEADER_CATALOG_TYPES: a shape
+            # always exports into `flow`, never `header`, regardless of
+            # which list it was authored in — so both go here, never in
+            # `header.elements`, for that same reason).
+            _page_pinned_rectangle(0, 0, 3, 297, 'theme_primary'),
+            _page_pinned_rectangle(3, 0, 0.4, 297, '#d9c9a8'),
             # y=68: the real golden `<hr class="rule">` — sits between the
             # header's own real content bottom (65mm) and the table's own
             # calibrated y=76 below, with real clearance on both sides.
@@ -435,8 +637,9 @@ PROFESSIONAL_DESIGN_DATA_V2 = {
             # 234, matching the real measured signature-line position
             # (250.1mm page-absolute = 234.1mm content-relative) and this
             # row's own real shared bottom edge with QR/link (~240–242mm).
-            {'kind': 'semantic', 'type': 'signature', 'x': 119, 'y': 234, 'width': 55, 'height': 8,
-             'style': {'label': 'Authorised signature', 'align': 'right'}, 'overrides': {}},
+            {'kind': 'semantic', 'type': 'signature', 'x': 119, 'y': 234, 'width': 55, 'height': _signature_bundle_height(),
+             'style': {'label': 'Authorised signature', 'align': 'right', 'parts': _signature_parts_style(55)},
+             'overrides': {}},
         ],
     },
 }
@@ -581,8 +784,11 @@ MINIMAL_DESIGN_DATA_V2 = {
             # y corrected (was 238.0, above the QR/link row) to 250, matching
             # the real measured signature-line position (269.9mm
             # page-absolute = 249.9mm content-relative).
-            {'kind': 'semantic', 'type': 'signature', 'x': 119, 'y': 250, 'width': 55, 'height': 7,
-             'style': {'label': 'Authorised signature', 'has_signature_image': True, 'align': 'right'},
+            {'kind': 'semantic', 'type': 'signature', 'x': 119, 'y': 250, 'width': 55, 'height': _signature_bundle_height(),
+             'style': {
+                 'label': 'Authorised signature', 'has_signature_image': True, 'align': 'right',
+                 'parts': _signature_parts_style(55),
+             },
              'overrides': {}},
         ],
     },
@@ -607,7 +813,19 @@ MODERN_DESIGN_DATA_V2 = {
     'page': {
         'size': 'A4', 'width_mm': 210, 'height_mm': 297,
         'margin_top_mm': 14, 'margin_right_mm': 16, 'margin_bottom_mm': 16, 'margin_left_mm': 16,
-        'sidebar': {'width_mm': 42, 'color': None},  # None -> renderer falls back to design_primary_color
+        # `width_mm` stays real page-level geometry (drives the main-
+        # content margin offset AND gates the fixed `.v2-sidebar` column
+        # every sidebar-flagged element — logo/business name/QR/pay-online
+        # link, all below — renders inside; removing it would break all of
+        # them, not just the background fill). `color: None` (unchanged
+        # since before Part 2) means the wrapper's own default fill still
+        # applies — the VISIBLE bar is now a real, editable element instead
+        # (09 September 2026, Part 2 — see the `_page_pinned_rectangle`-
+        # sibling `style.sidebar: True` rectangle at the very start of
+        # `flow.elements` below), so this default and that element resolve
+        # to the identical color and simply double-paint — zero visual
+        # change, but the fill is now genuinely selectable/editable.
+        'sidebar': {'width_mm': 42, 'color': None},
         # 09 September 2026 fidelity fix — see Professional's own identical
         # comment above (same real gap, same audit, same fix). modern.html's
         # own real, measured `@bottom-left { color: #a8a5b8; }` differs from
@@ -631,7 +849,32 @@ MODERN_DESIGN_DATA_V2 = {
             #    color override needed/added here.
             {'kind': 'semantic', 'type': 'logo', 'x': 6, 'y': 14, 'width': 15, 'height': 15,
              'style': {'sidebar': True}, 'overrides': {}},
-            _bound_text('business.name', 6, 35, 30, 8,
+            # 09 September 2026 fidelity fix — the original width=30 here
+            # was measured against the sidebar's own CSS padding-box
+            # (sidebar_width_mm 42 minus 6mm padding on each side), mirroring
+            # modern.html's real `.sidebar { padding: 14mm 6mm 12mm; }` — but
+            # a real WeasyPrint render (confirmed directly, not assumed)
+            # showed this genuinely too tight: even a real, normal 2-word
+            # business name ("Horizon Studio", this codebase's own standard
+            # test fixture value, used across a dozen existing test files)
+            # wrapped to 2 lines at 14pt bold Space Grotesk in a 30mm box.
+            # Sidebar V2 elements are positioned as real page-absolute
+            # coordinates (x=6 measures from the sidebar's left BORDER edge,
+            # not its own padding-box — confirmed by direct pixel
+            # measurement: a schema x=6 render position landed at 6.0mm),
+            # so 36 is the true maximum before design_schema's own
+            # page-bounds check (x + width <= page.sidebar.width_mm) rejects
+            # it — widened to that ceiling rather than reducing font_size_pt,
+            # since font_size_pt=14 is the exact value that reproduces
+            # modern.html's own real `.sidebar .brandname { font-size: 14pt;
+            # }` — changing it would trade one fidelity gap for another.
+            # This does not fix every conceivable business name (a genuine
+            # 3-word name like "Sarah Khan Designs" still needs more room
+            # than a 42mm-wide sidebar has to give at this font size,
+            # confirmed directly — a materially larger layout change, not
+            # this fix's scope), but does fix the real, reported case: a
+            # normal-length business name now renders on one line.
+            _bound_text('business.name', 6, 35, 36, 8,
                         {'sidebar': True, 'font': 'Space Grotesk', 'font_size_pt': 14, 'font_weight': 700}),
 
             # ── Main content ─────────────────────────────────────────
@@ -656,6 +899,22 @@ MODERN_DESIGN_DATA_V2 = {
     },
     'flow': {
         'elements': [
+            # 09 September 2026 (Part 2) — the sidebar's real, visible fill
+            # is now this real, editable `generic:rectangle` (full-bleed:
+            # the sidebar's own real width_mm x the full page height)
+            # rather than being painted purely from `page.sidebar.color`
+            # config (see this seed's own `page.sidebar` comment above).
+            # `style.sidebar: True` (not `page_pinned` — Modern already has
+            # a real `page.sidebar`, so this reuses that existing,
+            # already-gated page-absolute/position:fixed rendering
+            # mechanism directly rather than introducing a second one it
+            # doesn't need). Placed FIRST in this list for the same
+            # editor-z-order/round-trip reason Professional's own new
+            # elements are placed first in ITS flow.elements — see that
+            # seed's own comment for the full reasoning.
+            {'kind': 'generic', 'type': 'rectangle', 'x': 0, 'y': 0, 'width': 42, 'height': 297,
+             'style': {'sidebar': True, 'background_color': 'theme_primary'}, 'overrides': {}},
+
             # ── Sidebar flow content — positioned within the sidebar's own
             #    fixed column, below its absolutely-positioned header
             #    content (logo/business fields above). A flat, always-
@@ -737,8 +996,11 @@ MODERN_DESIGN_DATA_V2 = {
             # the sidebar here) — signature genuinely stands alone in main
             # content, matching this seed's own existing structure; only
             # its exact box needed correcting, not its pairing.
-            {'kind': 'semantic', 'type': 'signature', 'x': 76, 'y': 223, 'width': 60, 'height': 7,
-             'style': {'label': 'Authorised signature', 'has_signature_image': True, 'align': 'right'},
+            {'kind': 'semantic', 'type': 'signature', 'x': 76, 'y': 223, 'width': 60, 'height': _signature_bundle_height(),
+             'style': {
+                 'label': 'Authorised signature', 'has_signature_image': True, 'align': 'right',
+                 'parts': _signature_parts_style(60),
+             },
              'overrides': {}},
         ],
     },
@@ -765,33 +1027,60 @@ def get_blank_design_data(base_template):
     tools still has an underlying stylesheet) — this reuses that
     template's own real page geometry (margins, sidebar) verbatim, so a
     blank start and a builtin start share the identical printable area.
-    Zero pre-arranged header content (`header.elements: []`) — the ONLY
-    elements present are the two structurally mandatory anchors
-    design_schema requires every design_data payload to contain (the
-    line-items table, a totals block that includes the real grand-total
-    row), positioned at a sensible top-of-page default so the design is
-    immediately valid and renderable, not just non-empty. Never a database
-    row — a fresh, real, independent value every call, same "always a
-    deep copy, no shared mutable state" contract get_builtin_design_data
-    already has.
+
+    Part 3 ("blank design richness") rewrite — this used to seed only the
+    two structurally mandatory anchors (`header.elements: []`, a bare
+    table + totals block), a real, separate, hand-authored-in-Python
+    approximation of "blank" that drifted from the frontend editor's own
+    original, deliberate default (every catalog element present, user
+    removes what they don't want — design-editor-v2's `initialTemplateState`,
+    verified collision-free across its complete set) — the actual real
+    UX shipped to users didn't match this project's own stated intent for
+    it. Content now comes from `_load_blank_design_rich_elements()` (the
+    frontend's own real default, dumped to a checked-in JSON fixture by
+    frontend/scripts/js/dump_blank_design_elements.mjs — see that file's
+    module-level comment and this module's own header comment for the
+    full drift-prevention reasoning), rescaled to fit whichever
+    base_template's real content_width_mm is narrower than the generic,
+    zero-margin canvas that content was originally authored against (see
+    `_scale_elements_to_fit` — a uniform scale-from-origin, never an
+    independent per-element clamp, so the set's own already-verified
+    collision-freedom is preserved exactly).
+
+    `page.sidebar.color` is forced to `'transparent'` when present (Modern
+    only) rather than left at the source seed's own `None` — `None` means
+    "the .v2-sidebar wrapper paints its own default theme-color fill"
+    (see design_renderer.py's canonical.html, `{{ sidebar.color|default:
+    design_primary_color }}`), which is correct for Modern's real BUILTIN
+    seed (a real sidebar-background rectangle element also exists there
+    now and simply double-paints the identical color — see that seed's
+    own comment) but was a real, reported bug for a blank design: nothing
+    in the rich content dumped above is sidebar-flagged, so a blank Modern
+    design rendered a solid, full-height colored panel purely from this
+    page-level default, with zero actual sidebar content behind it. Width
+    reservation (`width_mm`, which shifts the main content column and
+    narrows content_width_mm for the scale-to-fit step above) is
+    unaffected — only the wrapper's own implicit fill is suppressed.
+
+    Never a database row — a fresh, real, independent value every call,
+    same "always a deep copy, no shared mutable state" contract
+    get_builtin_design_data already has.
     """
     if base_template not in BUILTIN_DESIGNS:
         raise ValueError(f'base_template must be one of {sorted(BUILTIN_DESIGNS.keys())}.')
     source = BUILTIN_DESIGNS[base_template]
-    table_seed = next(el for el in source['flow']['elements'] if el.get('type') == 'table')
-    content_x, content_width = table_seed['x'], table_seed['width']
-    table_y = 20
+    page = copy.deepcopy(source['page'])
+    if page.get('sidebar'):
+        page['sidebar']['color'] = 'transparent'
+
+    rich = _load_blank_design_rich_elements()
+    content_width_mm = _content_width_mm_for_page(page)
+    all_elements = rich['header']['elements'] + rich['flow']['elements']
+    _scale_elements_to_fit(all_elements, content_width_mm)
+
     return {
         'schema_version': SCHEMA_VERSION_V2,
-        'page': copy.deepcopy(source['page']),
-        'header': {'elements': []},
-        'flow': {
-            'elements': [
-                _table(content_x, table_y, content_width, _TABLE_HEIGHT_ESTIMATE_MM, {
-                    'header_border_color': 'theme_primary', 'row_border_color': '#e5e1d6', 'font': 'IBM Plex Mono',
-                    'columns': ['description', 'quantity', 'unit_price', 'total'],
-                }),
-                _totals_row(content_x + content_width - 62, table_y + _TABLE_HEIGHT_ESTIMATE_MM + 10, 62, 'total'),
-            ],
-        },
+        'page': page,
+        'header': rich['header'],
+        'flow': rich['flow'],
     }

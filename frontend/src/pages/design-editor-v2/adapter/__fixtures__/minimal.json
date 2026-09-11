@@ -438,11 +438,39 @@
         "x": 119,
         "y": 250,
         "width": 55,
-        "height": 7,
+        "height": 20.5,
         "style": {
           "label": "Authorised signature",
           "has_signature_image": true,
-          "align": "right"
+          "align": "right",
+          "parts": {
+            "image": {
+              "dx": 29,
+              "dy": 0,
+              "width": 26,
+              "height": 12
+            },
+            "divider": {
+              "dx": 0,
+              "dy": 13,
+              "width": 55,
+              "height": 0.3,
+              "color": "theme_secondary"
+            },
+            "label": {
+              "dx": 0,
+              "dy": 14.5,
+              "width": 55,
+              "height": 6,
+              "font": "IBM Plex Mono",
+              "font_weight": 400,
+              "font_size_pt": 7.5,
+              "letter_spacing_em": 0.1,
+              "text_transform": "uppercase",
+              "color": "#a09a89",
+              "align": "right"
+            }
+          }
         },
         "overrides": {}
       }

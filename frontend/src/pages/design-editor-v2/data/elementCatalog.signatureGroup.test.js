@@ -1,12 +1,14 @@
-// Tests for the signature trio's move/resize/rotate-as-one-unit lock
-// (Task 4 — see designDataAdapter.js's exportSignatureGroup docstring for
-// the full "why": production's semantic:signature is one bundle whose
-// geometry the adapter derives from the union of 3 editor items, only
-// invertible while they stay in their default relative arrangement).
-// This is the pure, React-free core of that lock — `expandLinkedGroupSelection`
-// is the single choke point EditorContext.jsx's setSelection wrapper and
-// CanvasItem.jsx's beginMove both call, so proving it here proves the
-// selection-state behavior independent of React, matching this repo's own
+// Tests for the pure `expandLinkedGroupSelection` helper itself — the
+// signature trio's grouped-MOVE-only mechanism (Part 7; see
+// elementCatalog.js's own comment above SIGNATURE_GROUP_TYPES for the
+// current "why"). This function's own id-expansion behavior is unchanged
+// from when it originally backed a fuller (selection-wide) lock — what
+// changed is WHERE it's called: only CanvasItem.jsx's beginMove calls it
+// now, locally, scoped to one drag gesture's own groupMembers
+// computation, gated on the dragged item itself being a signature part —
+// never EditorContext.jsx's setSelection (now a plain passthrough, so
+// clicking one part selects only that part). These tests exercise the
+// helper's own pure logic independent of React, matching this repo's own
 // established pure-function test convention (see elementCatalog.customText.test.js).
 import { test, describe } from 'vitest';
 import assert from 'node:assert/strict';
@@ -20,7 +22,7 @@ function makeTrio() {
   return { image, divider, label, items: [image, divider, label] };
 }
 
-describe('expandLinkedGroupSelection: the signature trio always selects/transforms together', () => {
+describe('expandLinkedGroupSelection: pure id-expansion helper backing the signature trio\'s grouped move', () => {
   test('selecting just one signature part expands to every other PRESENT part', () => {
     const { image, divider, label, items } = makeTrio();
     const expanded = expandLinkedGroupSelection([image.id], items);

@@ -8,11 +8,6 @@
     "margin_right_mm": 16,
     "margin_bottom_mm": 16,
     "margin_left_mm": 20,
-    "spine": {
-      "width_mm": 3,
-      "color": "theme_primary",
-      "accent_color": "#d9c9a8"
-    },
     "background_color": "#faf9f6",
     "footer": {}
   },
@@ -269,6 +264,32 @@
     "elements": [
       {
         "kind": "generic",
+        "type": "rectangle",
+        "x": 0,
+        "y": 0,
+        "width": 3,
+        "height": 297,
+        "style": {
+          "page_pinned": true,
+          "background_color": "theme_primary"
+        },
+        "overrides": {}
+      },
+      {
+        "kind": "generic",
+        "type": "rectangle",
+        "x": 3,
+        "y": 0,
+        "width": 0.4,
+        "height": 297,
+        "style": {
+          "page_pinned": true,
+          "background_color": "#d9c9a8"
+        },
+        "overrides": {}
+      },
+      {
+        "kind": "generic",
         "type": "divider",
         "x": 0,
         "y": 68,
@@ -439,10 +460,38 @@
         "x": 119,
         "y": 234,
         "width": 55,
-        "height": 8,
+        "height": 20.5,
         "style": {
           "label": "Authorised signature",
-          "align": "right"
+          "align": "right",
+          "parts": {
+            "image": {
+              "dx": 29,
+              "dy": 0,
+              "width": 26,
+              "height": 12
+            },
+            "divider": {
+              "dx": 0,
+              "dy": 13,
+              "width": 55,
+              "height": 0.3,
+              "color": "theme_secondary"
+            },
+            "label": {
+              "dx": 0,
+              "dy": 14.5,
+              "width": 55,
+              "height": 6,
+              "font": "IBM Plex Mono",
+              "font_weight": 400,
+              "font_size_pt": 7.5,
+              "letter_spacing_em": 0.1,
+              "text_transform": "uppercase",
+              "color": "#a09a89",
+              "align": "right"
+            }
+          }
         },
         "overrides": {}
       }
