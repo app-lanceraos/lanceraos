@@ -8678,3 +8678,82 @@ is a plain static import and this pass's brief was to match that page's existing
 introduce a new pattern; leaving `tokens.css` at `:root` and hoping the self-referencing fallbacks
 degrade gracefully — rejected once the guaranteed-invalid custom-property cycle was actually traced
 through the CSS spec rather than assumed harmless.
+
+---
+
+**12 September 2026 — Full Reversion: back to 3 static templates only.**
+
+Decision: removed the entire free-canvas Template Builder effort — both editors (the original
+GrapesJS `DesignEditor.jsx` and its successor, the standalone-project-merged `design-editor-v2`/
+`TemplateBuilderV2.jsx`), the `schema_version: 2` design_data contract and its retired
+zone_1/zone_2 predecessor, AI-seeded design generation (Path 3, `ai_design.py`), version history
+(`InvoiceDesignVersion`), and per-design `color_variant`. `InvoiceDesign` is reduced to exactly
+`id`/`user`/`name`/`base_template`/`is_default`/`created_at`/`updated_at` — a user picks one of
+the 3 static templates (professional/minimal/modern) and uses it exactly as provided, no
+customization of any kind.
+
+Reason: real time invested against real progress — a deliberate decision to ship the simpler,
+already-working thing now rather than keep carrying an increasingly elaborate customization system
+forward. The concrete signal: a direct database check before any removal began showed 0 of 113
+real invoices in the dev database ever ended up with an `InvoiceDesign` assigned at all (Part 0's
+own audit), despite the system existing since Step 8 and going through multiple SEV1 fix rounds —
+real evidence the added complexity was not paying for itself, not a snap judgment made without
+checking.
+
+What was verified along the way, not assumed: the footer design this effort's own `page.footer`
+schema capability replicated (business identity left, page counter center — multi-page only —
+wordmark right) turned out to already be live, native markup in all 3 static templates
+independently of anything being removed (traced to a standalone commit, `70df8b5`, predating the
+free-canvas editor's own footer capability) — so Part 4 of this reversion required no code change,
+only real-PDF verification (single-page and multi-page, all 3 templates) that it still rendered
+correctly, which it did. `color_variant` was a harder call — it was genuinely live and wired into
+the static templates' own rendering (`design_seeds.resolve_design_colors` producing
+`design_primary_color`/`design_secondary_color`), not dead weight — dropped anyway per this
+reversion's own explicit "no customization of any kind" goal, with the exact same hex values each
+template already rendered ported directly into `pdf_generator.DEFAULT_TEMPLATE_COLORS` so no
+invoice's actual appearance changed.
+
+Migration: `apps/invoices/migrations/0012_verify_design_data_before_reversion.py` (a real
+integrity gate — asserts every `base_template` was valid and checks for orphaned
+`Invoice.design_id` FKs or a populated `Invoice.rendered_design_snapshot` before the next
+migration removes the columns that could explain either) then
+`0013_reversion_drop_design_editor_schema.py` (the actual `RemoveField`/`DeleteModel`
+operations, generated via `makemigrations` off the edited model). Reversibility was tested for
+real, not just claimed: rolled back to 0012 (schema fully restored) and reapplied 0013 — the
+*schema* reverses cleanly, but the actual `design_data`/`color_variant`/version content itself is
+gone for good the moment 0013 runs, recoverable only from a real pre-reversion `pg_dump` taken
+before this work began (`backups/lanceraos_pre_reversion_20260912_120404.dump`), not from a
+migration rollback alone.
+
+Every removed file — backend modules, management commands, ~20 design-system-only test files,
+the frontend editor tree, `DesignLivePreview.jsx`, `designTemplatesApi.js`, the dead
+`frontend/scripts/` Python-validation-bridge tooling, the `blank_design_rich_elements.json`
+fixture, and the by-then-entirely-stale `LANCERAOS_TEMPLATE_BUILDER_ARCHITECTURE.md` — was moved
+to `archive/free-canvas-editor-2026/`, not deleted outright, mirroring original paths. A handful
+of test files that touched `InvoiceDesign` but weren't purely-for-this
+(`test_recurring.py`, `test_design_assignment.py`, `test_pdf_pipeline.py`, `test_new_models.py`)
+were edited in place instead — dead `design_data`/`source`/`color_variant` kwargs stripped, two
+still-relevant test classes (`DraftLiveDefaultFallbackTests`/`ItemZeroBrandNewInvoiceTests`) ported
+out of the otherwise-fully-dead `test_design_color_and_preview.py` before archiving it, and one
+real, previously-undetected bug (`InvoiceDesignVersion`-era fragments accidentally left stranded
+inside `InvoiceDesign.save()`'s body during the initial field-removal edit — a syntactically valid
+but semantically dead `indexes`/`unique_together`/duplicate `__str__` — caught by a `pyflakes`
+sweep during the dead-code-sweep pass, not by any test, since Python happily tolerates dead local
+variables and a shadowed method) was found and fixed the same pass.
+
+`pdf_generator.py`'s render path collapsed from a 3-way dispatch (static templates / legacy-dynamic
+/ v2 canonical) to a single, direct static-template render — `_effective_design` no longer
+consults `Invoice.rendered_design_snapshot` (a mechanism that existed solely to protect a
+finalized invoice's render from a *later* edit to a design's free-canvas content; with no
+free-canvas content left to edit, the mechanism has nothing left to protect against). The field
+itself stays on the `Invoice` model, untouched and unpopulated, per the same "don't touch what's
+not being changed" discipline this reversion applied to the database throughout.
+
+Full before/after evidence, file-by-file archive manifest, and the complete reasoning behind every
+part of this reversion: `archive/free-canvas-editor-2026/INTEGRATION_HISTORY.md`.
+
+Alternatives considered: keeping `color_variant` as a dead, unused column for potential future
+reuse — rejected (explicit user decision) as inconsistent with "no customization of any kind";
+porting `resolve_design_colors`'s full per-template color-variant logic into `pdf_generator.py`
+rather than dropping it — rejected for the same reason, once the trade-off was surfaced rather
+than assumed.

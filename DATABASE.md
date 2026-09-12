@@ -1035,6 +1035,21 @@ reason). Both require `confirm: true`, matching every other endpoint in this app
 
 ## `invoice_designs` (`InvoiceDesign`, in `apps.invoices`)
 
+**CURRENT SCHEMA as of 12 September 2026 (Full Reversion — back to 3 static templates only),
+superseding every schema/column claim in this section below**: the free-canvas design system
+described throughout this section has been removed entirely. `InvoiceDesign` now has exactly:
+`id` (UUID PK), `user` (FK, `CASCADE`), `name`, `base_template` (`professional`/`minimal`/
+`modern`), `is_default`, `created_at`, `updated_at`. **`design_data`, `source`, and
+`color_variant` no longer exist as columns** (dropped by migration
+`0013_reversion_drop_design_editor_schema`, gated by a real data-integrity check in
+`0012_verify_design_data_before_reversion`). A design is just "which of the 3 static templates" —
+no customization of any kind. See DECISIONS.md's 12 September 2026 entry and
+`archive/free-canvas-editor-2026/INTEGRATION_HISTORY.md` for the full reasoning and before/after.
+Everything below this notice describes the now-removed system as it existed historically — kept
+as a real record of what was built, not as a current schema reference.
+
+---
+
 New — no v1-of-LanceraOS equivalent (the original PDF generation was reportlab code, not
 user-editable data). The visual PDF/portal template system, now on its second, production
 `design_data` schema — see "Two schema generations" below for the full history and how the
@@ -1344,6 +1359,15 @@ builtin/golden test) is in DECISIONS.md's own 07 September 2026 "Phase 3a" entry
 ---
 
 ## `invoice_design_versions` (`InvoiceDesignVersion`, in `apps.invoices`)
+
+**REMOVED as of 12 September 2026 (Full Reversion — back to 3 static templates only)**: this
+table no longer exists — dropped by migration `0013_reversion_drop_design_editor_schema`, along
+with the `design_data`/`source`/`color_variant` columns on `InvoiceDesign` this table's own
+history depended on. See DECISIONS.md's 12 September 2026 entry and
+`archive/free-canvas-editor-2026/INTEGRATION_HISTORY.md`. The rest of this section describes it
+as it existed historically.
+
+---
 
 Purely additive version history for `InvoiceDesign.design_data` — every real save creates a new,
 immutable snapshot (`InvoiceDesign._create_version_if_content_changed`, skipped when the saved

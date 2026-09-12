@@ -51,9 +51,6 @@ from django.utils import timezone
 
 from core.money import Money
 
-from .legacy_design_renderer import design_has_real_custom_data, render_dynamic_design_html
-from .design_seeds import resolve_design_colors
-
 logger = logging.getLogger(__name__)
 
 FONTS_DIR = Path(__file__).resolve().parent / 'static' / 'invoices' / 'fonts'
@@ -127,19 +124,28 @@ PORTAL_WRAPPER_STYLE = '''
 </style>
 '''
 
-# Interim default template, per this step's explicit instruction: checked
-# directly — FreelancerProfile has no default-template-ish field of its
-# own (verified against apps/users/models.py) — and Invoice.design
-# (InvoiceDesign FK) is null for every real invoice today, since nothing
-# creates InvoiceDesign rows yet (Step 8 builds the design system, Step 9
-# the editor). SUPERSEDED the moment Step 8 wires real design selection —
-# not a permanent decision being made here.
+# Interim default template: checked directly — FreelancerProfile has no
+# default-template-ish field of its own (verified against
+# apps/users/models.py) — used whenever an invoice has no InvoiceDesign
+# assigned at all.
 DEFAULT_TEMPLATE = 'professional'
 
 TEMPLATE_MAP = {
     'professional': 'invoices/professional.html',
     'minimal': 'invoices/minimal.html',
     'modern': 'invoices/modern.html',
+}
+
+# Full Reversion Plan — the one true accent-color pair per static
+# template, ported directly from the removed design_seeds.py's
+# COLOR_VARIANTS['default'] entries so every existing invoice renders
+# byte-identical colors to before: each pair was already chosen to match
+# that template's own hardcoded CSS, back when these were the only colors
+# a template could render at all.
+DEFAULT_TEMPLATE_COLORS = {
+    'professional': ('#a8813c', '#1a2b42'),
+    'minimal': ('#6b8570', '#171614'),
+    'modern': ('#2d2a6e', '#d4e157'),
 }
 
 
@@ -154,63 +160,19 @@ def _template_name_for_design(design):
     return TEMPLATE_MAP[DEFAULT_TEMPLATE]
 
 
-class _FrozenDesignSnapshot:
-    """
-    Master Blueprint cutover — the real read-side of the TB-007 provenance
-    fix. A lightweight, read-only stand-in for a real InvoiceDesign row,
-    built from Invoice.rendered_design_snapshot's own self-contained dict
-    (base_template + color_variant + design_data — everything
-    _design_colors_for/render_html_for_design/design_has_real_custom_data
-    actually read off a design object) — never a real database row, and
-    never saved anywhere. Exists so _effective_design can return something
-    that behaves like a real design to every existing caller without
-    those callers needing a special case for "this came from a frozen
-    snapshot instead of a live FK".
-    """
-
-    def __init__(self, snapshot):
-        self.base_template = snapshot.get('base_template')
-        self.color_variant = snapshot.get('color_variant') or ''
-        self.design_data = snapshot.get('design_data')
-
-
 def _effective_design(invoice):
     """
-    Which design should actually drive this invoice's render.
+    Which design should actually drive this invoice's render — just
+    `invoice.design` (the live FK) when set, falling back to the user's
+    current default design for a still-editable draft with none yet
+    (predates any default design existing, or predates one being set as
+    default after this draft was created), so a draft's own live preview
+    never shows stale output while a user is actively experimenting.
 
-    Master Blueprint cutover: for anything PAST draft, a real, self-
-    contained snapshot (Invoice.rendered_design_snapshot, captured once by
-    _finalise_invoice at the exact moment this invoice left draft) wins
-    over the live `invoice.design` FK whenever one exists — this is the
-    real fix for TB-007 (a real, previously-observed case: deleting a
-    design nulled a frozen invoice's own provenance; a real, previously-
-    reachable case: editing a design after finalising an invoice against
-    it silently changed what that already-sent invoice would render as on
-    any live re-render, e.g. the self-heal fallback path or preview-as-
-    client). Editing or deleting `invoice.design` after this point can
-    never again change what THIS invoice renders as.
-
-    Invoices finalised BEFORE this fix existed have no snapshot at all
-    (rendered_design_snapshot is null) — these fall through to the exact
-    pre-existing behavior below (the live `invoice.design` FK, unchanged),
-    never retroactively altered by this fix; a real, deliberate choice,
-    matching this codebase's own "never touch an already-frozen invoice"
-    convention.
-
-    For a still-editable DRAFT with none yet — predates any default
-    design existing at all, or predates one being SET as default after
-    this draft was created — falls back LIVE to the user's CURRENT
-    default design, so a draft's own live preview (the only case that
-    genuinely re-renders on every GET; see invoice_pdf, views.py) never
-    shows stale output while a user is actively experimenting with
-    designs.
-
-    A pure read-time fallback — never mutates invoice.design itself.
-    The real, permanent assignment still only ever happens via
+    A pure read-time fallback — never mutates invoice.design itself. The
+    real, permanent assignment still only ever happens via
     invoice_create/_finalise_invoice.
     """
-    if invoice.status != 'draft' and invoice.rendered_design_snapshot:
-        return _FrozenDesignSnapshot(invoice.rendered_design_snapshot)
     if invoice.design_id:
         return invoice.design
     if invoice.status == 'draft':
@@ -220,10 +182,9 @@ def _effective_design(invoice):
 
 
 def _design_colors_for(design):
-    """(primary_hex, secondary_hex) for whichever design (possibly None) will actually render — resolve_design_colors' own base_template/color_variant fallback handles a None design by resolving DEFAULT_TEMPLATE's own 'default' entry, matching _template_name_for_design's identical fallback."""
+    """(primary_hex, secondary_hex) for whichever design (possibly None) will actually render."""
     base_template = design.base_template if design else DEFAULT_TEMPLATE
-    color_variant = design.color_variant if design else ''
-    return resolve_design_colors(base_template, color_variant)
+    return DEFAULT_TEMPLATE_COLORS.get(base_template, DEFAULT_TEMPLATE_COLORS[DEFAULT_TEMPLATE])
 
 
 def _generate_qr_data_uri(url):
@@ -439,29 +400,6 @@ def build_pdf_context(invoice):
     }
 
 
-def _is_static_template_design(design):
-    """
-    True when `design` will actually go through one of the 3 static
-    templates — the same condition `render_html_for_design`'s own 3-way
-    dispatch uses for its branch 3, duplicated here (not imported/reused
-    directly, since it's the negative/gating check, not the dispatch
-    itself) so the 2-pass single-page render below (Part 2 — signature
-    pinning + conditional page-indicator) can be scoped to ONLY this
-    branch. Confirmed directly against real data (see DECISIONS.md) that
-    every real Invoice in this environment resolves here today — but the
-    V2 canonical and legacy-dynamic branches are deliberately left
-    completely untouched by the 2-pass logic below regardless, since a
-    user actively picking "Use this template" (V2) is a real, separate
-    path this pass does not touch.
-    """
-    if design is None:
-        return True
-    schema_version = (design.design_data or {}).get('schema_version')
-    if schema_version == 2:
-        return False
-    return not design_has_real_custom_data(design)
-
-
 def render_invoice_pdf(invoice):
     """
     Live-renders `invoice` to PDF bytes. No storage side effect — see
@@ -476,13 +414,8 @@ def render_invoice_pdf(invoice):
     startup, well before any task actually runs) and confined to the one
     call site that genuinely needs it.
 
-    Signature pinning + the footer's conditional "Page X of N" (Part 1/2 of
-    the 30 August 2026 footer+signature pass — see DECISIONS.md) apply ONLY
-    when `design` resolves to one of the 3 static templates
-    (_is_static_template_design) — the V2 canonical and legacy-dynamic
-    renderers are untouched, a single plain render exactly as before.
-
-    MANDATORY SAFE ORDER for the static-template branch (do not reorder):
+    MANDATORY SAFE ORDER (do not reorder — see DECISIONS.md's "footer+
+    signature" entry):
       1. Render through the template exactly as it renders today
          (`single_page_layout=False` — natural document flow, the
          already-proven-safe path). Read the REAL page count off
@@ -496,37 +429,14 @@ def render_invoice_pdf(invoice):
          bytes directly. The bottom-pin CSS variant is NEVER attempted on
          a multi-page document, under any circumstance — flex-column
          layout silently drops content that would otherwise fragment
-         across pages in this WeasyPrint version (confirmed directly,
-         see DECISIONS.md's "footer+signature" entry) — this order is
-         what makes that failure mode structurally unreachable, not just
-         avoided by convention.
+         across pages in this WeasyPrint version (confirmed directly) —
+         this order is what makes that failure mode structurally
+         unreachable, not just avoided by convention.
     """
     from weasyprint import HTML
 
     design = _effective_design(invoice)
     context = build_pdf_context(invoice)
-
-    if not _is_static_template_design(design):
-        # Phase 1 (rotation/ellipse/footer/crop, 07 September 2026) — a
-        # real, schema_version=2 design routes through design_renderer.
-        # render_design_pdf_bytes, not a bare HTML(...).write_pdf() call
-        # here, because THAT function is what now carries forward this
-        # same MANDATORY SAFE ORDER natural-flow-first page-count check
-        # (see its own docstring) for a v2 design's own `page.footer` —
-        # a real, independent decommission of that exact WeasyPrint
-        # limitation, needed here because page.footer is a Phase 1
-        # capability the older legacy-dynamic render path never had and
-        # still doesn't. A v2 design with no footer configured falls
-        # straight through to that same single, unchanged plain render
-        # internally — zero performance cost for the common case. The
-        # legacy-dynamic path (real, saved zone_1/zone_2 customizations
-        # with no schema_version key) is completely untouched, still a
-        # single plain render exactly as before this phase.
-        if design is not None and (design.design_data or {}).get('schema_version') == 2:
-            from .design_renderer import render_design_pdf_bytes
-            return render_design_pdf_bytes(design.design_data, context)
-        html_string = render_html_for_design(design, context, for_pdf=True)
-        return HTML(string=html_string).write_pdf()
 
     context['single_page_layout'] = False
     html_string = render_html_for_design(design, context, for_pdf=True)
@@ -542,57 +452,18 @@ def render_invoice_pdf(invoice):
 
 def _render_invoice_html(invoice, context, *, for_pdf=False):
     """
-    The one real branch point between the 3 static templates, the v1
-    design_data-driven renderer (apps/invoices/design_renderer.py), and
-    (Template Builder 2.0 cutover) the v2 canonical renderer
-    (apps/invoices/design_renderer.py) — shared by both
-    render_invoice_pdf and render_invoice_portal_html so neither grows its
-    own copy of this decision. Routes through _effective_design(invoice)
-    (not invoice.design directly) so a still-editable draft's live preview
-    picks up the user's current default design even before that
-    assignment is ever persisted — see that function's own docstring.
-    render_html_for_design is the same design-parametrized entry point a
-    gallery preview render (no real Invoice in scope at all) also uses —
-    see apps/invoices/design_preview.py.
-
-    `for_pdf` selects file:// font URIs (WeasyPrint) vs /static/ URLs
-    (browser-rendered HTML) for a v2 design's own render — the same
-    real distinction FONT_CONTEXT/PORTAL_FONT_CONTEXT already encode for
-    v1's own two callers below (render_invoice_pdf=True,
-    render_invoice_portal_html=False); a v1 design ignores this flag
-    entirely, since its own font URIs already live inside `context`
-    (build_pdf_context/build_portal_context), unchanged.
+    Shared by render_invoice_pdf and render_invoice_portal_html so neither
+    grows its own copy of design resolution. Routes through
+    _effective_design(invoice) (not invoice.design directly) so a still-
+    editable draft's live preview picks up the user's current default
+    design even before that assignment is ever persisted — see that
+    function's own docstring.
     """
     return render_html_for_design(_effective_design(invoice), context, for_pdf=for_pdf)
 
 
 def render_html_for_design(design, context, *, for_pdf=False):
-    """
-    Three-way dispatch, in order:
-
-      1. A real, saved v2 design (design_data.schema_version == 2) — the
-         Template Builder 2.0 cutover this function exists to make real:
-         `apps/invoices/design_renderer.render_design_html` is the
-         one canonical v2 renderer (see that module's own docstring for
-         why it has no seed-equality branch of its own). `context` already
-         carries everything that renderer needs (invoice/freelancer/
-         qr_code_data_uri/design_primary_color/design_secondary_color) —
-         build_pdf_context/build_portal_context/design_preview.py's own
-         build_preview_context all already build exactly this shape, so
-         no second v2-specific context builder is needed here.
-      2. A v1 design with real custom edits (design_has_real_custom_data's
-         own docstring has the exact condition) — v1's existing dynamic
-         renderer, unchanged.
-      3. Everything else (no design, or an untouched v1 builtin pick) —
-         one of the 3 static templates, unchanged.
-    """
-    if design is not None:
-        schema_version = (design.design_data or {}).get('schema_version')
-        if schema_version == 2:
-            from .design_renderer import render_design_html
-            return render_design_html(design.design_data, context, for_pdf=for_pdf)
-        if design_has_real_custom_data(design):
-            return render_dynamic_design_html(design, context)
+    """One of the 3 static templates — the only design type left."""
     return render_to_string(_template_name_for_design(design), context)
 
 

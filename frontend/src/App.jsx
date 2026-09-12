@@ -24,7 +24,6 @@ import Clients from '@/pages/Clients'
 import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
 import DesignGallery from '@/pages/DesignGallery'
-import TemplateBuilderV2 from '@/pages/design-editor-v2/TemplateBuilderV2'
 import Onboarding from '@/pages/Onboarding'
 import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
@@ -119,40 +118,6 @@ export default function App() {
         <Route
           path="/invoices/analytics"
           element={<PrivateRoute><AppShell><InvoiceAnalytics /></AppShell></PrivateRoute>}
-        />
-        {/* The standalone invoice-editor/ project, physically merged into
-            frontend/ (see DECISIONS.md's merge entry) — the ONE
-            production Template Builder (the original GrapesJS editor,
-            DesignEditor.jsx, has been removed entirely — see
-            DECISIONS.md's removal entry). Every design creation path
-            (blank/template/AI-seed) always produces real
-            schema_version: 2 design_data (traced directly against
-            design_duplicate/get_blank_design_data/design_ai_seed's own
-            backend code, not assumed), and DesignGallery.jsx routes Edit
-            here unconditionally. A legacy-shaped design (no
-            schema_version key) still opens here too — this editor's own
-            LoadedTemplateBuilder shows a real, explicit "legacy" status
-            screen for one it can't open (never a silently blank editor).
-            /invoices/designs/editor-v2 (no id) stays a bare, unlinked
-            dev sandbox with no real design behind it. Shell-less (not
-            wrapped in AppShell, same pattern as /account/deletion-review
-            above — a real, focused, full-screen editing surface) but
-            still PrivateRoute-gated — shell-less is a layout choice, not
-            an auth one. */}
-        <Route
-          path="/invoices/designs/editor-v2"
-          element={<PrivateRoute><TemplateBuilderV2 /></PrivateRoute>}
-        />
-        {/* This editor's own permanent, real route for an existing, owned
-            InvoiceDesign (production schema_version: 2, or a legacy
-            design the load path's own status screen handles — see
-            TemplateBuilderV2.jsx's LoadedTemplateBuilder). "build" reads
-            as this editor's own distinct verb (constructing a design
-            from scratch on a free canvas). Linked for real from
-            DesignGallery.jsx. */}
-        <Route
-          path="/invoices/designs/:id/build"
-          element={<PrivateRoute><TemplateBuilderV2 /></PrivateRoute>}
         />
 
         {/* No dedicated landing page yet (separate future work) — send

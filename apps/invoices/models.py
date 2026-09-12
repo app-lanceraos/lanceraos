@@ -1051,23 +1051,13 @@ class InvoiceDesign(models.Model):
     BASE_TEMPLATE_CHOICES = [
         ('professional', 'Professional'), ('minimal', 'Minimal'), ('modern', 'Modern'),
     ]
-    SOURCE_CHOICES = [
-        ('builtin', 'Built-in'), ('custom', 'Custom'), ('ai_seeded', 'AI-seeded'),
-    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='invoice_designs')
     name = models.CharField(max_length=100)
     base_template = models.CharField(
         max_length=20, choices=BASE_TEMPLATE_CHOICES,
-        help_text='Which of the 3 built templates this started from, even for custom designs.',
-    )
-    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='builtin')
-    color_variant = models.CharField(max_length=50, blank=True, help_text='Curated palette key — builtin path only.')
-    design_data = models.JSONField(
-        default=dict, blank=True,
-        help_text='Element positions/styles/data-bindings — the single structure feeding editor '
-                   'preview, the portal page, and WeasyPrint rendering.',
+        help_text='Which of the 3 static templates this design renders as.',
     )
     is_default = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1084,93 +1074,6 @@ class InvoiceDesign(models.Model):
         if self.is_default:
             InvoiceDesign.objects.filter(user=self.user, is_default=True).exclude(pk=self.pk).update(is_default=False)
         super().save(*args, **kwargs)
-        self._create_version_if_content_changed()
-
-    def _create_version_if_content_changed(self):
-        """
-        Master Blueprint cutover — the real write-side for
-        InvoiceDesignVersion (existed since Phase 0, unpopulated by any
-        code path). Writes a new, real, immutable version snapshot only
-        when this design's own `design_data` genuinely differs from the
-        most recently stored version (or none exists yet) — NOT
-        unconditionally on every save, since `save()` also runs for
-        content-unrelated changes (design_set_default's own `is_default`
-        flip, a plain rename) that would otherwise bloat real version
-        history with byte-identical duplicates. A real content edit
-        (including the very first save of a brand-new design) always gets
-        a new, real version number.
-        """
-        last = self.versions.order_by('-version_number').first()
-        if last is not None and last.design_data == self.design_data:
-            return
-        InvoiceDesignVersion.objects.create(
-            design=self,
-            version_number=(last.version_number if last else 0) + 1,
-            design_data=self.design_data,
-        )
-
-
-# ══════════════════════════════════════════════════════════════════
-# INVOICE DESIGN VERSION — Template Builder 2.0, Phase 0 foundation only
-# (see LANCERAOS_TEMPLATE_BUILDER_2_ARCHITECTURE_PLAN.md Section 14 and
-# LANCERAOS_TEMPLATE_BUILDER_2_PHASE0.md). Nothing in this phase writes
-# to this table — InvoiceDesign.save() is completely unchanged, so no
-# version row is created on any real save yet. This model exists purely
-# as the additive, backwards-safe database foundation a later phase can
-# build real revision history/rollback on top of, without a further
-# migration when that phase lands.
-# ══════════════════════════════════════════════════════════════════
-
-class InvoiceDesignVersion(models.Model):
-    """
-    A single, immutable snapshot of an InvoiceDesign's design_data at one
-    point in time. Purely additive history — InvoiceDesign.design_data
-    itself remains the live "current" working state; this table is never
-    read from or written to by the live editor/save flow in this phase.
-
-    6-question framework:
-    1. Mutable? No — write-once, append-only (a version snapshot is a
-       historical fact; it should never be edited after creation, the
-       same "immutable by design" convention this codebase already
-       applies to InvoiceComment).
-    2. Soft deleted? No — hard delete only, and only ever as a cascade
-       from its parent InvoiceDesign being deleted (see cascade below);
-       nothing in this phase deletes a version row directly.
-    3. Audit trail? No dedicated AuditLog event for creating a version —
-       consistent with InvoiceDesign itself, whose own docstring already
-       notes a design edit isn't a security/finance-relevant action the
-       way an invoice status transition is. This table IS itself a form
-       of history, just not one that writes to the shared AuditLog table.
-    4. Indexed? (design, version_number) together, since "list this
-       design's versions in order" and "find version N of this design"
-       are the only two access patterns this table needs to support.
-    5. Encrypted? No — same content class as InvoiceDesign.design_data
-       itself, which isn't encrypted either (no PII/credentials modeled
-       at this layer).
-    6. Cascade behavior? CASCADE from InvoiceDesign — a version snapshot
-       has no independent meaning once its parent design is gone (unlike
-       Invoice.rendered_design_snapshot, which is a COPY living on the
-       Invoice itself specifically so it survives independently of the
-       design's lifecycle — this table is deliberately not that; it's
-       pure per-design history, not per-invoice provenance).
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    design = models.ForeignKey(InvoiceDesign, on_delete=models.CASCADE, related_name='versions')
-    version_number = models.PositiveIntegerField()
-    design_data = models.JSONField(
-        help_text='A full, immutable snapshot of InvoiceDesign.design_data at the moment this '
-                   'version was created. Never mutated after creation.',
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'invoice_design_versions'
-        ordering = ['design', '-version_number']
-        indexes = [models.Index(fields=['design', 'version_number'])]
-        unique_together = [('design', 'version_number')]
-
-    def __str__(self):
-        return f'{self.design.name} v{self.version_number}'
 
 
 # ══════════════════════════════════════════════════════════════════

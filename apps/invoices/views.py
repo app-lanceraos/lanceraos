@@ -15,7 +15,6 @@ action names or mislabel invoice actions as "ratelimit_clients_...".
 Replicated with an "invoices"-scoped key instead; behavior is identical.
 """
 import base64
-import copy
 import io
 import logging
 import os
@@ -28,12 +27,10 @@ from PIL import UnidentifiedImageError
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Max, Q, Sum
-from django.db.models.functions import TruncMonth
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
-from django.views.decorators.clickjacking import xframe_options_exempt
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -42,25 +39,21 @@ from rest_framework.response import Response
 
 from core.events import emit
 from core.money import Money
-from apps.clients.models import Client
 from apps.clients.scoring import EXCLUDED_STATUSES as CLIENT_SCORING_EXCLUDED_STATUSES
 from apps.clients.serializers import validate_currency_code
 from apps.payments.models import ExchangeRateSnapshot
 from apps.users.models import FreelancerProfile, User
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
 
-from .ai_design import seed_design_data_from_image
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
-from .design_preview import render_builtin_template_preview_html, render_design_preview_html
-from .design_templates import BUILTIN_DESIGNS, get_builtin_design_data
 from .email_service import (
     build_formal_notice_email, build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email,
 )
 from .models import (
-    NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceDesignVersion, InvoiceItem,
-    InvoicePartialPayment, InvoicePreset, InvoicePresetItem, InvoiceReminder, PaymentClaim,
+    NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceItem,
+    InvoicePartialPayment, InvoicePreset, InvoiceReminder, PaymentClaim,
 )
-from .pdf_generator import TEMPLATE_MAP, render_invoice_pdf
+from .pdf_generator import render_invoice_pdf
 from .tasks import REMINDER_SCHEDULE, _advance_recurring_date, _send_reminder, render_and_store_invoice_pdf
 from .serializers import (
     DueDateOnlySerializer, InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer,
@@ -71,13 +64,6 @@ from .serializers_comments import CommentCreateSerializer, InvoiceCommentSeriali
 from .signature_tool import (
     DEFAULT_FEATHER, compute_otsu_threshold, crop_signature_to_content, flatten_to_rgb, remove_signature_background,
 )
-
-# Reference images for AI design seeding — a narrower set than logo uploads
-# (screenshots/photos of an existing design, not decorative image formats):
-# no .gif/.bmp/.tiff, same SVG exclusion reasoning as ALLOWED_LOGO_EXTENSIONS
-# (stored-XSS risk) even though this image is never persisted anyway.
-ALLOWED_REFERENCE_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
-MAX_REFERENCE_IMAGE_SIZE_BYTES = 8 * 1024 * 1024  # 8MB
 
 logger = logging.getLogger(__name__)
 
@@ -648,23 +634,15 @@ def _finalise_invoice(invoice, force_reminders_off=True):
     if invoice.design_id is None:
         invoice.design = InvoiceDesign.objects.filter(user=invoice.user, is_default=True).first()
 
-    # Master Blueprint cutover — the real write-side of the TB-007
-    # provenance fix (Invoice.rendered_design_snapshot existed, unpopulated
-    # by any code path, since Phase 0 of the Template Builder 2.0 work).
-    # This is the exact moment `invoice.design` becomes final for this
-    # invoice's entire remaining lifecycle (the same moment the PDF itself
-    # gets frozen, below) — a real, self-contained COPY (base_template +
-    # color_variant + design_data, everything pdf_generator._effective_design
-    # needs to re-render this exact design later) is captured here so that
-    # deleting or editing `invoice.design` afterward can never again change
-    # what THIS invoice renders as. See pdf_generator._effective_design's
-    # own updated docstring for the read side of this fix.
-    if invoice.design_id:
-        invoice.rendered_design_snapshot = {
-            'base_template': invoice.design.base_template,
-            'color_variant': invoice.design.color_variant,
-            'design_data': copy.deepcopy(invoice.design.design_data),
-        }
+    # Full Reversion Plan — the TB-007 provenance-freeze mechanism
+    # (Invoice.rendered_design_snapshot) existed to protect a finalized
+    # invoice's render from a LATER edit to its InvoiceDesign's own
+    # design_data/color_variant — content that no longer exists now that
+    # a design is just a name + base_template, with no editor to change
+    # either after the fact. Nothing writes rendered_design_snapshot
+    # anymore; pdf_generator._effective_design no longer reads it either
+    # (see that function's own updated docstring). The field itself is
+    # left on the model, untouched, per this plan's own Part 1.
 
     # A recurring root's next_recurring_date was never being set anywhere
     # (Step 16 only ever advances it once a value already exists) — every
@@ -2361,10 +2339,17 @@ def preset_create_invoice(request, pk):
 
 
 # ══════════════════════════════════════════════════════════════════
-# DESIGNS — Step 8. The design_data JSON contract (apps/invoices/
-# design_schema.py) and real, tested CRUD against it. The canvas UI
-# consuming these endpoints is Step 8b, not built here.
+# DESIGNS — Full Reversion Plan (back to 3 static templates only). Every
+# real InvoiceDesign row is now just a name + which of the 3 static
+# templates it renders as (see models.py) — the free-canvas editor, its
+# design_data JSON contract, version history, AI-seeding, and per-design
+# color variants are gone (see DECISIONS.md's removal entry). What's left
+# is the original, pre-2026-08-29 shape this system started from: pick a
+# template, name it, optionally mark it default.
 # ══════════════════════════════════════════════════════════════════
+
+VALID_BASE_TEMPLATES = {choice for choice, _label in InvoiceDesign.BASE_TEMPLATE_CHOICES}
+
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
@@ -2415,53 +2400,6 @@ def design_detail(request, pk):
     return Response(InvoiceDesignSerializer(design).data)
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def design_versions_list(request, pk):
-    """
-    Green-Light directive — version history for the Template Health/
-    editor UI. Real, already-populated data
-    (InvoiceDesign._create_version_if_content_changed writes one row per
-    genuine content change on every real save) — this endpoint is the
-    first real reader of that table. Newest first; deliberately returns
-    no `design_data` (that would make this list expensive and is never
-    needed just to show "what changed and when" — the restore endpoint
-    below fetches one specific version's full payload when actually
-    needed).
-    """
-    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
-    versions = design.versions.order_by('-version_number').values('id', 'version_number', 'created_at')
-    return Response(list(versions))
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def design_version_restore(request, pk, version_id):
-    """
-    Green-Light directive — rollback. Deliberately non-destructive: this
-    never deletes or rewrites history. Restoring version N copies that
-    version's own `design_data` onto the design's LIVE `design_data` and
-    saves — InvoiceDesign.save()'s own existing
-    _create_version_if_content_changed then creates a brand-new version
-    for this restored content (unless it happens to exactly match the
-    CURRENT live version already, the same no-op-safe rule every other
-    save already follows), so "undo the rollback" is just restoring the
-    version that came before it — the version list only ever grows.
-    """
-    if _check_moderate_rate_limit('design_version_restore', request.user):
-        return _too_many_requests('Too many actions. Please try again later.')
-
-    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
-    version = get_object_or_404(InvoiceDesignVersion, pk=version_id, design=design)
-    design.design_data = version.design_data
-    design.save()
-    logger.info(
-        '[INVOICES] Restored design %s to version %s (a new version was created for the restored content).',
-        design.pk, version.version_number,
-    )
-    return Response(InvoiceDesignSerializer(design).data)
-
-
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def design_set_default(request, pk):
@@ -2475,197 +2413,31 @@ def design_set_default(request, pk):
     return Response(InvoiceDesignSerializer(design).data)
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-@xframe_options_exempt
-def design_builtin_preview(request):
-    """
-    Path 1's own gallery card preview (SEV1 follow-up, 20 August 2026,
-    item 1) — a real, non-WeasyPrint HTML render of one of the 3 static
-    templates, real sample data, the requesting user's own real logo/
-    profile, and the requested color_variant. `?base_template=`
-    (required) + `?color_variant=` (optional, blank/unrecognized falls
-    back to that template's own 'default' — see resolve_design_colors)
-    are query params, not JSON body, since DesignGallery.jsx embeds this
-    directly as an <iframe src="...">, not an XHR call — the browser's
-    own navigation carries the same-site auth cookie automatically (see
-    DECISIONS.md), no fetch/blob plumbing needed.
-
-    @xframe_options_exempt — same real, necessary exemption
-    invoice_preview_as_client already needed (see that view's own
-    docstring/DECISIONS.md): Django's clickjacking protection blocks
-    ANY page from being framed by default, in DEBUG and production
-    alike, and this view's entire purpose is to be framed.
-    IsAuthenticated still fully gates who can reach it at all.
-    """
-    base_template = request.query_params.get('base_template')
-    if base_template not in TEMPLATE_MAP:
-        return Response({'base_template': f'Must be one of {sorted(TEMPLATE_MAP)}.'}, status=status.HTTP_400_BAD_REQUEST)
-    color_variant = request.query_params.get('color_variant', '') or ''
-
-    html = render_builtin_template_preview_html(request.user, base_template, color_variant)
-    return HttpResponse(html, content_type='text/html')
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-@xframe_options_exempt
-def design_preview(request, pk):
-    """
-    'Your designs' own gallery card preview — same real-render principle
-    as design_builtin_preview above, but for an already-saved,
-    real-owned InvoiceDesign (real sample data, but the design's ACTUAL
-    design_data, routed through the exact same render_html_for_design
-    branch a real invoice with this design assigned would use — a
-    custom/edited design's card genuinely reflects the dynamic renderer,
-    not just base_template+color).
-    """
-    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
-    html = render_design_preview_html(request.user, design)
-    return HttpResponse(html, content_type='text/html')
-
-
-# Production cutover — design_editor_canvas/design_editor_element (the
-# legacy canvas editor's own initial-load render + live per-element
-# content refresh) were retired outright at the 29 August 2026 cutover,
-# not replaced; their would-be v2 successors, design_canvas_document/
-# design_canvas_element, were themselves later removed along with the
-# GrapesJS editor that was their only real caller (see DECISIONS.md's
-# removal entry) — the current production editor (design-editor-v2) is
-# a pure frontend canvas with no backend canvas-document endpoint of its
-# own at all. Nothing edits a legacy-shape design directly anymore; a
-# legacy row is left exactly as-is until the one-time migration command
-# converts it or it's rebuilt from a template.
-
-
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def design_duplicate(request):
     """
-    Path 1 (ready-made templates) — the spec's own language is that
-    picking a built-in + color variant "converts into this same
-    structure under the hood." That conversion needs a starting point;
-    duplicating one of the 3 built templates' design_data
-    (apps/invoices/design_seeds.py) into a new, real, editable
-    InvoiceDesign row for the requesting user is that starting point.
-
-    Deliberately scoped to only this one case — instantiating a builtin
-    seed by `base_template` name, not an existing InvoiceDesign row (no
-    `pk` in this URL at all). Nothing in the spec asks for general
-    "duplicate any existing design" — an InvoiceDesign is already
-    PUT-editable in place — so that's left unbuilt; see DECISIONS.md.
+    Instantiates one of the 3 static templates as a new, real, owned
+    InvoiceDesign row for the requesting user — the one real "pick a
+    template" action DesignGallery.jsx's "Use this template" calls.
     """
     if _check_moderate_rate_limit('design_duplicate', request.user):
         return _too_many_requests('Too many actions. Please try again later.')
 
     base_template = request.data.get('base_template')
-    if base_template not in BUILTIN_DESIGNS:
+    if base_template not in VALID_BASE_TEMPLATES:
         return Response(
-            {'base_template': f'Must be one of {sorted(BUILTIN_DESIGNS)}.'},
+            {'base_template': f'Must be one of {sorted(VALID_BASE_TEMPLATES)}.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    color_variant = request.data.get('color_variant', '') or ''
     name = request.data.get('name') or f'{base_template.title()} (copy)'
 
-    design = _instantiate_design_from_builtin(request.user, base_template, color_variant, name)
+    design = InvoiceDesign.objects.create(user=request.user, name=name, base_template=base_template)
     logger.info(
-        '[INVOICES] Duplicated builtin design %s (%s) as %s for user %s.',
-        base_template, color_variant or 'default', design.pk, request.user.pk,
+        '[INVOICES] Duplicated builtin design %s as %s for user %s.',
+        base_template, design.pk, request.user.pk,
     )
-    return Response(InvoiceDesignSerializer(design).data, status=status.HTTP_201_CREATED)
-
-
-def _instantiate_design_from_builtin(user, base_template, color_variant='', name=None, design_data=None, source='builtin'):
-    """
-    The one real "create an InvoiceDesign row from a builtin seed" code
-    path — used by both design_duplicate (Path 1, above) and
-    design_ai_seed (Path 3, below) rather than each growing its own.
-    `design_data` defaults to the unmodified seed; Path 3 passes its own
-    AI-adjusted payload instead. Defined after design_duplicate since
-    Python resolves the name at call time, not definition time — either
-    order works, this keeps the two Path 1 pieces textually adjacent.
-    """
-    return InvoiceDesign.objects.create(
-        user=user,
-        name=name or f'{base_template.title()} (copy)',
-        base_template=base_template,
-        source=source,
-        color_variant=color_variant,
-        design_data=design_data if design_data is not None else get_builtin_design_data(base_template),
-    )
-
-
-# ══════════════════════════════════════════════════════════════════
-# AI-SEEDED DESIGN — Step 9, Path 3. apps/invoices/ai_design.py owns the
-# classify + adjust pipeline; this view owns rate limiting, upload
-# handling, and turning any pipeline failure into a clear response that
-# still leaves the user a path to Path 1/Path 2 (they're never navigated
-# away from the gallery those live on — see DesignGallery.jsx).
-# ══════════════════════════════════════════════════════════════════
-
-# Separate, tighter limit than _check_moderate_rate_limit's 30/hour — this
-# is a real external Groq API call with real token cost per attempt, not a
-# free CRUD operation, per the task's own explicit instruction.
-AI_SEED_RATE_LIMIT = 5
-
-
-def _check_ai_seed_rate_limit(user):
-    key = f'ratelimit_invoices_design_ai_seed_{user.pk}'
-    count = cache.get(key, 0)
-    if count >= AI_SEED_RATE_LIMIT:
-        return True
-    cache.set(key, count + 1, timeout=3600)
-    return False
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def design_ai_seed(request):
-    if _check_ai_seed_rate_limit(request.user):
-        return _too_many_requests(
-            f'AI design seeding is limited to {AI_SEED_RATE_LIMIT} attempts per hour. Please try again later, '
-            'or pick a ready-made template / start a blank design instead.'
-        )
-
-    image = request.FILES.get('image')
-    if not image:
-        return Response({'error': 'No reference image provided.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    extension = os.path.splitext(image.name)[1].lower()
-    if extension not in ALLOWED_REFERENCE_IMAGE_EXTENSIONS:
-        return Response(
-            {'error': f'Unsupported file type. Allowed: {", ".join(sorted(ALLOWED_REFERENCE_IMAGE_EXTENSIONS))}'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    if image.size > MAX_REFERENCE_IMAGE_SIZE_BYTES:
-        return Response({'error': 'File too large. Maximum size is 8MB.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        PILImage.open(image).verify()
-    except (UnidentifiedImageError, OSError):
-        return Response({'error': "That doesn't look like a valid image file."}, status=status.HTTP_400_BAD_REQUEST)
-    image.seek(0)
-
-    # The reference image is read into memory for the one Groq call and
-    # never written to Cloudinary/disk anywhere in this view or in
-    # ai_design.py — per the spec's real liability/copyright reasoning
-    # (reference images are often someone else's licensed template design).
-    # `image` (the Django UploadedFile) goes out of scope when this request
-    # finishes; nothing here holds a reference to it beyond that.
-    raw_bytes = image.read()
-
-    try:
-        base_template, design_data = seed_design_data_from_image(raw_bytes)
-    except ValueError as exc:
-        logger.warning('[INVOICES] AI design seeding failed for user %s: %s', request.user.pk, exc)
-        return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-
-    design = _instantiate_design_from_builtin(
-        request.user, base_template, color_variant='ai_extracted',
-        name=f'{base_template.title()} (AI-seeded)', design_data=design_data, source='ai_seeded',
-    )
-    logger.info('[INVOICES] AI-seeded design %s (%s) for user %s.', design.pk, base_template, request.user.pk)
     return Response(InvoiceDesignSerializer(design).data, status=status.HTTP_201_CREATED)
 
 

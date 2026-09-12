@@ -1,93 +1,82 @@
 // src/pages/DesignGallery.jsx
 //
-// The LanceraOS Template Builder's own "Manage Designs" gallery — Create
-// (blank or a ready-made template), Edit, Duplicate-via-template,
-// AI-seed, set-default, delete. Wired from Invoices.jsx's header (see
-// that file's own comment on why there's no natural per-invoice design
-// picker yet). Stays inside the normal AppShell frame — unlike the
-// editor's own canvas, a gallery/list page is exactly what AppShell's
-// standard layout already handles well; no reason to break that
-// precedent here the way the canvas itself needed to.
-//
-// Edit always opens the one production editor (TemplateBuilderV2,
-// /invoices/designs/:id/build) — the old GrapesJS editor has been
-// removed entirely (see DECISIONS.md). A pre-existing legacy-shaped
-// design (no schema_version key) still opens there too; that editor's
-// own load path shows a real "can't open this one" status screen for
-// it, since the one-time migration mapper can't safely convert it (see
-// design_migration.py's own reasoning) — there is no editor left that
-// can open a legacy design directly. Every real creation path here
-// (blank, ready-made template, AI-seed) is verified against its own
-// backend implementation to always produce schema_version: 2, so those
-// three are never affected.
+// Full Reversion Plan (back to 3 static templates only) — the free-canvas
+// editor, its version history, AI-seeding, and per-design color variants
+// are gone (see DECISIONS.md's removal entry). This page is back to its
+// original, pre-editor shape: pick one of the 3 static templates, name
+// it, and optionally mark it your default for new invoices. No Edit
+// action, no Blank action, no AI-seed upload, no theme/color picker —
+// a template is used exactly as it's provided.
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Copy, LayoutTemplate, Plus, Sparkles, Star, Trash2 } from 'lucide-react'
+import { Copy, FileText, LayoutTemplate, Star, Trash2 } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import FosAlert from '@/components/FosAlert'
-import DesignLivePreview from '@/components/design-editor/DesignLivePreview'
-import { fetchBlankDesignData, fetchDesignTemplates } from '@/lib/designTemplatesApi'
 
-// Real, friendly labels for the 3 production base templates — a small,
-// static, never-drifting lookup (the real inventory itself, including
-// each one's real color variants, comes from design_templates_list,
-// fetched below — this is presentation-only).
-const BASE_TEMPLATE_LABELS = { professional: 'Professional', minimal: 'Minimal', modern: 'Modern' }
+// Real, friendly labels + accent color for the 3 static templates — a
+// small, static, never-drifting lookup. The colors mirror
+// pdf_generator.DEFAULT_TEMPLATE_COLORS exactly (each template's own
+// single real accent) purely so this card's thumbnail reads as "that
+// template" at a glance — never a customization control, just a label.
+const BASE_TEMPLATES = [
+  { key: 'professional', label: 'Professional', color: '#a8813c' },
+  { key: 'minimal', label: 'Minimal', color: '#6b8570' },
+  { key: 'modern', label: 'Modern', color: '#2d2a6e' },
+]
+const BASE_TEMPLATE_LABELS = Object.fromEntries(BASE_TEMPLATES.map((t) => [t.key, t.label]))
 
-function BuiltinTemplateCard({ baseTemplate, variants, onUse, busy }) {
-  const [variant, setVariant] = useState(variants[0]?.key || '')
+function TemplateThumbnail({ color }) {
+  return (
+    <div style={{
+      width: '100%', maxWidth: 200, aspectRatio: '210 / 297', background: '#fff',
+      border: '1px solid var(--border-default)', borderRadius: 6, overflow: 'hidden',
+      display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{ height: '18%', background: color, flexShrink: 0 }} />
+      <div style={{ flex: 1, padding: '10%', display: 'flex', flexDirection: 'column', gap: '10%' }}>
+        <div style={{ height: 6, width: '70%', background: 'var(--border-default)', borderRadius: 3 }} />
+        <div style={{ height: 6, width: '90%', background: 'var(--border-subtle)', borderRadius: 3 }} />
+        <div style={{ height: 6, width: '55%', background: 'var(--border-subtle)', borderRadius: 3 }} />
+      </div>
+    </div>
+  )
+}
 
+function BuiltinTemplateCard({ baseTemplate, label, color, onUse, busy }) {
   return (
     <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-        <DesignLivePreview baseTemplate={baseTemplate} colorVariant={variant} />
+        <TemplateThumbnail color={color} />
       </div>
-      <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: 8 }}>
-        {BASE_TEMPLATE_LABELS[baseTemplate] || baseTemplate}
-      </div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        {variants.map((v) => (
-          <button
-            key={v.key}
-            onClick={() => setVariant(v.key)}
-            aria-label={v.label}
-            title={v.label}
-            style={{
-              width: 22, height: 22, borderRadius: '50%', cursor: 'pointer',
-              border: variant === v.key ? '2px solid var(--accent)' : '2px solid transparent',
-              background: `linear-gradient(135deg, ${v.primary} 50%, ${v.secondary} 50%)`,
-            }}
-          />
-        ))}
+      <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: 12 }}>
+        {label}
       </div>
       <button
-        onClick={() => onUse(baseTemplate, variant)}
+        onClick={() => onUse(baseTemplate)}
         disabled={busy}
         className="fos-btn fos-btn-accent fos-btn-full"
       >
-        Use this template
+        {busy ? 'Adding…' : 'Use this template'}
       </button>
     </div>
   )
 }
 
-function SavedDesignCard({ design, baseTemplateLabels, onEdit, onSetDefault, onDelete }) {
+function SavedDesignCard({ design, baseTemplateLabels, onSetDefault, onDelete }) {
   return (
-    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-        <DesignLivePreview designId={design.id} />
+    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+      <FileText size={20} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)' }}>{design.name}</span>
+          {design.is_default && <Star size={13} style={{ color: 'var(--accent)' }} fill="var(--accent)" />}
+        </div>
+        <div style={{ fontSize: '0.74rem', color: 'var(--text-tertiary)' }}>
+          {baseTemplateLabels[design.base_template] || design.base_template}
+        </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <span style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)' }}>{design.name}</span>
-        {design.is_default && <Star size={13} style={{ color: 'var(--accent)' }} fill="var(--accent)" />}
-      </div>
-      <div style={{ fontSize: '0.74rem', color: 'var(--text-tertiary)', marginBottom: 12 }}>
-        Based on {baseTemplateLabels[design.base_template] || design.base_template} · {design.source}
-      </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button onClick={() => onEdit(design)} className="fos-btn fos-btn-ghost" style={{ flex: 1 }}>Edit</button>
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
         {!design.is_default && (
           <button onClick={() => onSetDefault(design)} aria-label="Set as default" className="fos-btn fos-btn-ghost" style={{ padding: 8 }}>
             <Star size={14} />
@@ -103,149 +92,43 @@ function SavedDesignCard({ design, baseTemplateLabels, onEdit, onSetDefault, onD
 
 export default function DesignGallery() {
   useTitle('Manage Designs — LanceraOS')
-  const navigate = useNavigate()
 
   const [designs, setDesigns] = useState([])
-  const [templates, setTemplates] = useState([])
-  const [variantDetails, setVariantDetails] = useState({}) // { professional: [{key,label,primary,secondary}, ...], ... }
   const [loading, setLoading] = useState(true)
   const [busyTemplate, setBusyTemplate] = useState(null)
-  const [startingBlank, setStartingBlank] = useState(false)
   const [error, setError] = useState('')
-  const [justCreated, setJustCreated] = useState(null) // the design just created, awaiting edit-or-done choice
-  const [aiSeeding, setAiSeeding] = useState(false)
 
   useEffect(() => {
-    Promise.all([
-      api.get('/invoices/designs/'),
-      fetchDesignTemplates(),
-    ])
-      .then(([designsResp, templatesResp]) => {
-        setDesigns(designsResp.data)
-        setTemplates(templatesResp.templates)
-        setVariantDetails(templatesResp.variant_details || {})
-      })
+    api.get('/invoices/designs/')
+      .then(({ data }) => setDesigns(data))
       .catch(() => setError('Could not load your saved designs.'))
       .finally(() => setLoading(false))
   }, [])
 
   // Merges a just-set-default design into state — the shared bookkeeping
-  // handleSetDefault/handleUseTemplate/handleAiSeedUpload/handleStartBlank
-  // all need after a real POST /designs/{id}/set-default/ call (whichever
-  // design comes back with is_default:true wins, every other design's
-  // own is_default flips false locally to match, without a second fetch).
+  // handleSetDefault/handleUseTemplate both need after a real
+  // POST /designs/{id}/set-default/ call.
   function applyDefaultInState(defaultedDesign) {
     setDesigns((prev) => prev.map((d) => (d.id === defaultedDesign.id ? defaultedDesign : { ...d, is_default: false })))
   }
 
-  async function handleUseTemplate(baseTemplate, colorVariant) {
+  async function handleUseTemplate(baseTemplate) {
     setBusyTemplate(baseTemplate)
     setError('')
     try {
-      const { data } = await api.post('/invoices/designs/duplicate/', {
-        base_template: baseTemplate, color_variant: colorVariant,
-      })
+      const { data } = await api.post('/invoices/designs/duplicate/', { base_template: baseTemplate })
       setDesigns((prev) => [data, ...prev])
-      setJustCreated(data)
-      // "Use this template" is a real call-to-action, not just "add this to
-      // a pile of designs" — it immediately becomes the active design new
-      // invoices use, matching what the button's own name promises.
+      // "Use this template" is a real call-to-action — it immediately
+      // becomes the active design new invoices use, matching what the
+      // button's own name promises.
       const { data: defaulted } = await api.post(`/invoices/designs/${data.id}/set-default/`)
       applyDefaultInState(defaulted)
-      setJustCreated(defaulted)
     } catch {
       setError('Could not create a design from that template. Please try again.')
     } finally {
       setBusyTemplate(null)
     }
   }
-
-  // The blank starting mode — deliberately NOT the same create-then-
-  // set-default/"ready to use as-is" treatment "Use this template" and
-  // the AI-seed upload get above. A blank design has zero header content
-  // (get_blank_design_data returns header.elements: []) — no logo,
-  // business info, client info, or dates — so it is never "ready to
-  // use" and must never be silently activated as the account's default.
-  // Straight to the editor instead, where there's actually something to
-  // build. The blank design_data itself comes from the same production
-  // template.get_blank_design_data (?blank=true) the editor's own
-  // "Start blank" button calls directly — no separate client-side copy.
-  async function handleStartBlank() {
-    setStartingBlank(true)
-    setError('')
-    try {
-      const designData = await fetchBlankDesignData('professional')
-      const { data } = await api.post('/invoices/designs/', {
-        name: 'Untitled design', base_template: 'professional', color_variant: '', design_data: designData,
-      })
-      setDesigns((prev) => [data, ...prev])
-      navigate(`/invoices/designs/${data.id}/build`)
-    } catch {
-      setError('Could not start a blank design. Please try again.')
-    } finally {
-      setStartingBlank(false)
-    }
-  }
-
-  async function handleAiSeedUpload(e) {
-    const file = e.target.files?.[0]
-    e.target.value = '' // allow re-selecting the same file if the user retries
-    if (!file) return
-
-    setAiSeeding(true)
-    setError('')
-    try {
-      const formData = new FormData()
-      formData.append('image', file)
-      const { data } = await api.post('/invoices/designs/ai-seed/', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-      setDesigns((prev) => [data, ...prev])
-      // Same immediate-activation treatment as handleUseTemplate above —
-      // an AI-seeded design is just as much a real, direct "use this" pick
-      // as a ready-made template, not a second-class candidate that sits
-      // unused until a separate manual step.
-      let created = data
-      try {
-        const { data: defaulted } = await api.post(`/invoices/designs/${data.id}/set-default/`)
-        applyDefaultInState(defaulted)
-        created = defaulted
-      } catch {
-        // Non-fatal — the design itself was created successfully (the
-        // banner below still offers Customize/Done); only the auto-default
-        // convenience step failed, silently falling back to the pre-
-        // existing manual "Set as default" star the user can still click.
-      }
-      setJustCreated(created)
-    } catch (err) {
-      // Deliberately stays on this same page — the ready-made templates
-      // and "Blank design" button above remain immediately visible/
-      // clickable, never a dead end.
-      setError(err.response?.data?.error || 'Could not create a design from that image. Please try again, or pick a template below instead.')
-    } finally {
-      setAiSeeding(false)
-    }
-  }
-
-  // Always the one production editor — GrapesJS has been removed
-  // entirely (see DECISIONS.md). A pre-existing legacy-shaped design (no
-  // schema_version key) still opens here too; that editor's own load
-  // path shows a real "can't open this one" status screen for it,
-  // since the one-time migration mapper can't safely convert it.
-  function handleEdit(design) {
-    navigate(`/invoices/designs/${design.id}/build`)
-  }
-
-  // Real, visible "which design is active" state — `is_default` is a
-  // real, meaningful signal (apps.invoices.views.invoice_create/
-  // _finalise_invoice both read it) rather than a write-only field
-  // nothing ever consulted — this banner reflects that same real
-  // backend behavior directly, not a separate, potentially-drifting
-  // frontend guess.
-  const activeDesign = designs.find((d) => d.is_default)
-  const activeColorLabel = activeDesign
-    ? (variantDetails[activeDesign.base_template] || []).find((v) => v.key === (activeDesign.color_variant || 'default'))?.label
-    : null
 
   async function handleSetDefault(design) {
     try {
@@ -266,20 +149,19 @@ export default function DesignGallery() {
     }
   }
 
+  // Real, visible "which design is active" state — `is_default` is a
+  // real, meaningful signal (apps.invoices.views.invoice_create/
+  // _finalise_invoice both read it) rather than a write-only field
+  // nothing ever consulted.
+  const activeDesign = designs.find((d) => d.is_default)
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)' }}>Manage Designs</h1>
-          <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
-            Pick a ready-made template or build your own invoice layout.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={handleStartBlank} disabled={startingBlank} className="fos-btn fos-btn-accent" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Plus size={15} /> {startingBlank ? 'Starting…' : 'Blank design'}
-          </button>
-        </div>
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)' }}>Manage Designs</h1>
+        <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+          Pick which invoice template new invoices use.
+        </p>
       </div>
 
       <div style={{
@@ -291,8 +173,7 @@ export default function DesignGallery() {
         {activeDesign ? (
           <span>
             <strong style={{ color: 'var(--text-primary)' }}>Currently active for new invoices:</strong>{' '}
-            {activeDesign.name} ({BASE_TEMPLATE_LABELS[activeDesign.base_template] || activeDesign.base_template}
-            {activeColorLabel ? ` — ${activeColorLabel}` : ''})
+            {activeDesign.name} ({BASE_TEMPLATE_LABELS[activeDesign.base_template] || activeDesign.base_template})
           </span>
         ) : (
           <span>
@@ -304,63 +185,23 @@ export default function DesignGallery() {
 
       {error && <FosAlert type="error" onDismiss={() => setError('')} style={{ marginBottom: 16 }}>{error}</FosAlert>}
 
-      {justCreated && (
-        <FosAlert type="success" onDismiss={() => setJustCreated(null)} style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <span>"{justCreated.name}" is ready to use as-is, or you can customize it further.</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setJustCreated(null)} className="fos-btn fos-btn-ghost">Done</button>
-              <button onClick={() => handleEdit(justCreated)} className="fos-btn fos-btn-accent">Customize</button>
-            </div>
-          </div>
-        </FosAlert>
-      )}
-
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 12px' }}>
         <LayoutTemplate size={16} style={{ color: 'var(--text-tertiary)' }} />
         <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          Ready-made templates
+          Templates
         </span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16, marginBottom: 32 }}>
-        {templates.map((baseTemplate) => (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 32 }}>
+        {BASE_TEMPLATES.map(({ key, label, color }) => (
           <BuiltinTemplateCard
-            key={baseTemplate}
-            baseTemplate={baseTemplate}
-            variants={variantDetails[baseTemplate] || []}
+            key={key}
+            baseTemplate={key}
+            label={label}
+            color={color}
             onUse={handleUseTemplate}
-            busy={busyTemplate === baseTemplate}
+            busy={busyTemplate === key}
           />
         ))}
-
-        {/* AI-seeded design. Classify-only: uploads a reference image, one
-            Groq vision call maps it onto the closest of the same 3 base
-            templates + a couple of real colors + a coarse layout
-            density, and design_ai_seed (backend) returns a real,
-            already-saved, already-validated InvoiceDesign. Never a dead
-            end on failure — the error banner above renders in place;
-            the ready-made templates and "Blank design" stay clickable
-            the whole time. */}
-        <label
-          htmlFor="ai-seed-upload"
-          style={{
-            background: 'var(--bg-surface-2)', border: '1px dashed var(--border-default)', borderRadius: 'var(--radius-lg)',
-            padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
-            color: 'var(--text-tertiary)', minHeight: 200, cursor: aiSeeding ? 'wait' : 'pointer',
-          }}
-        >
-          {aiSeeding ? <span className="fos-spinner" /> : <Sparkles size={22} />}
-          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-            {aiSeeding ? 'Reading your design…' : 'AI-seeded design'}
-          </span>
-          <span style={{ fontSize: '0.74rem', textAlign: 'center' }}>
-            {aiSeeding ? 'This calls a real AI model and can take a few seconds.' : 'Upload a logo, letterhead, or old invoice — we\'ll match the closest style.'}
-          </span>
-          <input
-            id="ai-seed-upload" type="file" accept="image/png,image/jpeg,image/webp"
-            onChange={handleAiSeedUpload} disabled={aiSeeding} style={{ display: 'none' }}
-          />
-        </label>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 12px' }}>
@@ -373,16 +214,15 @@ export default function DesignGallery() {
         <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Loading…</div>
       ) : designs.length === 0 ? (
         <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
-          No saved designs yet — use a ready-made template above or start a blank one.
+          No saved designs yet — use a template above.
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {designs.map((design) => (
             <SavedDesignCard
               key={design.id}
               design={design}
               baseTemplateLabels={BASE_TEMPLATE_LABELS}
-              onEdit={handleEdit}
               onSetDefault={handleSetDefault}
               onDelete={handleDelete}
             />

@@ -1762,6 +1762,28 @@ baseline first). See DATABASE.md's own "Phase 3a schema additions" entry under `
 for the full schema shape, and DECISIONS.md's 07 September 2026 "Phase 3a" entry for the full
 verification evidence and the 2 real bugs' before/after.
 
+**12 September 2026 (Full Reversion — back to 3 static templates only, supersedes everything above
+in this "LanceraOS Template Builder" subsection).** Every part of the free-canvas system described
+above — both editors (the original GrapesJS `DesignEditor.jsx` and its successor
+`design-editor-v2`/`TemplateBuilderV2.jsx`), the `schema_version: 2` design_data contract and its
+legacy-shape predecessor, AI-seeded design generation (Path 3), `InvoiceDesignVersion`/version
+history, and per-design `color_variant` — has been removed. Zero of the 113 real invoices in the
+dev database ever ended up using any InvoiceDesign row at all (confirmed directly before removal,
+not assumed), which was the actual signal behind the decision, not a snap judgment. `InvoiceDesign`
+is reduced to exactly `name` + `base_template` (one of the 3 static templates) + `is_default` — a
+user picks a template and uses it as provided, no customization of any kind. `pdf_generator.py`'s
+render path is now a single, direct static-template render with no dispatch logic; the ported
+footer design (business identity left, page counter center — multi-page only — wordmark right) was
+already live in all 3 static templates independently of this system and is untouched. Every file
+this subsection references above (`design_renderer.py`, `design_schema.py`, `design_templates.py`,
+`design_migration.py`, `legacy_design_schema.py`, `legacy_design_renderer.py`, `design_seeds.py`,
+`design_preview.py`, `design_validation.py`, `ai_design.py`, `views_design_editor.py`,
+`design-editor-v2/`, `DesignLivePreview.jsx`, `designTemplatesApi.js`, and their dedicated tests) is
+preserved, not deleted, under `archive/free-canvas-editor-2026/` — see that folder's own
+`INTEGRATION_HISTORY.md` for the full before/after and reasoning, and DECISIONS.md's 12 September
+2026 entry. Everything else in this "LanceraOS Template Builder" subsection above is kept as
+written — real history of what was built and why it was eventually reverted, not current state.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

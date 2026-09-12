@@ -63,8 +63,8 @@ class PaymentClaimAdmin(admin.ModelAdmin):
 
 @admin.register(InvoiceDesign)
 class InvoiceDesignAdmin(admin.ModelAdmin):
-    list_display = ['name', 'user', 'base_template', 'source', 'is_default', 'updated_at']
-    list_filter = ['base_template', 'source', 'is_default']
+    list_display = ['name', 'user', 'base_template', 'is_default', 'updated_at']
+    list_filter = ['base_template', 'is_default']
     search_fields = ['name', 'user__email']
     readonly_fields = ['created_at', 'updated_at']
 

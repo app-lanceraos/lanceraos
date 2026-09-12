@@ -1,7 +1,7 @@
 # apps/invoices/urls.py
 from django.urls import path
 
-from . import views, views_design_editor, views_email, views_portal
+from . import views, views_email, views_portal
 
 app_name = 'invoices'
 
@@ -33,36 +33,17 @@ urlpatterns = [
     path('presets/<uuid:pk>/set-default/', views.preset_set_default, name='preset_set_default'),
     path('presets/<uuid:pk>/create-invoice/', views.preset_create_invoice, name='preset_create_invoice'),
 
-    path('designs/ai-seed/', views.design_ai_seed, name='design_ai_seed'),
     path('signature/', views.signature_upload, name='signature_upload'),
 
+    # Full Reversion Plan — back to 3 static templates only. Every route
+    # that served the free-canvas editor, its version history, its live
+    # HTML-render previews, and AI design seeding is gone (see
+    # DECISIONS.md's removal entry). What's left is the original, simple
+    # shape: list/create/rename/delete a design row, set one default.
     path('designs/', views.design_list, name='design_list'),
     path('designs/duplicate/', views.design_duplicate, name='design_duplicate'),
-    path('designs/preview/', views.design_builtin_preview, name='design_builtin_preview'),
-    # Production cutover — the editor's own backend surface
-    # (views_design_editor.py), renamed off "v2-*" now that this is the
-    # one production template system, not a parallel/experimental one.
-    path('designs/render-preview/', views_design_editor.design_render_preview, name='design_render_preview'),
-    path('designs/templates/', views_design_editor.design_templates_list, name='design_templates_list'),
-    path('designs/template/', views_design_editor.design_template_data, name='design_template_data'),
-    # designs/canvas/ and designs/canvas-element/ (design_canvas_document/
-    # design_canvas_element) served the old GrapesJS editor's own canvas
-    # exclusively — removed along with it, and design_canvas.py with them
-    # (see DECISIONS.md's removal entry). Nothing else ever called them.
-    # Green-Light directive — the Template Health endpoint (Layers A/C/D, see design_validation.py).
-    path('designs/validate/', views_design_editor.design_validate, name='design_validate'),
-    # Editor-authored canvas images (file picker / clipboard paste) — real
-    # Cloudinary upload, own folder, no replace-on-upload semantics.
-    path('designs/upload-image/', views_design_editor.design_upload_image, name='design_upload_image'),
     path('designs/<uuid:pk>/', views.design_detail, name='design_detail'),
     path('designs/<uuid:pk>/set-default/', views.design_set_default, name='design_set_default'),
-    # Green-Light directive — version history + rollback.
-    path('designs/<uuid:pk>/versions/', views.design_versions_list, name='design_versions_list'),
-    path(
-        'designs/<uuid:pk>/versions/<uuid:version_id>/restore/',
-        views.design_version_restore, name='design_version_restore',
-    ),
-    path('designs/<uuid:pk>/preview/', views.design_preview, name='design_preview'),
 
     path('<uuid:pk>/', views.invoice_detail, name='invoice_detail'),
     path('<uuid:pk>/pdf/', views.invoice_pdf, name='invoice_pdf'),

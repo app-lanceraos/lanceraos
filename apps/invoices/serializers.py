@@ -13,7 +13,6 @@ from rest_framework import serializers
 from apps.clients.models import Client
 from apps.clients.serializers import validate_currency_code
 
-from .design_schema import validate_design_data_schema_by_version
 from .models import Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem, _today
 
 
@@ -343,20 +342,13 @@ class InvoicePresetSerializer(serializers.ModelSerializer):
 
 class InvoiceDesignSerializer(serializers.ModelSerializer):
     """
-    Step 8 — the real validated contract Step 8b's canvas editor builds
-    against. `source` defaults to 'custom' here on create (the model's
-    own field default is 'builtin', a Step 4 placeholder from before any
-    design CRUD existed — see DECISIONS.md for why that's fine to leave
-    on the model and just override at this layer: design_duplicate is
-    the only path that legitimately wants 'builtin', and it sets the
-    field explicitly rather than relying on either default).
+    Full Reversion Plan — InvoiceDesign is just a name + which of the 3
+    static templates it renders as (see models.py). The design_data JSON
+    contract, source/color_variant fields, and their validation are gone.
     """
     class Meta:
         model = InvoiceDesign
-        fields = [
-            'id', 'name', 'base_template', 'source', 'color_variant',
-            'design_data', 'is_default', 'created_at', 'updated_at',
-        ]
+        fields = ['id', 'name', 'base_template', 'is_default', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def validate_name(self, value):
@@ -364,27 +356,3 @@ class InvoiceDesignSerializer(serializers.ModelSerializer):
         if not value:
             raise serializers.ValidationError('Design name is required.')
         return value
-
-    def validate_design_data(self, value):
-        """
-        Template Builder 2.0 cutover: dispatches to the v1 structural
-        validator for a legacy-shape payload (schema_version absent or 1
-        — every design saved before this cutover, and still the default
-        for a brand-new custom/blank design) or the v2 validator for a
-        real schema_version: 2 payload (the production editor's own
-        save, or a v1->v2 migrated design) — see
-        design_schema.validate_design_data_schema_by_version's own
-        docstring. This is what lets a v2 design be created/edited/
-        deleted/set-default through the exact same real InvoiceDesign
-        CRUD endpoints (design_list/design_detail/design_set_default,
-        apps/invoices/views.py) v1 designs already use, rather than a
-        second, parallel v2-only persistence surface.
-        """
-        errors = validate_design_data_schema_by_version(value)
-        if errors:
-            raise serializers.ValidationError(errors)
-        return value
-
-    def create(self, validated_data):
-        validated_data.setdefault('source', 'custom')
-        return super().create(validated_data)
