@@ -13,7 +13,7 @@ from rest_framework import serializers
 from apps.clients.models import Client
 from apps.clients.serializers import validate_currency_code
 
-from .models import Invoice, InvoiceDesign, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem, _today
+from .models import Invoice, InvoiceItem, InvoicePartialPayment, InvoicePreset, InvoicePresetItem, _today
 
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
@@ -266,7 +266,7 @@ class InvoiceListSerializer(serializers.ModelSerializer):
         model = Invoice
         fields = [
             'id', 'invoice_number', 'status', 'sent_via_platform', 'view_token', 'portal_view_url',
-            'design',
+            'base_template',
             'client', 'client_name', 'client_email', 'client_company', 'client_address', 'client_phone',
             'currency', 'subtotal', 'tax_rate', 'tax_amount', 'discount_amount', 'total', 'amount_paid',
             'refunded_amount',
@@ -340,19 +340,3 @@ class InvoicePresetSerializer(serializers.ModelSerializer):
         return instance
 
 
-class InvoiceDesignSerializer(serializers.ModelSerializer):
-    """
-    Full Reversion Plan — InvoiceDesign is just a name + which of the 3
-    static templates it renders as (see models.py). The design_data JSON
-    contract, source/color_variant fields, and their validation are gone.
-    """
-    class Meta:
-        model = InvoiceDesign
-        fields = ['id', 'name', 'base_template', 'is_default', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
-
-    def validate_name(self, value):
-        value = value.strip()
-        if not value:
-            raise serializers.ValidationError('Design name is required.')
-        return value

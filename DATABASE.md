@@ -148,6 +148,14 @@ pseb_registered (plain bool — see note below), pseb_encrypted, pseb_hash (uniq
 logo, logo_public_id, business_name, address_line1/2, city, country,
 default_currency, default_payment_terms
 
+# Invoice template preference (Post-Reversion Polish, 12 September 2026)
+# — replaces the old per-user InvoiceDesign row-per-template model.
+# Read at Invoice creation time (apps.invoices.views.invoice_create) and
+# copied onto that invoice's own base_template field, never reassigned
+# afterward. A local choices tuple, not imported from apps.invoices
+# (apps.invoices already depends on apps.users, never the reverse).
+invoice_template ('professional'/'minimal'/'modern', default 'professional')
+
 # Invoice PDF signature (Step 7b) — same CharField/Cloudinary-lifecycle
 # pattern as logo/logo_public_id above, mirrored exactly (not URLField,
 # despite that being the intuitive guess). Storage only; the actual
@@ -760,18 +768,19 @@ aging-report/exchange-rate/presets). Step 7b built the real `GET .../pdf/` rende
 
 **Schema** (grouped by purpose): `id` (UUID PK), `user` (FK, `CASCADE`), `client` (FK →
 `clients.Client`, `SET_NULL`, nullable), `invoice_number` (see uniqueness note below), `status`
-(9 choices — see below), `sent_via_platform`, `design` (FK → `InvoiceDesign`, `SET_NULL`,
-nullable — genuinely populated as of 19 August 2026; see this table's own `invoice_designs`
-entry below and DECISIONS.md's "SEV1 — the design-to-invoice assignment gap" entry. Before that
-fix this column was `NULL` on literally every real invoice, always, regardless of any
-`InvoiceDesign` a user created/edited/marked default — nothing, anywhere, ever wrote to it.
-**Important nuance, 20 August 2026**: this column itself is only ever persisted by
-`invoice_create`/`_finalise_invoice` — a still-`draft` invoice with `design_id=NULL` that predates
-a default design being set will still show that current default in its own LIVE preview
-(`pdf_generator._effective_design`'s read-time fallback, draft-status only, never persisted here)
-without this column ever actually changing. Query this column directly to know what's frozen;
-query a draft's live render to know what it currently PREVIEWS as — the two can legitimately
-differ for an un-finalised draft),
+(9 choices — see below), `sent_via_platform`, `base_template` (plain `CharField`, choices
+`professional`/`minimal`/`modern`, nullable — **Post-Reversion Polish, 12 September 2026**:
+replaces the old `design` FK to `InvoiceDesign`, which is itself now removed — see this table's
+own former `invoice_designs` entry, now marked TABLE REMOVED, and DECISIONS.md's second 12
+September 2026 entry. Assigned at CREATE time from `FreelancerProfile.invoice_template`
+(`apps.invoices.views.invoice_create`), never reassigned afterward — the same frozen-at-creation
+guarantee the old FK gave, just without a row to point at. `_finalise_invoice` backfills it for
+any pre-existing draft that predates the field. A still-`draft` invoice with `base_template=NULL`
+that predates a preference being set will still show the user's CURRENT preference in its own LIVE
+preview (`pdf_generator._effective_base_template`'s read-time fallback, draft-status only, never
+persisted here) without this column ever actually changing. Query this column directly to know
+what's frozen; query a draft's live render to know what it currently PREVIEWS as — the two can
+legitimately differ for an un-finalised draft),
 `view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
 `client_address`/`client_phone` (immutable snapshot at creation), `currency` (CharField(3), no
 `choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`,
@@ -785,17 +794,14 @@ differ for an un-finalised draft),
 on success, triggers an auto-pause at 3), `escalation_required`/`escalation_dismissed`,
 `is_one_time_client`, `pre_payment_status`, `client_acknowledged`/`client_acknowledged_at`,
 `formal_notice_sent_at` (new, Step 17 — same migration; one-shot timestamp, same pattern as
-`finalised_at`/`sent_at`, never blocks a deliberate second send), `rendered_design_snapshot`
-(JSONField, nullable, default `None` — a real, self-contained copy of `{base_template,
-color_variant, design_data}` captured once, at the same moment `invoice.design` becomes final for
-this invoice's remaining lifecycle (`_finalise_invoice`, `apps/invoices/views.py`) and the PDF
-itself gets frozen. This is what makes the frozen-PDF guarantee survive a LATER edit or deletion of
-`invoice.design` itself — `pdf_generator._effective_design` reads this snapshot in preference to
-the live `InvoiceDesign` row for any non-draft invoice that has one, falling through to the live
-row only when it's still `null` (an invoice finalised before this field was wired up — see
-DECISIONS.md's Master Blueprint cutover entry for the historical TB-007 gap this closed: the
-column existed since the Template Builder's own foundation step but nothing ever wrote to it until
-that pass)), `created_at`/`updated_at`.
+`finalised_at`/`sent_at`, never blocks a deliberate second send), `created_at`/`updated_at`.
+
+**`rendered_design_snapshot` — REMOVED, 12 September 2026 (Post-Reversion Polish)**: this JSONField
+existed to protect a finalized invoice's render from a LATER edit to its design's free-canvas
+content (`design_data`/`color_variant`) — content that no longer exists anywhere in this codebase.
+Confirmed unused by any code path (never populated, never read) before removal in the same
+migration that dropped `InvoiceDesign` (`apps.invoices.0016_remove_invoice_design_model`). See
+DECISIONS.md's second 12 September 2026 entry.
 
 **`status` choices** (exactly 9, no `overdue`): `draft`, `created`, `sent`, `viewed`,
 `partially_paid`, `paid`, `cancelled`, `refunded`, `bad_debt`. `days_overdue` stays a pure
@@ -1033,20 +1039,25 @@ reason). Both require `confirm: true`, matching every other endpoint in this app
 
 ---
 
-## `invoice_designs` (`InvoiceDesign`, in `apps.invoices`)
+## `invoice_designs` (`InvoiceDesign`, in `apps.invoices`) — TABLE REMOVED
 
-**CURRENT SCHEMA as of 12 September 2026 (Full Reversion — back to 3 static templates only),
-superseding every schema/column claim in this section below**: the free-canvas design system
-described throughout this section has been removed entirely. `InvoiceDesign` now has exactly:
-`id` (UUID PK), `user` (FK, `CASCADE`), `name`, `base_template` (`professional`/`minimal`/
-`modern`), `is_default`, `created_at`, `updated_at`. **`design_data`, `source`, and
-`color_variant` no longer exist as columns** (dropped by migration
-`0013_reversion_drop_design_editor_schema`, gated by a real data-integrity check in
-`0012_verify_design_data_before_reversion`). A design is just "which of the 3 static templates" —
-no customization of any kind. See DECISIONS.md's 12 September 2026 entry and
-`archive/free-canvas-editor-2026/INTEGRATION_HISTORY.md` for the full reasoning and before/after.
-Everything below this notice describes the now-removed system as it existed historically — kept
-as a real record of what was built, not as a current schema reference.
+**REMOVED entirely as of 12 September 2026 (Post-Reversion Polish, same day as the Full Reversion
+below), superseding every schema/column claim in this section**: this table no longer exists.
+A same-day follow-up to the Full Reversion found that once `InvoiceDesign` held nothing but
+`name`/`base_template`/`is_default`, every row for the same `base_template` was functionally
+identical — clicking "Use this template" was duplicating rows with no unique information (real,
+confirmed: multiple "Professional (copy)" rows per user in the reversion's own Part 1 audit).
+Dropped entirely (migration `apps.invoices.0016_remove_invoice_design_model`) and replaced by a
+single `FreelancerProfile.invoice_template` preference field (see that table's own entry above)
+plus a plain frozen `Invoice.base_template` field (see that table's own entry below) — no
+per-user table of design rows at all anymore. `Invoice.rendered_design_snapshot` was removed in
+the same migration — its entire purpose (protecting a finalized invoice from a later edit to a
+design's free-canvas content) no longer applies to anything. See DECISIONS.md's second 12
+September 2026 entry and `archive/free-canvas-editor-2026/INTEGRATION_HISTORY.md` for the full
+reasoning and before/after. Everything below this notice describes the table as it existed
+historically — first simplified by the Full Reversion (12 September 2026, first entry), then
+removed outright by this same-day follow-up — kept as a real record, not a current schema
+reference.
 
 ---
 

@@ -50,13 +50,13 @@ from .email_service import (
     build_formal_notice_email, build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email,
 )
 from .models import (
-    NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceDesign, InvoiceItem,
+    NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceItem,
     InvoicePartialPayment, InvoicePreset, InvoiceReminder, PaymentClaim,
 )
 from .pdf_generator import render_invoice_pdf
 from .tasks import REMINDER_SCHEDULE, _advance_recurring_date, _send_reminder, render_and_store_invoice_pdf
 from .serializers import (
-    DueDateOnlySerializer, InvoiceDesignSerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer,
+    DueDateOnlySerializer, InvoiceListSerializer, InvoicePartialPaymentSerializer,
     InvoicePresetSerializer, InvoiceSerializer, RecurringSeriesSettingsSerializer,
 )
 from .serializers_claims import PaymentClaimSerializer
@@ -351,20 +351,18 @@ def invoice_create(request):
     unassigned (None) — see Invoice.invoice_number's field comment;
     invoice_finalise() is what assigns the real number.
 
-    `design` is deliberately NOT one of InvoiceSerializer's own fields (a
-    client can't just pass an arbitrary design id in the request body —
-    only the system's own default-design lookup may assign it), so it's
-    set here as an extra serializer.save() kwarg, the same pattern already
-    used for `user` on the line below. This is the real, previously-
-    missing connection between "a user marked a design as their default"
-    (InvoiceDesign.is_default, set via .../set-default/) and any actual
-    invoice — before this fix, is_default was write-only: nothing, ever,
-    anywhere, read it back. Assigned at CREATE time (not finalise) so a
-    draft's live PDF preview and its eventual finalised/frozen PDF always
-    agree — never a design that visibly changes out from under the user
-    the moment they click Finalise. See DECISIONS.md's 19 August 2026
-    "design assignment gap" entry for the full investigation (a real,
-    live-browser-verified SEV1 report) this closes.
+    `base_template` is deliberately NOT one of InvoiceSerializer's own
+    fields (a client can't just pass an arbitrary template name in the
+    request body — only the system's own preference lookup may assign
+    it), so it's set here as an extra serializer.save() kwarg, the same
+    pattern already used for `user` on the line below. Assigned at CREATE
+    time (not finalise) so a draft's live PDF preview and its eventual
+    finalised/frozen PDF always agree — never a template that visibly
+    changes out from under the user the moment they click Finalise. Post-
+    Reversion Polish (12 September 2026): reads
+    FreelancerProfile.invoice_template directly — the whole
+    InvoiceDesign-row-per-template model this originally connected to
+    (DECISIONS.md's 19 August 2026 "design assignment gap" entry) is gone.
     """
     if _check_moderate_rate_limit('create', request.user):
         return _too_many_requests('Too many invoices created recently. Please try again later.')
@@ -373,8 +371,7 @@ def invoice_create(request):
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    default_design = InvoiceDesign.objects.filter(user=request.user, is_default=True).first()
-    invoice = serializer.save(user=request.user, design=default_design)
+    invoice = serializer.save(user=request.user, base_template=request.user.profile.invoice_template)
     emit('InvoiceCreated', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
     logger.info('[INVOICES] Created draft invoice %s for user %s.', invoice.pk, request.user.pk)
     return Response(InvoiceListSerializer(invoice).data, status=status.HTTP_201_CREATED)
@@ -626,23 +623,12 @@ def _finalise_invoice(invoice, force_reminders_off=True):
         invoice.reminders_enabled = False
 
     # Defensive fallback for a draft created before invoice_create started
-    # assigning the user's default design (see that view's own docstring) —
-    # every draft in the database as of this fix predates it, so without
-    # this, all of them would stay design_id=None forever even after the
-    # user has since marked a real design as default. Only applies when
+    # assigning base_template from the user's preference (see that view's
+    # own docstring) — a pre-existing draft from before this field existed
+    # would otherwise stay base_template=None forever. Only applies when
     # nothing has assigned one already (never overrides a real choice).
-    if invoice.design_id is None:
-        invoice.design = InvoiceDesign.objects.filter(user=invoice.user, is_default=True).first()
-
-    # Full Reversion Plan — the TB-007 provenance-freeze mechanism
-    # (Invoice.rendered_design_snapshot) existed to protect a finalized
-    # invoice's render from a LATER edit to its InvoiceDesign's own
-    # design_data/color_variant — content that no longer exists now that
-    # a design is just a name + base_template, with no editor to change
-    # either after the fact. Nothing writes rendered_design_snapshot
-    # anymore; pdf_generator._effective_design no longer reads it either
-    # (see that function's own updated docstring). The field itself is
-    # left on the model, untouched, per this plan's own Part 1.
+    if invoice.base_template is None:
+        invoice.base_template = invoice.user.profile.invoice_template
 
     # A recurring root's next_recurring_date was never being set anywhere
     # (Step 16 only ever advances it once a value already exists) — every
@@ -1287,7 +1273,7 @@ def _duplicate_invoice_core(original, **overrides):
         is_recurring=original.is_recurring, recurring_interval_days=original.recurring_interval_days,
         recurring_auto_send=original.recurring_auto_send,
         is_one_time_client=original.is_one_time_client,
-        design=original.design,
+        base_template=original.base_template,
     )
     defaults.update(overrides)
 
@@ -2336,109 +2322,6 @@ def preset_create_invoice(request, pk):
     emit('InvoiceCreated', invoice_id=str(invoice.pk), user_id=str(request.user.pk), from_preset=str(preset.pk))
     logger.info('[INVOICES] Created invoice %s from preset %s.', invoice.pk, preset.pk)
     return Response(InvoiceListSerializer(invoice).data, status=status.HTTP_201_CREATED)
-
-
-# ══════════════════════════════════════════════════════════════════
-# DESIGNS — Full Reversion Plan (back to 3 static templates only). Every
-# real InvoiceDesign row is now just a name + which of the 3 static
-# templates it renders as (see models.py) — the free-canvas editor, its
-# design_data JSON contract, version history, AI-seeding, and per-design
-# color variants are gone (see DECISIONS.md's removal entry). What's left
-# is the original, pre-2026-08-29 shape this system started from: pick a
-# template, name it, optionally mark it default.
-# ══════════════════════════════════════════════════════════════════
-
-VALID_BASE_TEMPLATES = {choice for choice, _label in InvoiceDesign.BASE_TEMPLATE_CHOICES}
-
-
-@api_view(['GET', 'POST'])
-@permission_classes([IsAuthenticated])
-def design_list(request):
-    if request.method == 'POST':
-        return design_create(request)
-
-    designs = InvoiceDesign.objects.filter(user=request.user)
-    return Response(InvoiceDesignSerializer(designs, many=True).data)
-
-
-def design_create(request):
-    if _check_moderate_rate_limit('design_create', request.user):
-        return _too_many_requests('Too many designs created recently. Please try again later.')
-
-    serializer = InvoiceDesignSerializer(data=request.data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    design = serializer.save(user=request.user)
-    logger.info('[INVOICES] Created design %s for user %s.', design.pk, request.user.pk)
-    return Response(InvoiceDesignSerializer(design).data, status=status.HTTP_201_CREATED)
-
-
-@api_view(['GET', 'PUT', 'DELETE'])
-@permission_classes([IsAuthenticated])
-def design_detail(request, pk):
-    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
-
-    if request.method == 'GET':
-        return Response(InvoiceDesignSerializer(design).data)
-
-    if request.method == 'DELETE':
-        if _check_moderate_rate_limit('design_delete', request.user):
-            return _too_many_requests('Too many actions. Please try again later.')
-        design.delete()
-        logger.info('[INVOICES] Deleted design %s.', pk)
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-    if _check_moderate_rate_limit('design_update', request.user):
-        return _too_many_requests('Too many updates. Please try again later.')
-
-    serializer = InvoiceDesignSerializer(design, data=request.data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    serializer.save()
-    logger.info('[INVOICES] Updated design %s.', design.pk)
-    return Response(InvoiceDesignSerializer(design).data)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def design_set_default(request, pk):
-    if _check_moderate_rate_limit('design_set_default', request.user):
-        return _too_many_requests('Too many actions. Please try again later.')
-
-    design = get_object_or_404(InvoiceDesign, pk=pk, user=request.user)
-    design.is_default = True
-    design.save()  # InvoiceDesign.save()'s own override unsets every other default for this user
-    logger.info('[INVOICES] Set design %s as default for user %s.', design.pk, request.user.pk)
-    return Response(InvoiceDesignSerializer(design).data)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def design_duplicate(request):
-    """
-    Instantiates one of the 3 static templates as a new, real, owned
-    InvoiceDesign row for the requesting user — the one real "pick a
-    template" action DesignGallery.jsx's "Use this template" calls.
-    """
-    if _check_moderate_rate_limit('design_duplicate', request.user):
-        return _too_many_requests('Too many actions. Please try again later.')
-
-    base_template = request.data.get('base_template')
-    if base_template not in VALID_BASE_TEMPLATES:
-        return Response(
-            {'base_template': f'Must be one of {sorted(VALID_BASE_TEMPLATES)}.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    name = request.data.get('name') or f'{base_template.title()} (copy)'
-
-    design = InvoiceDesign.objects.create(user=request.user, name=name, base_template=base_template)
-    logger.info(
-        '[INVOICES] Duplicated builtin design %s as %s for user %s.',
-        base_template, design.pk, request.user.pk,
-    )
-    return Response(InvoiceDesignSerializer(design).data, status=status.HTTP_201_CREATED)
 
 
 # ══════════════════════════════════════════════════════════════════

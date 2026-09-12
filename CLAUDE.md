@@ -1784,6 +1784,29 @@ preserved, not deleted, under `archive/free-canvas-editor-2026/` — see that fo
 2026 entry. Everything else in this "LanceraOS Template Builder" subsection above is kept as
 written — real history of what was built and why it was eventually reverted, not current state.
 
+**12 September 2026 (Post-Reversion Polish, same day).** Three follow-ups on top of the Full
+Reversion above. (1) Real, pre-generated preview images replace the abstract CSS-mockup gallery
+cards from the reversion's own Part 3 — each of the 3 static templates rendered once, with
+realistic sample data, through the real `render_invoice_pdf` pipeline, converted to a PNG
+(`apps/invoices/management/commands/generate_template_previews.py`, output at
+`frontend/public/design-previews/{template}.png`, re-run only if the templates themselves are ever
+edited — never rendered live). (2) `InvoiceDesign` itself is now gone entirely, not just reduced —
+since every row for the same `base_template` had become functionally identical (nothing left to
+differentiate one from another), clicking "Use this template" was duplicating rows with no unique
+information (confirmed: multiple "Professional (copy)" rows per user in the reversion's own Part 1
+audit). Replaced by a single `FreelancerProfile.invoice_template` preference field (default
+`'professional'`) and a plain frozen `Invoice.base_template` field, assigned at create time and
+never reassigned — the exact same frozen-at-creation shape the old FK gave, just without a row to
+point at. `Invoice.rendered_design_snapshot` was removed alongside it — its entire purpose
+(protecting a finalized invoice from a later edit to a design's free-canvas content) no longer
+applies to anything, since there is no free-canvas content left anywhere for a design to be edited
+into. (3) The whole `designs/*` API route group, `InvoiceDesignSerializer`, and the
+`design_list`/`design_create`/`design_detail`/`design_set_default`/`design_duplicate` views are
+gone — "Use this template" is now a direct `PUT /api/auth/profile/` (the same general-purpose
+partial-update endpoint every Settings section already uses), no invoices-app endpoint needed at
+all. See DATABASE.md's `freelancer_profiles`/`invoices` entries and DECISIONS.md's second 12
+September 2026 entry for the full migration/verification detail.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

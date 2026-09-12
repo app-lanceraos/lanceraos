@@ -278,8 +278,8 @@ def generate_recurring_invoices():
     its own try/except, same pattern send_invoice_reminders already
     established above).
 
-    Series settings (recurring_interval_days/recurring_auto_send/design)
-    are read LIVE from the invoice's own recurring root
+    Series settings (recurring_interval_days/recurring_auto_send/
+    base_template) are read LIVE from the invoice's own recurring root
     (Invoice.get_recurring_root()) at generation time, never copied or
     frozen onto a generated child — DECISIONS.md's own Step 16 design
     decision. In practice the triggering invoice here IS always the
@@ -348,7 +348,7 @@ def generate_recurring_invoices():
             new_invoice = _duplicate_invoice_core(
                 invoice,
                 parent_invoice=invoice,
-                design=root.design,
+                base_template=root.base_template,
                 due_date=new_due_date,
                 # Series-level settings, deliberately NOT copied onto the
                 # occurrence — always read live from the root instead.

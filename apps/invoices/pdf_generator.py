@@ -124,10 +124,9 @@ PORTAL_WRAPPER_STYLE = '''
 </style>
 '''
 
-# Interim default template: checked directly — FreelancerProfile has no
-# default-template-ish field of its own (verified against
-# apps/users/models.py) — used whenever an invoice has no InvoiceDesign
-# assigned at all.
+# Fallback template — used whenever an invoice has no base_template
+# assigned at all (matches FreelancerProfile.invoice_template's own
+# model-level default, apps/users/models.py).
 DEFAULT_TEMPLATE = 'professional'
 
 TEMPLATE_MAP = {
@@ -150,40 +149,37 @@ DEFAULT_TEMPLATE_COLORS = {
 
 
 def _select_template_name(invoice):
-    """Kept as a real, still-tested public name (test_pdf_pipeline.py calls it directly) — now a thin wrapper over the design-parametrized version every real render path actually uses."""
-    return _template_name_for_design(_effective_design(invoice))
+    """Kept as a real, still-tested public name (test_pdf_pipeline.py calls it directly) — now a thin wrapper over the base_template-parametrized version every real render path actually uses."""
+    return _template_name_for_base_template(_effective_base_template(invoice))
 
 
-def _template_name_for_design(design):
-    if design and design.base_template in TEMPLATE_MAP:
-        return TEMPLATE_MAP[design.base_template]
-    return TEMPLATE_MAP[DEFAULT_TEMPLATE]
+def _template_name_for_base_template(base_template):
+    return TEMPLATE_MAP.get(base_template, TEMPLATE_MAP[DEFAULT_TEMPLATE])
 
 
-def _effective_design(invoice):
+def _effective_base_template(invoice):
     """
-    Which design should actually drive this invoice's render — just
-    `invoice.design` (the live FK) when set, falling back to the user's
-    current default design for a still-editable draft with none yet
-    (predates any default design existing, or predates one being set as
-    default after this draft was created), so a draft's own live preview
-    never shows stale output while a user is actively experimenting.
+    Which of the 3 static templates should actually drive this invoice's
+    render — just `invoice.base_template` when set, falling back to the
+    user's CURRENT FreelancerProfile.invoice_template preference for a
+    still-editable draft with none yet (predates the preference field
+    existing, or predates it being changed after this draft was
+    created), so a draft's own live preview never shows stale output
+    while a user is actively experimenting.
 
-    A pure read-time fallback — never mutates invoice.design itself. The
-    real, permanent assignment still only ever happens via
+    A pure read-time fallback — never mutates invoice.base_template
+    itself. The real, permanent assignment still only ever happens via
     invoice_create/_finalise_invoice.
     """
-    if invoice.design_id:
-        return invoice.design
+    if invoice.base_template:
+        return invoice.base_template
     if invoice.status == 'draft':
-        from .models import InvoiceDesign
-        return InvoiceDesign.objects.filter(user=invoice.user, is_default=True).first()
+        return invoice.user.profile.invoice_template
     return None
 
 
-def _design_colors_for(design):
-    """(primary_hex, secondary_hex) for whichever design (possibly None) will actually render."""
-    base_template = design.base_template if design else DEFAULT_TEMPLATE
+def _colors_for_base_template(base_template):
+    """(primary_hex, secondary_hex) for whichever base_template (possibly None) will actually render."""
     return DEFAULT_TEMPLATE_COLORS.get(base_template, DEFAULT_TEMPLATE_COLORS[DEFAULT_TEMPLATE])
 
 
@@ -369,24 +365,17 @@ def build_pdf_context(invoice):
     pre-formatting happens here beyond what genuinely can't be a template
     variable (the QR image itself; the font file locations).
 
-    `design_primary_color`/`design_secondary_color` (20 August 2026 —
-    closes the "color_variant is completely inert" finding) are resolved
-    from `_effective_design(invoice)` — the SAME design resolution the
-    actual template-selection branch (_render_invoice_html) uses, so a
-    draft's live color preview and its live template-selection agree
-    with each other, always. Every one of the 3 static templates' own
-    brand-accent hex values (verified directly against each file's real
-    CSS) were chosen to be byte-identical to that template's own
-    'default' COLOR_VARIANTS entry — so an invoice with no explicit
-    design, or a design with color_variant='' /'default', renders these
-    two variables to the exact same hex values that were already
-    hardcoded, zero visual regression for every invoice that predates
-    this pass.
+    `design_primary_color`/`design_secondary_color` are resolved from
+    `_effective_base_template(invoice)` — the SAME resolution the actual
+    template-selection branch (_render_invoice_html) uses, so a draft's
+    live color preview and its live template-selection agree with each
+    other, always. Every one of the 3 static templates' own brand-accent
+    hex values (verified directly against each file's real CSS) matches
+    `DEFAULT_TEMPLATE_COLORS` exactly — zero visual regression.
     """
     freelancer = invoice.user.profile
-    design = _effective_design(invoice)
-    primary_color, secondary_color = _design_colors_for(design)
-    base_template = design.base_template if design else DEFAULT_TEMPLATE
+    base_template = _effective_base_template(invoice) or DEFAULT_TEMPLATE
+    primary_color, secondary_color = _colors_for_base_template(base_template)
     wordmark_fill = _WORDMARK_FILL_BY_TEMPLATE.get(base_template, _WORDMARK_FILL_BY_TEMPLATE[DEFAULT_TEMPLATE])
     return {
         'invoice': invoice,
@@ -435,16 +424,16 @@ def render_invoice_pdf(invoice):
     """
     from weasyprint import HTML
 
-    design = _effective_design(invoice)
+    base_template = _effective_base_template(invoice)
     context = build_pdf_context(invoice)
 
     context['single_page_layout'] = False
-    html_string = render_html_for_design(design, context, for_pdf=True)
+    html_string = render_html_for_base_template(base_template, context, for_pdf=True)
     document = HTML(string=html_string).render()
 
     if len(document.pages) == 1:
         context['single_page_layout'] = True
-        html_string = render_html_for_design(design, context, for_pdf=True)
+        html_string = render_html_for_base_template(base_template, context, for_pdf=True)
         document = HTML(string=html_string).render()
 
     return document.write_pdf()
@@ -453,18 +442,18 @@ def render_invoice_pdf(invoice):
 def _render_invoice_html(invoice, context, *, for_pdf=False):
     """
     Shared by render_invoice_pdf and render_invoice_portal_html so neither
-    grows its own copy of design resolution. Routes through
-    _effective_design(invoice) (not invoice.design directly) so a still-
-    editable draft's live preview picks up the user's current default
-    design even before that assignment is ever persisted — see that
-    function's own docstring.
+    grows its own copy of template resolution. Routes through
+    _effective_base_template(invoice) (not invoice.base_template
+    directly) so a still-editable draft's live preview picks up the
+    user's current preference even before that assignment is ever
+    persisted — see that function's own docstring.
     """
-    return render_html_for_design(_effective_design(invoice), context, for_pdf=for_pdf)
+    return render_html_for_base_template(_effective_base_template(invoice), context, for_pdf=for_pdf)
 
 
-def render_html_for_design(design, context, *, for_pdf=False):
-    """One of the 3 static templates — the only design type left."""
-    return render_to_string(_template_name_for_design(design), context)
+def render_html_for_base_template(base_template, context, *, for_pdf=False):
+    """One of the 3 static templates — the only render path left."""
+    return render_to_string(_template_name_for_base_template(base_template), context)
 
 
 def build_portal_context(invoice):

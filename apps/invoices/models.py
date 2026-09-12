@@ -90,9 +90,10 @@ class Invoice(models.Model):
        `(user, invoice_number)` (implicit via unique_together — see the
        real bug note below).
     5. Encrypted? No.
-    6. Cascade behavior? CASCADE from User; SET_NULL from Client, from
-       InvoiceDesign, and from ExchangeRateSnapshot; self-referential
-       `parent_invoice` is SET_NULL.
+    6. Cascade behavior? CASCADE from User; SET_NULL from Client and from
+       ExchangeRateSnapshot; self-referential `parent_invoice` is
+       SET_NULL. `base_template` (Post-Reversion Polish) is a plain
+       field, not a FK — nothing to cascade.
 
     **A real bug found while writing this step's own tests, not carried
     forward from v1 on faith**: v1's `invoice_number` was a bare
@@ -162,9 +163,16 @@ class Invoice(models.Model):
         default=False,
         help_text='Set only by the real /send/ action (not the manual mark-sent flip). Gates reminders only.',
     )
-    design = models.ForeignKey(
-        'InvoiceDesign', null=True, blank=True, on_delete=models.SET_NULL, related_name='invoices',
-        help_text='Which saved visual design rendered this invoice\'s PDF.',
+    # Post-Reversion Polish (12 September 2026) — replaces the old
+    # InvoiceDesign FK. Assigned at create time from the user's current
+    # FreelancerProfile.invoice_template preference (mirroring exactly
+    # what the FK assignment used to do), never reassigned afterward —
+    # the same frozen-at-creation guarantee the FK gave, just without a
+    # row to point at. Null only for an invoice created before this
+    # field existed and not yet backfilled by _finalise_invoice.
+    base_template = models.CharField(
+        max_length=20, choices=[('professional', 'Professional'), ('minimal', 'Minimal'), ('modern', 'Modern')],
+        null=True, blank=True, help_text='Which of the 3 static templates renders this invoice\'s PDF.',
     )
 
     # Public URL token — cryptographically random, unguessable. Also a
@@ -219,24 +227,6 @@ class Invoice(models.Model):
     # accumulating orphaned ones. See DECISIONS.md's Cloudinary access-mode
     # entry for why a re-upload is sometimes needed at all.
     pdf_public_id = models.CharField(max_length=200, blank=True)
-
-    # Template Builder 2.0, Phase 0 (scaffolding only — see
-    # LANCERAOS_TEMPLATE_BUILDER_2_ARCHITECTURE_PLAN.md Section 15 and
-    # LANCERAOS_TEMPLATE_BUILDER_2_PHASE0.md). Nullable, and NOT populated
-    # by any code path yet — this field exists so a later phase can start
-    # writing a fully-resolved design_data snapshot at the exact moment
-    # _finalise_invoice already freezes the PDF, without a further schema
-    # migration when that phase lands. The eventual point of this field:
-    # once populated, a finalized invoice's render reads THIS snapshot
-    # rather than the live, mutable InvoiceDesign row, so deleting or
-    # editing that design afterward has zero effect on this invoice —
-    # extending this exact model's own existing frozen-pdf_url guarantee
-    # one step earlier in the pipeline, rather than relying on
-    # `design`'s on_delete behavior (SET_NULL, see below) to protect
-    # historical rendering, which it does not (a real, confirmed gap —
-    # see the Template Builder audit's TB-007 finding). Reading this
-    # field is not wired into any render path in this phase either.
-    rendered_design_snapshot = models.JSONField(null=True, blank=True, default=None)
 
     # ── Dates ──────────────────────────────────────────────────────
     # default=_today (not timezone.now, which v1 used verbatim on a
@@ -1022,63 +1012,15 @@ class PaymentClaim(models.Model):
 
 
 # ══════════════════════════════════════════════════════════════════
-# INVOICE DESIGN — new, no v1 equivalent (v1's pdf_generator.py is
-# reportlab-based, not a data model)
-# ══════════════════════════════════════════════════════════════════
-
-class InvoiceDesign(models.Model):
-    """
-    The visual PDF/portal template system (decisions doc Section 9/10).
-    Genuinely new — v1's PDF generation was code (reportlab), not
-    user-editable data.
-
-    6-question framework:
-    1. Mutable? Yes — edited via the design editor (a later step).
-    2. Soft deleted? No — hard delete; Invoice.design is SET_NULL, so a
-       deleted design never breaks an invoice that already rendered
-       against it (the frozen pdf_url survives regardless).
-    3. Audit trail? No dedicated events — a design edit isn't a
-       security/finance-relevant action the way an invoice status
-       transition is.
-    4. Indexed? None beyond the implicit FK index yet.
-    5. Encrypted? No.
-    6. Cascade behavior? CASCADE from User.
-
-    `is_default` enforcement (one per user) ported structurally from
-    v1's InvoiceTemplate.save() (lines 708-714) — same pattern, applied
-    to a new model.
-    """
-    BASE_TEMPLATE_CHOICES = [
-        ('professional', 'Professional'), ('minimal', 'Minimal'), ('modern', 'Modern'),
-    ]
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='invoice_designs')
-    name = models.CharField(max_length=100)
-    base_template = models.CharField(
-        max_length=20, choices=BASE_TEMPLATE_CHOICES,
-        help_text='Which of the 3 static templates this design renders as.',
-    )
-    is_default = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'invoice_designs'
-        ordering = ['-is_default', 'name']
-
-    def __str__(self):
-        return f'{self.name} ({self.user})'
-
-    def save(self, *args, **kwargs):
-        if self.is_default:
-            InvoiceDesign.objects.filter(user=self.user, is_default=True).exclude(pk=self.pk).update(is_default=False)
-        super().save(*args, **kwargs)
-
-
-# ══════════════════════════════════════════════════════════════════
 # INVOICE PRESET — renamed from v1's InvoiceTemplate, per the spec's
-# explicit naming decision (avoids colliding with InvoiceDesign)
+# explicit naming decision (avoids colliding with the old InvoiceDesign,
+# itself removed in the Post-Reversion Polish, 12 September 2026 — see
+# DECISIONS.md. A saved InvoiceDesign row carried nothing but a name and
+# which of the 3 static templates it was, so a whole table of user-owned
+# rows was replaced by one plain FreelancerProfile.invoice_template
+# preference field and Invoice.base_template's own frozen-at-creation
+# copy of it — see apps/users/models.py and this file's own
+# Invoice.base_template field.)
 # ══════════════════════════════════════════════════════════════════
 
 class InvoicePreset(models.Model):

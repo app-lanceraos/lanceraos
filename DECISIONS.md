@@ -8757,3 +8757,97 @@ reuse — rejected (explicit user decision) as inconsistent with "no customizati
 porting `resolve_design_colors`'s full per-template color-variant logic into `pdf_generator.py`
 rather than dropping it — rejected for the same reason, once the trade-off was surfaced rather
 than assumed.
+
+---
+
+**12 September 2026 (second entry, same day) — Post-Reversion Polish: real preview thumbnails,
+single frozen template preference, InvoiceDesign removed entirely.**
+
+Decision: three follow-ups to the Full Reversion above, same day.
+
+**(1) Real preview thumbnails.** The reversion's own Part 3 replaced the gallery's live iframe
+preview with an honest-but-abstract CSS mockup (a colored header bar in each template's accent
+color). Replaced with real, pre-generated PNG images — each of the 3 templates rendered once with
+realistic, fully-populated sample data through the actual production path
+(`render_invoice_pdf`/`pdf_generator.py`, real WeasyPrint, not an approximation), first page
+converted to PNG via PyMuPDF (already a real project dependency, used throughout the test suite to
+inspect real rendered output — chosen over a browser-based HTML-to-image capture as one fewer
+moving part with guaranteed pixel-for-pixel fidelity to the real PDF). A new management command,
+`apps.invoices.generate_template_previews` (checked first for an existing similar command — none
+existed), creates a real throwaway user+invoice per template, renders, deletes both, writes to
+`frontend/public/design-previews/{template}.png`. One-time, pre-generated — nothing renders these
+live on a gallery page load, since there's no per-user variation left to justify that. The sample
+data shape (a fictional "Callahan & Reyes LLP" client, 3 line items) is ported directly from the
+archived `design_preview.py`'s own `SAMPLE_ITEMS`/`_build_sample_invoice` convention rather than
+reinvented, with the freelancer identity changed to a clean, presentable placeholder
+(`hello@horizonstudio.example`) instead of that file's real-user-profile approach, since these
+images are shared across every viewer, not rendered per-user.
+
+**(2) `InvoiceDesign` removed entirely, not just simplified.** Investigated directly rather than
+assumed: once a design carried nothing but `name`/`base_template`/`is_default` (this same day's
+first entry), every row for the same `base_template` became functionally identical — clicking "Use
+this template" was duplicating rows with no unique information (confirmed: multiple "Professional
+(copy)" rows per user in the reversion's own Part 1 audit). Replaced with a single
+`FreelancerProfile.invoice_template` preference field (default `'professional'`, a local choices
+tuple — `apps.invoices` already depends on `apps.users`, never the reverse) and a plain
+`Invoice.base_template` field, assigned at CREATE time from that preference and never reassigned —
+the identical frozen-at-creation shape the old FK gave (`invoice_create` read
+`InvoiceDesign.objects.filter(is_default=True)` once at creation; now it reads
+`request.user.profile.invoice_template` once, same moment, same effect), verified consistent with
+`pdf_generator._effective_base_template` (the direct rename of `_effective_design`, same
+live-fallback-for-drafts logic, just resolving a plain string instead of a FK'd row) rather than
+building a second parallel mechanism. `Invoice.rendered_design_snapshot` was removed in the same
+migration — its entire purpose (protecting a finalized invoice from a later edit to a design's
+free-canvas content) no longer applies to anything real, since there is no free-canvas content left
+anywhere for a design to be edited into; confirmed zero real reads or writes anywhere before
+removal, not assumed.
+
+Migration, in 3 real steps across 2 apps (not one combined auto-generated migration, deliberately
+split so real data could be copied across before anything was removed): `apps.users.
+0011_add_invoice_template_preference` (schema: adds the field; data: seeds each user's
+`invoice_template` from their real `is_default=True` InvoiceDesign row, if any — 1 real user in the
+dev database had one) depends on `apps.invoices.0013` (the end of the first Full Reversion entry,
+confirming InvoiceDesign still exists in its normalized shape); `apps.invoices.
+0014_invoice_base_template` (schema: adds the new field, `design` FK and `InvoiceDesign` still
+live); `apps.invoices.0015_copy_design_base_template_to_invoice` (data: copies each real invoice's
+`design.base_template` across — 0 real invoices in the dev database had a `design_id` set, matching
+every prior audit in this project); `apps.invoices.0016_remove_invoice_design_model` (the actual
+removal — `RemoveField design`, `RemoveField rendered_design_snapshot`, `DeleteModel
+InvoiceDesign`), which depends explicitly on `apps.users.0011` having already run (so
+`InvoiceDesign` is still queryable when that migration reads it) via a real cross-app migration
+dependency, not an assumption about run order. `makemigrations --check --dry-run` confirmed zero
+drift between the hand-split migrations and the final model state before applying. Reversible via
+`migrate` for the schema (Django replays state), genuinely tested (not just claimed) by rolling
+back to `apps.invoices.0015` and forward again — but, as with the first Full Reversion entry, this
+is schema-only: the actual per-user default/per-invoice `InvoiceDesign` content is gone for good,
+recoverable only from `backups/lanceraos_pre_reversion_20260912_120404.dump`.
+
+**(3) Dead-code sweep following the model change.** The entire `designs/*` API route group
+(`design_list`/`design_create`/`design_detail`/`design_set_default`/`design_duplicate`),
+`InvoiceDesignSerializer`, and `InvoiceDesignAdmin` are gone — "Use this template" is now a direct
+`PUT /api/auth/profile/` (the exact same general-purpose partial-update endpoint every Settings
+section already uses; `FreelancerProfileSerializer` uses `Meta.exclude` with an allowlisted
+`read_only_fields`, so the new field became writable automatically, no serializer change needed at
+all). `DesignGallery.jsx` rebuilt around this — one `GET`/`PUT` to `/auth/profile/`, no
+`InvoiceDesign`-row bookkeeping. `_duplicate_invoice_core` and `generate_recurring_invoices` (the
+recurring-series "read the root's own settings live" mechanism, `tasks.py`) both updated to copy/
+read `base_template` directly. A real bug caught by a `pyflakes` sweep during this same pass (not
+by any test): the first Full Reversion entry's own edit to `InvoiceDesign.save()` had accidentally
+left that class's later-removed `InvoiceDesignVersion` sibling's dead body fragments — a stray
+`indexes`/`unique_together` local assignment and a duplicate `__str__` — stranded inside `save()`;
+fixed as part of this same-day pass, not left for a future discovery. 5 backend test files needed
+real updates, not just import fixes: `test_new_models.py` (`InvoiceDesignTests` removed outright —
+no equivalent model left to test), `test_recurring.py` (`RecurringDesignLockTests` rewritten for
+`base_template`), `test_pdf_pipeline.py` (4 separate `InvoiceDesign`-row-creation spots rewritten to
+set `base_template` directly), and `test_design_assignment.py` (fully rewritten — every class
+covers the same real guarantee it did before, just against the new mechanism). Full backend suite:
+919 passing (full project, `manage.py test --keepdb`); frontend: 212 passing
+(`npm test`) — `DesignGallery.test.jsx` fully rewritten for the new single-preference behavior;
+`npm run build` clean.
+
+Alternatives considered: keeping `InvoiceDesign` as a genuine one-row-per-template-choice model
+(so a user could still theoretically save multiple "designs" per template with different names) —
+rejected, since nothing in this reversion's own "no customization of any kind" scope gives a name
+any meaning once every row for a template is identical; storing the frozen choice as a new FK to a
+lighter-weight row instead of a plain string — rejected as needless indirection once there's no
+row-specific data left to point at.

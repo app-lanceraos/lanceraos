@@ -419,6 +419,24 @@ class FreelancerProfile(models.Model):
 
     default_send_method = models.CharField(max_length=10, choices=SEND_METHOD_CHOICES, default='email')
 
+    # ── Invoice template preference (Post-Reversion Polish, 12 September
+    # 2026) ──────────────────────────────────────────────────────────
+    # Replaces the old per-user InvoiceDesign row-per-template model —
+    # since a design row now carries nothing but which of the 3 static
+    # templates it is, there's no remaining reason for a whole table of
+    # user-owned rows instead of one plain preference field here. A local
+    # choices tuple (not imported from apps.invoices) — apps.invoices
+    # already depends on apps.users, never the reverse; see
+    # apps/invoices/models.py's Invoice.base_template for the sibling
+    # copy of these same 3 choices.
+    INVOICE_TEMPLATE_CHOICES = [
+        ('professional', 'Professional'), ('minimal', 'Minimal'), ('modern', 'Modern'),
+    ]
+    invoice_template = models.CharField(
+        max_length=20, choices=INVOICE_TEMPLATE_CHOICES, default='professional',
+        help_text='Which of the 3 static invoice templates a new invoice uses by default.',
+    )
+
     # ── Formal Notice (apps.invoices Step 17) ───────────────────────
     # Per the decisions doc's "every email type must be mutable" rule —
     # a real, user-facing kill switch for the Formal Notice feature,

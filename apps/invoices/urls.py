@@ -35,15 +35,12 @@ urlpatterns = [
 
     path('signature/', views.signature_upload, name='signature_upload'),
 
-    # Full Reversion Plan — back to 3 static templates only. Every route
-    # that served the free-canvas editor, its version history, its live
-    # HTML-render previews, and AI design seeding is gone (see
-    # DECISIONS.md's removal entry). What's left is the original, simple
-    # shape: list/create/rename/delete a design row, set one default.
-    path('designs/', views.design_list, name='design_list'),
-    path('designs/duplicate/', views.design_duplicate, name='design_duplicate'),
-    path('designs/<uuid:pk>/', views.design_detail, name='design_detail'),
-    path('designs/<uuid:pk>/set-default/', views.design_set_default, name='design_set_default'),
+    # Post-Reversion Polish (12 September 2026) — the whole designs/
+    # route group is gone. A saved InvoiceDesign row carried nothing but
+    # a name and which of the 3 static templates it was; "which template"
+    # is now FreelancerProfile.invoice_template, read/written through the
+    # existing GET/PUT /api/auth/profile/ (apps.users) — no invoices-app
+    # endpoint needed at all. See DECISIONS.md.
 
     path('<uuid:pk>/', views.invoice_detail, name='invoice_detail'),
     path('<uuid:pk>/pdf/', views.invoice_pdf, name='invoice_pdf'),

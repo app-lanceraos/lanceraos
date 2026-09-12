@@ -2,7 +2,7 @@
 from django.contrib import admin
 
 from .models import (
-    Invoice, InvoiceComment, InvoiceDesign, InvoiceItem, InvoicePartialPayment,
+    Invoice, InvoiceComment, InvoiceItem, InvoicePartialPayment,
     InvoicePreset, InvoicePresetItem, InvoiceReminder, InvoiceViewEvent, PaymentClaim,
 )
 
@@ -14,8 +14,8 @@ class InvoiceItemInline(admin.TabularInline):
 
 @admin.register(Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
-    list_display = ['invoice_number', 'client_name', 'user', 'status', 'currency', 'total', 'amount_paid', 'due_date', 'created_at']
-    list_filter = ['status', 'currency', 'is_recurring', 'reminders_enabled']
+    list_display = ['invoice_number', 'client_name', 'user', 'status', 'base_template', 'currency', 'total', 'amount_paid', 'due_date', 'created_at']
+    list_filter = ['status', 'base_template', 'currency', 'is_recurring', 'reminders_enabled']
     search_fields = ['invoice_number', 'client_name', 'client_email', 'user__email']
     readonly_fields = ['view_token', 'created_at', 'updated_at']
     inlines = [InvoiceItemInline]
@@ -59,14 +59,6 @@ class PaymentClaimAdmin(admin.ModelAdmin):
     list_filter = ['status', 'payment_source']
     search_fields = ['invoice__invoice_number', 'client_email']
     readonly_fields = ['submitted_at']
-
-
-@admin.register(InvoiceDesign)
-class InvoiceDesignAdmin(admin.ModelAdmin):
-    list_display = ['name', 'user', 'base_template', 'is_default', 'updated_at']
-    list_filter = ['base_template', 'is_default']
-    search_fields = ['name', 'user__email']
-    readonly_fields = ['created_at', 'updated_at']
 
 
 class InvoicePresetItemInline(admin.TabularInline):
