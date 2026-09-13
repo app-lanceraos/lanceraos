@@ -8851,3 +8851,179 @@ rejected, since nothing in this reversion's own "no customization of any kind" s
 any meaning once every row for a template is identical; storing the frozen choice as a new FK to a
 lighter-weight row instead of a plain string — rejected as needless indirection once there's no
 row-specific data left to point at.
+
+---
+
+**13 September 2026 — Template Gallery Foundation: manifest, branding toggle, footer rule, first
+shared partial.**
+
+Pass 1 of N on the 20-new-template import. Nothing here adds a new template — the point was to
+prove the manifest, the branding gate, the footer rule, and the shared-partial mechanism against
+the 3 templates that already exist, so importing 19 more is a repetition of something already
+known to work rather than a discovery exercise. Every claim below was verified against a file
+actually opened this pass or a real render this pass produced — not carried forward from this
+document's own prior entries.
+
+**Part 0 — WeasyPrint capability spike, run before any production code.** All 4 sub-questions
+came back POSITIVE, none required a fallback design:
+
+- **0a (two-line margin-box content):** `content: "Name\A email"` + `white-space: pre-wrap` inside
+  a real `@page @bottom-left` box renders two genuinely separate lines — confirmed via an isolated
+  WeasyPrint render read back with PyMuPDF (`Horizon Studio` at y0=789.3, `hello@...` at y0=799.7,
+  a real ~10.4pt line gap consistent with the chosen line-height). No fallback mechanism was
+  needed.
+- **0b/0d (page count with the footer margin dropped):** swept every one of `professional`/
+  `minimal`/`modern` at n=3 (safely 1 page) through n=8–13 (the exact 1↔2-page boundary for this
+  fixture) through n=40 (the existing regression fixture's own multi-page case) — zero page-count
+  mismatches between `@page` bottom margin = 16mm and = 0, in every one of 24 real renders.
+  Dropping margin only adds available content space; it cannot itself force a page break, and this
+  was verified rather than assumed given this exact codebase's own prior history of margin/
+  min-height mismatches producing a spurious empty page.
+- **0c (arithmetic dependencies on the 16mm margin):** grepped and found 3 real spots, not the 2
+  named in the plan — `professional.html`'s `.page { min-height: 281mm }` (297−16, as expected),
+  `modern.html`'s `.sidebar { bottom: -16mm }` (as expected), AND `minimal.html`'s
+  `body.body-single { min-height: 261mm }` (297−20−16 — `minimal.html`'s own top margin is 20mm,
+  not 0, so this is a 3-term dependency, not a 2-term one). All 3 are now real Django-template
+  conditionals gated on the exact same expression (`single_page_layout and not wordmark_data_uri`
+  — true only in the one no-footer cell), each recomputed to the correct value with the margin
+  removed (297mm / 0 / 277mm respectively) rather than left static.
+
+**Part 1 — the manifest.** `apps/invoices/template_manifest.py` (`TEMPLATES`, `get_template`,
+`selectable_templates`, `template_keys`) is now the one authoritative list, replacing what was 3
+independently-maintained copies. `tier` is real data (all 3 are `'free'` today) but enforces
+nothing — `_is_premium_branding_enabled` remains the one hook pattern; tier-gating a template
+itself is a Module 8 problem for later, not solved speculatively here. `FreelancerProfile.
+INVOICE_TEMPLATE_CHOICES` stays a local mirror tuple (apps.invoices depends on apps.users, never
+the reverse — confirmed directly against both files' own pre-existing comments before touching
+either), guarded by a new `test_manifest_drift.py`: 4 tests asserting the mirror's keys/labels
+match the manifest exactly, that `Invoice.base_template`'s own choices (a DIRECT import — same
+app, no dependency-direction concern) are generated from the manifest, and that the manifest has
+no duplicate keys. `GET /api/invoices/templates/` is a new, plain, function-based, read-only,
+`IsAuthenticated` endpoint returning `selectable_templates()` — deliberately reopening a
+`templates/` route group distinct from the removed per-user `designs/` group (a comment in
+`urls.py` says so explicitly, so the distinction survives the next person reading that file cold).
+Minimal stays fully selectable in this pass, unchanged — Ali's plan eventually retires it via
+`selectable: False`, but that's the import pass's decision to make, not this one's; the mechanism
+exists now, unused. Real dev-database check before touching anything: **all 113 real invoices have
+`base_template=NULL`** (every one predates `invoice_create`'s own assignment logic and none has
+been finalised since) and **all 28 real `FreelancerProfile` rows are still on the `professional`
+default** — recorded in DATABASE.md's own `invoices`/`base_template` entry rather than left as a
+private observation, since it means this column doesn't yet reflect any real usage pattern.
+
+**Part 2 — rename to Template Gallery.** `DesignGallery.jsx`/`.test.jsx` → `TemplateGallery.jsx`/
+`.test.jsx` (via `git mv` for the tracked component file; the test file turned out to be untracked
+by git entirely — see this document's own "backend + frontend test suites untracked from git"
+entry — so a plain filesystem `mv` was used for it instead, no history to preserve). Route
+`/invoices/designs` → `/invoices/templates`, with a real `<Navigate replace>` redirect kept at the
+old path rather than deleted, so a stale bookmark or an unnoticed link doesn't 404. Both real
+in-app links found by grep (`Invoices.jsx`'s desktop "More" dropdown and its mobile header items —
+there were exactly 2, not assumed) were updated to the new path and relabeled "Template Gallery"
+(was "Manage Designs"). `AppShell.jsx`'s `PAGE_TITLES` gained a `/invoices/templates` entry (there
+was none for the old path — a real, if minor, gap). The template list itself is no longer a
+hardcoded frontend array; it's fetched from the new manifest endpoint. **Correction during this
+pass, not by this pass's own author:** the `<title>` this document's own plan specified
+(`"Template Gallery — LanceraOS"`) was written, then corrected on disk (observed as a live edit
+mid-session) to `"LanceraOS | Template Gallery"` — a grep across the other ~10 pages using
+`useTitle` shows `'LanceraOS | X'` is the actual dominant convention (`Clients.jsx`, `Invoices.jsx`,
+`Login.jsx`, `AddPassword.jsx`, etc.), with only 2 outliers (`InvoiceAnalytics.jsx`,
+`InvoiceView.jsx`) using the `'X — LanceraOS'` shape this pass's own plan had copied from. The
+plan's instruction was wrong relative to the codebase's real convention; the live correction is
+the one that should stand, and no code review should "fix" it back.
+
+**Part 3 — the branding toggle.** `FreelancerProfile.show_lanceraos_branding` (`BooleanField`,
+default `True`), modeled directly on `formal_notice_enabled`'s own file region/comment style —
+migration `apps/users/migrations/0012_freelancerprofile_show_lanceraos_branding.py`, additive,
+no data migration needed (a new nullable-by-default-value boolean). `pdf_generator.
+_is_premium_branding_enabled` is now the field's ONLY reader anywhere — confirmed by grep that
+exactly one call site existed before this pass (`build_pdf_context`) and still does; no template or
+other function reads `wordmark_data_uri`'s own generation logic or the new field directly. Its body
+is now `return freelancer.show_lanceraos_branding` (tier-gating stays commented-out future work, as
+instructed — Module 8 doesn't exist). `FreelancerProfileSerializer` uses `Meta.exclude` with an
+allowlisted `read_only_fields`; verified directly (not assumed) that the new field appears in
+neither list, so it became writable through the existing `GET`/`PUT /api/auth/profile/` with zero
+serializer change — the exact mechanism `invoice_template` already relies on. UI lives only on the
+Template Gallery page (a labeled toggle button, `role="switch"`, reading/writing the same
+`/auth/profile/` endpoint, no optimistic flip — the displayed state only ever changes after the
+server confirms it, and a failed PUT surfaces a real inline error rather than silently reverting
+anything, since nothing was changed in the UI until the request actually succeeded). Not mirrored
+into Settings > Business, per Ali's explicit one-home decision.
+
+`statement.html`'s own `@bottom-right` — `"Page X of Y · Generated via LanceraOS"` — is a SECOND,
+independent, hardcoded LanceraOS branding string that predates the wordmark work entirely and does
+not go through `_is_premium_branding_enabled` at all (confirmed by grep: zero references to that
+function or to `show_lanceraos_branding` anywhere in `views_statement.py` or `statement.html`). A
+client statement is client-facing, so the same toggle arguably should govern it too — **left
+untouched this pass, flagged here as a real, deliberate scope decision for Ali to make**, not
+silently worked around. A full grep for any other hardcoded "LanceraOS"/wordmark-shaped string
+across every rendered template turned up exactly these two locations (the wordmark SVG itself,
+now gated; `statement.html`'s text, not gated) and nothing else.
+
+**Part 4 — the footer rule, as the first shared partial.** The rule (single-page/multi-page ×
+branding on/off, 4 cells — see this pass's own `apps/invoices/tests/test_footer_rule.py` for the
+exhaustive matrix) is implemented as `apps/invoices/templates/invoices/_partials/footer.html`,
+included by all 3 static templates inside their own `@page` block via `{% include ... with
+footer_text_color="#..." %}` — each template keeps its own existing muted footer-text hex
+(`#a09a89`/`#a3a099`/`#a8a5b8`), never collapsed to one shared color. `modern.html` additionally
+appends 3 same-selector `@bottom-left`/`@bottom-center`/`@bottom-right` rules directly after the
+include, each guarded by the identical conditions the partial itself uses, to add the
+margin/width properties that template alone needs (clearing its full-bleed sidebar) — CSS cascade
+lets a later rule for the same at-rule add/override only the properties it names, verified
+directly rather than assumed, and guarded rather than left unconditional so an empty box is never
+declared with leftover positioning in the one no-footer cell. The one deliberate content
+resolution: the "two lines are taller than one line, but the footer should read lighter" tension is
+resolved by REDUCING SIZE (7pt → 6.5pt, tighter line-height) while KEEPING both business name and
+email, rather than dropping the name — a stray continuation page still needs to say whose invoice
+it is without relying on page 1's own header being nearby, which a bare email address does less
+immediately. Real rendered before/after: the old single 7pt line
+`"Horizon Studio · freelancer@example.com"` becomes two 6.5pt lines, `Horizon Studio` then
+`hello@horizonstudio.example`, each independently positioned (confirmed via the Part 0a spike and
+re-confirmed against the production templates via `test_footer_rule.py`'s own two-line assertion).
+
+`_partials/README.md` states the convention: partials own structure, templates own skin, and the
+library grows during the 20-template import pass, which will build it from the incoming templates'
+own already-shared primitives (`brandLockup`/`docBlock`/etc.) rather than force-extracting one from
+3 independently-written templates now. Only the footer was extracted this pass, since it was (a)
+genuinely byte-identical content across all 3 aside from color, and (b) being rewritten regardless.
+
+**A confirmed, unrelated dead-file finding, reported rather than silently fixed:** this pass's own
+Step 1 file inventory (mandated by the task before any code changes) found `apps/invoices/
+templates/invoices/canonical/` (5 files) and `_dynamic_element_content.html`/
+`_dynamic_element_styles.html`/`dynamic_design.html` still present on disk in `apps/invoices/
+templates/invoices/` — genuine residue from the removed free-canvas system that the 12 September
+2026 Full Reversion's own file sweep missed. Confirmed by grep across every `.py` file in
+`apps/invoices/` and every test: zero references to any of these 5 files from any real code path.
+Every actual `design_*.py`/`views_design_editor.py` Python module and the `design-editor-v2`
+frontend directory the Full Reversion described moving to `archive/free-canvas-editor-2026/` are
+genuinely gone from the live tree (confirmed directly) — only these 5 template files were left
+behind. **Not deleted by this pass** (the sandbox this session ran in refuses destructive
+filesystem operations without a human in the loop) — flagged here for Ali to remove directly; they
+are provably dead weight, not a needed fallback for anything.
+
+**Verification.** Full `apps.invoices` + `apps.users` backend suite: 792 passing (`manage.py test
+apps.invoices apps.users --keepdb`), including the pre-existing, UNMODIFIED
+`test_multi_page_invoice_renders_through_safe_path_with_all_items_intact` (the single most
+important pre-existing guarantee this pass could have broken) and the pre-existing
+`FooterAndSignaturePinningTests` class, both still green with zero edits. 17 new backend tests
+(`test_manifest_drift.py`, `test_footer_rule.py`) cover the manifest/choices drift guard, the
+endpoint, all 4 footer-rule cells × 3 templates (a real vector-drawing-op detection for the
+wordmark specifically, via `page.get_drawings()` confined to the bottom-right footer band — a real,
+confirmed trap found during this pass's own verification: `page.get_images()` reports 0 for the
+wordmark regardless of branding state, since WeasyPrint renders inline SVG `content: url(...)` as
+PDF vector path operators, not a raster XObject; checking the wrong PyMuPDF API would have silently
+passed a test that proves nothing), the page-count-parity sweep, and the branding-gate tests.
+Frontend: 10 tests in the rewritten `TemplateGallery.test.jsx` (manifest fetch, template
+switching, and the branding toggle including its failure path), all passing — one test needed a
+`{ selector: 'div' }` scope to avoid the exact "getByText matches a button label AND a card
+heading" ambiguity STANDARDS.md's own Frontend Conventions section already names as a real bug
+found twice before; the fix here is the same established pattern, not a new discovery.
+`npx vite build` clean.
+
+Alternatives considered: computing `show_footer`/margin values as a single Python-side context
+variable rather than a repeated Django-template `{% if %}` expression — rejected as unnecessary
+indirection for a boolean expression that only needs to exist inside templates that already
+receive `single_page_layout` as a late-bound render-time variable (set after `build_pdf_context`
+returns, inside `render_invoice_pdf`'s own 2-pass loop), so a Python-side precomputation would
+need its own second pass anyway; stripping the footer's margin-box CSS blocks via regex text
+surgery in the actual production templates (as an early, since-discarded draft of the Part 0 spike
+script did, for expedience) — rejected once it produced malformed CSS and WeasyPrint parser
+warnings; the real templates use proper Django `{% if %}` conditionals instead, verified clean.

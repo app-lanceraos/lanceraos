@@ -45,6 +45,7 @@ from apps.payments.models import ExchangeRateSnapshot
 from apps.users.models import FreelancerProfile, User
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
 
+from . import template_manifest
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
 from .email_service import (
     build_formal_notice_email, build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email,
@@ -2000,6 +2001,20 @@ def invoice_currencies(request):
         Invoice.objects.filter(user=request.user).order_by('currency').values_list('currency', flat=True).distinct()
     )
     return Response({'currencies': currencies})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def template_catalog(request):
+    """
+    Template Gallery Foundation (13 September 2026) — the static, read-only
+    catalog of selectable invoice templates, sourced from
+    apps.invoices.template_manifest.TEMPLATES (the one authoritative list —
+    see that module's own docstring). No per-user state here at all: this
+    is genuinely just "what templates exist", not a return of the removed
+    per-user InvoiceDesign row model that used to live at designs/.
+    """
+    return Response({'templates': template_manifest.selectable_templates()})
 
 
 @api_view(['GET'])

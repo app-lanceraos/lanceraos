@@ -343,16 +343,20 @@ _WORDMARK_FILL_BY_TEMPLATE = {
 
 def _is_premium_branding_enabled(freelancer):
     """
-    The one, single real hook point for a future "show the LanceraOS
-    wordmark only on paid plans" gate — Module 8 (Subscriptions) doesn't
-    exist yet (see CLAUDE.md's own module build-status table), so this
-    always returns True today. Once a real subscription/tier field exists,
-    flip ONLY this function's own return statement (e.g.
-    `return freelancer.user.subscription.tier != 'free'`) — every real
-    call site (build_pdf_context below) already reads through this one
-    function, so nothing else needs to change.
+    The one, single real reader of FreelancerProfile.show_lanceraos_branding
+    (Template Gallery Foundation, 13 September 2026) — no template or
+    render path may read that field directly anywhere. Real logic:
+
+        user preference AND tier-allows
+
+    `tier-allows` is hardcoded True today since Module 8 (Subscriptions)
+    doesn't exist yet (see CLAUDE.md's own module build-status table).
+    Once a real subscription/tier field exists, flip ONLY the second half
+    of this expression (e.g. `and freelancer.user.subscription.tier !=
+    'free'`) — every real call site (build_pdf_context below) already
+    reads through this one function, so nothing else needs to change.
     """
-    return True
+    return freelancer.show_lanceraos_branding
 
 
 def build_pdf_context(invoice):

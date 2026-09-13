@@ -429,6 +429,16 @@ class FreelancerProfile(models.Model):
     # already depends on apps.users, never the reverse; see
     # apps/invoices/models.py's Invoice.base_template for the sibling
     # copy of these same 3 choices.
+    #
+    # Template Gallery Foundation (13 September 2026) — the real,
+    # authoritative source for these 3 entries is now
+    # apps.invoices.template_manifest.TEMPLATES. This tuple is a
+    # deliberate, accepted MIRROR of it, not an independent list — kept
+    # local only because the dependency direction (apps.invoices depends
+    # on apps.users, never the reverse) rules out importing it directly.
+    # apps/invoices/tests/test_manifest_drift.py asserts the two key
+    # lists stay identical; if you add/remove/rename a template in the
+    # manifest, update this tuple in the same change or that test fails.
     INVOICE_TEMPLATE_CHOICES = [
         ('professional', 'Professional'), ('minimal', 'Minimal'), ('modern', 'Modern'),
     ]
@@ -445,6 +455,22 @@ class FreelancerProfile(models.Model):
     # client-side). Defaults True — an opt-out toggle for a real,
     # deliberately manual-only feature, not an opt-in one.
     formal_notice_enabled = models.BooleanField(default=True)
+
+    # ── LanceraOS branding toggle (Template Gallery Foundation, 13
+    # September 2026) ────────────────────────────────────────────────
+    # Modeled directly on formal_notice_enabled above — same file region,
+    # same comment style, an opt-out toggle defaulting to on. Controls
+    # whether the LanceraOS wordmark appears in the invoice PDF/portal
+    # footer (see apps/invoices/pdf_generator.py's
+    # _is_premium_branding_enabled, the ONLY reader of this field —
+    # nothing else may read it directly. That function's real logic is
+    # `user preference AND tier-allows`, with tier-allows hardcoded True
+    # today since Module 8/Subscriptions doesn't exist yet; when tier
+    # gating lands, only that one function's body changes, not this
+    # field or any of the 3 static templates. UI lives only in the
+    # Template Gallery page (Ali's explicit decision — not mirrored into
+    # Settings > Business).
+    show_lanceraos_branding = models.BooleanField(default=True)
 
     # ── SRO 586 / tax profile ───────────────────────────────────────
     income_type = models.CharField(

@@ -73,6 +73,23 @@ actual view logic never called them) and the DRF `DEFAULT_THROTTLE_RATES` scoped
 Config or code that looks load-bearing but isn't actively misleads whoever reads it next — treat
 discovering it as a signal to delete it, not preserve it.
 
+## Shared template partials: structure lives in the partial, skin stays in the template
+
+When two or more Django templates render genuinely identical structure (not just similar-looking —
+byte-identical content/markup shape), extract it to `<app>/templates/<app>/_partials/<name>.html` and
+`{% include %}` it, rather than letting each template keep its own copy that can silently drift.
+The partial owns shared structure (the CSS declaration or markup shape); the including template still
+owns its own skin (color, exact positioning) — pass those in via `{% include %}`'s own `with` clause, or
+append extra same-selector CSS rules directly after the include (CSS cascade only overrides the specific
+properties the later rule names, it doesn't replace the partial's own declarations — verified directly,
+not assumed, before relying on this in `apps/invoices/templates/invoices/modern.html`'s own footer
+override). Don't force-extract a partial library out of independently-written templates before it's
+been validated against real content that will actually reuse it — `apps/invoices/templates/invoices/
+_partials/footer.html` (Template Gallery Foundation, 13 September 2026) was extracted first specifically
+because it was being rewritten anyway and was already byte-identical across all 3 static invoice
+templates bar one color value; the templates' own remaining structure stayed independent, deliberately,
+until a real second consumer justifies extracting more.
+
 ## A parallel implementation's naming gets promoted the moment it becomes the only one
 
 A generation-suffixed name (`_v2`, a "Phase N" module docstring, an "isolated"/"experimental"

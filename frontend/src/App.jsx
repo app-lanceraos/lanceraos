@@ -23,7 +23,7 @@ import Profile from '@/pages/Profile'
 import Clients from '@/pages/Clients'
 import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
-import DesignGallery from '@/pages/DesignGallery'
+import TemplateGallery from '@/pages/TemplateGallery'
 import Onboarding from '@/pages/Onboarding'
 import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
@@ -112,9 +112,14 @@ export default function App() {
           element={<PrivateRoute><AppShell><Invoices /></AppShell></PrivateRoute>}
         />
         <Route
-          path="/invoices/designs"
-          element={<PrivateRoute><AppShell><DesignGallery /></AppShell></PrivateRoute>}
+          path="/invoices/templates"
+          element={<PrivateRoute><AppShell><TemplateGallery /></AppShell></PrivateRoute>}
         />
+        {/* Template Gallery Foundation (13 September 2026) — /invoices/designs
+            is the old route name (residue from the free-canvas era); a
+            real redirect keeps existing bookmarks and any stray in-app
+            link working rather than 404ing. */}
+        <Route path="/invoices/designs" element={<Navigate to="/invoices/templates" replace />} />
         <Route
           path="/invoices/analytics"
           element={<PrivateRoute><AppShell><InvoiceAnalytics /></AppShell></PrivateRoute>}

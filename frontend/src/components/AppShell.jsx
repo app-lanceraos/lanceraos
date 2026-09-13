@@ -56,6 +56,7 @@ export const PageHeaderActionsContext = createContext(() => {})
 const PAGE_TITLES = {
   '/dashboard': 'Dashboard',
   '/invoices': 'Invoices',
+  '/invoices/templates': 'Template Gallery',
   '/clients': 'Clients',
   '/payments': 'Payments',
   '/expenses': 'Expenses',

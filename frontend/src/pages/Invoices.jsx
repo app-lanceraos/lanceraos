@@ -130,7 +130,7 @@ export default function Invoices() {
         trigger="More" showChevron
         triggerClassName="fos-btn fos-btn-ghost"
         items={[
-          { key: 'designs', label: 'Manage Designs', Icon: LayoutTemplate, onClick: () => navigate('/invoices/designs') },
+          { key: 'templates', label: 'Template Gallery', Icon: LayoutTemplate, onClick: () => navigate('/invoices/templates') },
           { key: 'preset', label: 'From Preset', Icon: BookmarkPlus, onClick: () => setShowPresetPicker(true) },
         ]}
       />
@@ -142,7 +142,7 @@ export default function Invoices() {
 
   const mobileHeaderItems = useMemo(() => [
     { key: 'analytics', label: 'Analytics', Icon: BarChart3, onClick: () => navigate('/invoices/analytics') },
-    { key: 'designs', label: 'Manage Designs', Icon: LayoutTemplate, onClick: () => navigate('/invoices/designs') },
+    { key: 'templates', label: 'Template Gallery', Icon: LayoutTemplate, onClick: () => navigate('/invoices/templates') },
     { key: 'preset', label: 'From Preset', Icon: BookmarkPlus, onClick: () => setShowPresetPicker(true) },
   ], [navigate])
 

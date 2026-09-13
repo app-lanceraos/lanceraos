@@ -9,6 +9,11 @@ urlpatterns = [
     path('', views.invoice_list, name='invoice_list'),
     path('summary/', views.invoice_summary, name='invoice_summary'),
     path('currencies/', views.invoice_currencies, name='invoice_currencies'),
+    # Template Gallery Foundation (13 September 2026) — a static catalog
+    # endpoint (apps.invoices.template_manifest), explicitly NOT a return
+    # of the removed per-user designs/ row model (see this file's own
+    # comment further down for that removal's history).
+    path('templates/', views.template_catalog, name='template_catalog'),
     path('exchange-rate/', views.exchange_rate_lookup, name='exchange_rate_lookup'),
     path('analytics/', views.invoice_analytics, name='invoice_analytics'),
     path('email/incoming/', views_email.email_incoming_webhook, name='email_incoming_webhook'),

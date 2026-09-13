@@ -1,0 +1,59 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/footer.html
+
+The shared @page margin-box footer, included inside each of the 3 static
+templates' own @page { ... } block. See _partials/README.md for the
+shared-partials convention, and DECISIONS.md's 13 September 2026 entry for
+the full 4-cell footer rule this implements:
+
+  single-page + branding ON  -> business info (left) + wordmark (right)
+  single-page + branding OFF -> no footer at all — this partial renders
+                                 nothing, and the including template must
+                                 ALSO set @page's own bottom margin to 0 in
+                                 this exact case (a margin box with no
+                                 content inside it still reserves the
+                                 16mm of page space otherwise)
+  multi-page  + branding ON  -> business info + "Page X of N" + wordmark
+  multi-page  + branding OFF -> business info + "Page X of N" (no wordmark)
+
+Two-line business-info content (name above email, real WeasyPrint
+capability confirmed via an isolated spike — CSS4 `content: "A\A B"` +
+`white-space: pre-wrap` renders two genuinely separate lines in a real
+@page margin box) at a reduced 6.5pt (down from the old single-line 7pt)
+is the deliberate resolution of the "two lines are taller than one line at
+the same size, but the footer should read lighter" tension — business
+name is kept (not dropped in favor of email-only) because it's what lets
+a stray continuation page identify whose invoice it is even outside the
+context of page 1's own header, which a bare email address doesn't do as
+immediately.
+
+Requires from the including template's own render context: freelancer,
+invoice, single_page_layout, wordmark_data_uri (all already present in
+every real render — see pdf_generator.build_pdf_context) plus
+footer_text_color, passed in by the including template via
+`{% include %}`'s own `with` clause (each of the 3 templates keeps its own
+existing muted footer-text hex — see this partial's own README).
+{% endcomment %}
+{% if not single_page_layout or wordmark_data_uri %}
+@bottom-left {
+  content: "{{ freelancer.business_name|default:freelancer.display_name }}{% if invoice.user.email %}\A {{ invoice.user.email }}{% endif %}";
+  white-space: pre-wrap;
+  font-family: 'IBM Plex Mono';
+  font-size: 6.5pt;
+  line-height: 1.35;
+  color: {{ footer_text_color }};
+}
+{% if not single_page_layout %}
+@bottom-center {
+  content: "Page " counter(page) " of " counter(pages);
+  font-family: 'IBM Plex Mono';
+  font-size: 7pt;
+  color: {{ footer_text_color }};
+}
+{% endif %}
+{% if wordmark_data_uri %}
+@bottom-right {
+  content: url("{{ wordmark_data_uri }}");
+}
+{% endif %}
+{% endif %}

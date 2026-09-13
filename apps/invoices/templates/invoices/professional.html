@@ -21,37 +21,20 @@
        @bottom-left/@bottom-right counter technique proven in
        minimal.html/modern.html, added here per the handoff notes' gap
        (professional.html predates that test) — a real page-margin box,
-       not the old static "Page 1 of 1" text this replaces. */
-    margin: 0 0 16mm 0;
-    @bottom-left {
-      content: "{{ freelancer.business_name|default:freelancer.display_name }}{% if invoice.user.email %} · {{ invoice.user.email }}{% endif %}";
-      font-family: 'IBM Plex Mono';
-      font-size: 7pt;
-      color: #a09a89;
-    }
-    {% if not single_page_layout %}
-    /* Real WeasyPrint limitation, confirmed directly: there is no
-       `@page :first:last` (or any pure-CSS "exactly one page") selector —
-       tested directly, matched nothing in either a real 1-page or a real
-       multi-page document. `single_page_layout` (set by
-       pdf_generator.render_invoice_pdf's own 2-pass real-page-count check,
-       never guessed) is what actually makes this conditional: this whole
-       @bottom-center block is omitted from the rendered CSS entirely for a
-       confirmed single page — never rendered as "Page 1 of 1" — and
-       included, with the real counter(pages), only for a render already
-       confirmed to be 2+ pages. */
-    @bottom-center {
-      content: "Page " counter(page) " of " counter(pages);
-      font-family: 'IBM Plex Mono';
-      font-size: 7pt;
-      color: #a09a89;
-    }
-    {% endif %}
-    {% if wordmark_data_uri %}
-    @bottom-right {
-      content: url("{{ wordmark_data_uri }}");
-    }
-    {% endif %}
+       not the old static "Page 1 of 1" text this replaces.
+       Template Gallery Foundation (13 September 2026) — the bottom
+       margin drops to 0 in exactly the one cell of the footer rule
+       (DECISIONS.md's 13 September 2026 entry) where nothing is
+       rendered into it at all: a confirmed single page with branding
+       off. Reserving 16mm of page space for an empty margin box would
+       otherwise leave a dead gap with no content. Real page-count
+       parity with/without this margin change was verified directly
+       (a real isolated WeasyPrint spike, all 3 templates, both a
+       comfortably-1-page and a boundary-swept content length) — dropping
+       margin only adds available content space, it cannot itself cause a
+       page break. */
+    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}16mm{% endif %} 0;
+    {% include "invoices/_partials/footer.html" with footer_text_color="#a09a89" %}
   }
   * { box-sizing: border-box; }
   body {
@@ -65,7 +48,12 @@
   .page {
     position: relative;
     width: 210mm;
-    min-height: 281mm;
+    /* 297mm page minus whatever @page's own bottom margin actually is on
+       THIS render (see the @page block above) — 281mm (297-16) when a
+       footer is reserved, the full 297mm on the one no-footer cell.
+       Real page-count parity (with/without this exact change) verified
+       directly, not assumed — see the @page block's own comment. */
+    min-height: {% if single_page_layout and not wordmark_data_uri %}297mm{% else %}281mm{% endif %};
     padding: 16mm 16mm 0 20mm;
   }
   /* Signature pinned to the true bottom (Part 2 of the 30 August 2026

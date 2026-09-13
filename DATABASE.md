@@ -193,6 +193,15 @@ client_onboarding_enabled, client_onboarding_message, income_type
 # (invoice_send_formal_notice, the real enforced gate).
 formal_notice_enabled
 
+# LanceraOS branding toggle (Template Gallery Foundation, 13 September
+# 2026) — modeled directly on formal_notice_enabled above. Default True
+# (opt-out, not opt-in). The ONLY reader anywhere in the codebase is
+# apps.invoices.pdf_generator._is_premium_branding_enabled — no template
+# or other render-path function may read this field directly. UI lives
+# only on the Template Gallery page (/invoices/templates), not mirrored
+# into Settings > Business.
+show_lanceraos_branding
+
 last_email_changed_at, created_at, updated_at
 ```
 
@@ -218,6 +227,12 @@ fields, this is the tool that fills them.
    specifically so uniqueness can be enforced across accounts (Fernet's randomized IV makes
    uniqueness checks on the encrypted value itself impossible) without ever storing plaintext.
 6. **Cascade behavior?** `CASCADE` from `User` (one-to-one) — no independent lifecycle.
+
+**`show_lanceraos_branding`, the 6 questions:** (1) Mutable — a plain user preference, flipped
+from the Template Gallery page. (2) Soft deleted — N/A, same lifecycle as the rest of this row.
+(3) Audit trail — no, a cosmetic preference with no financial/legal significance, same class as
+`invoice_template` beside it. (4) Indexed — no, never queried across users. (5) Encrypted — no,
+not PII/credentials. (6) Cascade — `CASCADE` from `User`, same as the rest of this table.
 
 **Known, deliberate schema quirk**: `pseb_registered` is a plain boolean, entirely decoupled from
 `pseb_hash`/`pseb_encrypted` — a user can self-declare "I am PSEB registered" via a Settings
@@ -780,7 +795,15 @@ that predates a preference being set will still show the user's CURRENT preferen
 preview (`pdf_generator._effective_base_template`'s read-time fallback, draft-status only, never
 persisted here) without this column ever actually changing. Query this column directly to know
 what's frozen; query a draft's live render to know what it currently PREVIEWS as — the two can
-legitimately differ for an un-finalised draft),
+legitimately differ for an un-finalised draft. **Template Gallery Foundation, 13 September 2026**:
+`choices` are now generated directly from `apps.invoices.template_manifest.TEMPLATES` (same app,
+direct import — no dependency-direction concern the way `FreelancerProfile.INVOICE_TEMPLATE_CHOICES`
+has) rather than a third hand-written copy of the 3-entry list; includes every manifest key
+regardless of `selectable`, since a retired template must remain a valid, renderable value for any
+invoice already frozen onto it. Real dev-database check before this pass: all 113 real invoices
+have `base_template=NULL` — every one predates `invoice_create`'s own assignment code and none has
+been finalised since, so all render via `DEFAULT_TEMPLATE` fallback (`professional`) today; not a
+bug, just a fact worth knowing before assuming this column reflects real usage),
 `view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
 `client_address`/`client_phone` (immutable snapshot at creation), `currency` (CharField(3), no
 `choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`,

@@ -28,6 +28,8 @@ from apps.clients.models import Client
 from apps.payments.models import ExchangeRateSnapshot
 from core.money import Money
 
+from .template_manifest import TEMPLATES as _TEMPLATE_MANIFEST_ENTRIES
+
 
 def _today():
     """A real function, not `timezone.now` — see Invoice.issue_date's field comment for why that distinction matters here."""
@@ -170,8 +172,18 @@ class Invoice(models.Model):
     # the same frozen-at-creation guarantee the FK gave, just without a
     # row to point at. Null only for an invoice created before this
     # field existed and not yet backfilled by _finalise_invoice.
+    #
+    # Template Gallery Foundation (13 September 2026) — choices are now
+    # generated from apps.invoices.template_manifest.TEMPLATES (this same
+    # app, so a direct import is safe — no cross-app dependency-direction
+    # concern the way FreelancerProfile.INVOICE_TEMPLATE_CHOICES has).
+    # Deliberately includes every template key, selectable or not — a
+    # retired (selectable=False) template must still be a valid choice
+    # here, since real invoices already frozen onto it must go on
+    # rendering forever. Changing `choices=` alone needs no migration
+    # (Django only enforces choices at the validation layer, not the DB).
     base_template = models.CharField(
-        max_length=20, choices=[('professional', 'Professional'), ('minimal', 'Minimal'), ('modern', 'Modern')],
+        max_length=20, choices=[(t['key'], t['label']) for t in _TEMPLATE_MANIFEST_ENTRIES],
         null=True, blank=True, help_text='Which of the 3 static templates renders this invoice\'s PDF.',
     )
 
