@@ -7,8 +7,20 @@ confirmed Invoice has neither field (verified directly against
 apps/invoices/models.py) — those two rows simply never appear, same as
 every other conditional in this codebase when the underlying data doesn't
 exist. Requires `invoice` in context.
+
+Optional `with with_invoice_number=True` (20-Template Import, Batch 4,
+14 September 2026) — prepends an "Invoice No." meta item before Issue
+date. Needed by pro_signature.html, whose header deliberately doesn't use
+doc_block.html at all (its own centered header shows the business name as
+the headline and "Invoice" as a small subtitle, with no room for the
+invoice number) — the prototype's own `signature.renderIntro` moves the
+number into this meta strip instead: `[{k:"Invoice No.", v:inv.meta.
+number}].concat(metaItemsList(inv))`. Defaults to omitted, so every
+pre-existing caller (Batches 1-3, and doc_block.html itself) is
+unaffected.
 {% endcomment %}
 <div class="meta-strip">
+  {% if with_invoice_number %}<div class="meta-item"><span class="k">Invoice No.</span><span class="v">{{ invoice.invoice_number|default:"DRAFT" }}</span></div>{% endif %}
   <div class="meta-item"><span class="k">Issue date</span><span class="v">{{ invoice.issue_date|date:"d M Y" }}</span></div>
   {% if invoice.due_date %}<div class="meta-item"><span class="k">Due date</span><span class="v">{{ invoice.due_date|date:"d M Y" }}</span></div>{% endif %}
 </div>

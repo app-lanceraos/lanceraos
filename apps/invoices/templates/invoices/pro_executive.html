@@ -1,0 +1,118 @@
+{% comment %}
+apps/invoices/templates/invoices/pro_executive.html
+20-Template Import, Batch 4 (14 September 2026) — ported from
+proTemplates.html's "Executive" prototype (tpl-executive). High-end
+corporate design: a bordered header band, a boxed meta-strip, two parties
+separated by a vertical rule, and a footer that pairs Notes/Terms with
+Totals side by side above a full-width payment section and a right-aligned
+signature.
+
+Part 0 finding (this batch): NOT flagged `wrapsBody` in the prototype —
+Executive uses the plain generic renderHeader/renderIntro/renderFooter
+composition path (`assembleTemplate`), the same as every other non-rail
+Pro template. No structural deviation requiring a new shared partial;
+every section below is a standard partial include, styled per-template.
+
+One real, deliberate simplification (confirmed, not assumed): the
+prototype's own `.exec-payment .pay-methods{ display:grid; grid-template-
+columns:repeat(4,1fr); }` targets classes (`.pay-methods`/`.pay-method`)
+that `payment_block.html` does not produce — that partial deliberately
+uses the LEGACY `.pay-block .method` full-row list markup (retrofitted
+onto professional.html/minimal.html/modern.html, see
+_partials/README.md), which every template in this whole 20-template
+import already renders through unchanged. This template's own payment
+section therefore renders as the same full-row list every other ported
+template uses, not the prototype's 4-column grid — consistent with every
+prior batch, none of which attempted this specific prototype visual
+either.
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge — see free_essential.html's identical
+comment (this whole family of pagination-preview code exists solely for
+the prototype's own fake print preview; WeasyPrint's real pagination plus
+the shared footer partial already solve this correctly).
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+  @font-face { font-family: 'Source Serif 4'; src: url('{{ font_source_serif_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'Source Serif 4'; src: url('{{ font_source_serif_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 20mm 18mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %};
+    {% include "invoices/_partials/footer.html" with footer_text_color="#6b6f78" footer_left_inset="-2mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: #fff;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #6b6f78;
+    --rule: #dddfe3;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .exec-band { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 8mm; margin-bottom: 9mm; border-bottom: 2px solid var(--accent); }
+  .exec-band .brand-logo { height: 34px; width: auto; }
+  .exec-band .brand-name { font-family: 'Source Serif 4', Georgia, serif; font-size: 15pt; font-weight: 700; color: var(--accent); }
+  .exec-band .doc-block { text-align: right; }
+  .exec-band .doc-title { font-size: 8pt; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; font-weight: 600; }
+  .exec-band .doc-number { font-family: 'Source Serif 4', Georgia, serif; font-size: 15pt; font-weight: 700; color: var(--ink); }
+
+  .meta-strip { border: 1px solid var(--rule); border-radius: 2px; margin-bottom: 9mm; gap: 0; }
+  .meta-item { flex: 1 1 0; padding: 9px 14px; border-right: 1px solid var(--rule); }
+  .meta-item:last-child { border-right: none; }
+
+  .parties-row { margin-bottom: 9mm; }
+  .party + .party { border-left: 1px solid var(--rule); padding-left: 22px; }
+
+  .footer-top { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 9mm; }
+  .footer-top .notes-terms { flex: 1 1 0; max-width: 64mm; }
+  .footer-top .inv-totals { flex: 0 0 64mm; margin: 0; }
+  .exec-payment { border-top: 1px solid var(--rule); padding-top: 8mm; margin-bottom: 6mm; }
+  .footer-close { border-top: 1px solid var(--rule); padding-top: 6mm; display: flex; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<div class="page-body">
+  <header class="exec-band">
+    {% include "invoices/_partials/brand_lockup.html" %}
+    {% include "invoices/_partials/doc_block.html" %}
+  </header>
+
+  {% include "invoices/_partials/meta_strip.html" %}
+  {% include "invoices/_partials/parties_row.html" %}
+  {% include "invoices/_partials/items_table.html" %}
+
+  <div class="footer-top">
+    {% include "invoices/_partials/notes_terms.html" %}
+    {% include "invoices/_partials/totals.html" %}
+  </div>
+
+  <div class="exec-payment">
+    {% include "invoices/_partials/payment_block.html" %}
+    <div class="pay-online" style="margin-top:6mm;">
+      {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+      <div>
+        <div class="label">Pay online</div>
+        <div class="link">{{ invoice.payment_page_url }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-close">{% include "invoices/_partials/signature_block.html" %}</div>
+</div>
+
+</body>
+</html>

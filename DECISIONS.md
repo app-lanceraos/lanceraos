@@ -9734,3 +9734,189 @@ real HTML (`.billto-box .party` vs `.party.billto-box`) than the prototype's own
 selector `.tpl-business .billto-box .party-label` only reads naturally against the class-on-the-
 party-element shape once traced back to the actual `partyHtml` call — porting the wrapper-div
 version anyway would have been "close enough" rather than actually correct.
+
+---
+
+**14 September 2026 — 20-Template Import, Batch 4: pro_executive/pro_studio/pro_signature/
+pro_editorial/pro_grid/pro_commerce/pro_prestige.**
+
+Fourth batch of the 20-template import — the 7 plain-composition pro-tier templates from
+`proTemplates.html` (`executive`, `studio`, `signature`, `editorial`, `grid`, `commerce`,
+`prestige` — the 3 persistent-rail designs there, `atelier`/`consulting`/`statement`, are Batch 5,
+explicitly out of scope here). Built from the existing 9-partial library with 2 new, small,
+named `parties_row.html` parameters (`from_label`/`bill_to_label`, plus a `from_only` mode
+mirroring the existing `bill_to_only`) and one new `meta_strip.html` parameter
+(`with_invoice_number`).
+
+**Part 0 baseline**: full project-wide `manage.py test`, run first via a real `git stash` (isolating
+this batch's own already-written WIP changes so the baseline was genuinely clean, not merely
+"believed clean") — **1024 passing, 0 failures**, matching this document's own claimed prior total
+exactly; no discrepancy this time (contrast Batches 1/2, both of which found real discrepancies in
+their own prompt's premises). Confirmed the gallery's real pre-batch selectable count directly
+against `template_manifest.py`: 12 (Ledger, Nova, the 4 Batch 1 templates, Compact, Freelancer, the
+4 Batch 3 templates) — matches this batch's own prompt exactly.
+
+**Part 0: real per-template classification, read directly from `proTemplates.html`'s own function
+bodies** (not inferred from a `wrapsBody`-equivalent flag, since Pro's own `TEMPLATES` registry and
+`assembleTemplate` have no such concept at all — confirmed directly, not assumed from the Free-tier
+precedent): all 7 use the plain `renderHeader`/`renderIntro`/`renderFooter` composition path: no
+persistent rail/sidebar, no `renderFull`. That said, reading all 7 bodies individually (not trusting
+the "uniform composition" label alone, per this batch's own instruction) found 6 real, genuine
+deviations across 4 of the 7 templates — every other batch so far has found at least one; this one
+found several, concentrated rather than spread evenly:
+
+1. **Studio** bakes the full seller identity (logo, business name, display name, address, email)
+   directly into its own header (`stu-identity`) rather than a separate "From" party, and shows the
+   client via a single custom-labeled `partyHtml("Prepared for", ...)` call instead of the two-party
+   `partiesRow`.
+2. **Signature** shows NO `docBlock` content in its own header at all (the business name is the
+   headline; "Invoice" is a small subtitle) — the invoice number instead appears as a prepended
+   "Invoice No." item inside the meta strip (`[{k:"Invoice No.", v:inv.meta.number}].concat(...)`),
+   and only the Bill To label changes (`partiesRow(inv, "From", "Billed to")` — From stays default).
+3. **Editorial**, **Commerce**, and **Prestige** each rename BOTH party labels
+   (`partiesRow(inv, "Issued by", "Billed to")` / `("Sold by", "Sold to")` /
+   `("Billed from", "Billed to")`).
+4. **Editorial** additionally splits its totals block — `totalsRowsHtml(inv, includeTotal=false)`
+   renders subtotal/tax/discount separately from a distinct, highlighted `edt-total-bar` for "Total
+   due" — and its own `edt-colophon` renders Payment/Notes/Terms/Signature as 4 fully independent
+   flex columns, never the standard combined `notes-terms` box.
+5. **Executive**'s own `.exec-payment .pay-methods{ display:grid; grid-template-columns:repeat(4,1fr);
+   }` and **Grid**'s identical rule target prototype classes (`.pay-methods`/`.pay-method`) that
+   `payment_block.html` does not produce — that partial deliberately uses the LEGACY
+   `.pay-block .method` full-row list markup (retrofitted onto professional.html/minimal.html/
+   modern.html since Batch 1), which every template in this whole import already renders through
+   unchanged. Confirmed this is not a new problem this batch introduced: no prior batch attempted
+   this specific prototype grid visual either. Both templates render the same full-row payment list
+   every other ported template uses — a deliberate, documented simplification, not a missed
+   deviation.
+6. **Prestige**'s own `renderFooter` never calls the QR/pay-online helper at all — the only one of
+   these 7 templates with no QR reference anywhere in its own render function. Per this whole
+   import's own established convention (Batch 1's own "added to all 4 new templates for feature
+   parity with the existing 3"), Prestige gets a small pay-online box here too, for the same reason
+   every prior batch's own templates did regardless of what their own specific prototype skin
+   happened to include.
+
+**Executive** and **Grid** are the two templates with NO real deviation — plain
+`metaStrip`+`partiesRow` intro, standard totals, standard footer composition, default "From"/"Bill
+To" labels throughout.
+
+**The 2 new shared partial parameters**, added only after confirming the existing 5 (`bill_to_only`,
+`wrap_class`, `stacked`, plus the two established-but-unmodified `show_sku`/`embed_totals`/
+`terms_only` family) didn't already cover these deviations:
+
+- `parties_row.html` gained `from_label`/`bill_to_label` (override the literal label text, applied
+  uniformly across every existing mode — default, `bill_to_only`, `stacked` — so this didn't need to
+  be re-added per mode) and a new `from_only` mode (the direct mirror of `bill_to_only`, for Studio's
+  own `.stu-client`-adjacent composition — though Studio's actual header identity turned out to need
+  hand-written markup instead, see below, since even `from_only` still renders a `.party-label`
+  Studio's header design doesn't want at all). Real, justified addition: 5 of this batch's 7
+  templates rename at least one party label — a strong, repeated signal for a shared parameter over
+  5 separate one-off inline duplications, unlike Editorial's own totals-split (used by exactly 1
+  template) or Studio's header identity (also exactly 1 template), both written inline instead per
+  this same reuse-vs-invent judgment call.
+- `meta_strip.html` gained `with_invoice_number` (prepends an "Invoice No." leading item) — needed
+  only by Signature, but a trivial, low-risk, single-conditional-line addition to an already-shared
+  partial, not a duplicated full copy of that partial's own field logic.
+
+**What was deliberately NOT added to a shared partial**, written as one-off template-local markup
+instead, matching this whole import's own established "a partial needs a real second consumer"
+bar (`_partials/README.md`, first stated for `free_freelancer.html`'s own "thanks box," Batch 2):
+Studio's header seller-identity block (no other template in this batch needs seller info baked into
+the header rather than a separate party); Editorial's split totals bar and its 4 fully independent
+colophon columns (no other template needs either). Both reuse the exact same real invoice/freelancer
+fields `totals.html`/`parties_row.html` themselves already use — no new field invented, just
+different markup shape.
+
+**payment_block.html's hardcoded "Payment methods" label was NOT varied per template**, despite the
+prototype's own genuinely inconsistent wording across these 7 (`"Payment Information"` for
+Executive, `"Payment"` for Grid/Editorial, `"Payment Methods"` for Commerce) — confirmed directly
+that no prior batch (1-3) ever overrode this label either, so this batch continues that established
+normalization rather than introducing per-template label variance for a purely cosmetic difference.
+
+**Commerce's flat meta-line** (`com-meta-line`, issue/due date as one inline row rather than the
+standard boxed `.meta-item` layout) reuses `meta_strip.html` completely unchanged, re-skinned
+entirely with scoped CSS — no markup duplication, matching this batch's own "CSS-only restyle before
+a new partial parameter" bar (the same one Batch 1's `parties-row`/`meta-item` CSS overrides on
+`free_classic.html` already established, just applied here to a more aggressive visual flattening).
+
+**Font**: Studio/Signature/Prestige (the 3 serif-leaning designs in this batch) use the system
+Georgia/Times New Roman stack, matching `free_classic.html`'s own established precedent (Batch 1) —
+`font_source_serif_regular`/`_semibold` stay unused by this batch, exactly as they were before it.
+
+**Zero-margin `@page` technique** (Studio, Signature, Prestige — all 3 have a tinted, whole-page
+"paper" background, `--paper` in the prototype's own CSS): ported using the SAME `@page margin: 0 0
+{cond} 0` + inner-div-padding technique `free_business.html`/`free_modern.html`/
+`free_professional.html`/`free_minimal.html` already established (Batch 1/3) — confirmed the reason
+directly rather than assumed: with a real, nonzero `@page` margin, WeasyPrint's own margin-box area
+falls OUTSIDE the body's content box and paints the page's own default WHITE background there, not
+the body's tint, a real, avoidable seam between a tinted content area and a white margin strip.
+`footer_left_inset="16mm"` on all 3, matching every other full-bleed template in this whole import.
+The other 4 (white-background, non-full-bleed designs) use a real `@page` margin directly, with
+`footer_left_inset` computed as `16mm − left_margin` — the established formula every template except
+`free_compact.html` (a documented, deliberate outlier for its own tighter "dense" design) already
+lands on exactly 16mm with.
+
+**Manifest**: 7 new `pro_`-prefixed entries, `tier: 'pro'` for the first time since the Ledger
+rename (Batch 1) — still real, developer-authored data, still not enforced anywhere (Module 8
+doesn't exist). Real, selectable count is now 19 (was 12).
+
+**Verification.** New `apps/invoices/tests/test_template_import_batch4.py` (28 tests, all green):
+page-count parity (1-page fixture, a boundary sweep at 8/12/16/20 items, and the 40-item regression,
+all 7 new templates), empty-items fallback, Wise + Meezan Bank payment-method presence for all 7,
+the signature name line and its omission case, notes/terms independence, the PKR conversion line,
+every one of the 6 real per-template deviations found above (including 2 real structural checks
+against raw rendered HTML — Studio's header identity fields with no client party visible there, and
+Editorial's colophon genuinely having no `class="notes-terms"` element anywhere in its markup), plus
+direct unit coverage of the 2 new shared-partial parameters independent of any one template. One
+real, expected test-authoring correction found and fixed during this batch's own verification (not a
+template bug): 3 assertions initially checked literal-case label text ("Payment methods", "Invoice
+No.", "Total due") that actually renders as real, painted uppercase glyphs under WeasyPrint's
+`text-transform: uppercase` (`.pay-block .label`/`.meta-item .k`/`.edt-total-bar span` in
+`base_components.css`/`pro_editorial.html`) — fixed by comparing against `.upper()` on both sides,
+the same established normalization `test_template_import_batch1.py`'s own modern.html sidebar-label
+fix already set as precedent. One real, expected forward-compatible update to a PRIOR batch's own
+test, the same class of change Batch 3 itself made to Batch 2's test: Batch 3's own
+`test_selectable_count_is_now_twelve` asserted the exact count as of Batch 3 — correct then, legitimately
+stale now that Batch 4 adds 7 more selectable templates — renamed to
+`test_batch3_templates_are_all_selectable` and narrowed to only what was actually in Batch 3's own
+scope, with the current real total (19) now living in this batch's own `GalleryStateTests`. Full
+relevant regression group (pinning tests, 40-item regression, and all 4 batches' own test files): 189
+tests, one clean `--keepdb` run, zero regressions beyond that single expected, deliberate update. Full
+project-wide backend suite, POST-change, clean run (`manage.py test`, zero edits in flight): **1052
+passing**, 0 failures — up from the 1024-passing baseline (+28, exactly this batch's own new test
+count, confirming zero regressions anywhere else in the project). `npx vite build` clean (frontend
+untouched by this batch — the gallery already fetches the template list live from the manifest
+endpoint, so no frontend code change was needed for 7 new entries to appear there). 2 real migrations
+(choices-only: `apps.invoices.0020_alter_invoice_base_template`,
+`apps.users.0016_alter_freelancerprofile_invoice_template`). All 7 templates additionally rendered
+through the real production pipeline outside the test suite (a disposable, rolled-back
+`transaction.atomic()` block, per this whole import's own Rule 8 discipline — zero residue left in
+the dev database), confirming 1 page for the standard 3-item fixture and 3 pages for a genuine
+40-item stress case for every one of the 7, with the rendered output visually inspected for each.
+
+**A real, unrelated, pre-existing gap found and flagged, not fixed** (out of this batch's own
+scope): `apps/invoices/management/commands/generate_template_previews.py` still hardcodes
+`('professional', 'minimal', 'modern')` — none of Batches 1-3's 9 free-tier templates, nor this
+batch's 7 pro-tier ones, have a real pre-generated gallery preview PNG. This predates Batch 4
+entirely (every prior batch left it exactly as the 12 September 2026 Post-Reversion Polish pass
+originally wrote it) and isn't something this batch's own prompt asked it to fix — flagged here
+directly rather than silently worked around or silently left undiscovered.
+
+**Deliberate exclusions, restated.** Batch 5 (`atelier`, `consulting`, `statement`, the 3 persistent-
+rail Pro templates) was not built. `payment_block.html`'s Wise behavior
+(`freelancer.wise_profile_id` displayed raw) was not touched. Legacy `base_template` stored DB values
+were not touched.
+
+Alternatives considered for Studio's header identity: reusing `parties_row.html`'s new `from_only`
+mode directly inside the header — rejected once it was confirmed that mode still renders a
+`.party-label` ("From"), which Studio's own design deliberately never shows anywhere near the seller
+identity; hand-written markup reusing the identical 4 real fields was the correct call, not a forced
+partial fit. Alternatives considered for Editorial's split totals: adding a `hide_total_row` mode to
+`totals.html` — rejected as over-engineering a shared partial for its only real consumer, the same
+judgment call `items_table.html`'s own `embed_totals` mode already made differently (there, Compact's
+tfoot embedding was judged partial-worthy since it modifies a structurally shared element, the items
+table itself; Editorial's split is a purely template-local visual composition with no such shared
+structural anchor). Alternatives considered for Executive/Grid's payment grid: writing new CSS
+targeting a hypothetical `.pay-methods`/`.pay-method` markup shape not actually produced by
+`payment_block.html` — rejected as CSS that would visually do nothing against real production markup;
+the simplification is documented rather than silently accepted.

@@ -147,6 +147,15 @@ TEMPLATE_MAP = {
     'free_modern': 'invoices/free_modern.html',
     'free_professional': 'invoices/free_professional.html',
     'free_business': 'invoices/free_business.html',
+    # 20-Template Import, Batch 4 (14 September 2026) — the 7 pro-tier
+    # templates (apps/invoices/template_manifest.py).
+    'pro_executive': 'invoices/pro_executive.html',
+    'pro_studio': 'invoices/pro_studio.html',
+    'pro_signature': 'invoices/pro_signature.html',
+    'pro_editorial': 'invoices/pro_editorial.html',
+    'pro_grid': 'invoices/pro_grid.html',
+    'pro_commerce': 'invoices/pro_commerce.html',
+    'pro_prestige': 'invoices/pro_prestige.html',
 }
 
 # Full Reversion Plan — the one true accent-color pair per static
@@ -182,6 +191,16 @@ DEFAULT_TEMPLATE_COLORS = {
     'free_modern': ('#4f46e5', '#201f33'),
     'free_professional': ('#b99a55', '#23262f'),
     'free_business': ('#1e3a5f', '#1e2430'),
+    # 20-Template Import, Batch 4 (14 September 2026) — each new pro_*
+    # entry uses (that template's own prototype --accent, --ink) values,
+    # same role split as every other entry in this table.
+    'pro_executive': ('#1b2a4a', '#151a24'),
+    'pro_studio': ('#b9812a', '#201d1a'),
+    'pro_signature': ('#6b2e3c', '#26201d'),
+    'pro_editorial': ('#b94b34', '#101012'),
+    'pro_grid': ('#2255cc', '#141416'),
+    'pro_commerce': ('#2e62a8', '#161a22'),
+    'pro_prestige': ('#8c7a54', '#1e1b16'),
 }
 
 
@@ -421,6 +440,14 @@ _WORDMARK_FILL_BY_TEMPLATE = {
     'free_modern': '#8b88a8',
     'free_professional': '#767c8c',
     'free_business': '#69707f',
+    # 20-Template Import, Batch 4 (14 September 2026).
+    'pro_executive': '#6b6f78',
+    'pro_studio': '#8a8378',
+    'pro_signature': '#8c7f76',
+    'pro_editorial': '#6e6e74',
+    'pro_grid': '#6e6f76',
+    'pro_commerce': '#666e7a',
+    'pro_prestige': '#8d8577',
 }
 
 

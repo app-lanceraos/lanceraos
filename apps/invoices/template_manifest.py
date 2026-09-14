@@ -97,6 +97,24 @@ free_minimal, the identical un-flagged wrinkle) turned out to have zero
 real implication for the ported templates once pagination-string-
 concatenation — the only reason that flag/wrinkle exists in the
 prototype at all — is out of the picture.
+
+20-Template Import, Batch 4 (14 September 2026) — 7 pro-tier templates:
+pro_executive, pro_studio, pro_signature, pro_editorial, pro_grid,
+pro_commerce, pro_prestige (ported from proTemplates.html's own plain-
+composition designs — the 3 persistent-rail/sidebar designs there,
+atelier/consulting/statement, are Batch 5, not this one). Real, selectable
+count is now 19 (was 12). `tier: 'pro'` is real, developer-authored data
+here for the first time since the Ledger rename (Batch 1) — still not
+enforced anywhere (Module 8/Subscriptions doesn't exist). See
+DECISIONS.md's 14 September 2026 Batch 4 entry for the real per-template
+structural classification (all 7 use the prototype's own plain generic
+renderHeader/renderIntro/renderFooter composition — none is flagged
+`wrapsBody`, and Pro's own `assembleTemplate` has no such concept at all
+— but 3 of the 7 rename one or both party labels, one splits its totals
+block, and one bakes the seller identity directly into its header rather
+than using a separate "From" party) and the 2 new shared `parties_row.html`/
+`meta_strip.html` parameters this batch added to cover those real,
+repeated deviations.
 """
 
 TEMPLATES = [
@@ -192,6 +210,55 @@ TEMPLATES = [
         'label': 'Business',
         'tier': 'free',
         'tag': 'General small/medium business',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_executive',
+        'label': 'Executive',
+        'tier': 'pro',
+        'tag': 'High-end corporate',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_studio',
+        'label': 'Studio',
+        'tier': 'pro',
+        'tag': 'Creative studio',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_signature',
+        'label': 'Signature',
+        'tier': 'pro',
+        'tag': 'Personal luxury',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_editorial',
+        'label': 'Editorial',
+        'tier': 'pro',
+        'tag': 'Magazine grid',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_grid',
+        'label': 'Grid',
+        'tier': 'pro',
+        'tag': 'Precision minimal',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_commerce',
+        'label': 'Commerce',
+        'tier': 'pro',
+        'tag': 'Product & business',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_prestige',
+        'label': 'Prestige',
+        'tier': 'pro',
+        'tag': 'Luxury',
         'selectable': True,
     },
 ]

@@ -466,6 +466,10 @@ class FreelancerProfile(models.Model):
         ('free_compact', 'Compact'), ('free_freelancer', 'Freelancer'),
         ('free_minimal', 'Minimal'), ('free_modern', 'Modern'),
         ('free_professional', 'Professional'), ('free_business', 'Business'),
+        ('pro_executive', 'Executive'), ('pro_studio', 'Studio'),
+        ('pro_signature', 'Signature'), ('pro_editorial', 'Editorial'),
+        ('pro_grid', 'Grid'), ('pro_commerce', 'Commerce'),
+        ('pro_prestige', 'Prestige'),
     ]
     invoice_template = models.CharField(
         max_length=20, choices=INVOICE_TEMPLATE_CHOICES, default='professional',

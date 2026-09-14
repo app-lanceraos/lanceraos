@@ -1,0 +1,135 @@
+{% comment %}
+apps/invoices/templates/invoices/pro_signature.html
+20-Template Import, Batch 4 (14 September 2026) — ported from
+proTemplates.html's "Signature" prototype (tpl-signature). Personal-luxury
+design: a centered serif header showing the business name as the headline
+(with "Invoice" as a small subtitle beneath it, not the invoice number), a
+centered meta strip that carries the invoice number itself as its own
+leading item, and two parties shown centered side by side with a custom
+"Billed to" label.
+
+Real, preserved deviation #1: the header does NOT use doc_block.html or
+brand_lockup.html at all — the prototype's own header shows the business
+name as the big headline (`.sig-mark`) with "Invoice" underneath as a
+small uppercase subtitle (`.sig-sub`), the opposite emphasis from every
+other template in this whole 20-template import (which all treat the
+invoice title/number as the header's primary content and the business
+identity as secondary or absent). Written as one-off hand markup, using
+the same 2 real fields (`freelancer.logo`, `freelancer.business_name|
+default:freelancer.display_name`) `brand_lockup.html` already uses —
+no new field invented, just centered instead of the standard flex-row
+brand lockup.
+
+Real, preserved deviation #2: the invoice number moves into the meta
+strip as its own leading "Invoice No." item (`meta_strip.html`'s new
+`with_invoice_number=True` param, see that partial's own docstring) —
+since the header carries no invoice number at all (deviation #1), the
+prototype's own `signature.renderIntro` puts it here instead:
+`[{k:"Invoice No.", v:inv.meta.number}].concat(metaItemsList(inv))`.
+
+Real, preserved deviation #3: `partiesRow(inv, "From", "Billed to")` —
+only the Bill To label changes ("Billed to", not "Bill To"); From stays
+the default. Ported via `parties_row.html`'s new `bill_to_label` param
+(see that partial's own docstring) with `from_label` left at its default.
+
+Font: Georgia/Times New Roman system serif throughout, matching
+free_classic.html's own established precedent (Batch 1) of using the
+system serif stack rather than embedding `font_source_serif_regular`/
+`_semibold` for a design that only needs the fallback-safe classic serif
+look, not this codebase's specific branded Source Serif 4 face.
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge — see free_essential.html's identical
+comment.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    {% include "invoices/_partials/footer.html" with footer_text_color="#8c7f76" footer_left_inset="16mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Georgia, 'Times New Roman', serif;
+    background: #fbf7f1;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #8c7f76;
+    --rule: #e7dcd1;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .page-body { padding: 22mm 24mm; }
+  .sig-top { text-align: center; }
+  .sig-logo { height: 24px; width: auto; margin: 0 auto 8px; }
+  .sig-mark { font-size: 19px; letter-spacing: 0.03em; font-weight: 700; }
+  .sig-sub { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); margin-top: 6px; }
+  .sig-hr { height: 1px; background: var(--rule); margin: 7mm 0; }
+
+  .sig-meta { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; margin-bottom: 9mm; }
+  .sig-meta .meta-strip { justify-content: center; gap: 26px; }
+  .sig-meta .meta-item { align-items: center; }
+
+  .parties-row { justify-content: center; margin-bottom: 9mm; }
+  .party { flex: 0 0 62mm; text-align: center; }
+  .party:first-child { text-align: right; border-right: 1px solid var(--rule); padding-right: 14mm; margin-right: 14mm; }
+  .party:last-child { text-align: left; }
+  .party-label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+
+  .inv-table thead th { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border-bottom-color: var(--accent); }
+  .inv-table td:not(.col-desc) { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+  .inv-totals { margin: 8mm 0 8mm auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+  .inv-totals .row.total { border-top-color: var(--accent); color: var(--accent); }
+
+  .notes-terms { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; text-align: center; justify-content: center; margin-bottom: 6mm; }
+  .notes-block p { font-style: italic; }
+  .sig-footer { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+  .sig-payment { text-align: right; margin-left: auto; }
+</style>
+</head>
+<body>
+
+<div class="page-body">
+  <div class="sig-top">
+    {% if freelancer.logo %}<img class="sig-logo" src="{{ freelancer.logo }}" alt="">{% endif %}
+    <div class="sig-mark">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+    <div class="sig-sub">Invoice</div>
+  </div>
+  <div class="sig-hr"></div>
+
+  <div class="sig-meta">{% include "invoices/_partials/meta_strip.html" with with_invoice_number=True %}</div>
+  {% include "invoices/_partials/parties_row.html" with bill_to_label="Billed to" %}
+
+  {% include "invoices/_partials/items_table.html" %}
+  {% include "invoices/_partials/totals.html" %}
+  {% include "invoices/_partials/notes_terms.html" %}
+
+  <div class="sig-hr"></div>
+  <div class="sig-footer">
+    {% include "invoices/_partials/signature_block.html" %}
+    <div class="sig-payment">
+      {% include "invoices/_partials/payment_block.html" %}
+      <div class="pay-online" style="margin-top:6mm; justify-content:flex-end;">
+        <div>
+          <div class="label">Pay online</div>
+          <div class="link">{{ invoice.payment_page_url }}</div>
+        </div>
+        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,148 @@
+{% comment %}
+apps/invoices/templates/invoices/pro_editorial.html
+20-Template Import, Batch 4 (14 September 2026) — ported from
+proTemplates.html's "Editorial" prototype (tpl-editorial). Magazine-grid
+design: a huge bold doc title beside a right-aligned meta strip, a thick
+rule, custom party labels, a split totals treatment (subtotal/tax/discount
+above a bold highlighted "Total due" bar), and a fully independent
+multi-column footer (payment / notes / terms / signature each their own
+flex column, not the standard combined notes+terms box).
+
+Real, preserved deviation #1: `partiesRow(inv, "Issued by", "Billed to")`
+— both party labels change. Ported via `parties_row.html`'s new
+`from_label`/`bill_to_label` params (see that partial's own docstring).
+
+Real, preserved deviation #2: the prototype's own `totalsRowsHtml(inv,
+includeTotal)` splits subtotal/tax/discount from the "Total due" row
+itself — the subtotal/tax/discount rows render in a plain `.edt-subtotals`
+block, while "Total due" gets its own bold, full-width, dark
+`.edt-total-bar`. `totals.html` cannot produce this split (it always
+renders the total row and the PKR line together with subtotal/tax/
+discount) — this is a genuine one-off among this batch's 7 (no other
+template needs a split total), so it's written here as local markup
+reusing the exact same invoice fields `totals.html` itself reads
+(subtotal/tax_rate/tax_amount/discount_amount/total/currency_symbol/
+client_currency_conversion), rather than adding a new mode to a shared
+partial with only one real consumer — same "genuinely per-template
+structural composition, not partial-worthy" precedent free_business.html
+already established for its own footer-grid totals placement (Batch 3).
+The PKR/secondary-currency conversion line (Ali's required, universal
+addition — see totals.html's own docstring) is preserved, placed directly
+under the total bar.
+
+Real, preserved deviation #3: Notes and Terms are NOT wrapped together in
+the standard combined `.notes-terms` box — the prototype's own
+`edt-colophon` puts Payment, Notes, and Terms as 3 fully independent flex
+columns (alongside a 4th for Signature), each only appearing if it has
+real content. `notes_terms.html` always wraps whatever it renders in one
+shared `.notes-terms` div (by design — see that partial's own comment
+about `.notes-terms p`'s CSS scoping), so it isn't reused here; Notes and
+Terms are written as two independent `block-label`+`<p>` blocks using the
+exact same `invoice.notes`/`invoice.terms` fields, matching this batch's
+established precedent (free_freelancer.html's own "thanks box," Batch 2)
+of writing a one-off presentation directly rather than forcing a shared
+partial to support a structure with no second real consumer.
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge — see free_essential.html's identical
+comment.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 18mm 16mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %};
+    {% include "invoices/_partials/footer.html" with footer_text_color="#6e6e74" footer_left_inset="0" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: #fff;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #6e6e74;
+    --rule: #d8d8dc;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .edt-masthead { display: flex; justify-content: space-between; align-items: flex-end; }
+  .edt-title-group { display: flex; flex-direction: column; gap: 6mm; }
+  .edt-title-group .brand-logo { height: 16px; width: auto; }
+  .edt-title-group .brand-name { font-size: 11px; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+  .edt-title-group .doc-title { font-size: 46px; font-weight: 800; letter-spacing: -0.03em; line-height: 0.9; }
+  .edt-title-group .doc-number { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .edt-masthead .meta-strip { gap: 18px; }
+  .edt-masthead .meta-item { align-items: flex-end; }
+  .edt-rule { height: 3px; background: var(--ink); margin: 8mm 0 9mm; }
+  .inv-table thead th { border-bottom: 2px solid var(--ink); font-weight: 700; }
+  .inv-table td { font-family: Georgia, 'Times New Roman', serif; }
+  .inv-table td.num { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+
+  .parties-row { margin-bottom: 9mm; padding-bottom: 8mm; border-bottom: 1px solid var(--rule); }
+  .party-name { font-size: 15px; font-weight: 800; }
+  .party-line { font-family: Georgia, 'Times New Roman', serif; font-size: 11px; color: #333338; }
+
+  .edt-subtotals { width: 64mm; margin: 6mm 0 6mm auto; }
+  .edt-subtotals .row { display: flex; justify-content: space-between; font-size: 11.5px; padding: 4px 0; color: var(--muted); }
+  .edt-total-bar { display: flex; justify-content: space-between; align-items: center; background: var(--ink); color: #fff; padding: 11px 16px; }
+  .edt-total-bar span { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .edt-total-bar strong { font-size: 22px; font-weight: 800; }
+  .edt-pkr { font-size: 9px; color: var(--muted); text-align: right; margin: 3px 0 9mm; }
+
+  .edt-colophon { display: flex; gap: 18px; flex-wrap: wrap; padding-top: 7mm; border-top: 1px solid var(--rule); }
+  .edt-colophon > div { flex: 1 1 130px; min-width: 0; }
+  .edt-colophon p { font-size: 9.5px; line-height: 1.6; color: var(--muted); margin: 0; }
+</style>
+</head>
+<body>
+
+<div class="page-body">
+  <header class="edt-masthead">
+    <div class="edt-title-group">
+      {% include "invoices/_partials/doc_block.html" %}
+      {% include "invoices/_partials/brand_lockup.html" %}
+    </div>
+    {% include "invoices/_partials/meta_strip.html" %}
+  </header>
+  <div class="edt-rule"></div>
+
+  {% include "invoices/_partials/parties_row.html" with from_label="Issued by" bill_to_label="Billed to" %}
+  {% include "invoices/_partials/items_table.html" %}
+
+  <div class="edt-subtotals">
+    <div class="row"><span>Subtotal</span><span>{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</span></div>
+    {% if invoice.tax_rate %}<div class="row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+    {% if invoice.discount_amount %}<div class="row"><span>Discount</span><span>&minus;{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+  </div>
+  <div class="edt-total-bar"><span>Total due</span><strong>{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</strong></div>
+  {% if invoice.client_currency_conversion %}<div class="edt-pkr">≈ {{ invoice.client_currency_conversion.symbol }}{{ invoice.client_currency_conversion.converted_total|floatformat:2|intcomma }} at rate {{ invoice.client_currency_conversion.rate }}</div>{% endif %}
+
+  <div class="edt-colophon">
+    <div>
+      {% include "invoices/_partials/payment_block.html" %}
+      <div class="pay-online" style="margin-top:6mm;">
+        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+        <div>
+          <div class="label">Pay online</div>
+          <div class="link">{{ invoice.payment_page_url }}</div>
+        </div>
+      </div>
+    </div>
+    {% if invoice.notes %}<div><div class="block-label">Notes</div><p>{{ invoice.notes|linebreaksbr }}</p></div>{% endif %}
+    {% if invoice.terms %}<div><div class="block-label">Terms</div><p>{{ invoice.terms|linebreaksbr }}</p></div>{% endif %}
+    {% if signature_url %}<div>{% include "invoices/_partials/signature_block.html" %}</div>{% endif %}
+  </div>
+</div>
+
+</body>
+</html>
