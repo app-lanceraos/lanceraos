@@ -74,12 +74,38 @@ const PAGE_TITLES = {
 
 // ── Nav groups — matches v1's structure exactly. Items for modules
 // that don't exist yet will 404-redirect harmlessly until built. ──
+// Footer Refinement pass (15 September 2026) — full NAV_GROUPS end:true
+// audit, entry by entry, against the REAL routes App.jsx defines today
+// (confirmed by reading App.jsx directly, not assumed from this list):
+//   /invoices    — REAL BUG, FIXED (end:true -> end:false). Two real
+//                  sub-routes exist (/invoices/templates,
+//                  /invoices/analytics) and were leaving the pill
+//                  inactive on both.
+//   /clients     — end:true, correct as-is: no /clients/* sub-route
+//                  exists in App.jsx (its detail view is a state-driven
+//                  panel, not a routed page, same pattern Invoices.jsx
+//                  itself used before Template Gallery/Analytics became
+//                  real routed sub-pages) — exact-match is the right
+//                  behavior today, revisit only if a real /clients/*
+//                  route is ever added.
+//   /dashboard   — end:false already, but /dashboard has no route in
+//                  App.jsx at all yet (Module 9 not started) — moot
+//                  either way until it's built.
+//   /payments, /expenses, /pnl, /tax, /proposals, /contracts, /health,
+//   /income-certificate, /skill-gap — all end:true, but NONE of these
+//                  have any real route in App.jsx yet (every one of
+//                  those modules is "Not started" per CLAUDE.md's own
+//                  build-status table) — moot either way, not a live
+//                  bug today. Re-audit each one's own end value against
+//                  its real sub-page shape at build time, don't assume
+//                  end:true is still correct once a module actually
+//                  ships.
 const NAV_GROUPS = [
   {
     label: 'Menu',
     items: [
       { to: '/dashboard', label: 'Dashboard', tip: 'Dashboard', Icon: LayoutGrid, end: false },
-      { to: '/invoices', label: 'Invoices', tip: 'Invoices', Icon: FileText, end: true },
+      { to: '/invoices', label: 'Invoices', tip: 'Invoices', Icon: FileText, end: false },
       { to: '/clients', label: 'Clients', tip: 'Clients', Icon: Users, end: true },
     ],
   },

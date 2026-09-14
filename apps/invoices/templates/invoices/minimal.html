@@ -15,9 +15,12 @@
        drops to 0 only in the single-page + branding-off cell of the
        footer rule (DECISIONS.md's 13 September 2026 entry) — see
        professional.html's identical @page comment for the full
-       reasoning and the real page-count-parity verification. */
-    margin: 20mm 18mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}16mm{% endif %};
-    {% include "invoices/_partials/footer.html" with footer_text_color="#a3a099" %}
+       reasoning and the real page-count-parity verification.
+       Footer Refinement pass (15 September 2026) — reduced from 16mm to
+       12mm, see professional.html's identical comment for the real
+       measurement and parity re-verification behind this value. */
+    margin: 20mm 18mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %};
+    {% include "invoices/_partials/footer.html" with footer_text_color="#a3a099" footer_left_inset="-2mm" %}
   }
   * { box-sizing: border-box; }
   body {
@@ -40,10 +43,10 @@
     flex-direction: column;
     justify-content: space-between;
     /* 297mm page minus 20mm top minus whatever @page's own bottom margin
-       actually is on THIS render (see the @page block above) — 261mm
-       (297-20-16) when a footer is reserved, 277mm (297-20-0) on the
+       actually is on THIS render (see the @page block above) — 265mm
+       (297-20-12) when a footer is reserved, 277mm (297-20-0) on the
        one no-footer cell. Real page-count parity verified directly. */
-    min-height: {% if single_page_layout and not wordmark_data_uri %}277mm{% else %}261mm{% endif %};
+    min-height: {% if single_page_layout and not wordmark_data_uri %}277mm{% else %}265mm{% endif %};
   }
 
   .eyebrow {
@@ -174,7 +177,10 @@
   }
   .pay-online .link { font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; color: #4b4941; white-space: nowrap; }
 
-  .sign-block { width: 55mm; text-align: right; }
+  /* Signature centering pass (15 September 2026) — both the signature
+     image and the "Authorised signature" label center over the line's
+     own real width, not sit flush right against it. */
+  .sign-block { width: 55mm; text-align: center; }
   .sign-block img.sig { height: 15mm; margin-bottom: -2mm; }
   .sign-block .line {
     border-top: 0.3mm solid {{ design_secondary_color }}; padding-top: 2.5mm;

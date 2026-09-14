@@ -17,7 +17,8 @@
 // for why a second hardcoded frontend copy would just be one more place
 // to edit for each of the 20 templates a later pass imports).
 import { useEffect, useState } from 'react'
-import { LayoutTemplate, Star } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ChevronRight, LayoutTemplate, Star } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
@@ -132,6 +133,20 @@ export default function TemplateGallery() {
 
   return (
     <div>
+      {/* Footer Refinement pass (15 September 2026) — a real path back to
+          Invoices; there was none before. Kept minimal (plain text + a
+          link) since no breadcrumb pattern existed anywhere else in the
+          app to match — this is the first one, not a heavyweight new
+          shared component for a single call site. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 4, marginBottom: 10,
+        fontSize: '0.8rem', color: 'var(--text-tertiary)',
+      }}>
+        <Link to="/invoices" style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>Invoices</Link>
+        <ChevronRight size={13} />
+        <span>Template Gallery</span>
+      </div>
+
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)' }}>Template Gallery</h1>
         <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>

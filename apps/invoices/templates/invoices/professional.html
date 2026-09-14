@@ -32,9 +32,16 @@
        (a real isolated WeasyPrint spike, all 3 templates, both a
        comfortably-1-page and a boundary-swept content length) — dropping
        margin only adds available content space, it cannot itself cause a
-       page break. */
-    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}16mm{% endif %} 0;
-    {% include "invoices/_partials/footer.html" with footer_text_color="#a09a89" %}
+       page break.
+       Footer Refinement pass (15 September 2026) — reduced from 16mm to
+       12mm: a real measurement showed the actual 2-line 6.5pt footer
+       content only needs ~6.08mm of vertical space (the old 16mm left
+       ~4.96mm of padding above AND below it — more than needed); 12mm
+       leaves ~2.96mm each side, still comfortable. Re-verified page-count
+       parity with/without this exact value across all 3 templates and
+       the same content-length sweep as before — zero regressions. */
+    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    {% include "invoices/_partials/footer.html" with footer_text_color="#a09a89" footer_left_inset="16mm" %}
   }
   * { box-sizing: border-box; }
   body {
@@ -49,11 +56,11 @@
     position: relative;
     width: 210mm;
     /* 297mm page minus whatever @page's own bottom margin actually is on
-       THIS render (see the @page block above) — 281mm (297-16) when a
+       THIS render (see the @page block above) — 285mm (297-12) when a
        footer is reserved, the full 297mm on the one no-footer cell.
        Real page-count parity (with/without this exact change) verified
        directly, not assumed — see the @page block's own comment. */
-    min-height: {% if single_page_layout and not wordmark_data_uri %}297mm{% else %}281mm{% endif %};
+    min-height: {% if single_page_layout and not wordmark_data_uri %}297mm{% else %}285mm{% endif %};
     padding: 16mm 16mm 0 20mm;
   }
   /* Signature pinned to the true bottom (Part 2 of the 30 August 2026
@@ -298,7 +305,10 @@
     align-items: flex-end;
     margin-top: 18mm;
   }
-  .sign-block { width: 55mm; text-align: right; }
+  /* Signature centering pass (15 September 2026) — both the signature
+     image and the "Authorised signature" label center over the line's
+     own real width, not sit flush right against it. */
+  .sign-block { width: 55mm; text-align: center; }
   .sign-block img.sig { height: 14mm; margin-bottom: 1mm; }
   .sign-block .line {
     border-top: 0.3mm solid {{ design_secondary_color }};

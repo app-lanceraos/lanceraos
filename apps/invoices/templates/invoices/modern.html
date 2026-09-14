@@ -25,7 +25,6 @@
        footer rule (DECISIONS.md's 13 September 2026 entry) — see
        professional.html's identical @page comment for the full
        reasoning and the real page-count-parity verification. */
-    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}16mm{% endif %} 0;
     /* Template Gallery Polish Pass (14 September 2026) — every
        template-specific footer-box override that used to live here
        (a 58mm @bottom-left inset to clear the sidebar's own bled dark
@@ -44,8 +43,12 @@
        content) found zero collisions and needed zero width-safety rules
        anywhere, this template included, once the sidebar fix landed —
        verified by rendering, not assumed from the other 2 templates'
-       own results. */
-    {% include "invoices/_partials/footer.html" with footer_text_color="#a8a5b8" %}
+       own results.
+       Footer Refinement pass (15 September 2026) — reduced from 16mm to
+       12mm, see professional.html's identical comment for the real
+       measurement and parity re-verification behind this value. */
+    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    {% include "invoices/_partials/footer.html" with footer_text_color="#a8a5b8" footer_left_inset="16mm" %}
   }
   * { box-sizing: border-box; }
   body {
@@ -125,10 +128,10 @@
     flex-direction: column;
     justify-content: space-between;
     /* 297mm page minus whatever @page's own bottom margin actually is on
-       THIS render — 281mm (297-16) when a footer is reserved, the full
+       THIS render — 285mm (297-12) when a footer is reserved, the full
        297mm on the one no-footer cell. Real page-count parity verified
        directly. */
-    min-height: {% if single_page_layout and not wordmark_data_uri %}297mm{% else %}281mm{% endif %};
+    min-height: {% if single_page_layout and not wordmark_data_uri %}297mm{% else %}285mm{% endif %};
   }
 
   .masthead { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8mm; }
@@ -197,7 +200,11 @@
     white-space: nowrap; margin-right: 4mm;
   }
 
-  .sign-block { width: 60mm; margin-left: auto; margin-top: 16mm; text-align: right; }
+  /* Signature centering pass (15 September 2026) — margin-left:auto still
+     positions the whole block at the row's right end via flexbox (kept
+     unchanged); text-align now centers BOTH the signature image and the
+     "AUTHORISED SIGNATURE" label inside the block itself. */
+  .sign-block { width: 60mm; margin-left: auto; margin-top: 16mm; text-align: center; }
   .sign-block img.sig { height: 15mm; margin-bottom: -2mm; }
   .sign-block .line {
     border-top: 0.3mm solid {{ design_primary_color }}; padding-top: 2.5mm;

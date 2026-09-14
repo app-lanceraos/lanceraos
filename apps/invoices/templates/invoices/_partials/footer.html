@@ -56,6 +56,22 @@ widened content) found zero collisions and needed zero new width-safety
 rules anywhere — see modern.html's own @page comment for why Modern
 specifically no longer needs one either, post this same pass's sidebar-
 bleed fix.
+
+Footer Refinement pass (15 September 2026) — `@bottom-left` now carries a
+`margin-left: {{ footer_left_inset }}` — a per-template value (passed in
+via `{% include %}`'s own `with` clause, same mechanism as
+`footer_text_color`) that lands all 3 templates on the SAME real final
+left position (16mm) despite their `@page`s starting from different left
+margins today (`professional.html`/`modern.html`: 0mm; `minimal.html`:
+18mm). Confirmed directly via an isolated spike, not assumed: a margin
+box's own `margin-left` ADDS to `@page`'s own left margin, it does not
+replace it — so professional.html/modern.html pass `16mm` (0+16=16) and
+minimal.html passes `-2mm` (18-2=16), verified by real render to land at
+the exact same measured x-position (0.0000mm difference). The wordmark's
+own vertical alignment against this text is handled inside
+`pdf_generator._generate_wordmark_data_uri` (a calibrated SVG viewBox
+shift), not here — `vertical-align` on this box has no effect in this
+WeasyPrint version, confirmed by the same pass's own spike.
 {% endcomment %}
 {% if not single_page_layout or wordmark_data_uri %}
 @bottom-left {
@@ -65,6 +81,7 @@ bleed fix.
   font-size: 6.5pt;
   line-height: 1.35;
   color: {{ footer_text_color }};
+  margin-left: {{ footer_left_inset }};
 }
 {% if not single_page_layout %}
 @bottom-center {
