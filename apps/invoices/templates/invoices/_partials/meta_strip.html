@@ -1,0 +1,14 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/meta_strip.html
+Issue date / due date. Direct port of the prototype's metaStrip(inv) —
+the prototype's own metaItemsList also conditionally shows payment-terms
+and a PO number, but Part 0c of the 20-Template Import (14 September 2026)
+confirmed Invoice has neither field (verified directly against
+apps/invoices/models.py) — those two rows simply never appear, same as
+every other conditional in this codebase when the underlying data doesn't
+exist. Requires `invoice` in context.
+{% endcomment %}
+<div class="meta-strip">
+  <div class="meta-item"><span class="k">Issue date</span><span class="v">{{ invoice.issue_date|date:"d M Y" }}</span></div>
+  {% if invoice.due_date %}<div class="meta-item"><span class="k">Due date</span><span class="v">{{ invoice.due_date|date:"d M Y" }}</span></div>{% endif %}
+</div>

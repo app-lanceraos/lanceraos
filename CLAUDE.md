@@ -1837,6 +1837,25 @@ were left behind by the 12 September 2026 Full Reversion's own sweep — confirm
 from any real code path, not yet deleted. See DECISIONS.md's 13 September 2026 entry for the full
 Part 0 spike results, the footer rule's 4-cell table, and every alternative considered.
 
+**14 September 2026 (20-Template Import, Batch 1 of ~5).** First real batch of the 20-template
+import — a shared partial library (`apps/invoices/templates/invoices/_partials/`: 9 new HTML
+partials plus `base_components.css`, a shared CSS-custom-property component stylesheet) proven
+against the 4 structurally simplest incoming templates: `free_essential.html`, `free_clean.html`,
+`free_classic.html`, `free_simple.html` — all real, selectable gallery entries now (5 selectable
+templates total: Ledger, Nova, Essential, Clean, Classic, Simple; Minimal stays selectable, not yet
+retired — see DECISIONS.md for why this pass's own instructions were wrong about that). Every
+template from this pass onward uses a tier-prefixed key (`free_essential`, later `pro_atelier`) to
+avoid a name collision with the 3 legacy keys and the existing `statement.html` account-statement
+generator. `'professional'`/`'modern'` relabeled "Ledger"/"Nova" (tier metadata only — the stored
+key, every real `Invoice.base_template` row, and every rendered PDF are byte-identical to before).
+2 of the 9 partials (`payment_block.html`, `signature_block.html`) were retrofitted onto
+`professional.html`/`minimal.html`/`modern.html` unchanged, adding real Wise payment-method support
+and a signer-name line above "Authorised signature" everywhere — re-verified against the existing
+`FooterAndSignaturePinningTests`/40-item regression suite with zero regressions. See DECISIONS.md's
+14 September 2026 entry for the full Part 0 classification (including 2 real corrections to this
+pass's own prompt), the Wise-field security finding (`wise_access_token`/`wise_refresh_token` are
+OAuth credentials, never rendered), and a real brand-logo sizing bug found and fixed along the way.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

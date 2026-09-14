@@ -1,0 +1,9 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/brand_lockup.html
+Logo + business name. Direct port of the prototype's brandLockup(inv) —
+see _partials/README.md. Requires `freelancer` in context.
+{% endcomment %}
+<div class="brand-lockup">
+  {% if freelancer.logo %}<img class="brand-logo" src="{{ freelancer.logo }}" alt="">{% endif %}
+  <div class="brand-name">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+</div>

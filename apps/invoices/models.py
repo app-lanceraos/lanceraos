@@ -184,7 +184,7 @@ class Invoice(models.Model):
     # (Django only enforces choices at the validation layer, not the DB).
     base_template = models.CharField(
         max_length=20, choices=[(t['key'], t['label']) for t in _TEMPLATE_MANIFEST_ENTRIES],
-        null=True, blank=True, help_text='Which of the 3 static templates renders this invoice\'s PDF.',
+        null=True, blank=True, help_text='Which of the available templates renders this invoice\'s PDF.',
     )
 
     # Public URL token — cryptographically random, unguessable. Also a

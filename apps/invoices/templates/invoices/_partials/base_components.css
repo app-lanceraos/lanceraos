@@ -1,0 +1,92 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/base_components.css
+
+Shared base-component CSS for the tier-prefixed templates (free_*/pro_*,
+20-Template Import, Batch 1 — 14 September 2026). See _partials/README.md
+for the full convention this implements (Part 0b's confirmed hypothesis:
+the prototype's own shared component styles are written once, generically,
+against 4 CSS custom properties, with each template skin supplying its own
+value set plus whatever structural layout is genuinely unique to it).
+
+Included via `{% include %}` inside each tier-prefixed template's own
+<style> block, AFTER that template declares its own custom-property values
+on `body`:
+
+  body{ --ink: {{ design_secondary_color }}; --accent: {{ design_primary_color }}; --muted:#...; --rule:#...; }
+  {% include "invoices/_partials/base_components.css" %}
+
+`--ink`/`--accent` are the SAME two per-template colors every render path
+already resolves via pdf_generator._colors_for_base_template (Django
+variables, interpolated into the custom-property declaration at render
+time — by the time a browser/WeasyPrint parses the CSS these are already
+literal hex). `--muted`/`--rule` are purely decorative, static per-skin
+tokens with no data-driven meaning, so each template hardcodes its own
+literal values — matching the existing convention professional.html/
+minimal.html/modern.html already use for their own non-data-driven colors.
+
+The payment/signature rules below use the LEGACY class names
+(`.pay-block .label .method`, `.sign-block .sig .line`) — not this
+prototype's own naming (`.pay-methods`/`.pay-method`, `.sign-img`) —
+because payment_block.html/signature_block.html are RETROFITTED onto
+professional.html/minimal.html/modern.html unchanged (see Part 3 of the
+20-Template Import prompt and DECISIONS.md's 14 September 2026 entry): the
+partial's markup had to match those 3 already-hardened templates' own
+existing CSS byte-for-byte, so nothing there needed to change beyond the
+2 real, deliberate behavioral additions (Wise, the signature name line).
+The other 7 primitives are net-new (never shared with the legacy 3), so
+they use this prototype's own original naming throughout.
+{% endcomment %}
+.brand-lockup{ display:flex; align-items:center; gap:12px; min-width:0; }
+.brand-logo{ object-fit:contain; flex-shrink:0; }
+.brand-name{ font-weight:700; color:var(--ink); }
+
+.doc-title{ font-weight:800; }
+
+.meta-strip{ display:flex; flex-wrap:wrap; gap:0; }
+.meta-item{ display:flex; flex-direction:column; gap:3px; }
+.meta-item .k{ font-size:9px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+.meta-item .v{ font-size:12px; font-weight:600; color:var(--ink); }
+
+.parties-row{ display:flex; gap:14mm; }
+.party{ flex:1 1 0; min-width:0; }
+.party-label{ font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--accent); font-weight:700; margin-bottom:6px; }
+.party-name{ font-size:13.5px; font-weight:700; color:var(--ink); margin-bottom:2px; }
+.party-line{ font-size:11.5px; color:var(--muted); line-height:1.65; }
+
+.inv-table{ border-collapse:collapse; width:100%; }
+.inv-table thead{ display:table-header-group; }
+.inv-table tr{ break-inside:avoid; }
+.inv-table thead th{ text-align:left; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:700; padding:0 0 8px; border-bottom:2px solid var(--ink); }
+.inv-table th.num, .inv-table td.num{ text-align:right; }
+.inv-table td{ font-size:12px; color:var(--ink); padding:9px 0; border-bottom:1px solid var(--rule); vertical-align:top; }
+.inv-table td.col-desc{ word-break:break-word; }
+.inv-table .empty-row td{ color:var(--muted); font-style:italic; text-align:center; padding:16px 0; }
+
+.block-label{ font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--accent); font-weight:700; margin-bottom:7px; }
+
+.inv-totals{ width:66mm; margin-left:auto; }
+.inv-totals .row{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--muted); padding:5px 0; }
+.inv-totals .row.total{ border-top:2px solid var(--ink); margin-top:4px; padding-top:9px; font-size:15px; font-weight:800; color:var(--ink); }
+.inv-totals .pkr{ font-size:9px; color:var(--muted); text-align:right; margin-top:3px; }
+
+.notes-terms{ display:flex; gap:18px; flex-wrap:wrap; }
+.notes-block, .terms-block{ flex:1 1 200px; min-width:0; }
+.notes-terms p{ font-size:10.5px; color:var(--muted); line-height:1.65; margin:0; }
+
+/* Payment methods + pay-online (QR) — legacy class names, see comment above. */
+.pay-block .label{ font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--accent); font-weight:700; margin-bottom:7px; }
+.pay-block .method{ display:flex; justify-content:space-between; gap:12px; font-size:11px; padding:4px 0; border-bottom:1px solid var(--rule); }
+.pay-block .method span:first-child{ font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+.pay-block .method span:last-child{ font-weight:600; color:var(--ink); }
+
+.pay-online{ display:flex; align-items:center; gap:4mm; }
+.pay-online img.qr{ width:18mm; height:18mm; object-fit:contain; border:1px solid var(--rule); padding:1.5mm; background:#fff; }
+.pay-online .label{ font-size:9px; letter-spacing:.09em; text-transform:uppercase; color:var(--accent); font-weight:700; margin-bottom:2px; }
+.pay-online .link{ font-size:9.5px; color:var(--muted); white-space:nowrap; }
+
+/* Signature — legacy class names, see comment above. */
+.sign-block{ display:inline-flex; flex-direction:column; gap:4px; }
+.sign-block img.sig{ height:13mm; object-fit:contain; object-position:left; margin-bottom:1px; }
+.sign-block .line{ border-top:1px solid var(--rule); padding-top:4px; min-width:44mm; }
+.sign-block .sign-name{ display:block; font-weight:700; color:var(--ink); font-size:11px; }
+.sign-block .sign-label{ display:block; font-size:9.5px; color:var(--muted); margin-top:1px; }

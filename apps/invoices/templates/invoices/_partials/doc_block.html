@@ -1,0 +1,11 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/doc_block.html
+Document title + number. Direct port of the prototype's docBlock(inv) —
+"Invoice" is hardcoded (this app has no per-invoice custom title field,
+same as professional.html/minimal.html/modern.html today). Requires
+`invoice` in context.
+{% endcomment %}
+<div class="doc-block">
+  <div class="doc-title">Invoice</div>
+  <div class="doc-number">{{ invoice.invoice_number|default:"DRAFT" }}</div>
+</div>

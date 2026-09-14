@@ -1,0 +1,11 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/notes_terms.html
+Notes + Terms. Direct port of the prototype's notesTermsHtml(inv).
+Requires `invoice` in context.
+{% endcomment %}
+{% if invoice.notes or invoice.terms %}
+<div class="notes-terms">
+  {% if invoice.notes %}<div class="notes-block"><div class="block-label">Notes</div><p>{{ invoice.notes|linebreaksbr }}</p></div>{% endif %}
+  {% if invoice.terms %}<div class="terms-block"><div class="block-label">Terms</div><p>{{ invoice.terms|linebreaksbr }}</p></div>{% endif %}
+</div>
+{% endif %}

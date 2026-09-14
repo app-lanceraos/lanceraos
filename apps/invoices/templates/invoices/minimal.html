@@ -184,7 +184,15 @@
   .sign-block img.sig { height: 15mm; margin-bottom: -2mm; }
   .sign-block .line {
     border-top: 0.3mm solid {{ design_secondary_color }}; padding-top: 2.5mm;
-    font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt;
+  }
+  /* Signature name line (20-Template Import, Part 3, 14 September 2026)
+     — see professional.html's identical comment. */
+  .sign-block .sign-name {
+    display: block; font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 8pt; font-weight: 600; color: {{ design_secondary_color }}; margin-bottom: 0.5mm;
+  }
+  .sign-block .sign-label {
+    display: block; font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt;
     letter-spacing: 0.12em; text-transform: uppercase; color: #a3a099;
   }
 </style>
@@ -270,15 +278,7 @@
       <p>{{ invoice.terms|linebreaksbr }}</p>
       {% endif %}
     </div>
-    {% if freelancer.bank_name or freelancer.payoneer_email or freelancer.jazzcash_number or freelancer.easypaisa_number %}
-    <div class="pay-block">
-      <div class="label">Payment methods</div>
-      {% if freelancer.bank_name %}<div class="method"><span>Bank transfer</span><span>{{ freelancer.bank_name }} — {{ freelancer.bank_account_number }}</span></div>{% endif %}
-      {% if freelancer.payoneer_email %}<div class="method"><span>Payoneer</span><span>{{ freelancer.payoneer_email }}</span></div>{% endif %}
-      {% if freelancer.jazzcash_number %}<div class="method"><span>JazzCash</span><span>{{ freelancer.jazzcash_number }}</span></div>{% endif %}
-      {% if freelancer.easypaisa_number %}<div class="method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
-    </div>
-    {% endif %}
+    {% include "invoices/_partials/payment_block.html" %}
   </div>
   </div>
 
@@ -290,12 +290,7 @@
         <div class="link">{{ invoice.payment_page_url }}</div>
       </div>
     </div>
-    {% if signature_url %}
-    <div class="sign-block">
-      <img class="sig" src="{{ signature_url }}" alt="">
-      <div class="line">Authorised signature</div>
-    </div>
-    {% endif %}
+    {% include "invoices/_partials/signature_block.html" %}
   </div>
 
 </body>

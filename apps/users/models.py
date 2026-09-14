@@ -436,15 +436,23 @@ class FreelancerProfile(models.Model):
     # deliberate, accepted MIRROR of it, not an independent list — kept
     # local only because the dependency direction (apps.invoices depends
     # on apps.users, never the reverse) rules out importing it directly.
-    # apps/invoices/tests/test_manifest_drift.py asserts the two key
-    # lists stay identical; if you add/remove/rename a template in the
-    # manifest, update this tuple in the same change or that test fails.
+    # apps/invoices/tests/test_manifest_drift.py asserts both the KEY
+    # lists AND the LABELS stay identical to the manifest; if you
+    # add/remove/rename a template or relabel one there, update this
+    # tuple in the same change or that test fails.
+    #
+    # 20-Template Import, Batch 1 (14 September 2026) — 'professional'
+    # relabeled "Ledger" and 'modern' relabeled "Nova" (keys unchanged),
+    # plus the 4 new free_* templates, mirroring
+    # apps.invoices.template_manifest.TEMPLATES exactly.
     INVOICE_TEMPLATE_CHOICES = [
-        ('professional', 'Professional'), ('minimal', 'Minimal'), ('modern', 'Modern'),
+        ('professional', 'Ledger'), ('minimal', 'Minimal'), ('modern', 'Nova'),
+        ('free_essential', 'Essential'), ('free_clean', 'Clean'),
+        ('free_classic', 'Classic'), ('free_simple', 'Simple'),
     ]
     invoice_template = models.CharField(
         max_length=20, choices=INVOICE_TEMPLATE_CHOICES, default='professional',
-        help_text='Which of the 3 static invoice templates a new invoice uses by default.',
+        help_text='Which of the available invoice templates a new invoice uses by default.',
     )
 
     # ── Formal Notice (apps.invoices Step 17) ───────────────────────

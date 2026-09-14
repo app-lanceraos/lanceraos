@@ -154,7 +154,10 @@ default_currency, default_payment_terms
 # copied onto that invoice's own base_template field, never reassigned
 # afterward. A local choices tuple, not imported from apps.invoices
 # (apps.invoices already depends on apps.users, never the reverse).
-invoice_template ('professional'/'minimal'/'modern', default 'professional')
+invoice_template ('professional'/'minimal'/'modern'/'free_essential'/'free_clean'/
+                  'free_classic'/'free_simple', default 'professional' — the 4
+                  free_* keys added by the 20-Template Import, Batch 1,
+                  14 September 2026; see apps/invoices/template_manifest.py)
 
 # Invoice PDF signature (Step 7b) — same CharField/Cloudinary-lifecycle
 # pattern as logo/logo_public_id above, mirrored exactly (not URLField,
@@ -165,6 +168,14 @@ signature_url, signature_public_id
 # Payment methods
 bank_name, bank_account_number, jazzcash_number, easypaisa_number,
 payoneer_email, wise_profile_id, wise_access_token, wise_refresh_token
+# wise_access_token/wise_refresh_token are OAuth credentials for a future
+# Wise API integration (Module 3) — NEVER rendered anywhere client-facing.
+# wise_profile_id is the one non-secret Wise field, and (20-Template
+# Import, Batch 1, 14 September 2026) the only one payment_block.html
+# reads to display "Wise" as a payment method on an invoice — flagged as
+# a real, open product question (is a raw profile ID actually what a
+# client should be shown to pay via Wise?) in DECISIONS.md, not a
+# security concern in itself.
 
 # Onboarding — collected once, then locked (see LOCKED_FIELDS on
 # FreelancerProfileSerializer); no longer editable anywhere afterward,
@@ -803,7 +814,12 @@ regardless of `selectable`, since a retired template must remain a valid, render
 invoice already frozen onto it. Real dev-database check before this pass: all 113 real invoices
 have `base_template=NULL` — every one predates `invoice_create`'s own assignment code and none has
 been finalised since, so all render via `DEFAULT_TEMPLATE` fallback (`professional`) today; not a
-bug, just a fact worth knowing before assuming this column reflects real usage),
+bug, just a fact worth knowing before assuming this column reflects real usage. **20-Template
+Import, Batch 1, 14 September 2026**: real `choices` now number 7, not 3 —
+`professional`/`minimal`/`modern` (unchanged keys; `professional`/`modern`'s gallery LABELS changed
+to "Ledger"/"Nova", label-only, see DECISIONS.md) plus 4 new tier-prefixed keys, `free_essential`/
+`free_clean`/`free_classic`/`free_simple`. All still generated directly from the manifest — no
+schema change, a real choices-only migration (`0017_alter_invoice_base_template`)),
 `view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
 `client_address`/`client_phone` (immutable snapshot at creation), `currency` (CharField(3), no
 `choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`,

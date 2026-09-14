@@ -1,0 +1,93 @@
+{% comment %}
+apps/invoices/templates/invoices/free_essential.html
+20-Template Import, Batch 1 (14 September 2026) — ported from
+freeTemplates.html's "Essential" prototype (tpl-essential). Balanced,
+universal starter — a plain header (brand + doc title), meta strip, both
+parties, items table, totals, and a 3-column footer (notes/terms,
+payment, signature). No wrapsBody/renderIntro/renderFull wrinkle in the
+prototype — the simplest of the 4 Batch 1 templates.
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge — those exist solely to fake pagination in
+a browser preview with no real print engine behind them. This is one
+continuous flowing document; WeasyPrint's own automatic pagination plus
+the existing shared footer partial (Page X of N) already solve this
+correctly, exactly like professional.html/minimal.html/modern.html do.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    /* Same footer-driven margin rule as professional.html/minimal.html/
+       modern.html — 0 only in the confirmed single-page + branding-off
+       cell where footer.html renders nothing at all. */
+    margin: 20mm 18mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %};
+    {% include "invoices/_partials/footer.html" with footer_text_color="#70737f" footer_left_inset="-2mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: #fff;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #70737f;
+    --rule: #e4e6ec;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .e-head { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 8mm; border-bottom: 1px solid var(--rule); margin-bottom: 6mm; }
+  .e-head .brand-logo { width: 12mm; height: 12mm; }
+  .e-head .doc-title { font-size: 19pt; letter-spacing: 0.01em; text-align: right; }
+  .e-head .doc-number { font-size: 9pt; color: var(--muted); margin-top: 3mm; text-align: right; font-weight: 600; }
+
+  .meta-strip { gap: 16px; margin-bottom: 7mm; }
+  .parties-row { margin-bottom: 7mm; }
+  .items-wrap { margin-bottom: 2mm; }
+  .inv-totals { margin: 6mm 0 10mm auto; }
+
+  .footer-grid { display: flex; gap: 12mm; margin-top: 8mm; padding-top: 7mm; border-top: 1px solid var(--rule); align-items: flex-start; }
+  .footer-grid > div { flex: 1 1 0; min-width: 0; }
+  .footer-sign { display: flex; justify-content: flex-end; flex: 0 0 auto; }
+</style>
+</head>
+<body>
+
+<div class="page-body">
+  <header class="e-head">
+    {% include "invoices/_partials/brand_lockup.html" %}
+    {% include "invoices/_partials/doc_block.html" %}
+  </header>
+
+  {% include "invoices/_partials/meta_strip.html" %}
+  {% include "invoices/_partials/parties_row.html" %}
+  {% include "invoices/_partials/items_table.html" %}
+  {% include "invoices/_partials/totals.html" %}
+
+  <div class="footer-grid">
+    <div>{% include "invoices/_partials/notes_terms.html" %}</div>
+    <div>
+      {% include "invoices/_partials/payment_block.html" %}
+      <div class="pay-online" style="margin-top:6mm;">
+        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+        <div>
+          <div class="label">Pay online</div>
+          <div class="link">{{ invoice.payment_page_url }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="footer-sign">{% include "invoices/_partials/signature_block.html" %}</div>
+  </div>
+</div>
+
+</body>
+</html>

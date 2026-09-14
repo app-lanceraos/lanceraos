@@ -1,0 +1,18 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/totals.html
+Subtotal / tax / discount / total due. Direct port of the prototype's
+totalsHtml(inv), PLUS one required behavioral addition per Ali's decision
+(20-Template Import, Part 3): the PKR/secondary-currency conversion line
+(invoice.client_currency_conversion) that professional.html/minimal.html/
+modern.html already render inline — the prototype has no equivalent at
+all and would silently drop this real, used feature if ported as-is.
+Requires `invoice` in context.
+{% endcomment %}
+{% load humanize %}
+<div class="inv-totals">
+  <div class="row"><span>Subtotal</span><span>{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</span></div>
+  {% if invoice.tax_rate %}<div class="row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+  {% if invoice.discount_amount %}<div class="row"><span>Discount</span><span>−{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+  <div class="row total"><span>Total due</span><span>{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</span></div>
+  {% if invoice.client_currency_conversion %}<div class="pkr">≈ {{ invoice.client_currency_conversion.symbol }}{{ invoice.client_currency_conversion.converted_total|floatformat:2|intcomma }} at rate {{ invoice.client_currency_conversion.rate }}</div>{% endif %}
+</div>

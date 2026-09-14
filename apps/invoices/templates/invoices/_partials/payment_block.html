@@ -1,0 +1,44 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/payment_block.html
+Payment methods list (bank / Payoneer / JazzCash / Easypaisa / Wise).
+Deliberately does NOT include the QR/"pay online" link — the prototype's
+own paymentHtml() bundles both into one primitive, but professional.html/
+minimal.html/modern.html already keep the QR block (pay_online, see
+`.pay-online` in each template's own markup) structurally separate from
+the payment-methods list; this partial matches THAT established
+production convention (it is retrofitted onto those 3 templates
+unchanged) rather than the prototype's bundling.
+
+Uses the LEGACY class names (`.pay-block`, `.label`, `.method`) — not the
+prototype's own `.block-label`/`.pay-methods`/`.pay-method` — because this
+partial is retrofitted verbatim onto professional.html/minimal.html/
+modern.html's own existing, untouched CSS (see _partials/README.md).
+
+Real, required addition per Ali's decision (20-Template Import, Part 3):
+Wise as a payment method. apps/users/models.py's only real Wise-related
+fields on FreelancerProfile are wise_profile_id/wise_access_token/
+wise_refresh_token (Part 0c, confirmed directly) — the latter two are
+OAuth credentials for a future Wise API integration (Module 3), never
+payment-display information, and must NEVER be rendered here or anywhere
+client-facing. wise_profile_id is the one non-secret field available, so
+it is what gates and displays the Wise row below — flagged in
+DECISIONS.md as a real, open product question (whether a profile ID is
+actually what a client should be shown to pay via Wise, or whether a
+dedicated display field is needed later), not a security concern.
+
+Requires `freelancer` in context. Optional `with class_name="..."` overrides
+the outer div's class (default "pay-block") — modern.html's own sidebar
+already owns the class name `.pay-block` for its unrelated QR/pay-online
+box, so its retrofit passes `class_name="pay-block2"`, the class its own
+existing CSS (`.pay-block2 .label`/`.method`) already targets.
+{% endcomment %}
+{% if freelancer.bank_name or freelancer.payoneer_email or freelancer.jazzcash_number or freelancer.easypaisa_number or freelancer.wise_profile_id %}
+<div class="{{ class_name|default:"pay-block" }}">
+  <div class="label">Payment methods</div>
+  {% if freelancer.bank_name %}<div class="method"><span>Bank transfer</span><span>{{ freelancer.bank_name }} — {{ freelancer.bank_account_number }}</span></div>{% endif %}
+  {% if freelancer.payoneer_email %}<div class="method"><span>Payoneer</span><span>{{ freelancer.payoneer_email }}</span></div>{% endif %}
+  {% if freelancer.jazzcash_number %}<div class="method"><span>JazzCash</span><span>{{ freelancer.jazzcash_number }}</span></div>{% endif %}
+  {% if freelancer.easypaisa_number %}<div class="method"><span>Easypaisa</span><span>{{ freelancer.easypaisa_number }}</span></div>{% endif %}
+  {% if freelancer.wise_profile_id %}<div class="method"><span>Wise</span><span>{{ freelancer.wise_profile_id }}</span></div>{% endif %}
+</div>
+{% endif %}

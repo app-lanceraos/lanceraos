@@ -133,6 +133,12 @@ TEMPLATE_MAP = {
     'professional': 'invoices/professional.html',
     'minimal': 'invoices/minimal.html',
     'modern': 'invoices/modern.html',
+    # 20-Template Import, Batch 1 (14 September 2026) — the 4 new
+    # tier-prefixed free templates (apps/invoices/template_manifest.py).
+    'free_essential': 'invoices/free_essential.html',
+    'free_clean': 'invoices/free_clean.html',
+    'free_classic': 'invoices/free_classic.html',
+    'free_simple': 'invoices/free_simple.html',
 }
 
 # Full Reversion Plan — the one true accent-color pair per static
@@ -141,10 +147,21 @@ TEMPLATE_MAP = {
 # byte-identical colors to before: each pair was already chosen to match
 # that template's own hardcoded CSS, back when these were the only colors
 # a template could render at all.
+#
+# 20-Template Import, Batch 1 (14 September 2026) — the 4 new
+# free_* entries use (primary, secondary) = (that template's own
+# prototype --accent, --ink) values, matching the SAME role split
+# professional/minimal/modern already use (primary drives small
+# uppercase labels/thin rules; secondary drives headings/emphasis text) —
+# verified directly against each new template's own <style> block.
 DEFAULT_TEMPLATE_COLORS = {
     'professional': ('#a8813c', '#1a2b42'),
     'minimal': ('#6b8570', '#171614'),
     'modern': ('#2d2a6e', '#d4e157'),
+    'free_essential': ('#2455a6', '#16181d'),
+    'free_clean': ('#5d5680', '#14151a'),
+    'free_classic': ('#1c2f4a', '#262a33'),
+    'free_simple': ('#3f7ae0', '#202531'),
 }
 
 
@@ -370,6 +387,12 @@ _WORDMARK_FILL_BY_TEMPLATE = {
     'professional': '#a09a89',
     'minimal': '#a3a099',
     'modern': '#a8a5b8',
+    # 20-Template Import, Batch 1 (14 September 2026) — each new
+    # template's own real --muted footer-text color, same convention.
+    'free_essential': '#70737f',
+    'free_clean': '#9a9dab',
+    'free_classic': '#6b7080',
+    'free_simple': '#7d8393',
 }
 
 

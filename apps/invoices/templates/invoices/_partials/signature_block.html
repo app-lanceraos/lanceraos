@@ -1,0 +1,25 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/signature_block.html
+Signature image + line. Uses the LEGACY class names (`.sign-block`,
+`.sig`, `.line`) — retrofitted verbatim onto professional.html/
+minimal.html/modern.html's own existing, untouched CSS.
+
+Real, required addition per Ali's decision (20-Template Import, Part 3):
+a name printed above the "Authorised signature" line, sourced from
+freelancer.display_name — the prototype's own enhancement
+(signatureHtml's `s.name`/`.sign-name`) that the legacy 3 templates
+lacked (they only ever rendered the bare label). Same gating as before —
+the whole block is still keyed on signature_url alone; the name line is
+not an independently-gated feature.
+
+Requires `signature_url` and `freelancer` in context.
+{% endcomment %}
+{% if signature_url %}
+<div class="sign-block">
+  <img class="sig" src="{{ signature_url }}" alt="">
+  <div class="line">
+    <span class="sign-name">{{ freelancer.display_name }}</span>
+    <span class="sign-label">Authorised signature</span>
+  </div>
+</div>
+{% endif %}

@@ -1,0 +1,41 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/parties_row.html
+From / Bill To. Direct port of the prototype's partiesRow(inv) (plus the
+single-party helper it's built from, partyHtml). Requires `invoice` and
+`freelancer` in context.
+
+Optional `with` params:
+  bill_to_only — when truthy, renders ONLY the Bill To `.party` div (no
+    outer `.parties-row` flex wrapper, no From party) — needed by
+    free_classic.html, whose own composition wraps just the Bill To party
+    in a bordered `.billto-box`, exactly matching the prototype's own
+    classic template (its renderHeader calls the single-party `partyHtml`
+    helper directly, never the two-party `partiesRow`). The caller
+    supplies its own wrapping element around the `{% include %}` call.
+{% endcomment %}
+{% if bill_to_only %}
+<div class="party">
+  <div class="party-label">Bill To</div>
+  <div class="party-name">{{ invoice.client_name|default:"No client yet" }}</div>
+  {% if invoice.client_company %}<div class="party-line">{{ invoice.client_company }}</div>{% endif %}
+  {% if invoice.client_address %}<div class="party-line">{{ invoice.client_address|linebreaksbr }}</div>{% endif %}
+  {% if invoice.client_email %}<div class="party-line">{{ invoice.client_email }}</div>{% endif %}
+</div>
+{% else %}
+<div class="parties-row">
+  <div class="party">
+    <div class="party-label">From</div>
+    <div class="party-name">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+    <div class="party-line">{{ freelancer.display_name }}</div>
+    {% if freelancer.address_line1 %}<div class="party-line">{{ freelancer.address_line1 }}</div>{% endif %}
+    <div class="party-line">{{ invoice.user.email }}</div>
+  </div>
+  <div class="party">
+    <div class="party-label">Bill To</div>
+    <div class="party-name">{{ invoice.client_name|default:"No client yet" }}</div>
+    {% if invoice.client_company %}<div class="party-line">{{ invoice.client_company }}</div>{% endif %}
+    {% if invoice.client_address %}<div class="party-line">{{ invoice.client_address|linebreaksbr }}</div>{% endif %}
+    {% if invoice.client_email %}<div class="party-line">{{ invoice.client_email }}</div>{% endif %}
+  </div>
+</div>
+{% endif %}

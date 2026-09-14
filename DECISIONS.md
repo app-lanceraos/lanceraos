@@ -9278,3 +9278,186 @@ directly from its own CSS instead, which is both more robust and doesn't depend 
 internal WeasyPrint rendering-group behavior. A full shared `Breadcrumb` component — rejected for
 now (this pass's own single real consumer), noted as the natural extraction point once
 `InvoiceAnalytics.jsx` (or a future page) genuinely needs the same pattern.
+
+**14 September 2026 — 20-Template Import, Batch 1: shared partial library + free_essential/
+free_clean/free_classic/free_simple.**
+
+First of an estimated 5 batches importing the 20 prototype templates (`freeTemplates.html`/
+`proTemplates.html`) into the real Django/WeasyPrint pipeline. This batch built the shared partial
+library every later batch depends on and proved it against the 4 structurally simplest new
+templates, plus a mandatory Part 0 classification pass across all 20 real prototype files (not a
+sample) before any code was written — two of that pass's findings directly overrode this batch's
+own prompt, both confirmed against the real files/tests before acting, per this project's own
+root-cause-before-fix rule.
+
+**Part 0 findings that corrected the prompt's own premises.** (1) The prompt's provisional batch
+table put only "minimal confirmed" plus "2 more unconfirmed" wrapsBody-wrinkle free-pool templates
+into Batch 3; the real `freeTemplates.html` TEMPLATES registry shows `modern`/`professional`/
+`business` all carry a real `wrapsBody:true` flag, and `minimal` — while never carrying that literal
+flag — has the identical structural wrinkle (`renderHeader` opens `<div class="m-shell"><div
+class="m-rail">...<div class="m-main">` and never closes it; `renderFooter` closes it with a bare
+`</div></div>`). Real count is 4, not 3: Batch 2 (free tier, plain composition) is now `compact`,
+`freelancer` only; Batch 3 (shell-spanning wrinkle) is `minimal`, `modern`, `professional`,
+`business`. Batches 4/5 (pro tier: 7 plain + `atelier`/`consulting`/`statement` as `renderFull`)
+were independently re-derived from the real `proTemplates.html` registry and match the prompt's own
+provisional table exactly — Pro's `assembleTemplate` has no `wrapsBody` concept at all; every
+non-`renderFull` template there already uses one uniform `renderHeader()` + `<div class="page-body">
+{intro}{items}{footer}</div>` composition, confirmed structurally simpler than Free's own variety.
+(2) The prompt's Part 1 asserted "Minimal: unchanged (already `selectable: False` per the Foundation
+pass)" — checked directly against `template_manifest.py` and this project's own history: Minimal is
+still `selectable: True` today, and the 13 September 2026 Foundation-pass entry itself says
+retiring it is "the import pass's decision to make", naming no specific batch. Left selectable in
+Batch 1 rather than retired with no replacement yet visible in the gallery (`free_minimal` doesn't
+exist until Batch 3) — a deliberate, conservative reading of an ambiguous prior note, not a rubber
+stamp of the prompt's wrong premise. The prompt also claimed the manifest/`FreelancerProfile`
+choices drift test "checks key lists, not labels" — false: `test_manifest_drift.py` has a dedicated
+`test_freelancer_profile_choices_match_the_manifest_labels_exactly` test, and a real
+`test_response_shape_carries_label_tier_and_tag`/`test_no_tier_is_pro_yet_module_8_does_not_exist`
+pair that would have failed outright the moment `professional`'s tier became `'pro'` — both updated
+in the same change (the second renamed to
+`test_tier_is_declared_data_not_enforcement_module_8_does_not_exist` and its own assertion changed
+from `{'free'}` to `{'free', 'pro'}`, matching the real, intended, mixed-tier reality this rename
+creates) rather than either skipped or left to fail.
+
+**Part 0c model audit (real field names, not assumed).** `InvoiceItem` has no SKU-equivalent field
+(`description`/`quantity`/`unit_price`/`total`/`sort_order` only). `Invoice` has no payment-terms or
+PO-number field. The real Wise-related fields on `FreelancerProfile` are `wise_profile_id`,
+`wise_access_token`, `wise_refresh_token` — the latter two are OAuth credentials for a future Wise
+API integration (Module 3), never payment-display information, and are NEVER rendered anywhere in
+this pass. `wise_profile_id` is the one non-secret field available, so it is what gates and displays
+the new Wise payment-method row; flagged here as a real, open product question (whether a raw
+profile ID is actually what a client should see to pay a freelancer via Wise, or whether a
+dedicated display field belongs on `FreelancerProfile` later) rather than quietly assumed correct.
+
+**Part 0b CSS hypothesis — confirmed.** Both prototype files' shared component CSS
+(`.brand-lockup`, `.meta-strip`, `.parties-row`/`.party`, `.inv-table`, `.inv-totals`,
+`.notes-terms`, `.pay-block`/`.pay-methods`, `.sign-block`) is written once, generically, against 4
+CSS custom properties (`--ink`/`--accent`/`--muted`/`--rule`), with each template skin supplying its
+own value set — byte-identical across `freeTemplates.html` and `proTemplates.html`. Built
+`_partials/base_components.css`, included via `{% include %}` inside each new template's own
+`<style>` block AFTER it declares `body{ --ink: {{ design_secondary_color }}; --accent: {{
+design_primary_color }}; --muted:#...; --rule:#...; }` — the SAME two per-template colors every
+render path already resolves via `pdf_generator._colors_for_base_template`, interpolated into the
+custom-property declaration at Django-render time (already literal hex by the time WeasyPrint parses
+the CSS). `--muted`/`--rule` are purely decorative per-skin tokens with no data-driven meaning, so
+each template hardcodes its own literal value, matching how `professional.html`/`minimal.html`/
+`modern.html` already treat their own non-data-driven colors. The 3 legacy templates are NOT
+retrofitted onto this CSS-custom-property system — untouched, working, hardened files, no functional
+reason to touch beyond the 2 specific partials below.
+
+**The 9 shared partials** (`_partials/`): `brand_lockup.html`, `doc_block.html`, `meta_strip.html`
+(issue/due date only — no payment-terms/PO row, per the Part 0c field audit), `parties_row.html`
+(with an optional `bill_to_only` mode for Classic, see below), `items_table.html` (SKU column
+structurally preserved as an optional `show_sku` param nothing sets today, gracefully inert per
+Part 0c), `totals.html`, `payment_block.html`, `signature_block.html`, `notes_terms.html`. 7 of the 9
+use the prototype's own class naming since they're net-new (no legacy CSS to match); the 2 that are
+retrofitted onto the legacy 3 (`payment_block.html`/`signature_block.html`) deliberately use the
+LEGACY class names (`.pay-block .label .method`, `.sign-block .sig .line`) instead, so the retrofit
+needed zero CSS changes in professional/minimal/modern beyond the two real behavioral additions
+below — `payment_block.html` also takes an optional `class_name` override (`modern.html`'s own
+sidebar already owns the literal class `.pay-block` for its unrelated QR box, so its retrofit passes
+`class_name="pay-block2"`, the class its own existing CSS already targets). The QR/"Pay online" block
+is deliberately NOT one of the 9 partials and stays inline per-template (matching the pre-existing
+professional/minimal/modern convention of a separate `.pay-online` block, never merged with payment
+methods the way the prototype's own `paymentHtml()` does) — added to all 4 new templates for feature
+parity with the existing 3, reusing the same `qr_code_data_uri`/`invoice.payment_page_url` context
+variables every render path already supplies.
+
+**Two required behavioral additions** (Ali's decision), both retrofitted onto the legacy 3 as well
+as built into the new 4: (1) `totals.html` includes the PKR/secondary-currency conversion line
+(`invoice.client_currency_conversion`) the existing 3 templates already render inline — the
+prototype has no equivalent and would have silently dropped this real, used feature if ported
+as-is. (2) `signature_block.html` prints `freelancer.display_name` above "Authorised signature"
+(the prototype's own enhancement the legacy 3 lacked) — same gating as before (keyed on
+`signature_url` alone, not an independent toggle).
+
+**Retrofit verification.** `professional.html`/`minimal.html`/`modern.html`'s own `.sign-block .line`
+CSS split into a border/spacing-only `.line` rule plus 2 new `.sign-name`/`.sign-label` rules
+carrying the text styling that used to sit directly on `.line` — a real, deliberate height change,
+re-verified rather than assumed compatible: the full pre-existing `FooterAndSignaturePinningTests`
+class and the 40-item multi-page regression test both pass UNMODIFIED against the new, slightly
+taller signature block (85 pre-existing tests in `test_pdf_pipeline.py`/`test_pdf_templates.py`/
+`test_footer_rule.py`/`test_manifest_drift.py`, one clean `--keepdb` run, zero regressions).
+
+**A real bug found and fixed during the new templates' own render verification** (not assumed
+correct from the CSS alone): all 4 new templates initially rendered onto 2 pages for a fixture that
+should trivially fit on 1 — traced to a missing per-template `.brand-logo { width: ...; height:
+...; }` rule (the prototype's own per-skin CSS always sets this; it was dropped during the port).
+Without an explicit size, the freelancer's logo `<img>` rendered unconstrained, inflating the whole
+header row's height enough to push the entire footer to a second page. Fixed by adding each
+template's own real prototype value (`free_essential`: 12mm; `free_clean`: 9mm; `free_classic`:
+11mm; `free_simple`: 10mm) — re-verified: all 4 templates render a 3-item fixture on exactly 1 page.
+A second, real (not a bug) finding: `free_simple` renders onto 2 pages for a FULLY-populated fixture
+(3 items + tax + signature + Wise payment + notes + terms) while the other 3 don't — traced to
+`free_simple`'s own `.footer-stack` being a vertical flex COLUMN (matching the prototype's own
+`tpl-simple` design exactly: notes, then payment, then signature, stacked) versus the other 3's
+side-by-side `.footer-grid` ROW — a real, expected consequence of Simple's own "single flowing
+column" design tag combined with the new pay-online addition, not an implementation defect; content
+ends comfortably mid-page (confirmed via real PyMuPDF y-position inspection) and the footer
+genuinely doesn't fit in the remaining space, which is exactly what real pagination is supposed to
+do. Left as genuine 2-page output rather than artificially compressed to force 1 page.
+
+**Legacy rename** (`template_manifest.py`, label/tier metadata only — the stored `key` values
+`'professional'`/`'modern'` are untouched, and so is every real `Invoice.base_template`/
+`FreelancerProfile.invoice_template` row referencing them): `'professional'` → label "Ledger", tier
+`'pro'` (real, developer-authored data — still enforced nowhere, per this file's own `tier`
+docstring; the frontend `TemplateGallery.jsx` doesn't render a tier badge at all yet, so this
+produces no user-visible "upgrade" prompt for a feature that isn't actually gated — flagged for
+whoever eventually builds tier enforcement/badging). `'modern'` → label "Nova", tier stays `'free'`.
+A real DB query before making this change: all 113 real invoices in the dev database have
+`base_template=None` (falling back to `'professional'`/Ledger at render time regardless), and 27
+`FreelancerProfile` rows reference `'professional'` by key (1 references `'modern'`) — confirmed
+after the change that both migrations (`invoices/0017_alter_invoice_base_template`,
+`users/0013_alter_freelancerprofile_invoice_template`, choices-only, no schema change) apply cleanly
+and a real rendered PDF for `base_template='professional'` contains neither "Ledger" nor "Nova"
+anywhere (gallery labels are never invoice content). `FreelancerProfile.INVOICE_TEMPLATE_CHOICES`
+updated in the same change to keep the labels-match drift test passing.
+
+**Tier-prefixed key convention** (documented in `template_manifest.py`'s own module docstring and
+`_partials/README.md`): every template from Batch 1 onward uses a tier-prefixed key
+(`free_essential`, later `pro_atelier`, etc.) and matching filename — resolves the name collision
+between the prototype's own `minimal`/`modern`/`professional`/`statement` pool designs and the 3
+legacy keys (`statement` also collides with the existing account-statement generator,
+`apps/invoices/templates/invoices/statement.html`, untouched by this pass) without a special case
+per collision.
+
+**Deliberate exclusions, restated.** `paginateItems`/`computeCapacity`/`continuationHeader`/
+`.page-badge` were not ported anywhere — they exist solely to fake pagination in a browser preview
+with no real print engine behind it; WeasyPrint's own automatic pagination plus the existing shared
+footer partial (`Page X of N`) already solve this correctly, exactly like the legacy 3 templates.
+The other 7 shared primitives were NOT retrofitted onto professional/minimal/modern — their current
+inline markup already works correctly and touching hardened production templates with no functional
+reason is unnecessary risk. Batches 2–5 were not built.
+
+**Verification.** New `apps/invoices/tests/test_template_import_batch1.py` (26 tests): page-count
+parity (1-page fixture, a boundary sweep at 8/12/16/20 items, and the 40-item regression, all 4 new
+templates), empty-items fallback, SKU-column absence, payment methods including Wise, the
+no-payment-methods omission case, the signature name line and its omission case, notes/terms
+independent conditionals and their omission case, the PKR conversion line, `free_classic`'s real
+Bill-To-only deviation, the Wise/signature-name retrofit on all 3 legacy templates (including
+`modern.html`'s sidebar `.pay-block`/`.pay-block2` non-collision), the legacy rename's real
+byte-identical output, and every new template key's presence across `pdf_generator.py`'s 3 lookup
+tables (`TEMPLATE_MAP`, `DEFAULT_TEMPLATE_COLORS`, `_WORDMARK_FILL_BY_TEMPLATE`). All real WeasyPrint
+renders inspected via PyMuPDF, matching `test_pdf_pipeline.py`'s own established convention — never
+"no exception raised" alone. Two real test-authoring bugs found and fixed along the way, both
+consistent with this project's own established letter-spacing/uppercase text-extraction quirk
+(`test_pdf_pipeline.py`'s own `'AUTHORISED SIGNATURE' in text.upper()` pattern): a case-sensitivity
+assumption, and a heavily letter-spaced uppercase label (`modern.html`'s sidebar `.lbl`) extracting
+as individually space-separated glyphs under PyMuPDF, fixed by comparing with all whitespace
+stripped from both sides rather than a plain substring. `apps.invoices`/`apps.users` full suite: see
+this pass's own report for the final combined total; the pre-existing 85-test subset spanning
+`test_pdf_pipeline.py`/`test_pdf_templates.py`/`test_footer_rule.py`/`test_manifest_drift.py` passed
+unmodified except the two `test_manifest_drift.py` tests this entry's own tier-rename section
+already covers.
+
+Alternatives considered for the Wise field: inventing a new `FreelancerProfile.wise_email`-style
+display field to match the prototype's own clean per-method-value shape — rejected as unplanned
+scope (a real schema change Ali hasn't asked for, and the "is a profile ID even what a client should
+see" question is still open); silently omitting Wise entirely until a real display field exists —
+rejected since Ali's decision explicitly asked for Wise as a real option this pass, and
+`wise_profile_id` is a genuine, non-secret, already-real field, not a guess. Alternatives considered
+for the shared CSS: keeping every new template's component CSS fully inline, matching the legacy 3's
+own convention exactly — rejected once Part 0b's hypothesis was confirmed broadly true across all 20
+real prototype files, since 20 templates' worth of copy-pasted identical component CSS is exactly
+the DRY payoff a shared partial exists for, and the legacy 3 are explicitly NOT being touched to
+match it anyway.

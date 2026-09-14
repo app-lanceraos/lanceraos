@@ -39,13 +39,43 @@ Invoice rows already carry base_template='minimal', frozen at creation by
 design; deleting the choice value or the template file would break their
 renders permanently), but the mechanism exists now for the import pass to
 use on whichever templates it retires.
+
+20-Template Import, Batch 1 (14 September 2026) — two real changes to the
+above, both verified against the actual repo state before being made
+(this prompt's own premise about that state was checked, not trusted —
+see DECISIONS.md's 14 September 2026 entry for the full discrepancy):
+
+1. LEGACY RENAME (label/tier metadata only — the stored `key` values
+   'professional'/'modern' are UNTOUCHED, and so is every real
+   Invoice.base_template / FreelancerProfile.invoice_template row that
+   already references them; a real DB query confirmed all 113 real
+   invoices currently have base_template=None anyway, falling back to
+   'professional' at render time, so this rename changes zero real
+   output). 'professional' becomes "Ledger" (tier 'pro' — real,
+   developer-authored data, still NOT enforced anywhere, per this
+   module's own docstring above); 'modern' becomes "Nova" (tier stays
+   'free'). Minimal is genuinely UNCHANGED here (still `selectable: True`)
+   — contrary to this exact import pass's own prompt, which incorrectly
+   assumed it was already retired; DECISIONS.md's own entry already on
+   record (13 September 2026) says retiring it is "the import pass's
+   decision to make", without naming which batch, so it is left
+   selectable in Batch 1 rather than retired with no replacement yet
+   visible in the gallery (free_minimal doesn't exist until Batch 3).
+
+2. TIER-PREFIXED KEY CONVENTION — every template added from Batch 1
+   onward uses a tier-prefixed key (`free_essential`, later `pro_atelier`,
+   etc.) and a matching filename (`free_essential.html`). This is what
+   resolves the name collision between the incoming prototype's own
+   'minimal'/'modern'/'professional' pool designs and these 3 legacy keys
+   (and, in a later batch, the 'statement' collision with the existing
+   account-statement generator) without a special case per collision.
 """
 
 TEMPLATES = [
     {
         'key': 'professional',
-        'label': 'Professional',
-        'tier': 'free',
+        'label': 'Ledger',
+        'tier': 'pro',
         'tag': 'Traditional business',
         'selectable': True,
     },
@@ -58,9 +88,37 @@ TEMPLATES = [
     },
     {
         'key': 'modern',
-        'label': 'Modern',
+        'label': 'Nova',
         'tier': 'free',
         'tag': 'Bold sidebar layout',
+        'selectable': True,
+    },
+    {
+        'key': 'free_essential',
+        'label': 'Essential',
+        'tier': 'free',
+        'tag': 'Universal starter',
+        'selectable': True,
+    },
+    {
+        'key': 'free_clean',
+        'label': 'Clean',
+        'tier': 'free',
+        'tag': 'Modern SaaS invoice',
+        'selectable': True,
+    },
+    {
+        'key': 'free_classic',
+        'label': 'Classic',
+        'tier': 'free',
+        'tag': 'Traditional business',
+        'selectable': True,
+    },
+    {
+        'key': 'free_simple',
+        'label': 'Simple',
+        'tier': 'free',
+        'tag': 'Maximum clarity',
         'selectable': True,
     },
 ]

@@ -88,7 +88,26 @@ been validated against real content that will actually reuse it — `apps/invoic
 _partials/footer.html` (Template Gallery Foundation, 13 September 2026) was extracted first specifically
 because it was being rewritten anyway and was already byte-identical across all 3 static invoice
 templates bar one color value; the templates' own remaining structure stayed independent, deliberately,
-until a real second consumer justifies extracting more.
+until a real second consumer justifies extracting more. That second consumer arrived with the
+20-Template Import (Batch 1, 14 September 2026): `_partials/` grew to 9 shared HTML partials plus
+`base_components.css`, once real, byte-identical shared structure existed across a genuinely large set
+of new templates to justify it — see `_partials/README.md` for the full current inventory.
+
+## CSS custom-property skinning for a template FAMILY, not a mixed one
+
+When multiple templates share not just structure (the case above) but a whole family of component CSS
+that only differs by a small, fixed set of color/tone values, skin them with CSS custom properties
+instead of duplicating the ruleset per template: each template declares its own `--ink`/`--accent`/etc.
+values once (interpolating server-resolved values like `design_primary_color`/`design_secondary_color`
+directly into the custom-property declaration — by the time the CSS is parsed these are already literal
+hex, so no indirection cost), then `{% include %}`s one shared stylesheet partial written generically
+against `var(--...)`. Confirmed via the 20-Template Import's own Part 0b spike that the prototype these
+4 new templates were ported from already used exactly this pattern, byte-identical across all 20 source
+templates — a strong, validated signal, not a guess, that the abstraction actually fits. Don't
+retroactively convert an already-hardened template onto this system just for consistency — `professional
+.html`/`minimal.html`/`modern.html` keep their own established direct-substitution convention
+(`color: {{ design_primary_color }};`, no custom-property indirection at all) untouched; the two
+conventions coexist deliberately rather than one being "correct" project-wide.
 
 ## A parallel implementation's naming gets promoted the moment it becomes the only one
 

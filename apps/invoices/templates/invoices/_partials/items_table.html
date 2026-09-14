@@ -1,0 +1,44 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/items_table.html
+Line items table. Direct port of the prototype's itemsTableHtml(inv,
+items), including the empty-items fallback row ("No line items on this
+invoice") — Django's own {% for %}/{% empty %} handles that natively
+rather than the prototype's manual length check.
+
+The SKU column is preserved structurally (an optional `with show_sku=True`
+param a future caller could pass) but Part 0c of the 20-Template Import
+(14 September 2026) confirmed InvoiceItem has no `sku` field at all
+(verified directly against apps/invoices/models.py) — nothing sets
+show_sku today, so the column never renders, gracefully, same as every
+other conditional in this codebase when the underlying data doesn't exist.
+
+Requires `invoice` in context (uses invoice.items.all and
+invoice.currency_symbol).
+{% endcomment %}
+{% load humanize %}
+<div class="items-wrap">
+<table class="inv-table">
+  <thead>
+    <tr>
+      {% if show_sku %}<th class="col-sku">SKU</th>{% endif %}
+      <th class="col-desc">Description</th>
+      <th class="col-qty num">Qty</th>
+      <th class="col-rate num">Rate</th>
+      <th class="col-amount num">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in invoice.items.all %}
+    <tr>
+      {% if show_sku %}<td class="col-sku"></td>{% endif %}
+      <td class="col-desc">{{ item.description }}</td>
+      <td class="col-qty num">{{ item.quantity|floatformat:"-2" }}</td>
+      <td class="col-rate num">{{ invoice.currency_symbol }}{{ item.unit_price|floatformat:2|intcomma }}</td>
+      <td class="col-amount num">{{ invoice.currency_symbol }}{{ item.total|floatformat:2|intcomma }}</td>
+    </tr>
+    {% empty %}
+    <tr class="empty-row"><td colspan="{% if show_sku %}5{% else %}4{% endif %}">No line items on this invoice</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>

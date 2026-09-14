@@ -1,0 +1,87 @@
+{% comment %}
+apps/invoices/templates/invoices/free_simple.html
+20-Template Import, Batch 1 (14 September 2026) — ported from
+freeTemplates.html's "Simple" prototype (tpl-simple). Maximum clarity,
+single flowing column — plain header, meta strip, both parties, items,
+totals, and a stacked (not side-by-side) footer.
+
+Does not port paginateItems/computeCapacity/continuationHeader/
+.page-badge — see free_essential.html's identical comment.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 22mm 22mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %};
+    {% include "invoices/_partials/footer.html" with footer_text_color="#7d8393" footer_left_inset="-6mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: #fff;
+    font-size: 10pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #7d8393;
+    --rule: #e3e6ec;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .s-top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .s-top .brand-logo { width: 10mm; height: 10mm; }
+  .s-top .doc-title { font-size: 17pt; color: var(--accent); text-align: right; }
+  .s-top .doc-number { font-size: 9pt; color: var(--muted); margin-top: 3mm; text-align: right; }
+
+  .meta-strip { gap: 16px; margin-top: 7mm; }
+  .meta-item .v { font-weight: 600; }
+
+  .parties-row { margin-top: 9mm; margin-bottom: 8mm; }
+
+  .inv-table thead th { font-weight: 700; border-bottom-width: 2px; border-color: var(--rule); color: var(--muted); }
+  .inv-totals { margin: 6mm 0 10mm auto; }
+  .inv-totals .row.total { color: var(--accent); border-top-color: var(--rule); }
+
+  .footer-stack { margin-top: 13mm; display: flex; flex-direction: column; gap: 11mm; }
+  .footer-sign { margin-top: 2mm; }
+</style>
+</head>
+<body>
+
+<div class="page-body">
+  <header class="s-top">
+    {% include "invoices/_partials/brand_lockup.html" %}
+    {% include "invoices/_partials/doc_block.html" %}
+  </header>
+
+  {% include "invoices/_partials/meta_strip.html" %}
+  {% include "invoices/_partials/parties_row.html" %}
+  {% include "invoices/_partials/items_table.html" %}
+  {% include "invoices/_partials/totals.html" %}
+
+  <div class="footer-stack">
+    <div>{% include "invoices/_partials/notes_terms.html" %}</div>
+    <div>
+      {% include "invoices/_partials/payment_block.html" %}
+      <div class="pay-online" style="margin-top:6mm;">
+        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+        <div>
+          <div class="label">Pay online</div>
+          <div class="link">{{ invoice.payment_page_url }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="footer-sign">{% include "invoices/_partials/signature_block.html" %}</div>
+  </div>
+</div>
+
+</body>
+</html>
