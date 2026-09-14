@@ -9596,3 +9596,141 @@ no second real consumer yet among the 20 source templates (confirmed: no other `
 `renderHeader` in either prototype file produces a standalone italic notes call-out box), matching
 this library's own established rule (`_partials/README.md`) that a partial needs a real second
 consumer to justify extracting one.
+
+**14 September 2026 — 20-Template Import, Batch 3: free_minimal/free_modern/free_professional/
+free_business.**
+
+Third batch of the 20-template import — the 4 free-pool templates that happen to share names with
+the legacy 3 designs (Minimal/Modern/Professional) plus Business, built from the existing 9-partial
+library with 2 new, small, named partial parameters. This batch's own prompt was, unlike the
+previous two, accurate about everything it claimed as "current state" — both Part 0 checks that
+mattered (legacy Minimal's `selectable` value; the baseline test total) matched exactly. The one
+place this batch found something genuinely worth correcting was in how it approached its own
+classification task, not in a wrong factual claim — see below.
+
+**Part 0 baseline**: full project-wide `manage.py test`, run first, before any file was touched —
+**1002 passing**, 0 failures. Matches `DECISIONS.md`'s own Batch 2 entry exactly; no discrepancy.
+
+**Part 0: legacy Minimal's `selectable` value** — confirmed `False` directly against
+`template_manifest.py`, exactly as Batch 2 left it and as this batch's own prompt expected.
+
+**Part 0: real classification of all 4 templates, read directly from `freeTemplates.html`'s own
+function bodies** (not inferred from the `wrapsBody` object-literal flag alone):
+
+- `minimal`: NOT flagged `wrapsBody`, but `renderHeader` opens `<div class="m-shell"><div
+  class="m-rail">...</div><div class="m-main">` and only `renderFooter` closes it
+  (`</div></div>`) — the same real wrinkle the Batch 1 classification already found here.
+- `modern`, `professional`, `business`: all 3 flagged `wrapsBody: true` — each opens exactly ONE
+  wrapper div (`.page-body`) in `renderHeader` and closes it in `renderFooter`, with no sidebar/rail
+  structure at all. Structurally simpler than `minimal`'s two-part rail-and-main shape.
+
+**The actual finding that matters more than the classification itself**: this entire "wrapper spans
+across renderHeader/renderFooter" concept — for all 4 templates, flagged or not — turned out to have
+**zero structural implication for the real Django port**, once traced to its actual cause. The
+prototype's `renderHeader`/`renderItems`/`renderFooter` are three INDEPENDENTLY-INVOKED JS functions
+whose raw, unbalanced string-fragment return values get concatenated back together by the
+prototype's own per-page pagination assembler (`assembleTemplate`) — `wrapsBody`/the wrinkle exists
+solely to make that stitching workable across the prototype's OWN fake multi-page preview. A real
+Django template is written as one complete, properly nested document from the start — there was
+never a reason to "preserve" an open div spanning multiple sections, because in a real template file
+that's just... normal HTML, closed where it naturally ends. This was confirmed directly against
+already-shipping code, not asserted: `professional.html` (the LEGACY design, unrelated to this
+batch's `free_professional.html`) already opens `.page-body` right after `.spine` and closes it
+right before `.sign-row`, as one plain nested `<div>...</div>`, with no cross-function complexity
+anywhere. `free_modern.html`/`free_professional.html`/`free_business.html` all follow that exact,
+already-proven shape.
+
+**`free_minimal.html` goes one step further and makes even the concept of a spanning wrapper
+disappear entirely**, not just become writable as a normal div: its persistent rail uses
+`position: fixed` (`top:0; left:0; bottom:0; width:54mm`) — the exact same mechanism the
+ALREADY-SHIPPING `modern.html` (legacy design) already uses for its own persistent sidebar
+(`.sidebar{ position:fixed; top:0; left:0; bottom:0; width:42mm; }` + `.main{ margin-left:42mm; }`,
+confirmed by reading that file directly, comment included: "the sidebar's dark background used to
+bleed through the reserved footer margin... now that .sidebar stops at the content box's own bottom
+edge instead"). A `position: fixed` element is removed from normal document flow entirely, so
+`.m-rail` is a fully self-contained, completely closed block; `.m-main` needs exactly one normal
+wrapping div. This isn't a new pattern invented for this template — it's reused, proven
+infrastructure, and it also means the rail repeats on every real page of a multi-page invoice for
+free, via WeasyPrint's own paged-media handling of `position: fixed`, with no pagination-porting of
+any kind needed to get that repetition.
+
+**2 new, small, named `parties_row.html` parameters** (same precedent as `bill_to_only`, Batch 1):
+
+- `stacked` — renders both From and Bill To as bare sibling `.party` divs with no `.parties-row` flex
+  wrapper, for `free_minimal.html`'s rail (spaced via a plain adjacent-sibling CSS rule,
+  `.party + .party{ margin-top: ...; }`, matching the prototype's own direct double call to the
+  single-party `partyHtml` helper).
+- `wrap_class` — appends an extra class directly onto the Bill-To `.party` div itself, for
+  `free_business.html`. A real, confirmed DIFFERENCE from `free_classic.html`'s/
+  `free_professional.html`'s own Bill-To-only shape: the prototype's `business.renderHeader` calls
+  `partyHtml(..., "billto-box")`, whose 4th param appends the extra class straight onto the `.party`
+  element (`'<div class="party'+(extraClass?" "+extraClass:"")+'">'`) — confirmed against
+  `.tpl-business .billto-box .party-label{ color:var(--accent); }`'s own descendant selector, which
+  only makes sense if `billto-box` is on the party element itself, not a separate wrapping container
+  the way Classic/Professional compose it. Two real, different shapes for "the same idea," both
+  preserved rather than forced to match each other.
+
+`free_professional.html` reuses the EXISTING `bill_to_only` (wrapped in its own `<div
+class="billto-box">`, exactly like `free_classic.html`) — no new parameter needed there; confirmed
+by reading the prototype's own `professional.renderHeader` before assuming otherwise.
+`free_business.html`'s totals also render as a footer-grid COLUMN rather than a separate block above
+it (contrast `free_essential.html`/`free_professional.html`) — pure per-template composition using
+the plain `totals.html` partial unchanged, no partial parameter needed for that part.
+
+**The 4 templates**: `free_minimal.html` (rail-and-main, `position:fixed`, both parties stacked in
+the rail, huge 34pt doc title, a 2-column footer); `free_modern.html` (full-bleed gradient hero band,
+an overlapping meta-strip card, a dark `.totals-card` alongside a light `.pay-box`); 
+`free_professional.html` (dark hero band with a bordered meta-strip, Bill-To-only, boxed);
+`free_business.html` (solid-color hero band, a bordered/shaded items table, Bill-To-only via
+`wrap_class`, totals folded into the footer-grid). All 4 explicitly size their own `.brand-logo`
+(12mm/11mm/10mm/11mm respectively) — the exact class of omission Batch 1 found and fixed — confirmed
+via direct grep before considering the work done, not assumed correct from a single render.
+
+**Rule 8 (this batch's own new discipline) followed throughout**: no ad hoc script was run against
+the shared dev/test database outside Django's own test isolation. All verification — including the
+two structural checks that needed to inspect raw rendered HTML rather than PDF text (the
+`position:fixed`/no-`m-shell` check, and the `class="party billto-box"` single-element check) — went
+through the real, transaction-wrapped `test_template_import_batch3.py` `TestCase` file directly, on
+the first attempt, with zero database contamination incidents (unlike Batches 1 and 2, both of which
+had to drop and rebuild the test database mid-session because of exactly this).
+
+**One real, deliberate test update to a prior batch's own test**, the same class of forward-
+compatible change Batch 2 made to a Batch 1 test: Batch 2's `test_selectable_count_is_now_eight`
+asserted the exact selectable set as of Batch 2 — correct then, but Batch 3 legitimately adds 4 more
+selectable templates, making that exact count stale by design. Renamed to
+`test_batch2_templates_are_all_selectable` and narrowed to only what was actually in Batch 2's own
+scope (that its own 2 templates are selectable); the current, real total (12) now lives in this
+batch's own `GalleryStateTests`.
+
+**Verification.** New `apps/invoices/tests/test_template_import_batch3.py` (22 tests, all passing on
+the first real run): page-count parity (1-page fixture, a boundary sweep at 10/15/20/30 items, and
+the 40-item regression, all 4 new templates), empty-items fallback, Wise's unchanged existing
+behavior (explicitly not re-litigated, per this batch's own out-of-scope instruction), the signature
+name line and its omission case, notes/terms independence, the PKR conversion line, the real
+Bill-To-only vs standard-two-party split across all 4, and 2 real structural checks (`position:
+fixed` + no `m-shell` for Minimal; `class="party billto-box"` on a single element, not two, for
+Business). Full relevant regression group (pinning tests, 40-item regression, and all 3 batches'
+own test files): 161 tests, one clean `--keepdb` run, zero regressions beyond the single expected,
+deliberate Batch 2 test update above. Full project-wide backend suite, POST-change, clean run
+(`manage.py test`, zero edits in flight): **1024 passing**, 0 failures — up from the 1002-passing
+baseline (+22, exactly this batch's own new test count, confirming zero regressions anywhere else in
+the project). `npx vite build` clean.
+
+**Deliberate exclusions, restated.** Batches 4-5 were not built. `payment_block.html`'s Wise
+behavior (`freelancer.wise_profile_id` displayed raw) was not touched — confirmed unchanged and
+still working via this batch's own `test_payment_methods_including_wise_render_unchanged`. Legacy
+`base_template` stored DB values were not touched.
+
+Alternatives considered for `free_minimal.html`'s rail: literally replicating the prototype's own
+flex `.m-shell` wrapper (a normal-flow flex row, matching the prototype's own preview-only layout
+byte-for-byte) — rejected once `position:fixed` was confirmed to be both the simpler mechanism (no
+spanning-wrapper concern at all) AND the one already proven correct in this exact codebase for the
+identical persistent-sidebar problem; re-deriving a second, independent solution to a problem this
+codebase has already solved once would be redundant risk for no real benefit. Alternatives considered
+for Business's Bill-To box: reusing `bill_to_only` wrapped in an extra outer `<div
+class="billto-box">` from the template itself, matching Classic/Professional's own shape exactly,
+and skipping the new `wrap_class` parameter — rejected because it would have produced different
+real HTML (`.billto-box .party` vs `.party.billto-box`) than the prototype's own source, and the CSS
+selector `.tpl-business .billto-box .party-label` only reads naturally against the class-on-the-
+party-element shape once traced back to the actual `partyHtml` call — porting the wrapper-div
+version anyway would have been "close enough" rather than actually correct.

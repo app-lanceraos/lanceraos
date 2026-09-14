@@ -83,6 +83,20 @@ count is now 8 (was 7 before this batch: all 7 Batch-0/1 entries were
 selectable, including Minimal) — Ledger, Nova, Essential, Clean, Classic,
 Simple, Compact, Freelancer. Minimal no longer offered as a NEW selection
 but still fully renderable for any historical row.
+
+20-Template Import, Batch 3 (14 September 2026) — 4 more free-pool
+templates: free_minimal, free_modern, free_professional, free_business.
+Same tier-prefixed convention; real, selectable count is now 12 (was 8).
+See DECISIONS.md's 14 September 2026 Batch 3 entry for the real per-
+template structural classification (none of the 4 needed the same
+mechanism — free_minimal uses a `position:fixed` persistent rail,
+matching production modern.html's own proven sidebar technique; the
+other 3 use one plain nested content wrapper, no special mechanism at
+all) and for why the prototype's own `wrapsBody` flag (or, for
+free_minimal, the identical un-flagged wrinkle) turned out to have zero
+real implication for the ported templates once pagination-string-
+concatenation — the only reason that flag/wrinkle exists in the
+prototype at all — is out of the picture.
 """
 
 TEMPLATES = [
@@ -150,6 +164,34 @@ TEMPLATES = [
         'label': 'Freelancer',
         'tier': 'free',
         'tag': 'Independent professionals',
+        'selectable': True,
+    },
+    {
+        'key': 'free_minimal',
+        'label': 'Minimal',
+        'tier': 'free',
+        'tag': 'Premium minimalism',
+        'selectable': True,
+    },
+    {
+        'key': 'free_modern',
+        'label': 'Modern',
+        'tier': 'free',
+        'tag': 'Contemporary startup',
+        'selectable': True,
+    },
+    {
+        'key': 'free_professional',
+        'label': 'Professional',
+        'tier': 'free',
+        'tag': 'High-end corporate',
+        'selectable': True,
+    },
+    {
+        'key': 'free_business',
+        'label': 'Business',
+        'tier': 'free',
+        'tag': 'General small/medium business',
         'selectable': True,
     },
 ]

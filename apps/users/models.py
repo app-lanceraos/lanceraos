@@ -452,11 +452,20 @@ class FreelancerProfile(models.Model):
     # key (matching template_manifest.template_keys(), which also
     # includes retired templates), not just selectable ones; the 2 new
     # free_* templates are appended.
+    #
+    # 20-Template Import, Batch 3 (14 September 2026) — 4 more free_*
+    # templates appended (free_minimal/free_modern/free_professional/
+    # free_business are free-pool designs unrelated to the legacy
+    # 'minimal'/'modern'/'professional' rows already in this tuple,
+    # despite the coincidentally similar labels — see
+    # template_manifest.py's own module docstring).
     INVOICE_TEMPLATE_CHOICES = [
         ('professional', 'Ledger'), ('minimal', 'Minimal'), ('modern', 'Nova'),
         ('free_essential', 'Essential'), ('free_clean', 'Clean'),
         ('free_classic', 'Classic'), ('free_simple', 'Simple'),
         ('free_compact', 'Compact'), ('free_freelancer', 'Freelancer'),
+        ('free_minimal', 'Minimal'), ('free_modern', 'Modern'),
+        ('free_professional', 'Professional'), ('free_business', 'Business'),
     ]
     invoice_template = models.CharField(
         max_length=20, choices=INVOICE_TEMPLATE_CHOICES, default='professional',

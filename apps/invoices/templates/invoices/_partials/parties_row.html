@@ -12,8 +12,45 @@ Optional `with` params:
     classic template (its renderHeader calls the single-party `partyHtml`
     helper directly, never the two-party `partiesRow`). The caller
     supplies its own wrapping element around the `{% include %}` call.
+  wrap_class — (20-Template Import, Batch 3, 14 September 2026) only
+    meaningful combined with `bill_to_only` — an extra class appended
+    directly onto the Bill To `.party` div itself (`class="party
+    {{ wrap_class }}"`), not a separate wrapping container. Needed by
+    free_business.html: the prototype's own `business.renderHeader` calls
+    `partyHtml(..., "billto-box")` — `partyHtml`'s own 4th param appends
+    its extra class straight onto the `.party` element
+    (`'<div class="party'+(extraClass?" "+extraClass:"")+'">'`), unlike
+    free_classic.html's own composition, which wraps this partial's
+    plain output in a SEPARATE outer `<div class="billto-box">` from
+    its own template markup. Two different real shapes for "add a
+    billto-box class", both preserved rather than forced to match each
+    other.
+  stacked — (20-Template Import, Batch 3, 14 September 2026) renders
+    BOTH From and Bill To, but as bare sibling `.party` divs with NO
+    `.parties-row` flex wrapper — needed by free_minimal.html's own
+    `.m-rail`, which stacks both parties vertically via a plain
+    adjacent-sibling CSS rule (`.m-rail .party + .party{ margin-top:
+    ...; }`) rather than the standard side-by-side flex row. The
+    prototype's own `minimal.renderHeader` calls the single-party
+    `partyHtml` helper twice directly (never the two-party
+    `partiesRow`), for exactly this reason.
 {% endcomment %}
 {% if bill_to_only %}
+<div class="party{% if wrap_class %} {{ wrap_class }}{% endif %}">
+  <div class="party-label">Bill To</div>
+  <div class="party-name">{{ invoice.client_name|default:"No client yet" }}</div>
+  {% if invoice.client_company %}<div class="party-line">{{ invoice.client_company }}</div>{% endif %}
+  {% if invoice.client_address %}<div class="party-line">{{ invoice.client_address|linebreaksbr }}</div>{% endif %}
+  {% if invoice.client_email %}<div class="party-line">{{ invoice.client_email }}</div>{% endif %}
+</div>
+{% elif stacked %}
+<div class="party">
+  <div class="party-label">From</div>
+  <div class="party-name">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+  <div class="party-line">{{ freelancer.display_name }}</div>
+  {% if freelancer.address_line1 %}<div class="party-line">{{ freelancer.address_line1 }}</div>{% endif %}
+  <div class="party-line">{{ invoice.user.email }}</div>
+</div>
 <div class="party">
   <div class="party-label">Bill To</div>
   <div class="party-name">{{ invoice.client_name|default:"No client yet" }}</div>

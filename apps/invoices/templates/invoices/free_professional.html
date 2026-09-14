@@ -1,0 +1,108 @@
+{% comment %}
+apps/invoices/templates/invoices/free_professional.html
+20-Template Import, Batch 3 (14 September 2026) — ported from
+freeTemplates.html's free-pool "Professional" prototype (tpl-professional)
+— same name as, but structurally and visually unrelated to, the legacy
+'professional'/Ledger design (professional.html). High-end corporate:
+a dark hero band (brand + doc title + a bordered meta strip), then a
+single content wrapper holding a Bill-To-only header box, items, totals,
+and a 3-column footer.
+
+Real, preserved deviation (matching free_classic.html's own precedent):
+the prototype's own renderHeader never calls the shared two-party
+partiesRow() — only a boxed Bill To party (`bill_to_only`, wrapped in
+`.billto-box` by this template itself, same shape as free_classic.html).
+
+Part 0 finding (this batch): flagged `wrapsBody: true` in the prototype
+for the same pagination-string-concatenation reason as free_modern.html
+— see that file's identical comment. Written here as one normal, fully
+nested `.page-body` div; no cross-function trickery needed.
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge — see free_essential.html's identical
+comment.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    {% include "invoices/_partials/footer.html" with footer_text_color="#767c8c" footer_left_inset="16mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: #fff;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #767c8c;
+    --rule: #dde0e8;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .hero-band { background: #12182b; color: #fff; padding: 14mm 17mm 0; }
+  .hero-top { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 9mm; }
+  .hero-band .brand-logo { width: 10mm; height: 10mm; }
+  .hero-band .brand-name { color: #fff; }
+  .hero-band .doc-title { font-size: 13pt; letter-spacing: 0.08em; text-align: right; color: var(--accent); }
+  .hero-band .doc-number { font-size: 8pt; color: #9aa3b8; margin-top: 3px; text-align: right; }
+  .hero-band .meta-strip { border-top: 1px solid #29304a; gap: 0; }
+  .hero-band .meta-item { flex: 1 1 0; padding: 5mm 0; border-right: 1px solid #29304a; }
+  .hero-band .meta-item:last-child { border-right: none; }
+  .hero-band .meta-item .k { color: #7d87a0; }
+  .hero-band .meta-item .v { color: #fff; }
+
+  .page-body { padding: 10mm 17mm 16mm; }
+  .billto-box { border: 1px solid var(--rule); padding: 6mm 7mm; max-width: 90mm; }
+  .items-wrap { margin-top: 9mm; }
+  .inv-totals { margin: 6mm 0 8mm auto; }
+
+  .footer-grid { display: flex; gap: 10mm; margin-top: 5mm; align-items: flex-start; }
+  .footer-grid > div { flex: 1 1 0; min-width: 0; }
+  .pay-box { border: 1px solid var(--rule); padding: 6mm 7mm; }
+  .footer-sign { display: flex; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<div class="hero-band">
+  <div class="hero-top">
+    {% include "invoices/_partials/brand_lockup.html" %}
+    {% include "invoices/_partials/doc_block.html" %}
+  </div>
+  {% include "invoices/_partials/meta_strip.html" %}
+</div>
+
+<div class="page-body">
+  <div class="billto-box">{% include "invoices/_partials/parties_row.html" with bill_to_only=True %}</div>
+  {% include "invoices/_partials/items_table.html" %}
+  {% include "invoices/_partials/totals.html" %}
+
+  <div class="footer-grid">
+    <div class="pay-box">
+      {% include "invoices/_partials/payment_block.html" %}
+      <div class="pay-online" style="margin-top:6mm;">
+        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+        <div>
+          <div class="label">Pay online</div>
+          <div class="link">{{ invoice.payment_page_url }}</div>
+        </div>
+      </div>
+    </div>
+    <div>{% include "invoices/_partials/notes_terms.html" %}</div>
+    <div class="footer-sign">{% include "invoices/_partials/signature_block.html" %}</div>
+  </div>
+</div>
+
+</body>
+</html>

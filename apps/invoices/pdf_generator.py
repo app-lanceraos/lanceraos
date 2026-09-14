@@ -142,6 +142,11 @@ TEMPLATE_MAP = {
     # 20-Template Import, Batch 2 (14 September 2026).
     'free_compact': 'invoices/free_compact.html',
     'free_freelancer': 'invoices/free_freelancer.html',
+    # 20-Template Import, Batch 3 (14 September 2026).
+    'free_minimal': 'invoices/free_minimal.html',
+    'free_modern': 'invoices/free_modern.html',
+    'free_professional': 'invoices/free_professional.html',
+    'free_business': 'invoices/free_business.html',
 }
 
 # Full Reversion Plan — the one true accent-color pair per static
@@ -170,6 +175,13 @@ DEFAULT_TEMPLATE_COLORS = {
     # design), so both values here are identical.
     'free_compact': ('#1f212a', '#1f212a'),
     'free_freelancer': ('#e2603f', '#26232a'),
+    # 20-Template Import, Batch 3 (14 September 2026) — free_minimal's
+    # prototype also sets --accent equal to --ink (same monochrome
+    # convention as Compact).
+    'free_minimal': ('#17181b', '#17181b'),
+    'free_modern': ('#4f46e5', '#201f33'),
+    'free_professional': ('#b99a55', '#23262f'),
+    'free_business': ('#1e3a5f', '#1e2430'),
 }
 
 
@@ -404,6 +416,11 @@ _WORDMARK_FILL_BY_TEMPLATE = {
     # 20-Template Import, Batch 2 (14 September 2026).
     'free_compact': '#767c8c',
     'free_freelancer': '#847e88',
+    # 20-Template Import, Batch 3 (14 September 2026).
+    'free_minimal': '#adaeb6',
+    'free_modern': '#8b88a8',
+    'free_professional': '#767c8c',
+    'free_business': '#69707f',
 }
 
 

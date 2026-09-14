@@ -1,0 +1,115 @@
+{% comment %}
+apps/invoices/templates/invoices/free_modern.html
+20-Template Import, Batch 3 (14 September 2026) — ported from
+freeTemplates.html's free-pool "Modern" prototype (tpl-modern) — same
+name as, but structurally and visually unrelated to, the legacy
+'modern'/Nova design (modern.html). Contemporary SaaS/startup look: a
+full-bleed gradient hero band, then a single content wrapper
+(`.page-body`) holding a meta-strip that overlaps the hero band, both
+parties, items, and a 2-column footer (payment + dark totals card).
+
+Part 0 finding (14 September 2026, this batch): the prototype flags this
+template `wrapsBody: true`, meaning its own `renderHeader` opens
+`<div class="page-body">` and only `renderFooter` closes it — but that
+split exists SOLELY because the prototype's `renderHeader`/`renderItems`/
+`renderFooter` are independently-invoked JS functions whose string
+fragments get concatenated back together by its own per-page pagination
+assembler. A real Django template has no such split: this file just
+writes `.page-body` as one normal, fully-nested `<div>...</div>` opened
+after the hero band and closed before `</body>` — exactly the same
+pattern the ALREADY-SHIPPING professional.html uses for its own
+`.page-body` (opened after `.spine`, closed before `.sign-row`, confirmed
+by reading that file directly). There is no structural wrinkle left to
+preserve once pagination-string-concatenation is out of the picture.
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge — see free_essential.html's identical
+comment.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    {% include "invoices/_partials/footer.html" with footer_text_color="#8b88a8" footer_left_inset="16mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: #fff;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #8b88a8;
+    --rule: #eceafb;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .hero-band { background: linear-gradient(125deg, var(--accent), #6d5bd0); color: #fff; padding: 14mm 16mm 12mm; display: flex; justify-content: space-between; align-items: flex-start; }
+  .hero-band .brand-logo { width: 11mm; height: 11mm; background: #fff; border-radius: 8px; padding: 2mm; }
+  .hero-band .brand-name { color: #fff; }
+  .hero-band .doc-title { font-size: 15pt; text-align: right; }
+  .hero-band .doc-number { font-size: 8.5pt; color: rgba(255,255,255,.85); margin-top: 3px; text-align: right; }
+
+  .page-body { padding: 0 16mm 16mm; }
+  .meta-strip { background: #fff; border-radius: 10px; box-shadow: 0 8px 22px rgba(79,70,229,.14); margin-top: -8mm; position: relative; z-index: 2; padding: 6mm 7mm; gap: 0; justify-content: space-between; }
+  .meta-item { flex: 1 1 0; }
+  .parties-row { margin-top: 11mm; }
+  .items-wrap { margin-top: 10mm; }
+  .inv-table thead th { background: #f2f1fb; color: var(--accent); border-bottom: none; padding: 7px 8px; }
+  .inv-table td { padding: 8px; }
+
+  .footer-grid { display: flex; gap: 10mm; margin-top: 8mm; align-items: flex-start; }
+  .footer-grid > div { flex: 1 1 0; min-width: 0; }
+  .pay-box { background: #f7f7fc; border-radius: 10px; padding: 6mm 7mm; }
+  .totals-card { background: var(--ink); border-radius: 10px; padding: 6mm 7mm; }
+  .totals-card .inv-totals { width: auto; margin: 0; }
+  .totals-card .inv-totals .row { color: #a8a6c4; }
+  .totals-card .inv-totals .row.total { border-top: 1px solid rgba(255,255,255,.16); color: #fff; }
+  .totals-card .inv-totals .pkr { color: #a8a6c4; }
+  .closing-row { display: flex; justify-content: space-between; gap: 10mm; margin-top: 9mm; align-items: flex-start; }
+</style>
+</head>
+<body>
+
+<div class="hero-band">
+  {% include "invoices/_partials/brand_lockup.html" %}
+  {% include "invoices/_partials/doc_block.html" %}
+</div>
+
+<div class="page-body">
+  {% include "invoices/_partials/meta_strip.html" %}
+  {% include "invoices/_partials/parties_row.html" %}
+  {% include "invoices/_partials/items_table.html" %}
+
+  <div class="footer-grid">
+    <div class="pay-box">
+      {% include "invoices/_partials/payment_block.html" %}
+      <div class="pay-online" style="margin-top:6mm;">
+        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+        <div>
+          <div class="label">Pay online</div>
+          <div class="link">{{ invoice.payment_page_url }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="totals-card">{% include "invoices/_partials/totals.html" %}</div>
+  </div>
+
+  <div class="closing-row">
+    <div>{% include "invoices/_partials/notes_terms.html" %}</div>
+    {% include "invoices/_partials/signature_block.html" %}
+  </div>
+</div>
+
+</body>
+</html>

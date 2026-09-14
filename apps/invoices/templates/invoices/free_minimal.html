@@ -1,0 +1,141 @@
+{% comment %}
+apps/invoices/templates/invoices/free_minimal.html
+20-Template Import, Batch 3 (14 September 2026) — ported from
+freeTemplates.html's free-pool "Minimal" prototype (tpl-minimal) — same
+name as, but structurally and visually unrelated to, the legacy 'minimal'
+design (minimal.html, retired from the gallery in Batch 2). Premium
+asymmetric minimalism: a persistent left rail (brand, both parties
+stacked, meta strip) beside a wide main column (a huge doc title, items,
+totals, and a 2-column footer).
+
+Part 0 finding (this batch): the prototype does NOT literally flag this
+template `wrapsBody: true`, but it has the identical real problem —
+`renderHeader` opens `<div class="m-shell"><div class="m-rail">...</div>
+<div class="m-main">` and only `renderFooter` closes it (`</div></div>`),
+with the items table injected in between by a THIRD, independently-called
+function. As with free_modern.html/free_professional.html/
+free_business.html's own `wrapsBody: true` (see free_modern.html's
+comment), this split exists only because the prototype's own render
+functions communicate via unbalanced string fragments its OWN pagination
+assembler stitches together — completely moot once ported to a real,
+single, fully-nested template.
+
+Better still: the actual mechanism used here — `position: fixed` on
+`.m-rail` — makes even the CONCEPT of "a wrapper spanning across the
+header/items/footer" disappear entirely, not just become writable as one
+normal nested div (contrast free_modern.html, which still needs one real
+`.page-body` wrapper div). A fixed-position element is removed from
+normal document flow, so `.m-rail` is a fully self-contained, completely
+closed block; `.m-main` is a plain, independently normal-flow container
+needing exactly one wrapping div. This is the exact same proven
+mechanism the ALREADY-SHIPPING modern.html uses for its own persistent
+sidebar (`.sidebar{ position:fixed; top:0; left:0; bottom:0; ...}` +
+`.main{ margin-left:42mm; }`, confirmed by reading that file directly) —
+not a new pattern invented for this template, and not something that
+needs pagination-porting to repeat per page: WeasyPrint's own paged-media
+`position:fixed` already repeats the rail on every page for free, exactly
+like modern.html's own sidebar already does for any of its own
+multi-page invoices.
+
+Real, preserved deviation: both parties render as bare, vertically
+stacked `.party` divs in the rail (`parties_row.html`'s new `stacked`
+mode — see that partial's own docstring) rather than the standard
+side-by-side `.parties-row` flex row, matching the prototype's own
+`minimal.renderHeader`, which calls the single-party `partyHtml` helper
+twice directly.
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge — see free_essential.html's identical
+comment.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    {% include "invoices/_partials/footer.html" with footer_text_color="#adaeb6" footer_left_inset="16mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    background: #fff;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #adaeb6;
+    --rule: #ebebee;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  /* Persistent left rail — position:fixed removes it from normal flow
+     entirely and repeats it on every real page automatically, the exact
+     mechanism modern.html's own .sidebar already proves in production
+     (see this file's own top comment). */
+  .m-rail { position: fixed; top: 0; left: 0; bottom: 0; width: 54mm; padding: 26mm 8mm 16mm 22mm; }
+  .m-rail .brand-lockup { flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12mm; }
+  .m-rail .brand-logo { width: 8mm; height: 8mm; }
+  .m-rail .brand-name { font-size: 9pt; }
+  .m-rail .party + .party { margin-top: 9mm; }
+  .m-rail .party-label { color: var(--muted); letter-spacing: 0.16em; font-size: 6.5pt; }
+  .m-rail .meta-strip { flex-direction: column; gap: 6mm; margin-top: 9mm; }
+  .m-rail .meta-item .k { letter-spacing: 0.16em; }
+
+  .m-main { margin-left: 54mm; padding: 26mm 22mm 16mm 14mm; }
+  .m-main .doc-title { font-size: 34pt; font-weight: 200; letter-spacing: -0.02em; line-height: 1; }
+  .m-main .doc-number { font-size: 8pt; color: var(--muted); margin-top: 4mm; letter-spacing: 0.03em; }
+  .items-wrap { margin-top: 15mm; }
+  .inv-table thead th { font-weight: 500; letter-spacing: 0.1em; }
+  .inv-table td { font-weight: 300; }
+  .inv-totals { margin-top: 9mm; width: auto; }
+  .inv-totals .row { max-width: 64mm; margin-left: auto; }
+  .inv-totals .row.total { border-top: none; padding-top: 5px; }
+  .inv-totals .row.total span:first-child { font-size: 7.5pt; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); align-self: flex-end; padding-bottom: 4px; }
+  .inv-totals .row.total span:last-child { font-size: 20pt; font-weight: 200; }
+
+  .m-foot { display: flex; margin-top: 16mm; gap: 10mm; }
+  .m-foot > div { flex: 1 1 0; min-width: 0; }
+  .pay-online img.qr { width: 15mm; height: 15mm; border: none; opacity: .9; }
+  .footer-sign { text-align: right; display: flex; flex-direction: column; align-items: flex-end; }
+  .sign-block img.sig { opacity: .85; }
+</style>
+</head>
+<body>
+
+<aside class="m-rail">
+  {% include "invoices/_partials/brand_lockup.html" %}
+  {% include "invoices/_partials/parties_row.html" with stacked=True %}
+  {% include "invoices/_partials/meta_strip.html" %}
+</aside>
+
+<div class="m-main">
+  {% include "invoices/_partials/doc_block.html" %}
+  {% include "invoices/_partials/items_table.html" %}
+  {% include "invoices/_partials/totals.html" %}
+
+  <div class="m-foot">
+    <div>
+      {% include "invoices/_partials/payment_block.html" %}
+      <div class="pay-online" style="margin-top:6mm;">
+        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+        <div>
+          <div class="label">Pay online</div>
+          <div class="link">{{ invoice.payment_page_url }}</div>
+        </div>
+      </div>
+      {% include "invoices/_partials/notes_terms.html" %}
+    </div>
+    <div class="footer-sign">{% include "invoices/_partials/signature_block.html" %}</div>
+  </div>
+</div>
+
+</body>
+</html>
