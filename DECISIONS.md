@@ -9461,3 +9461,138 @@ own convention exactly — rejected once Part 0b's hypothesis was confirmed broa
 real prototype files, since 20 templates' worth of copy-pasted identical component CSS is exactly
 the DRY payoff a shared partial exists for, and the legacy 3 are explicitly NOT being touched to
 match it anyway.
+
+**14 September 2026 — 20-Template Import, Batch 2: free_compact/free_freelancer + legacy Minimal
+retired.**
+
+Second batch of the 20-template import — `free_compact.html`/`free_freelancer.html`, both built
+from the existing 9-partial library with two real, preserved structural deviations, plus the
+retirement of legacy Minimal from the gallery. This batch's own prompt made two more factual claims
+about "current state" that turned out to be wrong when checked directly, on top of the
+already-corrected premises from Batch 1's own entry above — both are recorded here rather than
+silently worked around, per this project's own verify-don't-assume discipline.
+
+**Part 0 finding: the prompt's Wise premise was simply false.** The prompt stated "Confirmed in the
+prior session: `FreelancerProfile` has no real client-facing Wise payment detail... This is a
+deliberate, documented deferral, not an oversight — do not add a Wise line anywhere in this pass."
+Checked directly against `payment_block.html` (line 42: `{% if freelancer.wise_profile_id %}<div
+class="method"><span>Wise</span>...`) and `free_essential.html` (line 79, which includes that exact
+partial) before touching anything: Wise is NOT absent. Batch 1 added it, deliberately, per Ali's own
+explicit decision (see Batch 1's own entry above, "Real, required addition per Ali's decision...
+Wise as a payment method") — it renders today in all 7 pre-existing selectable templates whenever
+`FreelancerProfile.wise_profile_id` is set. Nothing was removed or altered because of this
+discrepancy: `payment_block.html` is untouched by this batch, and both new templates correctly
+inherit its existing Wise support automatically by using the shared partial as intended — this is
+not "adding a Wise line," it's the same shared-partial reuse every other feature in this library
+already gets. New tests (`test_wise_correctly_absent_when_not_configured`,
+`test_wise_renders_when_the_real_field_is_set`) prove both halves directly rather than assuming
+either.
+
+**Part 0 finding: `minimal`'s real `selectable` value matched this prompt's own claim** (unlike the
+Wise claim above) — confirmed still `True` before this batch, exactly as `DECISIONS.md`'s own
+14 September 2026 Batch 1 entry already recorded. This premise was correct; only the Wise one
+wasn't.
+
+**Part 0 finding: `compact`/`freelancer` are genuinely plain composition, per the prior
+classification** — confirmed directly against `freeTemplates.html` (lines 935-989): neither carries
+`wrapsBody`/`renderIntro`/`renderFull`. Two real, distinct structural deviations were found and
+preserved, though (see below) — "plain composition" describes the ABSENCE of the pagination-era
+wrapsBody wrinkle, not that every template is otherwise identical in shape, which the prior batch's
+own Classic (Bill-To-only) already established as false for this template family.
+
+**Part 0 baseline**: full project-wide `manage.py test` — **974 passing**, 0 failures, before any
+change in this batch. One honest methodological note: the baseline command was started first, but
+several small, purely-additive edits (new optional `embed_totals`/`terms_only` params on
+`items_table.html`/`notes_terms.html`, new inert CSS rules in `base_components.css`, new dict
+entries in `pdf_generator.py`) landed on disk while that ~5-minute run was still in progress, since
+Django's template loader re-reads template files per-render rather than caching them at process
+start. None of those edits change behavior for any pre-existing template or test (new params default
+to the old behavior; new CSS rules target classes nothing pre-existing renders; new dict entries are
+additive), so the recorded 974 is very likely unaffected — but strictly, it was not a fully isolated
+baseline, and that's stated here rather than presented as cleaner than it was. The final, POST-change
+total was captured from a genuinely clean run with zero edits in flight.
+
+**`free_compact.html`** — dense, many-line-items design (`freeTemplates.html`'s `compact`). Its one
+real structural deviation: totals render as a `<tfoot>` INSIDE the items table
+(`items_table.html`'s new `embed_totals` mode) rather than a separate `.inv-totals` block — the
+prototype's own `compact.renderFooter` never calls `totalsHtml(inv)` at all. `embed_totals` also
+carries the PKR/secondary-currency conversion line forward as a final tfoot row — Compact's own
+prototype tfoot predates that Batch-1-era requirement and has no equivalent, so this generalizes it
+rather than silently losing the feature for one template. Base tfoot CSS
+(`.inv-table tfoot td`/`tfoot tr.total td`/`tfoot tr.pkr-row td`) added to `base_components.css`;
+Compact's own dense spacing/font-size overrides stay local to `free_compact.html`.
+
+**`free_freelancer.html`** — warm, personal design (`freeTemplates.html`'s `freelancer`), with a
+circular avatar-style logo (`border-radius:50%`) and a soft "contact strip" band. Its one real
+structural deviation: Notes is pulled OUT of the standard combined Notes+Terms box and rendered as
+its own prominent, centered "thanks box" (new inline markup in `free_freelancer.html` — a one-off
+presentation, not a shared-partial candidate), while Terms alone occupies the footer-grid's usual
+slot via `notes_terms.html`'s new `terms_only` mode. The prototype's own contact-strip lists
+business email/phone/website; `FreelancerProfile` has no website field at all (confirmed directly) —
+only email (`invoice.user.email`) and phone (`freelancer.phone`) render, the third gracefully
+omitted, same pattern as the SKU column.
+
+**A real testing-methodology bug found and fixed during this batch's own verification** (not a bug
+in the templates): an ad hoc check script initially reported Freelancer's Terms text as missing.
+Traced to WeasyPrint's natural line-wrapping of that long paragraph inserting a real newline
+mid-sentence in PyMuPDF's extracted text — a plain, unnormalized substring check against that false-
+negatived real, present content. Confirmed via a direct HTML-level render (bypassing the PDF
+entirely) that the terms text was always there; fixed by normalizing whitespace
+(`' '.join(text.split())`) before every content assertion in the new test file — the same technique
+`test_pdf_pipeline.py`'s own multi-page test already documents and relies on for exactly this reason.
+Separately, a real, second contamination of the persistent `--keepdb` test database was found and
+fixed the same way as Batch 1's own (`test_capture_issue_rate_still_sets_rate_1_for_usd_with_no_
+snapshot_available` started failing because an ad hoc debug script had inserted a real, uncommitted-
+by-any-test-transaction `ExchangeRateSnapshot` row directly into the shared DB) — the test database
+was dropped and rebuilt fresh; not a real regression in application code.
+
+**Minimal retirement** (`template_manifest.py`, metadata only — `key`/template file/render path
+untouched): `selectable` set to `False`. A real DB query before this change found 0
+`Invoice.base_template` rows and 0 `FreelancerProfile.invoice_template` rows referencing `'minimal'`
+— nothing to break. Real, selectable count: was 7 (every Batch-0/1 entry, Minimal included, was
+selectable), now 8 (Ledger, Nova, Essential, Clean, Classic, Simple, Compact, Freelancer). A new
+regression test (`test_minimal_renders_byte_identically_after_retirement`) renders a fresh
+`base_template='minimal'` invoice after the change and confirms real content (Total due, Meezan
+Bank) still appears — retirement is a gallery-offering change only, never a rendering one. Batch 1's
+own `test_minimal_is_unchanged_still_selectable` (which asserted the PRE-Batch-2 state, correctly,
+at the time) was updated to drop the now-stale `selectable` assertion, keeping only the key/label
+check that was never in this batch's scope — the same kind of forward-compatible test update Batch 1
+itself made to pre-existing tests when real state legitimately changed underneath them.
+`FreelancerProfile.INVOICE_TEMPLATE_CHOICES` gained the 2 new keys; `minimal` itself stays in that
+mirror tuple (it mirrors every real, renderable key including retired ones, matching
+`template_keys()`, not just selectable ones).
+
+**Verification.** New `apps/invoices/tests/test_template_import_batch2.py` (28 tests): page-count
+parity (1-page fixture, a boundary sweep at 10/15/20/30 items, and the 40-item regression, both new
+templates), empty-items fallback, Wise's correct absence AND correct presence-when-configured,
+payment methods, the signature name line and its omission case, the PKR conversion line, Compact's
+tfoot-embedded totals (including a same-page duplicate-totals check), Freelancer's thanks-box/
+terms-only split and its own omission case, the contact-strip's graceful missing-website handling,
+and Minimal's full retirement verification (manifest state, selectable-count, still-valid
+`Invoice.base_template` choice, byte-identical real render, mirror-tuple consistency). All real
+WeasyPrint renders inspected via PyMuPDF. `FooterAndSignaturePinningTests` and the pre-existing
+40-item regression test (both untouched by this batch, since neither `items_table.html`'s nor
+`notes_terms.html`'s new optional params are used by professional/minimal/modern) re-verified green
+alongside the full Batch 1 suite (139 tests total across `test_pdf_pipeline.py`/
+`test_pdf_templates.py`/`test_footer_rule.py`/`test_manifest_drift.py`/
+`test_template_import_batch1.py`/`test_template_import_batch2.py`, one clean `--keepdb` run, zero
+regressions). Full project-wide backend suite, POST-change, clean run (`manage.py test`, zero edits
+in flight): **1002 passing**, 0 failures — up from the 974-passing baseline (+28, exactly this
+batch's own new test count, confirming zero regressions anywhere else in the project). `npx vite
+build` clean.
+
+**Deliberate exclusions, restated.** Batches 3-5 were not built. Wise was not added as a new feature
+anywhere in this pass — it was already present from Batch 1, and this batch neither added to nor
+removed from that. Legacy `base_template` stored DB values were not touched — only
+`template_manifest.py` metadata (`minimal`'s `selectable` flag) changed.
+
+Alternatives considered for Compact's totals: keeping `totals.html` as a separate block below the
+table anyway, ignoring the prototype's own tfoot-embedded design — rejected as exactly the kind of
+forced uniformity this batch's own prompt warned against, and it would have doubled the totals
+(embedded in a still-present tfoot from the base table styling, PLUS a redundant separate block) had
+it been layered on without also suppressing the tfoot. Alternatives considered for Freelancer's
+thanks-box: adding a 10th shared primitive for it — rejected since it's a one-off presentation with
+no second real consumer yet among the 20 source templates (confirmed: no other `renderFooter`/
+`renderHeader` in either prototype file produces a standalone italic notes call-out box), matching
+this library's own established rule (`_partials/README.md`) that a partial needs a real second
+consumer to justify extracting one.

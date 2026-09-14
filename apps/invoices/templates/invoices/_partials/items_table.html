@@ -12,6 +12,20 @@ param a future caller could pass) but Part 0c of the 20-Template Import
 show_sku today, so the column never renders, gracefully, same as every
 other conditional in this codebase when the underlying data doesn't exist.
 
+Optional `with embed_totals=True` (20-Template Import, Batch 2,
+14 September 2026) — a real, preserved deviation found in the prototype's
+own "Compact" design (`freeTemplates.html`'s `compact.renderItems`):
+subtotal/tax/discount/total-due render as a `<tfoot>` INSIDE this table
+instead of the standard separate `.inv-totals` block `totals.html`
+renders — Compact's own "dense, many items" design has no separate totals
+block at all. When `embed_totals` is set, the caller should NOT also
+include `totals.html` (it would duplicate the total). The PKR/secondary-
+currency conversion line (`invoice.client_currency_conversion`) is
+included here too as a final tfoot row, for the same reason `totals.html`
+always includes it — Compact's own tfoot in the prototype predates that
+requirement and has no equivalent, so this generalizes it forward rather
+than losing the feature for this one template.
+
 Requires `invoice` in context (uses invoice.items.all and
 invoice.currency_symbol).
 {% endcomment %}
@@ -40,5 +54,14 @@ invoice.currency_symbol).
     <tr class="empty-row"><td colspan="{% if show_sku %}5{% else %}4{% endif %}">No line items on this invoice</td></tr>
     {% endfor %}
   </tbody>
+  {% if embed_totals %}
+  <tfoot>
+    <tr><td colspan="{% if show_sku %}4{% else %}3{% endif %}">Subtotal</td><td class="num">{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</td></tr>
+    {% if invoice.tax_rate %}<tr><td colspan="{% if show_sku %}4{% else %}3{% endif %}">Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</td><td class="num">{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</td></tr>{% endif %}
+    {% if invoice.discount_amount %}<tr><td colspan="{% if show_sku %}4{% else %}3{% endif %}">Discount</td><td class="num">−{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</td></tr>{% endif %}
+    <tr class="total"><td colspan="{% if show_sku %}4{% else %}3{% endif %}">Total due</td><td class="num">{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</td></tr>
+    {% if invoice.client_currency_conversion %}<tr class="pkr-row"><td colspan="{% if show_sku %}5{% else %}4{% endif %}">≈ {{ invoice.client_currency_conversion.symbol }}{{ invoice.client_currency_conversion.converted_total|floatformat:2|intcomma }} at rate {{ invoice.client_currency_conversion.rate }}</td></tr>{% endif %}
+  </tfoot>
+  {% endif %}
 </table>
 </div>

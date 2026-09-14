@@ -69,6 +69,20 @@ see DECISIONS.md's 14 September 2026 entry for the full discrepancy):
    'minimal'/'modern'/'professional' pool designs and these 3 legacy keys
    (and, in a later batch, the 'statement' collision with the existing
    account-statement generator) without a special case per collision.
+
+20-Template Import, Batch 2 (14 September 2026) — legacy 'minimal' is now
+retired (`selectable: False`), landing in this batch specifically because
+Batch 3 introduces a new free-pool template also named "Minimal" — having
+both selectable at once would show two different, identically-labeled
+cards in the gallery. Metadata-only, same as the Ledger/Nova rename: the
+`key` and every other field are untouched, and so is every real
+Invoice.base_template/FreelancerProfile.invoice_template row already
+referencing it (a real DB query before this change found 0 of either —
+see DECISIONS.md's 14 September 2026 Batch 2 entry). Real, selectable
+count is now 8 (was 7 before this batch: all 7 Batch-0/1 entries were
+selectable, including Minimal) — Ledger, Nova, Essential, Clean, Classic,
+Simple, Compact, Freelancer. Minimal no longer offered as a NEW selection
+but still fully renderable for any historical row.
 """
 
 TEMPLATES = [
@@ -84,7 +98,10 @@ TEMPLATES = [
         'label': 'Minimal',
         'tier': 'free',
         'tag': 'Clean and understated',
-        'selectable': True,
+        # Retired from the gallery, 20-Template Import Batch 2
+        # (14 September 2026) — see this module's own docstring above.
+        # Metadata only; the key/template file/render path are untouched.
+        'selectable': False,
     },
     {
         'key': 'modern',
@@ -119,6 +136,20 @@ TEMPLATES = [
         'label': 'Simple',
         'tier': 'free',
         'tag': 'Maximum clarity',
+        'selectable': True,
+    },
+    {
+        'key': 'free_compact',
+        'label': 'Compact',
+        'tier': 'free',
+        'tag': 'Dense, many items',
+        'selectable': True,
+    },
+    {
+        'key': 'free_freelancer',
+        'label': 'Freelancer',
+        'tier': 'free',
+        'tag': 'Independent professionals',
         'selectable': True,
     },
 ]

@@ -62,6 +62,14 @@ they use this prototype's own original naming throughout.
 .inv-table td.col-desc{ word-break:break-word; }
 .inv-table .empty-row td{ color:var(--muted); font-style:italic; text-align:center; padding:16px 0; }
 
+/* Optional embed_totals mode (items_table.html) — Batch 2, 14 September
+   2026. Base rules only; free_compact.html overrides spacing/size to
+   match its own dense aesthetic, same pattern as every other per-template
+   skin override in this file's consumers. */
+.inv-table tfoot td{ border-bottom:none; border-top:1px solid var(--rule); padding:9px 0; color:var(--muted); }
+.inv-table tfoot tr.total td{ border-top:2px solid var(--ink); font-weight:800; color:var(--ink); }
+.inv-table tfoot tr.pkr-row td{ border-top:none; color:var(--muted); font-size:9px; text-align:right; padding-top:3px; }
+
 .block-label{ font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--accent); font-weight:700; margin-bottom:7px; }
 
 .inv-totals{ width:66mm; margin-left:auto; }

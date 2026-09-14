@@ -34,9 +34,11 @@ written once, generically, against 4 custom properties
 - `brand_lockup.html`, `doc_block.html`, `meta_strip.html`,
   `parties_row.html` (optional `bill_to_only`/`wrap_class`),
   `items_table.html` (optional `show_sku`, structurally preserved but
-  nothing sets it today — `InvoiceItem` has no real SKU field),
-  `totals.html`, `notes_terms.html` — net-new, using the prototype's own
-  class naming (no legacy CSS to match).
+  nothing sets it today — `InvoiceItem` has no real SKU field; optional
+  `embed_totals`, added Batch 2 — see below), `totals.html`,
+  `notes_terms.html` (optional `terms_only`, added Batch 2 — see below)
+  — net-new, using the prototype's own class naming (no legacy CSS to
+  match).
 - `payment_block.html` (optional `class_name`, default `pay-block`) and
   `signature_block.html` — retrofitted verbatim onto
   `professional.html`/`minimal.html`/`modern.html`'s own EXISTING CSS,
@@ -63,6 +65,27 @@ partials — it stays inline per-template, matching the pre-existing
 separate from the payment-methods list (the prototype's own
 `paymentHtml()` bundles both; production doesn't).
 
-Batches 2-5 of the 20-template import will keep extending this same
-library — see DECISIONS.md's 14 September 2026 entry for the confirmed
+**Batch 2 (14 September 2026)** added `free_compact.html`/
+`free_freelancer.html` and, with them, this library's first two
+per-template DEVIATION modes — real structural differences found in the
+prototype and preserved rather than forced into uniformity, the same
+precedent `parties_row.html`'s own `bill_to_only` (Batch 1, for
+`free_classic`) already set:
+
+- `items_table.html`'s `embed_totals` (used only by `free_compact.html`)
+  — Compact's own "dense, many items" design renders subtotal/tax/
+  discount/total-due as a `<tfoot>` inside the items table itself,
+  instead of a separate `.inv-totals` block; `totals.html` is never
+  included alongside it.
+- `notes_terms.html`'s `terms_only` (used only by `free_freelancer.html`)
+  — Freelancer pulls Notes out into its own prominent "thanks box"
+  call-out (inline markup in `free_freelancer.html` itself, not a shared
+  partial — a one-off presentation) and renders only Terms through this
+  partial, in its usual footer-grid slot.
+
+Neither mode changes behavior for any existing consumer — both default
+to the pre-Batch-2 behavior when omitted.
+
+Batches 3-5 of the 20-template import will keep extending this same
+library — see DECISIONS.md's 14 September 2026 entries for the confirmed
 batch groupings.

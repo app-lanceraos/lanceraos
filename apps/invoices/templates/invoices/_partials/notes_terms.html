@@ -2,10 +2,26 @@
 apps/invoices/templates/invoices/_partials/notes_terms.html
 Notes + Terms. Direct port of the prototype's notesTermsHtml(inv).
 Requires `invoice` in context.
+
+Optional `with terms_only=True` (20-Template Import, Batch 2,
+14 September 2026) — a real, preserved deviation found in the prototype's
+own "Freelancer" design (`freeTemplates.html`'s `freelancer.renderFooter`):
+Freelancer does NOT use the combined Notes+Terms box at all — Notes is
+pulled out and rendered as a separate, prominent "thanks box" call-out
+(free_freelancer.html's own inline markup, not a shared partial — a
+one-off presentation, not a candidate for a generic primitive), and only
+Terms occupies this partial's normal footer-grid slot. Still wrapped in
+the outer `.notes-terms` div (even though only one child can ever be
+present) so `.notes-terms p`'s own CSS scoping — which requires that
+ancestor — still applies without any CSS change.
 {% endcomment %}
+{% if terms_only %}
+{% if invoice.terms %}<div class="notes-terms"><div class="terms-block"><div class="block-label">Terms</div><p>{{ invoice.terms|linebreaksbr }}</p></div></div>{% endif %}
+{% else %}
 {% if invoice.notes or invoice.terms %}
 <div class="notes-terms">
   {% if invoice.notes %}<div class="notes-block"><div class="block-label">Notes</div><p>{{ invoice.notes|linebreaksbr }}</p></div>{% endif %}
   {% if invoice.terms %}<div class="terms-block"><div class="block-label">Terms</div><p>{{ invoice.terms|linebreaksbr }}</p></div>{% endif %}
 </div>
+{% endif %}
 {% endif %}

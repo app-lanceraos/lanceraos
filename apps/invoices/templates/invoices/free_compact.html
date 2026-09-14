@@ -1,0 +1,101 @@
+{% comment %}
+apps/invoices/templates/invoices/free_compact.html
+20-Template Import, Batch 2 (14 September 2026) — ported from
+freeTemplates.html's "Compact" prototype (tpl-compact). Dense, many-items
+layout — smaller base font, tighter spacing throughout, and one real
+structural deviation from the Batch 1 pattern: totals render as a
+`<tfoot>` INSIDE the items table (`items_table.html`'s own `embed_totals`
+mode) instead of a separate `.inv-totals` block — there is no `totals.html`
+include anywhere in this template, deliberately, matching the prototype's
+own `compact.renderItems`/`compact.renderFooter` (which never calls
+`totalsHtml(inv)` at all).
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge — see free_essential.html's identical
+comment.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 12mm 14mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %};
+    {% include "invoices/_partials/footer.html" with footer_text_color="#767c8c" footer_left_inset="-2mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: #fff;
+    font-size: 8pt;
+    line-height: 1.4;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #767c8c;
+    --rule: #e4e5ea;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .k-head { display: flex; justify-content: space-between; align-items: center; padding-bottom: 3.5mm; border-bottom: 1.5px solid var(--ink); }
+  .k-head .brand-logo { width: 7mm; height: 7mm; }
+  .k-head .brand-name { font-size: 9.5pt; }
+  .k-head .doc-title { font-size: 11pt; text-align: right; }
+  .k-head .doc-number { font-size: 8pt; color: var(--muted); text-align: right; }
+
+  .meta-strip { gap: 12px; margin: 3mm 0; font-size: 7pt; }
+  .parties-row { margin: 3mm 0 3.5mm; }
+  .party-label { font-size: 6.5pt; }
+  .party-name { font-size: 8.5pt; }
+  .party-line { font-size: 7.5pt; line-height: 1.5; }
+
+  /* Compact's own dense table treatment — no thead border, a shaded
+     header row instead, and a tighter row pitch. */
+  .inv-table thead th { background: #f0f1f4; padding: 3px 5px; border-bottom: none; font-size: 6.5pt; }
+  .inv-table td { padding: 2.5px 5px; font-size: 7.5pt; }
+  .inv-table tfoot td { padding: 2.5px 5px; font-size: 7.5pt; }
+  .inv-table tfoot tr.total td { font-size: 9pt; padding-top: 4px; }
+
+  .footer-grid { display: flex; justify-content: space-between; gap: 5mm; margin-top: 3.5mm; padding-top: 3mm; border-top: 1px solid var(--rule); font-size: 7pt; align-items: flex-start; }
+  .footer-grid > div { flex: 1 1 0; min-width: 0; }
+  .pay-online img.qr { width: 12mm; height: 12mm; }
+  .notes-terms p { font-size: 7pt; }
+  .sign-block img.sig { height: 6.5mm; }
+  .sign-block .line { min-width: 26mm; }
+</style>
+</head>
+<body>
+
+<div class="page-body">
+  <header class="k-head">
+    {% include "invoices/_partials/brand_lockup.html" %}
+    {% include "invoices/_partials/doc_block.html" %}
+  </header>
+
+  {% include "invoices/_partials/meta_strip.html" %}
+  {% include "invoices/_partials/parties_row.html" %}
+  {% include "invoices/_partials/items_table.html" with embed_totals=True %}
+
+  <div class="footer-grid">
+    <div>
+      {% include "invoices/_partials/payment_block.html" %}
+      <div class="pay-online" style="margin-top:4mm;">
+        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+        <div>
+          <div class="label">Pay online</div>
+          <div class="link">{{ invoice.payment_page_url }}</div>
+        </div>
+      </div>
+    </div>
+    <div>{% include "invoices/_partials/notes_terms.html" %}</div>
+    <div class="footer-sign">{% include "invoices/_partials/signature_block.html" %}</div>
+  </div>
+</div>
+
+</body>
+</html>

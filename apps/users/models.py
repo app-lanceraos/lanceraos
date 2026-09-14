@@ -445,10 +445,18 @@ class FreelancerProfile(models.Model):
     # relabeled "Ledger" and 'modern' relabeled "Nova" (keys unchanged),
     # plus the 4 new free_* templates, mirroring
     # apps.invoices.template_manifest.TEMPLATES exactly.
+    #
+    # 20-Template Import, Batch 2 (14 September 2026) — 'minimal' stays
+    # in this list even though the manifest retired it from the gallery
+    # (`selectable: False`) — this mirror tracks every real, renderable
+    # key (matching template_manifest.template_keys(), which also
+    # includes retired templates), not just selectable ones; the 2 new
+    # free_* templates are appended.
     INVOICE_TEMPLATE_CHOICES = [
         ('professional', 'Ledger'), ('minimal', 'Minimal'), ('modern', 'Nova'),
         ('free_essential', 'Essential'), ('free_clean', 'Clean'),
         ('free_classic', 'Classic'), ('free_simple', 'Simple'),
+        ('free_compact', 'Compact'), ('free_freelancer', 'Freelancer'),
     ]
     invoice_template = models.CharField(
         max_length=20, choices=INVOICE_TEMPLATE_CHOICES, default='professional',
