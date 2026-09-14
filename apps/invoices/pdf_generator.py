@@ -359,6 +359,41 @@ def _is_premium_branding_enabled(freelancer):
     return freelancer.show_lanceraos_branding
 
 
+# Template Gallery Polish Pass (14 September 2026) — modern.html's
+# `.sidebar .brandname` real-content-length-aware sizing. Calibrated
+# directly against the real Space Grotesk font at the sidebar's real
+# ~30mm effective content width (42mm box minus 6mm padding each side),
+# not guessed: a real WeasyPrint+PyMuPDF sweep (isolated spike, this
+# pass) measured exactly which font sizes keep which real business names
+# on one line —
+#   "Horizon" (7 chars)              -> already 1 line even at 14pt
+#   "Horizon Studio" (14 chars)      -> needs <=12pt for 1 line (13pt/14pt both wrap)
+#   "Callahan Design Co" (18 chars)  -> needs 9pt for 1 line (10pt/11pt still wrap to 2)
+#   32+ chars                        -> does not fit on 1 line at any tested size down to 9pt
+# _BRANDNAME_SHORT_CHARS/_LONG_CHARS below are picked so the linear scale
+# lands on exactly 14pt at <=8 chars and exactly 12.0pt at 14 chars
+# (matching the real "Horizon Studio" measurement above precisely, not
+# approximately) — below the 10pt floor a name simply wraps, same as
+# "Callahan Design Co" and longer real names measured in the same spike
+# (never truncated, per this pass's explicit requirement).
+_BRANDNAME_MAX_SIZE_PT = 14.0
+_BRANDNAME_MIN_SIZE_PT = 10.0
+_BRANDNAME_SHORT_CHARS = 8
+_BRANDNAME_LONG_CHARS = 20
+
+
+def _brandname_font_size_pt(business_name):
+    """modern.html's own real display name — sized down (never truncated) as it gets longer, floor 10pt."""
+    length = len(business_name or '')
+    if length <= _BRANDNAME_SHORT_CHARS:
+        return _BRANDNAME_MAX_SIZE_PT
+    if length >= _BRANDNAME_LONG_CHARS:
+        return _BRANDNAME_MIN_SIZE_PT
+    fraction = (length - _BRANDNAME_SHORT_CHARS) / (_BRANDNAME_LONG_CHARS - _BRANDNAME_SHORT_CHARS)
+    size = _BRANDNAME_MAX_SIZE_PT - fraction * (_BRANDNAME_MAX_SIZE_PT - _BRANDNAME_MIN_SIZE_PT)
+    return round(size, 1)
+
+
 def build_pdf_context(invoice):
     """
     Everything the three templates need. `invoice`/`freelancer` give the
@@ -388,6 +423,10 @@ def build_pdf_context(invoice):
         'signature_url': freelancer.signature_url or None,
         'design_primary_color': primary_color,
         'design_secondary_color': secondary_color,
+        # Only modern.html's .sidebar .brandname reads this — harmless to
+        # always compute for every template, since it's cheap and keeps
+        # build_pdf_context the one place per-render values are derived.
+        'modern_brandname_font_size_pt': _brandname_font_size_pt(freelancer.business_name or freelancer.display_name),
         'wordmark_data_uri': _generate_wordmark_data_uri(wordmark_fill) if _is_premium_branding_enabled(freelancer) else None,
         **FONT_CONTEXT,
     }
