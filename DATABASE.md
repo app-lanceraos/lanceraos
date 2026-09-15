@@ -154,10 +154,13 @@ default_currency, default_payment_terms
 # copied onto that invoice's own base_template field, never reassigned
 # afterward. A local choices tuple, not imported from apps.invoices
 # (apps.invoices already depends on apps.users, never the reverse).
-invoice_template ('professional'/'minimal'/'modern'/'free_essential'/'free_clean'/
-                  'free_classic'/'free_simple', default 'professional' — the 4
-                  free_* keys added by the 20-Template Import, Batch 1,
-                  14 September 2026; see apps/invoices/template_manifest.py)
+invoice_template (default 'professional' — real choices are a local mirror tuple,
+                  guarded by test_manifest_drift.py, of apps.invoices.template_manifest's
+                  own TEMPLATES list; 23 real keys as of the 20-Template Import's
+                  completion, Batch 5, 15 September 2026 — see that module's own
+                  docstring for the full batch-by-batch history rather than
+                  enumerating every key here, since this list would otherwise need
+                  editing on every future template addition too)
 
 # Invoice PDF signature (Step 7b) — same CharField/Cloudinary-lifecycle
 # pattern as logo/logo_public_id above, mirrored exactly (not URLField,
@@ -819,7 +822,17 @@ Import, Batch 1, 14 September 2026**: real `choices` now number 7, not 3 —
 `professional`/`minimal`/`modern` (unchanged keys; `professional`/`modern`'s gallery LABELS changed
 to "Ledger"/"Nova", label-only, see DECISIONS.md) plus 4 new tier-prefixed keys, `free_essential`/
 `free_clean`/`free_classic`/`free_simple`. All still generated directly from the manifest — no
-schema change, a real choices-only migration (`0017_alter_invoice_base_template`)),
+schema change, a real choices-only migration (`0017_alter_invoice_base_template`)). **20-Template
+Import, Batches 2-5 (14-15 September 2026, COMPLETE)**: each subsequent batch added its own real
+choices-only migration in the same pattern (no schema change, ever — only the generated `choices`
+tuple grows) — `0018`/`0019` (Batch 2/3's own free-tier keys), `0020` (Batch 4's 7 pro-tier keys),
+`0021` (Batch 5's final 3 pro-tier keys, FINAL). Real, final count: **23 total choices, 22
+selectable** (legacy `minimal` retired, `selectable: False`, but still a valid choice value here —
+see this table's own note above on why a retired template must stay renderable). A real dev-
+database check as of Batch 1 found all 113 real invoices with `base_template=NULL`; not re-checked
+against the live dev database in every later batch, since nothing about this column's own
+assignment logic (`invoice_create`/`_finalise_invoice`) changed after Batch 1 — only the set of
+values it can legally hold grew.
 `view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
 `client_address`/`client_phone` (immutable snapshot at creation), `currency` (CharField(3), no
 `choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`,

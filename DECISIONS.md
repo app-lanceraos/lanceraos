@@ -9920,3 +9920,212 @@ structural anchor). Alternatives considered for Executive/Grid's payment grid: w
 targeting a hypothetical `.pay-methods`/`.pay-method` markup shape not actually produced by
 `payment_block.html` — rejected as CSS that would visually do nothing against real production markup;
 the simplification is documented rather than silently accepted.
+
+---
+
+**15 September 2026 — 20-Template Import, Batch 5 (FINAL): pro_atelier/pro_consulting/
+pro_statement, the preview-image gap closed for the complete gallery, and the 5-batch import
+closed out.**
+
+Fifth and last batch of the 20-template import — the 3 `renderFull`/persistent-rail designs
+deferred from Batch 4 (`atelier`, `consulting`, `statement`), plus Part 3's own real, separate
+fix: every one of Batches 1-4's 16 templates had NO gallery preview image at all until this pass.
+
+**Part 0 baseline**: full project-wide `manage.py test`, run first via `git stash` isolation
+(matching Batch 4's own technique) — **1052 passing, 0 failures**, matching this document's own
+claimed prior total exactly; no discrepancy. Confirmed the gallery's real pre-batch selectable
+count directly against `template_manifest.py`: 19 — matches this batch's own prompt exactly.
+
+**Part 0: what `renderFull` actually produces for each of the 3** — read directly from
+`proTemplates.html`'s own function bodies, not assumed uniform from the shared JS mechanism name
+(this batch's own prompt explicitly warned against that assumption, and it was right to):
+
+- **Atelier**: a persistent rail carrying PURE BRANDING ONLY — logo, business name, a vertical
+  title+invoice-number line, and an address/email footer. No client info, no payment/QR content
+  in the rail at all.
+- **Consulting**: a persistent panel carrying the CLIENT's own info ("Prepared for" — the
+  Bill-To identity, not a "From" party) plus a meta strip led by the invoice number. The
+  freelancer's own identity instead lives in a small header INSIDE the main column
+  (`con-issuer`), not the rail.
+- **Statement**: a persistent rail carrying branding PLUS a QR/"Scan to pay" block — genuinely
+  functional content, unlike Atelier's pure decoration.
+
+All 3 share the `renderFull(inv, pages)` JS mechanism, but that mechanism describes how the
+prototype's own fake-pagination assembler stitches per-page fragments together, not a visual
+pattern — confirmed, not assumed, exactly as this batch's own prompt asked. All 3 also share the
+identical real behavior of showing the rail ONLY on page 1 in the prototype's own JS (continuation
+pages get a lighter `continuationHeader` instead) — per free_minimal.html's own established
+precedent (Batch 3), this is a pagination-SIMULATION artifact with no bearing on a real,
+continuously-flowing Django template. Ported via the same proven `position: fixed` technique
+modern.html's own sidebar and free_minimal.html's own rail already use — repeating the rail on
+every real page automatically, a strict improvement over the prototype's own page-1-only
+limitation, not a deviation from it. Verified directly, not assumed: a real 40-item, 3-page
+stress render for all 3 confirms the rail's own branding text (`Horizon Studio`) is present on a
+real page 2, not just page 1.
+
+**Part 0/1: two real, confirmed WeasyPrint limitations found during this batch's own
+verification** — genuinely new findings, not seen in any of Batches 1-4 (none of those needed
+`writing-mode` or `filter`):
+
+1. `writing-mode: vertical-rl` (Atelier's `.atl-rail-mid`, Statement's `.stm-rail-word` — both
+   meant to run text vertically along the rail) is a real "unknown property" in this WeasyPrint
+   version — a genuine console warning during every render, not a typo or a missing vendor
+   prefix. Left as originally ported (`writing-mode` + a paired `transform: rotate(180deg)`),
+   the property is silently ignored while the rotation still applies, shipping real, confirmed
+   upside-down (never vertical) horizontal text — screenshotted and confirmed directly before
+   any fix, not assumed from the warning text alone. Fixed by dropping both declarations
+   entirely and rendering the affected text as plain, normally-flowing horizontal text (still
+   visually distinct via letter-spacing/uppercase/accent-color) — a real, deliberate
+   simplification necessitated by an actual platform limitation, documented in both affected
+   templates' own `<style>` comments and top docstrings, not silently patched over.
+2. `filter: grayscale(1) contrast(1.05)` (Consulting's own issuer-logo treatment) is likewise an
+   unrecognized property — the logo renders in its real, original color instead of grayscale.
+   Dropped the ineffective declaration rather than ship dead CSS implying an effect that never
+   happens.
+
+Per this project's own "if a planned mechanism doesn't work in isolation, stop and report rather
+than improvise" rule: both were root-caused via the real WeasyPrint console warning (not guessed
+from the rendered image alone), confirmed against WeasyPrint 69.0's own documented property
+support, and fixed at the source rather than patched around.
+
+**Part 0: `TemplateGallery.jsx`'s missing-preview behavior, confirmed directly** — its `<img
+src={previewSrc(baseTemplate)}>` has NO `onError` fallback handler anywhere; a missing preview PNG
+renders as a plain browser broken-image icon, not a graceful placeholder. This means 16 of the
+19 templates that existed before this batch (every one of Batches 1-4's own templates) were
+showing a broken image in the real gallery UI this whole time — a real, user-visible bug, not a
+cosmetic gap, confirmed directly rather than assumed either way per this batch's own prompt.
+
+**Part 1 — the 3 templates.** `pro_atelier.html`: the rail ported as described above; a huge
+serif doc title; 4 numbered content sections (`01`-`04`) — the prototype's own dynamic
+skip-when-empty section numbering was simplified to this fixed sequence, since in real usage all
+4 sections (Parties/Items/Summary/Footer) always have some real content (fallback text covers
+every case that could otherwise be empty); a totals split (subtotal/tax/discount separate from a
+distinct "Total due" callout, written inline like `pro_editorial.html`'s own identical deviation,
+Batch 4 — no `totals.html` mode change, no second real consumer); Terms as a standalone trailing
+paragraph below the whole footer grid, NOT combined with Notes in the standard box (also written
+inline, matching `free_freelancer.html`'s "thanks box" precedent, Batch 2, for the same
+no-second-consumer reason). `pro_consulting.html`: the side panel reuses `parties_row.html`'s
+`bill_to_only`+`bill_to_label="Prepared for"` (Batch 4's own Studio mechanism) and
+`meta_strip.html`'s `with_invoice_number` (Batch 4's own Signature mechanism) UNCHANGED — a real,
+direct confirmation that adding those 2 parameters in Batch 4 for what was then a single consumer
+each was the right call, not premature generalization, since a second real consumer showed up one
+batch later; a "Scope of services" static label; a combined `display_name · email` contact line in
+the main column's own issuer header (one-off hand markup, no second consumer). `pro_statement.html`:
+the highlighted total bar is a REAL, DELIBERATE SIMPLIFICATION of the prototype's own design — the
+prototype's `stm-total-bar` bleeds under the entire page width including the rail's own colored
+fill; since the rail is `position: fixed` (repeating unconditionally on every page) and a real,
+later-in-DOM-order, non-fixed full-width block would paint OVER the rail's own content on
+whichever page they land on together, the total bar here is confined to the main column's own
+width instead (matching `pro_editorial.html`'s own `edt-total-bar` shape) — the meaningful part of
+the deviation (a bold, highlighted total callout, not a plain right-aligned box) is fully
+preserved; only the literal full-page-bleed-under-the-rail extent is not, flagged directly in that
+template's own docstring rather than attempted and left visually broken.
+
+**No new shared partial parameters were needed this batch** — every real deviation either reused
+an existing Batch 4 parameter (Consulting) or was written inline as a genuine one-off with no
+second real consumer among these 3 (Atelier's numbered sections/split totals/standalone Terms,
+Statement's confined total bar) — a real, positive signal that the 9-partial library plus the 9
+named optional parameters accumulated across Batches 1-4 already covered everything this final
+batch needed.
+
+**Part 2 — whole-manifest consistency, the real final counts.** This batch's own prompt claimed
+"22 total... 21 selectable" once the last 3 templates land — checked directly against the real
+manifest rather than trusted, and this is WRONG: the real, directly-computed final counts are
+**23 total keys, 22 selectable, 11 free + 11 pro selectable**. The prompt's own arithmetic
+undercounts by exactly 1 — it accounts for "20 imported templates + 2 relabeled legacy designs
+(Ledger, Nova)" but omits that legacy `minimal` is a THIRD real, still-present manifest row
+(retired, `selectable: False`, but not deleted — Real `Invoice.base_template='minimal'` rows still
+need it to render forever, per this module's own docstring since Batch 1). 20 + 2 + 1 (retired
+minimal) = 23 total rows; 23 − 1 (retired) = 22 selectable, not 21. Verified with a real
+`manage.py shell` query against the live manifest (`len(TEMPLATES)`, `len(selectable_templates())`,
+a real `Counter` over `tier`), not derived by hand-counting the source file, and pinned down as
+real, automated tests (`ManifestWideConsistencyTests`) rather than left as a one-off report finding
+that could silently go stale on the next edit. Every manifest key is confirmed unique; every
+`tier` value is confirmed `'free'` or `'pro'`; the `FreelancerProfile`/`Invoice.base_template`
+mirror/manifest sync is confirmed via `test_manifest_drift.py`'s own pre-existing tests (confirmed
+still collectible and still passing, not just present in the file); and — the one check none of
+the prior 4 batches' own manifest-consistency notes actually ran as a real test — EVERY one of the
+22 currently-selectable templates is confirmed to genuinely render a real PDF (`%PDF` magic bytes
+checked directly) via one real, shared test loop, not just that its key exists in 3 lookup tables.
+
+**Part 3 — the preview-image gap, closed for the complete set.**
+`generate_template_previews.py`'s own hardcoded `('professional', 'minimal', 'modern')` tuple —
+present, unmodified, through all of Batches 1-4 despite each one adding real new templates — is
+now `apps.invoices.template_manifest.selectable_templates()`, the same single source of truth the
+gallery's own API endpoint already reads, so no future template addition needs this command edited
+again either. Regenerated all 22: confirmed via a real file listing (22 real PNGs, `minimal.png`
+correctly NOT regenerated since it's retired — an old, stale copy from before this pass's own
+`git stash`-clean baseline remains on disk from a prior manual run, harmless and unreferenced by
+anything, left in place rather than deleted since removing files nobody asked to remove is outside
+this batch's own scope) and a real byte-size/hash check on each. One real, confirmed non-determinism
+found during this check (not a bug): re-running the command on an UNCHANGED template (professional.html/
+modern.html, untouched by this batch) still produces a different file hash every time, because each
+preview's own QR code encodes that render's freshly-generated, randomly-unguessable
+`invoice.view_token` — the PNG's own QR-code pixel region is never byte-identical across two runs
+by design, independent of whether the underlying template actually changed. `TemplateGallery.jsx`
+needed NO code change — confirmed directly per Part 0's own finding: `previewSrc()` already
+requests `/design-previews/{key}.png` for whatever key the manifest returns, so the missing images
+were the entire gap, not the requesting code.
+
+**Verification.** New `apps/invoices/tests/test_template_import_batch5.py` (34 tests, all green):
+page-count parity (1-page fixture, a boundary sweep at 8/12/16/20 items, and the 40-item
+regression, all 3 new templates), a real page-2 rail-repetition proof (not just CSS-source
+inspection) for all 3, empty-items fallback, Wise + Meezan Bank payment-method presence, the
+signature name line and its omission case, notes/terms independence, the PKR conversion line,
+every real per-template deviation found above (including 2 structural HTML-level checks — Atelier's
+standalone Terms paragraph with no `notes-terms` box anywhere, and a direct confirmation neither
+`writing-mode` nor `filter` regressed anything content-wise), full `TemplateMappingCompletenessTests`
+coverage for all 3 new keys plus a direct confirmation `pro_statement` never collides with the
+pre-existing account-statement generator, a new `ManifestWideConsistencyTests` class covering all
+of Part 2's real final-count/uniqueness/tier-validity/every-template-renders checks, and a new
+`PreviewImageCompletenessTests` class confirming all 22 selectable templates have a real, non-empty,
+genuinely-PNG-signed preview file on disk. One real, expected forward-compatible update to a PRIOR
+batch's own test, the same class of change every batch from 2 onward has made to its predecessor's:
+Batch 4's own `test_selectable_count_is_now_nineteen` asserted the exact count as of Batch 4 —
+correct then, legitimately stale now that Batch 5 adds 3 more selectable templates — renamed to
+`test_batch4_templates_are_all_selectable` and narrowed to only what was actually in Batch 4's own
+scope, with the current real total (22, not the originally-expected-but-wrong 21 — see Part 2 above)
+now living in this batch's own `ManifestWideConsistencyTests`. Full relevant regression group
+(pinning tests, 40-item regression, and all 5 batches' own test files): 221 tests, one clean
+`--keepdb` run, zero regressions beyond that single expected, deliberate update. Full project-wide
+backend suite, POST-change, clean run (`manage.py test`, zero edits in flight): **1086 passing**,
+0 failures — up from the 1052-passing baseline (+34, exactly this batch's own new test count,
+confirming zero regressions anywhere else in the project). `npx vite build` clean (frontend
+untouched beyond the pre-generated preview PNG assets themselves). 2 real migrations (choices-only:
+`apps.invoices.0021_alter_invoice_base_template`,
+`apps.users.0017_alter_freelancerprofile_invoice_template`).
+
+**Deliberate exclusions, restated.** `payment_block.html`'s Wise behavior
+(`freelancer.wise_profile_id` displayed raw) was not touched. Legacy `base_template` stored DB
+values were not touched. The pre-existing account-statement generator
+(`apps/invoices/templates/invoices/statement.html`, `pdf_generator.render_client_statement_pdf`) was
+not touched — confirmed directly (grep across `apps/invoices/*.py`) that its one real call site
+still references that exact file, unchanged, and a dedicated test now proves `pro_statement`'s own
+`TEMPLATE_MAP` entry points somewhere else entirely.
+
+**Closing summary — the 20-Template Import, all 5 batches, done.** Started 14 September 2026
+(Batch 1's own Part 0 classification pass across all 20 real prototype files) and finished 15
+September 2026 (this entry) — 2 real calendar days, 5 batches, 20 real prototype templates
+imported (10 free-tier, 10 pro-tier) plus 2 legacy designs relabeled (Ledger, Nova) and 1 retired
+(legacy Minimal, superseded by a same-named but structurally unrelated free-tier replacement in
+Batch 3). The gallery grew from 3 selectable templates to 22 — real, selectable count now stable
+at 11 free + 11 pro. A 9-partial shared library (`_partials/`) plus `base_components.css` and 9
+named optional parameters (`bill_to_only`, `wrap_class`, `stacked`, `embed_totals`, `terms_only`,
+`from_label`, `bill_to_label`, `from_only`, `with_invoice_number`) now back every one of the 20 new
+templates, proven sufficient for the full set — the final batch needed zero new ones, the
+strongest evidence yet that the library's design (extract only for a REAL second consumer, write
+one-off deviations inline otherwise) was the right level of abstraction rather than either
+over-engineering ahead of need or under-sharing common structure. 2 real, confirmed WeasyPrint
+platform limitations were found and documented (`writing-mode`, `filter`, both silently-ignored
+"unknown property" cases) — worth remembering for any future template work in this same renderer,
+since neither is discoverable except by reading the actual render warnings, never from the CSS
+source alone. A real, accumulated user-facing bug (16 of 19 templates showing a broken preview
+image) went unnoticed across 4 batches until this one's own Part 3 deliberately looked for it —
+worth noting as a real lesson for future multi-batch work: a gap that isn't any single batch's own
+stated scope can still accumulate silently unless something in a LATER batch is explicitly tasked
+with checking for it, as this batch's own prompt did. Total backend test growth across the whole
+import: 974 (pre-Batch-1 baseline, per Batch 2's own entry) → 1086 (now) — every one of those tests
+verifies a real, rendered, PyMuPDF-inspected PDF, never "no exception raised" alone. `DECISIONS.md`
+carries the full, dated reasoning for every real decision, deviation, and correction made along the
+way; `apps/invoices/template_manifest.py`'s own module docstring is the authoritative summary of
+what changed in the manifest itself, batch by batch.

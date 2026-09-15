@@ -115,6 +115,20 @@ block, and one bakes the seller identity directly into its header rather
 than using a separate "From" party) and the 2 new shared `parties_row.html`/
 `meta_strip.html` parameters this batch added to cover those real,
 repeated deviations.
+
+20-Template Import, Batch 5 (15 September 2026, FINAL) — the last 3
+pro-tier templates: pro_atelier, pro_consulting, pro_statement (the 3
+`renderFull`/persistent-rail designs deferred from Batch 4). Real,
+selectable count is now 21 (was 19) — the complete 20-template import is
+done: every prototype design from both `freeTemplates.html` and
+`proTemplates.html` now exists as a real, selectable gallery entry,
+alongside the 2 relabeled legacy designs (Ledger/Nova) and retired
+legacy Minimal. See DECISIONS.md's 15 September 2026 Batch 5 entry for
+the real per-template classification (none of the 3 shares one uniform
+visual pattern despite all 3 sharing the `renderFull` JS mechanism —
+Atelier's rail is pure branding, Consulting's is the CLIENT's own info,
+Statement's carries a QR code) and for the full closing summary of the
+5-batch import.
 """
 
 TEMPLATES = [
@@ -259,6 +273,27 @@ TEMPLATES = [
         'label': 'Prestige',
         'tier': 'pro',
         'tag': 'Luxury',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_atelier',
+        'label': 'Atelier',
+        'tier': 'pro',
+        'tag': 'Boutique editorial',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_consulting',
+        'label': 'Consulting',
+        'tier': 'pro',
+        'tag': 'Premium professional',
+        'selectable': True,
+    },
+    {
+        'key': 'pro_statement',
+        'label': 'Statement',
+        'tier': 'pro',
+        'tag': 'Bold contemporary',
         'selectable': True,
     },
 ]

@@ -1,0 +1,219 @@
+{% comment %}
+apps/invoices/templates/invoices/pro_atelier.html
+20-Template Import, Batch 5 (15 September 2026) — ported from
+proTemplates.html's "Atelier" prototype (tpl-atelier). Boutique-editorial
+design: a tinted paper page background, a persistent left rail (pure
+branding — logo, business name, a small styled title line, an address/
+email footer), a huge serif doc title, and numbered content sections.
+
+Real, confirmed WeasyPrint limitation found during this batch's own
+verification (Part 0/1): the prototype's own `.atl-rail-mid` uses
+`writing-mode: vertical-rl` to run its title/number text vertically
+along the rail's spine. This WeasyPrint version does not support
+`writing-mode` at all (a real "unknown property" console warning, not a
+missing vendor prefix or a typo) — the property is silently ignored, so
+a naive port would ship `transform: rotate(180deg)` alone, producing
+upside-down (never vertical) horizontal text with no visual reason for
+the rotation. Fixed by dropping both declarations and rendering this
+line as plain, normally-flowing horizontal text instead (still visually
+distinct via letter-spacing/uppercase/accent color) — see `.atl-rail-mid`'s
+own comment.
+
+Real, preserved deviation #1: the persistent rail. The prototype's own
+`renderFull(inv, pages)` only renders the rail (`atl-shell`/`atl-rail`)
+on page 1 — continuation pages get a plain `continuationHeader` instead.
+Per free_minimal.html's own established precedent (Batch 3, itself
+mirroring production modern.html's own sidebar), this page-1-only
+treatment is a pagination-SIMULATION artifact (the prototype's `pages`
+array + per-chunk JS rendering has no equivalent in a real, continuously-
+flowing Django template) — not a real design requirement. Ported via the
+same proven `position: fixed` technique, which repeats the rail on every
+real page automatically, a strict improvement over the prototype's own
+page-1-only limitation, not a deviation from it.
+
+Real, preserved deviation #2: `body{ background: var(--paper) }` — a
+tinted page background across the WHOLE page (matching pro_studio.html's/
+pro_signature.html's/pro_prestige.html's own real deviation, Batch 4) —
+ported using the same `@page margin: 0 0 {cond} 0` + inner-padding
+technique those 3 already established, for the identical reason (a real,
+nonzero `@page` margin would leave WeasyPrint's own margin-box area
+painted the page's default WHITE, not the body's tint).
+
+Real, preserved deviation #3: numbered content sections (`section()` in
+the prototype, a 2-digit index — "01", "02", etc. — beside each major
+content block). The prototype increments this counter only for
+non-empty sections, which would require genuinely dynamic per-request
+numbering in a real template; simplified here to the fixed sequence
+Parties/Items/Summary/Footer always renders as (01-04) — in real usage
+every one of these 4 sections always has SOME real content (the From
+party always has a business name at minimum; Bill To falls back to "No
+client yet"; items always render, even as the empty-fallback row), so
+the prototype's own dynamic skip-when-empty behavior has no real-world
+case where it would ever actually fire differently from this fixed
+sequence.
+
+Real, preserved deviation #4: Terms renders as a single, separate
+trailing paragraph BELOW the whole footer grid (`atl-terms`), not
+combined with Notes in the standard `notes-terms` box — the prototype's
+own `renderFull` pushes Notes into the SAME footer-grid row as Payment/
+Signature, then appends Terms as its own standalone paragraph after that
+entire grid. Written as one-off inline markup (not a `notes_terms.html`
+change) — the same "no second real consumer, write it inline" precedent
+`pro_editorial.html`'s own independent-colophon-columns deviation and
+`free_freelancer.html`'s "thanks box" (Batch 2) both already established.
+
+Real, preserved deviation #5: the Summary section splits totals exactly
+like `pro_editorial.html` does (subtotal/tax/discount separate from a
+distinct "Total due" callout) — written inline for the same reason
+Editorial's own split is inline, not a `totals.html` mode change (see
+that template's own docstring).
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge, or the `pages` array concept itself —
+same reasoning as every prior batch.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    {% include "invoices/_partials/footer.html" with footer_text_color="#8a8577" footer_left_inset="16mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: #f7f4ee;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #8a8577;
+    --rule: #dad5c8;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .atl-rail {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 38mm;
+    background: #efeae0; border-right: 1px solid var(--rule);
+    padding: 14mm 8mm; display: flex; flex-direction: column;
+    justify-content: space-between; align-items: center; text-align: center;
+  }
+  .atl-rail-top-group { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .atl-rail-top-group img { height: 20px; width: auto; }
+  .atl-rail-top { font-family: Georgia, 'Times New Roman', serif; font-size: 10.5px; font-weight: 700; line-height: 1.4; }
+  /* Real, confirmed WeasyPrint limitation (Batch 5 Part 0/1, 15 September
+     2026): `writing-mode` is an unrecognized property in this WeasyPrint
+     version (a real console warning, "unknown property" — not a typo or
+     a missing vendor prefix), so the prototype's own vertical spine text
+     effect is not achievable here. Rendered as plain, normally-flowing
+     horizontal text instead — still visually distinct via letter-spacing/
+     uppercase/accent-color — rather than leaving a `transform:
+     rotate(180deg)` that would otherwise silently ship upside-down (and
+     still horizontal, not vertical) text with no accompanying rotation
+     context to explain why. */
+  .atl-rail-mid { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); text-align: center; }
+  .atl-rail-bottom { font-size: 8.5px; color: var(--muted); line-height: 1.6; }
+
+  .atl-main { margin-left: 38mm; padding: 16mm 16mm 12mm 14mm; }
+  .atl-main .doc-title { font-family: Georgia, 'Times New Roman', serif; font-size: 44px; font-weight: 400; margin-bottom: 6mm; letter-spacing: -0.01em; }
+  .atl-head .meta-strip { gap: 20px; }
+
+  .atl-section { display: grid; grid-template-columns: 16px 1fr; gap: 14px; padding: 8mm 0; border-top: 1px solid var(--rule); }
+  .atl-section-num { font-size: 10px; color: var(--accent); font-weight: 700; padding-top: 2px; }
+  .party-line { line-height: 1.7; }
+  .inv-table thead th { border-bottom: 1px solid var(--ink); }
+
+  .atl-summary { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+  .atl-subtotals { flex: 1; max-width: 70mm; }
+  .atl-subtotals .row { display: flex; justify-content: space-between; font-size: 11.5px; padding: 4px 0; color: var(--muted); }
+  .atl-total-due { text-align: right; flex-shrink: 0; }
+  .atl-total-due span { display: block; font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  .atl-total-due strong { font-family: Georgia, serif; font-size: 30px; font-weight: 400; color: var(--accent); }
+  .atl-pkr { font-size: 9px; color: var(--muted); margin-top: 4px; }
+
+  .atl-foot-grid { display: flex; gap: 32px; flex-wrap: wrap; }
+  .atl-foot-grid > div { flex: 1 1 200px; min-width: 0; }
+  .atl-foot-grid p { font-size: 10.5px; color: var(--muted); line-height: 1.65; margin: 0; }
+  .atl-terms { margin-top: 8mm; font-size: 9px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<aside class="atl-rail">
+  <div class="atl-rail-top-group">
+    {% if freelancer.logo %}<img src="{{ freelancer.logo }}" alt="">{% endif %}
+    <div class="atl-rail-top">{{ freelancer.business_name|default:freelancer.display_name }}</div>
+  </div>
+  <div class="atl-rail-mid">Invoice{% if invoice.invoice_number %} — No. {{ invoice.invoice_number }}{% endif %}</div>
+  <div class="atl-rail-bottom">
+    {% if freelancer.address_line1 %}{{ freelancer.address_line1 }}<br>{% endif %}
+    {{ invoice.user.email }}
+  </div>
+</aside>
+
+<div class="atl-main">
+  <header class="atl-head">
+    <div class="doc-title">Invoice</div>
+    {% include "invoices/_partials/meta_strip.html" %}
+  </header>
+
+  <section class="atl-section">
+    <div class="atl-section-num">01</div>
+    <div class="atl-section-body">{% include "invoices/_partials/parties_row.html" %}</div>
+  </section>
+
+  <section class="atl-section">
+    <div class="atl-section-num">02</div>
+    <div class="atl-section-body">{% include "invoices/_partials/items_table.html" %}</div>
+  </section>
+
+  <section class="atl-section">
+    <div class="atl-section-num">03</div>
+    <div class="atl-section-body">
+      <div class="atl-summary">
+        <div class="atl-subtotals">
+          <div class="row"><span>Subtotal</span><span>{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</span></div>
+          {% if invoice.tax_rate %}<div class="row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+          {% if invoice.discount_amount %}<div class="row"><span>Discount</span><span>&minus;{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+        </div>
+        <div class="atl-total-due">
+          <span>Total due</span>
+          <strong>{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</strong>
+          {% if invoice.client_currency_conversion %}<div class="atl-pkr">≈ {{ invoice.client_currency_conversion.symbol }}{{ invoice.client_currency_conversion.converted_total|floatformat:2|intcomma }} at rate {{ invoice.client_currency_conversion.rate }}</div>{% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="atl-section atl-section-last">
+    <div class="atl-section-num">04</div>
+    <div class="atl-section-body">
+      <div class="atl-foot-grid">
+        <div>
+          {% include "invoices/_partials/payment_block.html" %}
+          <div class="pay-online" style="margin-top:6mm;">
+            {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+            <div>
+              <div class="label">Pay online</div>
+              <div class="link">{{ invoice.payment_page_url }}</div>
+            </div>
+          </div>
+        </div>
+        {% if invoice.notes %}<div><div class="block-label">Notes</div><p>{{ invoice.notes|linebreaksbr }}</p></div>{% endif %}
+        {% if signature_url %}<div>{% include "invoices/_partials/signature_block.html" %}</div>{% endif %}
+      </div>
+      {% if invoice.terms %}<p class="atl-terms">{{ invoice.terms|linebreaksbr }}</p>{% endif %}
+    </div>
+  </section>
+</div>
+
+</body>
+</html>

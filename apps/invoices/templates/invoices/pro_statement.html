@@ -1,0 +1,163 @@
+{% comment %}
+apps/invoices/templates/invoices/pro_statement.html
+20-Template Import, Batch 5 (15 September 2026) — ported from
+proTemplates.html's "Statement" prototype (tpl-statement). NOT to be
+confused with the existing account-statement generator
+(apps/invoices/templates/invoices/statement.html, rendered by
+pdf_generator.render_client_statement_pdf) — a completely separate,
+pre-existing feature this batch does not touch; the tier-prefixed key
+convention (`pro_statement`, this file's own filename) is exactly what
+resolves that name collision, per template_manifest.py's own docstring.
+
+Bold-contemporary design: a persistent, boldly-colored left rail (brand
+identity, a bold "INVOICE" label, and a QR/"Scan to pay" box), a bordered
+meta strip, standard items/parties, and a highlighted
+"Total due" bar.
+
+Real, preserved deviation #1: the persistent rail — same pagination-
+simulation-artifact reasoning as pro_atelier.html/pro_consulting.html/
+free_minimal.html; ported via `position: fixed`, repeating on every real
+page automatically.
+
+Real, preserved deviation #2 (a real, deliberate SIMPLIFICATION, not a
+faithful port): the prototype's own `stm-total-bar` sits OUTSIDE the
+rail+main grid entirely — a full page-width flex sibling beneath both
+columns, spanning under where the rail's own colored fill sits too. That
+shape cannot be safely reproduced here: the rail is `position: fixed`
+(so it repeats, unconditionally, on EVERY real page — including
+whichever page the total bar naturally lands on), and a real full-width,
+non-fixed block appearing later in DOM order would paint OVER the rail's
+own color/content in that overlapping region on that page, since fixed-
+position elements do not automatically create an isolated stacking
+context above later normal-flow content in WeasyPrint. Rather than
+building and finger-crossing a z-index-flavored fix for a single cell of
+this template, the total bar here is confined to the MAIN column's own
+width (starting after the rail, like `pro_editorial.html`'s own
+`edt-total-bar`) — the real, meaningful part of this deviation (a bold,
+highlighted total callout distinct from a plain right-aligned totals
+box) is fully preserved; only the literal full-page-bleed-under-the-rail
+extent is not. Flagged here as a deliberate, safety-driven choice, not a
+silently-dropped detail.
+
+Real, confirmed WeasyPrint limitation found during this batch's own
+verification (Part 0/1) — the same one pro_atelier.html's own docstring
+documents: `.stm-rail-word`'s `writing-mode: vertical-rl` (meant to run
+"INVOICE" vertically down the rail) is a real "unknown property" in this
+WeasyPrint version, silently ignored. Fixed the same way: dropped both
+`writing-mode` and the paired `transform: rotate(180deg)`, rendering
+"INVOICE" as plain, normally-sized horizontal bold text instead.
+
+Deliberately does NOT port paginateItems/computeCapacity/
+continuationHeader/.page-badge, or the `pages` array concept itself —
+same reasoning as every prior batch.
+{% endcomment %}
+{% load humanize %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_regular }}'); font-weight: 400; }
+  @font-face { font-family: 'IBM Plex Mono'; src: url('{{ font_ibm_plex_mono_semibold }}'); font-weight: 600; }
+
+  @page {
+    size: A4;
+    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    {% include "invoices/_partials/footer.html" with footer_text_color="#666b78" footer_left_inset="16mm" %}
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    background: #fff;
+    font-size: 9.5pt;
+    line-height: 1.5;
+    --ink: {{ design_secondary_color }};
+    --accent: {{ design_primary_color }};
+    --muted: #666b78;
+    --rule: #e4e4ea;
+    color: var(--ink);
+  }
+  {% include "invoices/_partials/base_components.css" %}
+
+  .stm-rail {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 46mm;
+    background: var(--accent); color: #fff;
+    padding: 14mm 8mm; display: flex; flex-direction: column;
+    justify-content: space-between; align-items: center; text-align: center;
+  }
+  .stm-rail-top-group { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .stm-rail-top-group img { height: 18px; width: auto; background: #fff; border-radius: 4px; padding: 3px 5px; }
+  .stm-rail-top { font-size: 10px; letter-spacing: 0.04em; opacity: 0.9; }
+  /* Real, confirmed WeasyPrint limitation (Batch 5 Part 0/1, 15 September
+     2026): `writing-mode` is an unrecognized property in this WeasyPrint
+     version (a real console warning, "unknown property") — the
+     prototype's own giant vertical "INVOICE" wordmark is not achievable
+     here. Rendered as plain, normally-sized horizontal bold text instead
+     of leaving a `transform: rotate(180deg)` that would otherwise ship
+     genuinely upside-down (never vertical) text at a size tuned for a
+     rotation that never actually happens. */
+  .stm-rail-word { font-size: 20px; font-weight: 800; letter-spacing: 0.04em; }
+  .stm-rail-bottom { text-align: center; }
+  .stm-rail-bottom img.qr { width: 44px; height: 44px; background: #fff; padding: 4px; border-radius: 3px; margin: 0 auto 6px; display: block; }
+  .stm-rail-bottom span { display: block; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.85; }
+
+  .stm-main { margin-left: 46mm; padding: 16mm 16mm 10mm; }
+  .stm-main .meta-strip { border-bottom: 2px solid var(--ink); padding-bottom: 7mm; margin-bottom: 10mm; gap: 8px; }
+  .stm-main .meta-item { flex: 1 1 0; }
+  .parties-row { margin-bottom: 9mm; }
+  .inv-table thead th { background: var(--ink); color: #fff; padding: 8px 10px; border-bottom: none; }
+  .inv-table td { padding: 9px 10px; }
+
+  .stm-subtotals { width: 60mm; margin: 0 0 7mm auto; }
+  .stm-subtotals .row { display: flex; justify-content: space-between; font-size: 11px; padding: 4px 0; color: var(--muted); }
+
+  .stm-total-bar { background: var(--ink); color: #fff; display: flex; justify-content: space-between; align-items: center; padding: 11px 16px; margin: 8mm 0 0; }
+  .stm-total-bar span { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.8; }
+  .stm-total-bar strong { font-size: 22px; font-weight: 800; }
+  .stm-pkr { font-size: 9px; color: var(--muted); text-align: right; margin-top: 3px; }
+
+  .stm-closing { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-top: 1px solid var(--rule); padding-top: 6mm; margin-top: 8mm; }
+  .stm-closing > div { flex: 1 1 180px; min-width: 0; }
+</style>
+</head>
+<body>
+
+<aside class="stm-rail">
+  <div class="stm-rail-top-group">
+    {% if freelancer.logo %}<img src="{{ freelancer.logo }}" alt="">{% endif %}
+    {% if freelancer.business_name %}<div class="stm-rail-top">{{ freelancer.business_name }}</div>{% endif %}
+  </div>
+  <div class="stm-rail-word">INVOICE</div>
+  {% if qr_code_data_uri %}
+  <div class="stm-rail-bottom">
+    <img class="qr" src="{{ qr_code_data_uri }}" alt="">
+    <span>Scan to pay</span>
+  </div>
+  {% else %}<div></div>{% endif %}
+</aside>
+
+<div class="stm-main">
+  {% include "invoices/_partials/meta_strip.html" %}
+  {% include "invoices/_partials/parties_row.html" %}
+  {% include "invoices/_partials/items_table.html" %}
+
+  <div class="stm-subtotals">
+    <div class="row"><span>Subtotal</span><span>{{ invoice.currency_symbol }}{{ invoice.subtotal|floatformat:2|intcomma }}</span></div>
+    {% if invoice.tax_rate %}<div class="row"><span>Tax ({{ invoice.tax_rate|floatformat:"-2" }}%)</span><span>{{ invoice.currency_symbol }}{{ invoice.tax_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+    {% if invoice.discount_amount %}<div class="row"><span>Discount</span><span>&minus;{{ invoice.currency_symbol }}{{ invoice.discount_amount|floatformat:2|intcomma }}</span></div>{% endif %}
+  </div>
+
+  <div class="stm-closing">
+    <div>
+      {% include "invoices/_partials/payment_block.html" %}
+    </div>
+    <div>{% include "invoices/_partials/notes_terms.html" %}</div>
+    <div>{% include "invoices/_partials/signature_block.html" %}</div>
+  </div>
+
+  <div class="stm-total-bar"><span>Total due</span><strong>{{ invoice.currency_symbol }}{{ invoice.total|floatformat:2|intcomma }}</strong></div>
+  {% if invoice.client_currency_conversion %}<div class="stm-pkr">≈ {{ invoice.client_currency_conversion.symbol }}{{ invoice.client_currency_conversion.converted_total|floatformat:2|intcomma }} at rate {{ invoice.client_currency_conversion.rate }}</div>{% endif %}
+</div>
+
+</body>
+</html>

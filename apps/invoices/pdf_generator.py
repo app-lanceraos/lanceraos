@@ -156,6 +156,14 @@ TEMPLATE_MAP = {
     'pro_grid': 'invoices/pro_grid.html',
     'pro_commerce': 'invoices/pro_commerce.html',
     'pro_prestige': 'invoices/pro_prestige.html',
+    # 20-Template Import, Batch 5 (15 September 2026, FINAL) — the last 3
+    # pro-tier templates (apps/invoices/template_manifest.py). Not to be
+    # confused with the pre-existing 'invoices/statement.html' (the
+    # account-statement generator, apps/invoices/pdf_generator.py's own
+    # render_client_statement_pdf) — a distinct file, distinct key.
+    'pro_atelier': 'invoices/pro_atelier.html',
+    'pro_consulting': 'invoices/pro_consulting.html',
+    'pro_statement': 'invoices/pro_statement.html',
 }
 
 # Full Reversion Plan — the one true accent-color pair per static
@@ -201,6 +209,10 @@ DEFAULT_TEMPLATE_COLORS = {
     'pro_grid': ('#2255cc', '#141416'),
     'pro_commerce': ('#2e62a8', '#161a22'),
     'pro_prestige': ('#8c7a54', '#1e1b16'),
+    # 20-Template Import, Batch 5 (15 September 2026, FINAL).
+    'pro_atelier': ('#5b6b4f', '#22201b'),
+    'pro_consulting': ('#3c6664', '#1b2726'),
+    'pro_statement': ('#2a2aa6', '#14151c'),
 }
 
 
@@ -448,6 +460,10 @@ _WORDMARK_FILL_BY_TEMPLATE = {
     'pro_grid': '#6e6f76',
     'pro_commerce': '#666e7a',
     'pro_prestige': '#8d8577',
+    # 20-Template Import, Batch 5 (15 September 2026, FINAL).
+    'pro_atelier': '#8a8577',
+    'pro_consulting': '#6c7876',
+    'pro_statement': '#666b78',
 }
 
 

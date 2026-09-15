@@ -1,8 +1,8 @@
 # apps/invoices/management/commands/generate_template_previews.py
 """
-Post-Reversion Polish (12 September 2026) — regenerates the 3 static
+Post-Reversion Polish (12 September 2026) — regenerates the static
 gallery preview images (frontend/public/design-previews/{template}.png)
-DesignGallery.jsx shows for "Professional"/"Minimal"/"Modern". These are
+TemplateGallery.jsx shows for each selectable template. These are
 one-time, pre-generated assets — nothing renders them live on a gallery
 page load, since there's no per-user variation left to justify that
 (every invoice on a given template looks identical now that per-design
@@ -24,6 +24,20 @@ one fewer moving part (no headless-browser dependency this backend
 doesn't otherwise need) and guarantees pixel-for-pixel fidelity with the
 actual PDF a client receives, not a second, separately-rendered
 approximation of it.
+
+20-Template Import, Batch 5 (15 September 2026, FINAL) — this command
+originally hardcoded `('professional', 'minimal', 'modern')`, the only 3
+templates that existed when it was written. Every one of Batches 1-4's 16
+new templates was left with no real preview image at all — a real,
+confirmed gap (`TemplateGallery.jsx`'s own `<img>` has no `onError`
+fallback, so a missing preview was a plain broken-image icon, not a
+graceful placeholder) that accumulated silently across 4 batches because
+nothing re-checked this command against the growing manifest. Fixed here,
+once, for the complete set: the template list is now
+`apps.invoices.template_manifest.selectable_templates()` — the same
+single source of truth the gallery's own API endpoint already reads —
+rather than a second hardcoded list this command would need editing for
+every future template too.
 
 A real, throwaway user/invoice is created for each template, rendered,
 then deleted — this command leaves no residue in the database on a
@@ -58,17 +72,19 @@ ZOOM = 2.0
 
 
 class Command(BaseCommand):
-    help = "Regenerates the 3 static-template gallery preview PNGs from real sample data through the real PDF pipeline."
+    help = "Regenerates every selectable template's gallery preview PNG from real sample data through the real PDF pipeline."
 
     def handle(self, *args, **options):
         import fitz
         from apps.invoices.models import Invoice, InvoiceItem
         from apps.invoices.pdf_generator import render_invoice_pdf
+        from apps.invoices.template_manifest import selectable_templates
         from apps.users.models import User
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        for base_template in ('professional', 'minimal', 'modern'):
+        for entry in selectable_templates():
+            base_template = entry['key']
             with transaction.atomic():
                 # The same email/username every iteration, on purpose — a
                 # clean, presentable sample identity (never a technical
