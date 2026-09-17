@@ -77,3 +77,7 @@ core/tests/
 # folder) — same reason as the backend test suites above.
 frontend/**/*.test.jsx
 frontend/**/*.test.js
+
+
+qa_invoice_pdfs/
+qa_invoices/

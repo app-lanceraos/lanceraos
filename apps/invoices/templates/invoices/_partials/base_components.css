@@ -38,7 +38,7 @@ they use this prototype's own original naming throughout.
 {% endcomment %}
 .brand-lockup{ display:flex; align-items:center; gap:12px; min-width:0; }
 .brand-logo{ object-fit:contain; flex-shrink:0; }
-.brand-name{ font-weight:700; color:var(--ink); }
+.brand-name{ font-weight:700; color:var(--ink); white-space:nowrap; }
 
 .doc-title{ font-weight:800; }
 
@@ -57,9 +57,30 @@ they use this prototype's own original naming throughout.
 .inv-table thead{ display:table-header-group; }
 .inv-table tr{ break-inside:avoid; }
 .inv-table thead th{ text-align:left; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:700; padding:0 0 8px; border-bottom:2px solid var(--ink); }
-.inv-table th.num, .inv-table td.num{ text-align:right; }
+.inv-table th.num, .inv-table td.num{ text-align:right; white-space:nowrap; }
 .inv-table td{ font-size:12px; color:var(--ink); padding:9px 0; border-bottom:1px solid var(--rule); vertical-align:top; }
-.inv-table td.col-desc{ word-break:break-word; }
+.inv-table td.col-desc{ word-break:break-word; padding-right:9px; }
+
+/* Protected numeric-column gutter (Invoice Template Review Phase 1, 16
+   September 2026) — Description is the one flexible column; Qty/Rate/
+   Amount each get a real minimum box (padding-left is the actual
+   protection here, not min-width alone: WeasyPrint's table auto-layout
+   shrinks a column toward its bare content width whenever Description's
+   own preferred width exceeds available space, and a column's padding is
+   part of that content-width floor, so it can't be squeezed away — the
+   8 templates that already had their own nonzero horizontal `.inv-table
+   td` padding were incidentally already protected this same way, unlike
+   the other 14, which had zero horizontal padding anywhere on this path.
+   min-width/white-space:nowrap are kept as a second, defensive layer for
+   any renderer/content combination where the padding floor alone isn't
+   the deciding factor. Deliberately padding-LEFT only, never padding-
+   right, so the Amount column's own right edge — and its alignment with
+   .inv-totals below, which has zero horizontal padding of its own —
+   never shifts. See DECISIONS.md's 16 September 2026 entry for the real,
+   measured before/after evidence across all 22 templates. */
+.inv-table th.col-qty, .inv-table td.col-qty{ min-width:11mm; padding-left:6px; }
+.inv-table th.col-rate, .inv-table td.col-rate,
+.inv-table th.col-amount, .inv-table td.col-amount{ min-width:20mm; padding-left:9px; }
 .inv-table .empty-row td{ color:var(--muted); font-style:italic; text-align:center; padding:16px 0; }
 
 /* Optional embed_totals mode (items_table.html) — Batch 2, 14 September
@@ -87,14 +108,23 @@ they use this prototype's own original naming throughout.
 .pay-block .method span:first-child{ font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
 .pay-block .method span:last-child{ font-weight:600; color:var(--ink); }
 
-.pay-online{ display:flex; align-items:center; gap:4mm; }
+.pay-online{ display:flex; align-items:center; gap:4mm; max-width:60mm; }
 .pay-online img.qr{ width:18mm; height:18mm; object-fit:contain; border:1px solid var(--rule); padding:1.5mm; background:#fff; }
 .pay-online .label{ font-size:9px; letter-spacing:.09em; text-transform:uppercase; color:var(--accent); font-weight:700; margin-bottom:2px; }
 .pay-online .link{ font-size:9.5px; color:var(--muted); white-space:nowrap; }
 
-/* Signature — legacy class names, see comment above. */
+/* Signature — legacy class names, see comment above. The real size ceiling
+   (Invoice Template Review Phase 1, 16 September 2026) is set as an INLINE
+   style directly on the <img> in signature_block.html, not here — a plain
+   stylesheet rule here could still be shrunk by a later per-template
+   `.sign-block img.sig{height:...}` override of equal specificity (exactly
+   what happened before this pass: 13mm here, overridden down to 6.5mm in
+   one template and up/down inconsistently in 4 others). Inline style beats
+   any such override without needing `!important` anywhere. margin-bottom
+   stays a real, live rule (inline style doesn't touch it, and per-template
+   spacing above the signature line is legitimate, per-template control). */
 .sign-block{ display:inline-flex; flex-direction:column; gap:4px; }
-.sign-block img.sig{ height:13mm; object-fit:contain; object-position:left; margin-bottom:1px; }
+.sign-block img.sig{ margin-bottom:1px; }
 .sign-block .line{ border-top:1px solid var(--rule); padding-top:4px; min-width:44mm; }
 .sign-block .sign-name{ display:block; font-weight:700; color:var(--ink); font-size:11px; }
 .sign-block .sign-label{ display:block; font-size:9.5px; color:var(--muted); margin-top:1px; }

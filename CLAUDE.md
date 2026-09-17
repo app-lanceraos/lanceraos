@@ -1883,6 +1883,55 @@ plus Batch 5's own closing summary) for the full per-batch reasoning, every real
 deviation found, and the 2 real corrections this final batch made to its own prompt's arithmetic
 (the true final counts are 23/22, not the prompt's claimed 22/21).
 
+**16 September 2026 (Invoice Template Review, Phase 1 — shared component fixes).** Phase 1 of a
+multi-phase implementation of a full external design review of all 22 templates, covering 5
+shared-mechanism defects found across the gallery (not per-template composition issues, which are
+Phase 2+): numeric-column compression (`.inv-table`'s Qty/Rate/Amount had zero horizontal padding
+anywhere in `base_components.css`, confirmed real and measured in 14 of 22 templates — the other 8
+were only accidentally safe via their own unrelated skin CSS), undersized/inconsistent signatures
+(6.5mm-17mm spread, no shared floor), 6 real artificial logo containers (a codebase-wide multi-line-
+aware sweep found 4 more than the review's own starting sample, including one on `professional.html`/
+Ledger itself), unnecessary business-name wrapping in the large majority of the 17 templates sharing
+`brand_lockup.html`'s `.brand-name` (root cause: a real WeasyPrint flex-basis under-allocation for
+wrappable-text flex children, present once a logo occupies width in the same row — the same root
+cause `professional.html`'s own header already had a working fix for from an earlier pass), and a
+raw `invoice.payment_page_url` shown as visible primary text next to the QR in 21 of 22 templates
+(every one except `pro_statement.html`, the review's own reference implementation). Fixes: real
+protected gutters on `.inv-table`'s numeric columns (`padding-left`, never `padding-right`, so the
+Amount column's alignment with `.inv-totals` below never shifts); an 18mm/`max-width:52mm` signature
+ceiling set as an INLINE style on `signature_block.html`'s own `<img>` (immune to any later
+per-template override, and `max-width` rather than a fixed `width` specifically because a fixed
+width broke `professional.html`/`minimal.html`/`modern.html`'s existing `text-align:center`
+centering — caught by this codebase's own real `SignatureCenteringTests`, not assumed); the 6 logo
+frames removed (verified with a real dark-ink test logo against 3 colored-background templates
+before removing — stayed legible in every case); `.brand-name{white-space:nowrap}` added to
+`base_components.css` (protects all 17 `brand_lockup.html` consumers in one shared rule, with one
+real, confirmed exception — `free_minimal.html`'s own narrow persistent rail, where `nowrap` caused
+a real collision with the "Invoice" title, fixed by overriding back to `white-space:normal` there
+specifically); and a new shared `_partials/pay_online.html` (generalized from `pro_statement.html`'s
+own correct "Scan to pay, no visible URL" pattern) wired into the 20 templates that shared the
+identical hand-rolled markup, with `modern.html`/`pro_signature.html` keeping their own structurally
+different local markup and just the text substituted. `professional.html`'s own pre-existing
+`flex:1 1 0%` header fix and `pro_prestige.html`'s intentional large-serif stacked name (confirmed,
+via its own flex layout, to introduce zero dead space) were both re-verified and left untouched.
+
+A real page-count regression was found and fixed during this pass's own page-count-parity sweep
+(4 item-count scenarios × all 22 templates, before/after a real git-stash baseline): the signature
+size increase pushed `free_simple.html` from 1 page to 2 for a genuinely small 1-item invoice, and
+broke this codebase's own previously-passing `SignatureCenteringTests` for retired `minimal.html`
+the same way (its signature landed on a real page 2, so the test's own page-0-only check found
+nothing) — both fixed with a small, targeted spacing trim in each template's own closing-section
+CSS (not a change to the shared ceiling itself). One difference was found, isolated, and knowingly
+left as-is: 9 of 22 templates shift from 3 to 4 pages specifically at this project's own
+40-item/long-name stress-test boundary and nowhere else (1/3/12-item scenarios: zero differences,
+all 22 templates) — isolated to a cumulative effect of several individually-correct height changes
+tipping an already-exact boundary case, not a defect in any one fix. See DECISIONS.md's 16 September
+2026 entry for the full Part 0 audit (every affected template, not just the review's own confirmed
+starting sample), the full before/after evidence for every fix, and the full page-count sweep
+results. `STANDARDS.md` gained 3 new standing conventions from this pass: numeric-column gutter
+protection, the inline-style signature-size-ceiling pattern, and re-running the project's own
+page-count-parity sweep after any shared-partial/stylesheet change.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

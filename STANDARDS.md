@@ -109,6 +109,61 @@ retroactively convert an already-hardened template onto this system just for con
 (`color: {{ design_primary_color }};`, no custom-property indirection at all) untouched; the two
 conventions coexist deliberately rather than one being "correct" project-wide.
 
+## Numeric table columns need a real protected gutter, not just `text-align:right`
+
+A shared `.inv-table` (or any invoice-style table with Description + right-aligned numeric columns)
+must give the numeric columns a real minimum box — `min-width` + `white-space:nowrap` — AND a real
+`padding-left` gutter on the numeric columns themselves (never `padding-right` on all columns
+uniformly; that shifts the LAST column off the table's own right edge, breaking alignment with
+anything positioned separately below it, like a totals block). `text-align:right` alone is not
+protection: under WeasyPrint's table auto-layout, when Description's own content pushes the table's
+total preferred width past the available space, the numeric columns get squeezed toward their bare
+content width — and with zero horizontal padding anywhere (the state `base_components.css` shipped
+in for the whole 14-15 September 2026 template import), "bare content width" means adjacent
+right-aligned values end up touching, with no visible gap between them at all. A column's own
+`padding` is what survives that squeeze (padding is part of a cell's minimum content box, so it
+can't be squeezed away the way pure whitespace can) — this is why some templates (Classic, Compact,
+Modern, Commerce, Statement, Studio) never showed the bug: each happened to already set nonzero
+horizontal `.inv-table td` padding for unrelated skin reasons. Don't assume a template's own skin
+override makes it safe going forward — always verify the ACTUAL rendered gap on a real 4-figure
+amount (`1,020.00`-class values), not just eyeball the CSS. See DECISIONS.md's 16 September 2026
+Invoice Template Review Phase 1 entry for the real, measured before/after evidence.
+
+## Signature images: set the real size ceiling as an inline style, not a stylesheet rule
+
+Any shared image element whose real-world size matters for legibility/professionalism (a
+signature is the concrete case; a similar rule would apply to anything else in this category) needs
+its size set as an inline `style=""` on the element itself inside the shared partial, not as a
+plain rule in the included stylesheet. A stylesheet rule of equal specificity can always be
+re-overridden by whichever template's own `<style>` block loads after it — which is exactly how
+this codebase's own signature sizes drifted to a 6.5mm–17mm spread across the 20-Template Import,
+several of them genuinely illegible. An inline style on the partial's own markup wins over any
+later same-specificity external rule without needing `!important` anywhere, so no per-template
+override can shrink (or grow) it again by accident. Use `max-width` (a cap), never a fixed `width`,
+alongside a fixed `height` — a fixed width creates a box wider than the image's own natural
+rendered size, and `object-fit:contain` then letterboxes the real image inside that oversized box
+rather than letting it render at its own natural width, which breaks any parent relying on
+`text-align:center` to center the image by its own real width (a real regression this project's own
+`SignatureCenteringTests` caught directly — see DECISIONS.md). Pick the actual numeric ceiling by
+rendering a real candidate size against a representative spread of the family (a plain layout, the
+densest/most compact one, and a narrow persistent-rail one), not by guessing a number that merely
+looks reasonable in isolation.
+
+## A shared-component fix can shift page counts — always re-run the real page-count-parity sweep
+
+Any change to a shared partial/stylesheet that invoice PDF templates include (a size, a padding, a
+gutter) changes real rendered height across every template that includes it, not just the one you
+were looking at when you made the change. Before considering such a change done, re-render a real
+page-count sweep (several item counts, from a genuinely small 1-item invoice up through this
+project's own established 40-item stress boundary) across every affected template, compared
+against a real "before" baseline (a git stash/worktree of the pre-change tree, not a guess) — not
+just the one or two templates you visually spot-checked. A change that's individually correct and
+well-verified in isolation can still tip an already-boundary-tight template from 1 page to 2 (a real
+regression worth fixing with a small, targeted per-template spacing trim) or shift a deliberately
+extreme stress fixture across an exact page boundary (a real, honestly-documented, but generally
+acceptable trade-off, not something to chase indefinitely). See DECISIONS.md's 16 September 2026
+Invoice Template Review Phase 1 entry for a worked example of both outcomes from the same pass.
+
 ## A parallel implementation's naming gets promoted the moment it becomes the only one
 
 A generation-suffixed name (`_v2`, a "Phase N" module docstring, an "isolated"/"experimental"

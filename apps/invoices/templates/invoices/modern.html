@@ -205,7 +205,7 @@
      unchanged); text-align now centers BOTH the signature image and the
      "AUTHORISED SIGNATURE" label inside the block itself. */
   .sign-block { width: 60mm; margin-left: auto; margin-top: 16mm; text-align: center; }
-  .sign-block img.sig { height: 15mm; margin-bottom: -2mm; }
+  .sign-block img.sig { margin-bottom: -2mm; }
   .sign-block .line {
     border-top: 0.3mm solid {{ design_primary_color }}; padding-top: 2.5mm;
   }
@@ -230,7 +230,7 @@
     <div class="pay-block">
       <div class="lbl">Pay online</div>
       {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-      <div class="link">{{ invoice.payment_page_url }}</div>
+      <div class="link">Scan to pay</div>
     </div>
     <div class="spacer"></div>
     <div class="contact">{{ invoice.user.email }}</div>

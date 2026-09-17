@@ -55,7 +55,7 @@ comment.
   {% include "invoices/_partials/base_components.css" %}
 
   .hero-band { background: linear-gradient(125deg, var(--accent), #6d5bd0); color: #fff; padding: 14mm 16mm 12mm; display: flex; justify-content: space-between; align-items: flex-start; }
-  .hero-band .brand-logo { width: 11mm; height: 11mm; background: #fff; border-radius: 8px; padding: 2mm; }
+  .hero-band .brand-logo { width: 11mm; height: 11mm; }
   .hero-band .brand-name { color: #fff; }
   .hero-band .doc-title { font-size: 15pt; text-align: right; }
   .hero-band .doc-number { font-size: 8.5pt; color: rgba(255,255,255,.85); margin-top: 3px; text-align: right; }
@@ -94,13 +94,7 @@ comment.
   <div class="footer-grid">
     <div class="pay-box">
       {% include "invoices/_partials/payment_block.html" %}
-      <div class="pay-online" style="margin-top:6mm;">
-        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-        <div>
-          <div class="label">Pay online</div>
-          <div class="link">{{ invoice.payment_page_url }}</div>
-        </div>
-      </div>
+      {% include "invoices/_partials/pay_online.html" with wrapper_style="margin-top:6mm;" %}
     </div>
     <div class="totals-card">{% include "invoices/_partials/totals.html" %}</div>
   </div>

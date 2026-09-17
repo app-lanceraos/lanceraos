@@ -168,7 +168,15 @@
     font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; color: #a3a099; text-transform: uppercase;
   }
 
-  .sign-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 16mm; }
+  /* margin-top trimmed 16mm -> 9mm (Invoice Template Review Phase 1,
+     Part 2, 16 September 2026) — recovers the headroom the shared
+     signature-size ceiling fix (13mm -> 18mm, see signature_block.html)
+     needed to keep this template's own existing 3-item test fixture
+     (SignatureCenteringTests) on 1 page; a real, confirmed regression
+     without this, not a hypothetical one. Retired from the gallery but
+     still rendered for historical invoices and still covered by that
+     test, so it still needs to hold. */
+  .sign-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 9mm; }
   .pay-online { display: flex; align-items: center; gap: 4mm; }
   .pay-online img.qr { width: 18mm; height: 18mm; }
   .pay-online .label {
@@ -181,7 +189,7 @@
      image and the "Authorised signature" label center over the line's
      own real width, not sit flush right against it. */
   .sign-block { width: 55mm; text-align: center; }
-  .sign-block img.sig { height: 15mm; margin-bottom: -2mm; }
+  .sign-block img.sig { margin-bottom: -2mm; }
   .sign-block .line {
     border-top: 0.3mm solid {{ design_secondary_color }}; padding-top: 2.5mm;
   }
@@ -283,13 +291,7 @@
   </div>
 
   <div class="sign-row">
-    <div class="pay-online">
-      {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-      <div>
-        <div class="label">Pay online</div>
-        <div class="link">{{ invoice.payment_page_url }}</div>
-      </div>
-    </div>
+    {% include "invoices/_partials/pay_online.html" %}
     {% include "invoices/_partials/signature_block.html" %}
   </div>
 

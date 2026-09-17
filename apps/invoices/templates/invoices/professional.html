@@ -140,7 +140,6 @@
   .brand > div { flex: 1 1 0%; }
   .brand img.logo {
     width: 15mm; height: 15mm;
-    border-radius: 2.5mm;
     margin-top: 1mm;
   }
   .brand h1 {
@@ -309,7 +308,7 @@
      image and the "Authorised signature" label center over the line's
      own real width, not sit flush right against it. */
   .sign-block { width: 55mm; text-align: center; }
-  .sign-block img.sig { height: 14mm; margin-bottom: 1mm; }
+  .sign-block img.sig { margin-bottom: 1mm; }
   .sign-block .line {
     border-top: 0.3mm solid {{ design_secondary_color }};
     padding-top: 2.5mm;
@@ -442,13 +441,7 @@
   </div>
 
   <div class="sign-row">
-    <div class="pay-online">
-      {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-      <div>
-        <div class="label">Pay online</div>
-        <div class="link">{{ invoice.payment_page_url }}</div>
-      </div>
-    </div>
+    {% include "invoices/_partials/pay_online.html" %}
     {% include "invoices/_partials/signature_block.html" %}
   </div>
 

@@ -199,13 +199,7 @@ same reasoning as every prior batch.
       <div class="atl-foot-grid">
         <div>
           {% include "invoices/_partials/payment_block.html" %}
-          <div class="pay-online" style="margin-top:6mm;">
-            {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-            <div>
-              <div class="label">Pay online</div>
-              <div class="link">{{ invoice.payment_page_url }}</div>
-            </div>
-          </div>
+          {% include "invoices/_partials/pay_online.html" with wrapper_style="margin-top:6mm;" %}
         </div>
         {% if invoice.notes %}<div><div class="block-label">Notes</div><p>{{ invoice.notes|linebreaksbr }}</p></div>{% endif %}
         {% if signature_url %}<div>{% include "invoices/_partials/signature_block.html" %}</div>{% endif %}

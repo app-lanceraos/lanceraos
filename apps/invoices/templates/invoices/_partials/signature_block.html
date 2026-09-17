@@ -13,10 +13,35 @@ the whole block is still keyed on signature_url alone; the name line is
 not an independently-gated feature.
 
 Requires `signature_url` and `freelancer` in context.
+
+Size ceiling (Invoice Template Review Phase 1, 16 September 2026) — a
+real, professional target height (18mm, up from the 6.5-17mm spread
+every template independently picked before, several of them
+illegibly small) set directly here as an inline style, immune to any
+per-template `.sign-block img.sig{height:...}` override (inline wins
+over any external, non-!important rule regardless of source order —
+the exact mechanism the old per-template overrides were exploiting to
+shrink it in the first place). Chosen and verified by real rendering
+across a representative spread (professional.html, free_compact.html's
+own dense rhythm, pro_atelier.html's rail) — see DECISIONS.md.
+
+`max-width`, not a fixed `width` — deliberately: a fixed width would
+create a box wider than a typical signature's own natural (proportional)
+rendered width, and object-fit:contain would then draw the real image
+letterboxed inside that wider box rather than at its own natural size,
+breaking professional.html/minimal.html/modern.html's existing
+`.sign-block{text-align:center}` centering (a real regression caught by
+this codebase's own SignatureCenteringTests, not assumed) — text-align
+centers based on the image's OWN rendered width, so the image must be
+allowed to size itself naturally and only be CAPPED, never padded out to
+a fixed box, for that centering to keep working. max-width only engages
+for an unusually wide signature; a typical one renders at its natural
+proportional width under the 18mm height, unchanged in that respect from
+before this pass.
 {% endcomment %}
 {% if signature_url %}
 <div class="sign-block">
-  <img class="sig" src="{{ signature_url }}" alt="">
+  <img class="sig" src="{{ signature_url }}" alt="" style="height:18mm; max-width:52mm; object-fit:contain;">
   <div class="line">
     <span class="sign-name">{{ freelancer.display_name }}</span>
     <span class="sign-label">Authorised signature</span>

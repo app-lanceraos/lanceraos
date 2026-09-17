@@ -100,13 +100,7 @@ comment.
     <div class="pre-footer-text">
       {% include "invoices/_partials/notes_terms.html" %}
       {% include "invoices/_partials/payment_block.html" %}
-      <div class="pay-online" style="margin-top:6mm;">
-        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-        <div>
-          <div class="label">Pay online</div>
-          <div class="link">{{ invoice.payment_page_url }}</div>
-        </div>
-      </div>
+      {% include "invoices/_partials/pay_online.html" with wrapper_style="margin-top:6mm;" %}
     </div>
     {% include "invoices/_partials/signature_block.html" %}
   </div>

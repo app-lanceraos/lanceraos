@@ -1,0 +1,48 @@
+{% comment %}
+apps/invoices/templates/invoices/_partials/pay_online.html
+QR "Scan to pay" block — Invoice Template Review Phase 1 (16 September
+2026), Part 5. Generalized from pro_statement.html's own real gallery
+entry, the one template out of 22 that never showed invoice.payment_page_url
+as visible primary text (`.stm-rail-bottom`: an <img class="qr"> next to a
+plain "Scan to pay" <span>, nothing else). Every other template previously
+hand-rolled the identical 5-line block below with a live, visible
+`{{ invoice.payment_page_url }}` running underneath the QR — confirmed by
+direct rendering across the full stress-tested set, not merely a
+cosmetic guess: the URL is real, long, and clutters the closing section
+for no reader benefit once a scannable QR already encodes it. Replaced
+here with the same "Scan to pay" wording pro_statement.html already
+established, so this codebase has exactly one payment-presentation
+pattern, not a mix of two.
+
+The real URL remains the QR's own encoded target (`qr_code_data_uri` is
+built from `invoice.payment_page_url` in pdf_generator.build_pdf_context)
+— only the VISIBLE text changes, never the destination.
+
+Renders nothing at all when qr_code_data_uri is unavailable (no bare-URL
+fallback) — same precedent pro_statement.html's own
+`{% else %}<div></div>{% endif %}` already set: a raw link with nothing to
+scan it against isn't useful primary content either, and every real
+Invoice has a view_token so this only matters for an edge case that
+shouldn't need one.
+
+Requires qr_code_data_uri in context. Optional `with wrapper_style="margin-top:6mm;"`
+reproduces each template's own previous inline top-margin — pass the
+literal value each call site used before this partial existed, so the
+surrounding vertical rhythm is unchanged.
+
+pro_signature.html and modern.html are NOT wired to this partial — both
+have a genuinely different element order/structure (QR after the text,
+or a single-column sidebar stack) that this partial's markup doesn't
+reproduce; each keeps its own local markup with the same "Scan to pay"
+text substitution applied directly. See the Part 5 entry in DECISIONS.md
+for the full reasoning on both.
+{% endcomment %}
+{% if qr_code_data_uri %}
+<div class="pay-online"{% if wrapper_style %} style="{{ wrapper_style }}"{% endif %}>
+  <img class="qr" src="{{ qr_code_data_uri }}" alt="">
+  <div>
+    <div class="label">Pay online</div>
+    <div class="link">Scan to pay</div>
+  </div>
+</div>
+{% endif %}

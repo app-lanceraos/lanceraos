@@ -51,7 +51,7 @@ comment.
   {% include "invoices/_partials/base_components.css" %}
 
   .f-head { display: flex; justify-content: space-between; align-items: center; }
-  .f-head .brand-logo { width: 15mm; height: 15mm; border-radius: 50%; border: 2px solid var(--accent); padding: 2px; object-fit: cover; }
+  .f-head .brand-logo { width: 15mm; height: 15mm; }
   .f-head .brand-name { font-size: 12pt; }
   .f-head .doc-title { font-size: 16pt; text-align: right; }
   .f-head .doc-number { font-size: 9pt; color: var(--muted); margin-top: 3px; text-align: right; }
@@ -70,7 +70,6 @@ comment.
   .footer-grid > div { flex: 1 1 0; min-width: 0; }
   .pay-online img.qr { border: 2px solid #ffd9cd; border-radius: 8px; }
   .footer-sign { display: flex; justify-content: flex-end; align-items: flex-end; }
-  .sign-block img.sig { height: 17mm; }
   .sign-block .line { border-top: 2px solid var(--accent); text-align: center; }
 </style>
 </head>
@@ -98,13 +97,7 @@ comment.
   <div class="footer-grid">
     <div>
       {% include "invoices/_partials/payment_block.html" %}
-      <div class="pay-online" style="margin-top:6mm;">
-        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-        <div>
-          <div class="label">Pay online</div>
-          <div class="link">{{ invoice.payment_page_url }}</div>
-        </div>
-      </div>
+      {% include "invoices/_partials/pay_online.html" with wrapper_style="margin-top:6mm;" %}
     </div>
     <div>{% include "invoices/_partials/notes_terms.html" with terms_only=True %}</div>
     <div class="footer-sign">{% include "invoices/_partials/signature_block.html" %}</div>

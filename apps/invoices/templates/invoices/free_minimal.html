@@ -83,7 +83,18 @@ comment.
   .m-rail { position: fixed; top: 0; left: 0; bottom: 0; width: 54mm; padding: 26mm 8mm 16mm 22mm; }
   .m-rail .brand-lockup { flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12mm; }
   .m-rail .brand-logo { width: 8mm; height: 8mm; }
-  .m-rail .brand-name { font-size: 9pt; }
+  /* white-space:normal overrides the shared .brand-name nowrap rule
+     (Invoice Template Review Phase 1, 16 September 2026) — this rail is
+     a genuinely narrow (~24mm effective) fixed-position column, the same
+     class of container as pro_atelier.html/pro_statement.html's own
+     rails (both use a custom class, never .brand-name, so the shared
+     nowrap rule never reaches them); nowrap here forced the name out of
+     the rail's own width and into the main content column, overlapping
+     the "Invoice" title — a real, confirmed collision. Multi-line
+     wrapping is this column's safe, accepted fallback, matching those
+     other two rails and modern.html's own sidebar (which keeps wrapping
+     past its own documented length floor). */
+  .m-rail .brand-name { font-size: 9pt; white-space: normal; }
   .m-rail .party + .party { margin-top: 9mm; }
   .m-rail .party-label { color: var(--muted); letter-spacing: 0.16em; font-size: 6.5pt; }
   .m-rail .meta-strip { flex-direction: column; gap: 6mm; margin-top: 9mm; }
@@ -124,13 +135,7 @@ comment.
   <div class="m-foot">
     <div>
       {% include "invoices/_partials/payment_block.html" %}
-      <div class="pay-online" style="margin-top:6mm;">
-        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-        <div>
-          <div class="label">Pay online</div>
-          <div class="link">{{ invoice.payment_page_url }}</div>
-        </div>
-      </div>
+      {% include "invoices/_partials/pay_online.html" with wrapper_style="margin-top:6mm;" %}
       {% include "invoices/_partials/notes_terms.html" %}
     </div>
     <div class="footer-sign">{% include "invoices/_partials/signature_block.html" %}</div>

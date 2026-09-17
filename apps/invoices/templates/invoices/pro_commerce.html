@@ -68,7 +68,7 @@ comment.
 
   .com-head { display: flex; justify-content: space-between; align-items: center; padding-bottom: 6mm; border-bottom: 2px solid var(--accent); }
   .com-head .brand-lockup { background: #eaf1fa; padding: 6px 12px 6px 6px; border-radius: 8px; }
-  .com-head .brand-logo { height: 22px; background: #fff; border-radius: 4px; padding: 2px; }
+  .com-head .brand-logo { height: 22px; }
   .com-head .doc-block { text-align: right; }
   .com-head .doc-title { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
   .com-head .doc-number { font-size: 14px; font-weight: 800; color: var(--accent); margin-top: 2px; }
@@ -113,13 +113,7 @@ comment.
   <div class="com-bottom">
     <div class="com-payment">
       {% include "invoices/_partials/payment_block.html" %}
-      <div class="pay-online" style="margin-top:6mm;">
-        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-        <div>
-          <div class="label">Pay online</div>
-          <div class="link">{{ invoice.payment_page_url }}</div>
-        </div>
-      </div>
+      {% include "invoices/_partials/pay_online.html" with wrapper_style="margin-top:6mm;" %}
     </div>
     {% include "invoices/_partials/totals.html" %}
   </div>

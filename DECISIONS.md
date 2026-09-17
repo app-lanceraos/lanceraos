@@ -10129,3 +10129,229 @@ verifies a real, rendered, PyMuPDF-inspected PDF, never "no exception raised" al
 carries the full, dated reasoning for every real decision, deviation, and correction made along the
 way; `apps/invoices/template_manifest.py`'s own module docstring is the authoritative summary of
 what changed in the manifest itself, batch by batch.
+
+**16 September 2026 (Invoice Template Review, Phase 1 — shared component fixes).** The first phase
+of a multi-phase implementation of a full external design review of all 22 templates
+(`LanceraOS_Master_Invoice_Template_Review_22_Templates`), covering 5 shared-mechanism defects:
+numeric-column compression, undersized signatures, artificial logo containers, unnecessary
+business-name wrapping, and a raw payment URL shown as primary content. Deliberately excluded: the
+first-page-only sidebar rework (Atelier/Consulting/Statement/Nova/free_minimal's own `position:fixed`
+rails) and any per-template composition/ordering fix — both real, both named, both Phase 2+.
+
+**Part 0 — the real, complete audit (not the prompt's own confirmed starting sample).** Every
+finding below was reached by rendering real invoices through the actual `render_invoice_pdf`
+pipeline and measuring/inspecting the output (real PyMuPDF word bounding boxes, real screenshots),
+not by reading CSS and guessing.
+
+- *Numeric-column compression* (Part 1): reproduced with a `qty=1 / rate=$1,020.00 / amount=$1,020.00`
+  line under a long description, since the compression only manifests once Description's own
+  preferred width exceeds available space, forcing WeasyPrint's table auto-layout to squeeze the
+  numeric columns toward their bare content width. Real, measured gap between Qty and Rate before
+  the fix: ~2.1-2.5pt (a single character-space, not a real gutter) in 14 of 22 templates —
+  `free_essential`, `free_clean`, `free_simple`, `free_freelancer`, `free_minimal`,
+  `free_professional`, `free_business`, `pro_executive`, `pro_signature`, `pro_editorial`,
+  `pro_grid`, `pro_prestige`, `pro_atelier`, `pro_consulting` (9 more than the prompt's own
+  confirmed 5-template sample). The other 8 (`professional`/Ledger, `modern`/Nova, `free_classic`,
+  `free_compact`, `free_modern`, `pro_studio`, `pro_commerce`, `pro_statement`) were already safe —
+  each happens to already carry nonzero horizontal `.inv-table td` padding for unrelated skin
+  reasons (Ledger/Nova's own separate `table.items` implementation uses `padding-right:6mm` on the
+  description column instead), an accident of their own skin CSS, not a deliberate protection.
+- *Undersized signatures* (Part 2): confirmed the full spread — 13mm (`base_components.css`
+  default, ~16 templates), 14mm (`professional.html`), 15mm (`modern.html`, and retired
+  `minimal.html`), 17mm (`free_freelancer.html`), and a genuinely illegible 6.5mm
+  (`free_compact.html`) — with zero shared floor anywhere.
+- *Artificial logo containers* (Part 3): a codebase-wide multi-line-aware regex sweep (the first,
+  single-line grep missed 2 real hits written across multiple lines, both in the legacy 3
+  templates' own multi-line-formatted CSS) found 6 real hits, not the prompt's confirmed 2:
+  `free_business.html`/`free_modern.html` (white rounded-square background behind the logo, on a
+  colored hero band), `free_freelancer.html` (circular frame + `border:2px solid` + forced
+  `object-fit:cover` crop), `pro_commerce.html` (a redundant white rounded-square directly on the
+  logo, INSIDE an already-legitimate light-blue `.brand-lockup` chip — the chip itself is left
+  alone; only the logo's own nested frame is removed), `pro_statement.html` (`.stm-rail-top-group
+  img` — white bg + radius, missed by the first pass because it doesn't use the word "logo" in its
+  selector), and `professional.html`'s own `.brand img.logo{border-radius:2.5mm}` (missed by the
+  first grep for the same multi-line-CSS reason).
+- *Unnecessary business-name wrapping* (Part 4): reproducing this required a REAL logo present in
+  the fixture — with no logo, "Callahan Design & Consulting Group" (35 chars) rendered on one line
+  in every template; with a real logo image occupying its own width inside `.brand-lockup`, it
+  wrapped unnecessarily (with large amounts of visible, unused width remaining before the doc-title/
+  invoice-number block) in the large majority of the 17 templates using the shared `.brand-name`
+  class (`brand_lockup.html`), confirmed by direct visual inspection of real renders, not text-
+  extraction heuristics (PyMuPDF's own `search_for()` gives false negatives across a wrapped line —
+  discovered and discarded as an audit method after it silently missed Grid's own real 2-line wrap).
+  Root cause, confirmed directly: WeasyPrint's flex layout under-allocates width to a wrappable-text
+  flex child even when the row's own `justify-content:space-between` sibling leaves real free space
+  — the exact same root cause `professional.html`'s own header already had a real, working,
+  documented fix for from an earlier pass (`flex:1 1 0%` bypassing the buggy auto-basis), independently
+  confirming the diagnosis rather than inventing a new theory.
+- *Raw payment URL* (Part 5): `invoice.payment_page_url` was rendered as visible, primary text next
+  to the QR code in 21 of 22 templates (every one except `pro_statement.html`, the prompt's own
+  correct reference implementation) — confirmed by grep and by direct visual inspection (the raw
+  `http://localhost:5173/invoice/<token>/` URL is clearly visible in every "before" screenshot taken
+  during this pass).
+
+**Part 1 fix.** `base_components.css`'s `.inv-table` gained a real protected gutter: `white-space:
+nowrap` on `.num` cells (defensive, prevents a 4-figure amount from ever wrapping mid-digit),
+`min-width:11mm` + `padding-left:6px` on `.col-qty`, `min-width:20mm` + `padding-left:9px` on
+`.col-rate`/`.col-amount`. Deliberately `padding-LEFT` only, never `padding-right` on any column
+(including the last) — the Amount column's own right edge, and its alignment with `.inv-totals`
+below (which has zero horizontal padding of its own), must never shift. The rule targets the
+`.col-qty`/`.col-rate`/`.col-amount` classes directly (higher specificity than a plain per-template
+`.inv-table td` override), so it wins regardless of a template's own past override — verified this
+doesn't visually disturb the 8 already-safe templates (their own symmetric padding still applies to
+every side except the now-protected left gutter, a sub-2px difference, imperceptible). Real,
+measured gap after the fix: 14.8mm-40mm (was 2.1-2.5pt) across all 22, zero compression anywhere.
+Compact (deliberately dense) and every other "tight" template were specifically checked and remain
+visually distinct — none needed a per-template exception; the shared padding-left is small enough
+(6-9px) to read as a normal gutter even in Compact's own tighter rhythm.
+
+**Part 2 fix.** `signature_block.html`'s `<img class="sig">` now carries `style="height:18mm;
+max-width:52mm; object-fit:contain;"` as an INLINE style (wins over any external same-specificity
+rule without `!important`, so no per-template override can shrink it again). 18mm chosen by
+rendering real candidates against `professional.html` (plain/legacy), `free_compact.html` (the
+densest real design), and `pro_atelier.html` (a narrow persistent rail) — 18mm read as proportional
+and professional in all three with zero collision; `max-width` (never a fixed `width`) so a
+narrower-than-52mm signature renders at its own natural size rather than being letterboxed inside
+an oversized box — a fixed width was tried first and broke `professional.html`/`minimal.html`/
+`modern.html`'s existing `.sign-block{text-align:center}` centering (their real, passing
+`SignatureCenteringTests` caught this directly: `text-align:center` centers an inline element by
+its own rendered width, so a wider fixed box with a smaller letterboxed image inside no longer
+centers the same way — the actual visible ink measurably shifted off-center). Every per-template
+`height` override that could re-shrink it below the ceiling was removed (`professional.html` 14mm,
+`modern.html`/`minimal.html` 15mm, `free_compact.html` 6.5mm, `free_freelancer.html` 17mm) — the
+surrounding `margin-bottom`/line/divider/signer-name/label styling in each template was left alone,
+per the task's own "templates may still control placement" allowance. `base_components.css`'s own
+default `.sign-block img.sig{height:13mm; ...}` rule is now just `margin-bottom:1px` — the size
+itself lives only in the partial now, not duplicated in the shared stylesheet where it could drift
+again.
+
+**A real page-count regression, found and fixed.** The signature-size increase (13mm -> 18mm) is a
+genuine +5mm of vertical footprint per invoice's closing section — enough to push `free_simple.html`
+specifically from 1 page to 2 for a real, minimal 1-item invoice (its own `.footer-stack` was already
+operating within a few mm of its own page-boundary before this pass, confirmed by isolating the
+change: reverting the signature to its old 13mm size, with every other Phase 1 fix still applied,
+restored 1 page exactly). Fixed by trimming `free_simple.html`'s own `.footer-stack` margin-top/gap
+(13mm/11mm -> 7mm/9mm) — a spacing recovery, not a restyle; every other property of that block is
+unchanged. The identical class of regression also broke this codebase's own existing, previously-
+passing `SignatureCenteringTests` for retired `minimal.html` (its `.sign-row` pushed the signature
+onto a real page 2 for that test's exact 3-item fixture, so `doc[0]` no longer contained it) — fixed
+the same way, trimming `.sign-row`'s own margin-top (16mm -> 9mm). Both fixes were verified by
+re-running this project's own page-count-parity sweep (4 real scenarios — 1/3/12/40 items — across
+all 22 templates, before vs. after, real git-stash baseline) and the real test suite, not assumed.
+
+**The one remaining, honestly-disclosed page-count difference.** 9 of 22 templates (`free_clean`,
+`free_simple`, `free_freelancer`, `free_minimal`, `pro_executive`, `pro_editorial`, `pro_grid`,
+`pro_consulting`, `pro_statement`) shift from 3 to 4 pages specifically at this project's own
+deliberately extreme 40-item/long-description/long-name stress-test boundary — and ONLY there: the
+1-item, 3-item, and 12-item scenarios in the same sweep show zero page-count differences across all
+22 templates, confirming this does not reproduce for any realistic invoice volume. Isolated directly
+(not assumed): reverting the signature to its old 13mm size does NOT fix these 9 — they persist
+identically either way, so the signature-size fix is not the cause; reverting the Part 1 numeric-
+column padding fixes exactly 1 of the 9 (`free_minimal`); reverting the Part 4 business-name nowrap
+fix makes it WORSE (10 diffs, one new template affected), confirming nowrap is net-positive, not the
+cause. The most likely explanation is the cumulative effect of several small, individually-correct,
+individually-verified height changes (a gutter here, a nowrap-driven reflow there) each contributing
+a fraction of a millimetre across many of the stress fixture's 40 rows, tipping an already-exact
+page-boundary case — not a defect in any single fix. Left as-is rather than chased further: this is
+a synthetic stress boundary, not a real invoice shape, and shaving a few more elements' spacing
+specifically to preserve a 40-item boundary would trade real, visually-verified improvements (Parts
+1/2/4) for a scenario this project's own established convention already treats as a boundary sweep,
+not a guarantee.
+
+**Part 3 fix.** All 6 confirmed hits: removed `background`/`border-radius`/`border` from the logo
+image's own CSS in `free_business.html`, `free_modern.html`, `pro_commerce.html`,
+`pro_statement.html`, and `professional.html`; `free_freelancer.html` additionally had its
+`border-radius:50%`/`border:2px solid`/`object-fit:cover` removed (the crop was the more serious
+defect — a rectangular logo would have been visibly chopped into a circle). `width`/`height` sizing
+was preserved everywhere; `pro_commerce.html`'s own legitimate `.brand-lockup` chip background is
+untouched (a lockup-level design choice, not a logo-specific frame). Verified with a real, wide
+rectangular test logo (a shape a circular crop or padding-driven aspect distortion would visibly
+damage) rendered through all 6 affected templates: every logo now renders in its full natural shape,
+undistorted, un-cropped. **A conflict considered and resolved, per Absolute Rule 5:**
+`free_business.html`/`free_modern.html`/`pro_statement.html` place their logo on a solid-colored
+band (navy, a purple gradient, and a bold accent rail respectively) — removing the white backing
+plausibly risks legibility for a sufficiently dark real user logo. Rendered a real dark-ink test
+logo against all three colored backgrounds before deciding: it stayed clearly legible in every case
+(a saturated brand color, not literal black, always reads as distinct from a near-black logo).
+Combined with the prompt's own explicit, human-confirmed finding for Business specifically, proceeded
+with removal for all three rather than treating this as a genuine identity conflict.
+
+**Part 4 fix.** `.brand-name{ white-space:nowrap; }` added to `base_components.css` — this single
+rule protects all 17 templates using the shared `brand_lockup.html`/`.brand-name` pattern at once,
+confirmed to eliminate the wrap entirely (verified by rendering all 22 before/after with a real
+35-character stress name and a real logo present) with zero visual collision in every case except
+one. **The one real exception, found and fixed:** `free_minimal.html`'s persistent left rail is a
+genuinely narrow (~24mm effective) `position:fixed` column — `nowrap` there forced the business name
+out of the rail's own width and directly into the main content column, overlapping the "Invoice"
+title (a real, screenshotted collision, not a hypothetical one). Fixed by overriding back to
+`white-space:normal` specifically for `.m-rail .brand-name`, matching the same accepted multi-line
+treatment `pro_atelier.html`/`pro_statement.html`'s own rails already use (both of those use a
+custom class, never `.brand-name`, so the shared rule never reached them in the first place — no fix
+needed there). **Business names left intentionally stacked, and why:** `pro_prestige.html`'s
+business name renders as a genuinely large serif display headline (22px, matching the template's own
+"Luxury" tier identity) — a real, deliberate design treatment, not an oversight; its `.pre-head` uses
+`align-items:flex-start` with no fixed height, so a 2-line name simply makes that one flex row
+taller with no dead space introduced anywhere around it — checked directly, no "don't waste space"
+fix was needed. `modern.html`'s sidebar keeps its own, already-existing, already-documented
+`_brandname_font_size_pt` shrink-to-fit mechanism (Template Gallery Polish Pass, 14 September 2026)
+untouched — it already does real, calibrated shrinking down to a 10pt floor, and its own docstring
+already documents that 32+ character names genuinely can't fit its ~30mm sidebar at any size, which
+this pass's own 35-character stress name reproduces exactly as documented (a confirmed floor, not a
+new bug). `professional.html`/Ledger's own header (a separate `<h1>`, not `.brand-name`) keeps its
+own pre-existing `flex:1 1 0%` fix and `max-width:100mm` safety cap from an earlier pass, re-verified
+directly rather than re-touched — its own code comment already documents that a real 7-word name is
+expected to still wrap safely, ~33pt clear of `.meta`, which this pass's 5-word test name does too,
+with zero collision.
+
+**Part 5 fix.** A new shared partial, `_partials/pay_online.html`, generalizes `pro_statement.html`'s
+own already-correct pattern (QR + a plain "Scan to pay" label, no visible URL) — wired into all 20
+templates that previously hand-rolled the identical 5-line raw-URL block (an exact structural match
+across all 20, confirmed before extracting). `modern.html` and `pro_signature.html` keep their own
+local markup (a genuinely different element order/structure — QR-after-text or a single-column
+sidebar stack) with the same text substitution applied directly rather than being forced onto a
+partial whose shape doesn't fit. `.pay-online` gained a real `max-width:60mm` bound so the block
+can't visually intrude into neighboring content — a defensive cap, not a functional necessity now
+that its content is a short fixed label rather than a long URL. **A real extraction bug caught and
+fixed before it shipped:** the first automated replacement pass left the closing `</div>` of each
+template's OLD `.pay-online` block orphaned (the new `{% include %}` line replaced the opening tag
+but not its own separate closing line) — caught by inspecting the resulting file structure directly
+before moving on, not by a later test failure; fixed across all 20 files. The real target URL is
+unchanged everywhere — only the visible text changed, confirmed via a real grep showing zero
+remaining `invoice.payment_page_url` references in any template's rendered output. **The
+`payment_page_url` base-URL finding:** confirmed NOT hardcoded — `FRONTEND_URL` is already read via
+`env('FRONTEND_URL', default='http://localhost:5173')` in `config/settings.py`, a real,
+environment-aware setting, not a literal. The one real, related gap found: `.env.example`'s own
+production comment said `FRONTEND_URL=https://app.lanceraos.com`, contradicting this document's own
+domain decision (`lanceraos.com` directly, no `app.` subdomain) — fixed to match.
+
+**Verification.** Real rendered PDFs for all 22 (varied item counts, long/short descriptions,
+optional fields present and absent, long business/client names, real multi-page stress) — evidence
+gathered throughout this pass via the project's own `render_invoice_pdf` pipeline, never a synthetic
+approximation. `generate_template_previews.py` re-run for the complete set (22 new PNGs, reflecting
+every fix above). Full page-count-parity sweep (4 scenarios x 22 templates = 88 comparisons) against
+a real git-stash baseline: 79/88 unchanged, 9 differences (all confined to the 40-item stress
+boundary, none at any realistic invoice size) — see above. `FooterAndSignaturePinningTests` and
+`SignatureCenteringTests` (the existing 21-test regression class covering the 3 legacy templates):
+green (2 real failures found and fixed along the way, both the minimal.html page-count regression
+above). Full `apps.invoices` + `apps.users` suite (`python manage.py test apps.invoices apps.users
+--keepdb`) — BEFORE this pass's own 2 fixes (signature ceiling + logo/business-name/payment-URL
+changes already applied, `free_simple.html`/`minimal.html` spacing trims not yet applied): 4 real
+failures, all `SignatureCenteringTests` (the page-count regression); AFTER: **942 passing, 0
+failures** — zero regressions anywhere else in either app. `npx vite build` clean (frontend
+untouched beyond the regenerated preview PNGs).
+
+**Deliberate exclusions, restated.** The first-page-only sidebar rework (Atelier/Consulting/
+Statement/Nova/free_minimal — making `position:fixed` content differ between page 1 and later pages)
+is confirmed still necessary and still deferred to its own dedicated spike, untouched by this pass.
+Ledger's orphaned closing page, Classic's missing From block, Statement's Total Due ordering, and
+every other per-template composition/ordering issue named in the review are real, confirmed in
+passing where visible, and left for Phase 2+, per this prompt's own explicit scope.
+
+**A real, unrelated repo-state discrepancy found at the start of this pass, not caused by it:**
+`freeTemplates.html`/`proTemplates.html` (the root-level prototype source files this whole 20-
+template import was ported from) were already deleted from disk, `.gitignore` already carried an
+uncommitted `qa_invoice_pdfs/` addition, and a `qa_invoice_pdfs/` directory of per-template PDF
+renders already existed on disk, all before this session's own first tool call. None of this was
+touched beyond what a `git stash`/`git worktree` cycle (both cleanly reverted) needed for this
+pass's own before/after verification — flagged here and in the session's own final report rather
+than silently worked around.
