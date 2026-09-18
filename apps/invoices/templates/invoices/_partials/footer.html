@@ -113,6 +113,28 @@ left inset rather than 16mm, so its `footer_right_inset` targets 12mm to
 match ITS OWN left side, not the other 22 templates' 16mm. See
 DECISIONS.md's 18 September 2026 entry for the full per-template
 before/after measurement table.
+
+CORRECTION, same day — the paragraph immediately above is WRONG about
+what `footer_right_inset` actually lands on the right, and is kept here
+only as a record of the mistake, not as current guidance. `@bottom-right`
+is one content run — text, then an en-space, then the wordmark's own
+vector SVG trailing after it — and the measurement above only ever
+checked the TEXT's position (`page.get_text()`/`page.get_image_info()`
+can't see a vector path fill at all). The real wordmark was overflowing
+the true page edge by ~1.4mm-5.4mm on every one of the 23 templates the
+whole time this comment claimed "zero clipping." `footer_right_inset`'s
+real calibration target, corrected same day, is the WORDMARK's own real
+right edge (measured via `page.get_drawings()`, filtered to the footer
+band and that template's fill color — a text-only or image-only check
+will miss it again), landing at 16mm/12mm PLUS a deliberate +1.0mm safety
+margin (17mm/13mm) — not the bare 16mm/12mm this paragraph describes. The
+business-info text itself now sits further from the right edge than
+16mm/12mm as a direct, correct consequence (its own position was never
+separately targeted). See DECISIONS.md's second 18 September 2026 entry
+(explicitly marked as a correction to the first) for the full root
+cause, the corrected per-template values, and the re-verification
+evidence — including a `get_drawings()`-based method proven against the
+known-broken state before being trusted for anything.
 {% endcomment %}
 {% if not single_page_layout or wordmark_data_uri %}
 @bottom-left {
