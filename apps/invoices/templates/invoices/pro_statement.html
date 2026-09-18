@@ -78,7 +78,7 @@ same reasoning as every prior batch.
   @page {
     size: A4;
     margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
-    {% include "invoices/_partials/footer.html" with footer_text_color="#666b78" footer_left_inset="16mm" %}
+    {% include "invoices/_partials/footer.html" with footer_text_color="#666b78" footer_left_inset="16mm" footer_right_inset="-7.282mm" %}
   }
   * { box-sizing: border-box; }
   body {
@@ -166,10 +166,10 @@ same reasoning as every prior batch.
   </div>
   <div class="stm-rail-word">INVOICE</div>
   {% if qr_code_data_uri %}
-  <div class="stm-rail-bottom">
+  <a class="stm-rail-bottom" href="{{ invoice.payment_page_url }}" style="display:block; text-decoration:none; color:inherit;">
     <img class="qr" src="{{ qr_code_data_uri }}" alt="">
     <span>Scan to pay</span>
-  </div>
+  </a>
   {% else %}<div></div>{% endif %}
 </aside>
 

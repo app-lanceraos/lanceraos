@@ -19,7 +19,7 @@ Does not port paginateItems/computeCapacity/continuationHeader/
   @page {
     size: A4;
     margin: 22mm 22mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %};
-    {% include "invoices/_partials/footer.html" with footer_text_color="#7d8393" footer_left_inset="-6mm" %}
+    {% include "invoices/_partials/footer.html" with footer_text_color="#7d8393" footer_left_inset="-6mm" footer_right_inset="-29.282mm" %}
   }
   * { box-sizing: border-box; }
   body {

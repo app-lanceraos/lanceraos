@@ -28,7 +28,7 @@ correctly, exactly like professional.html/minimal.html/modern.html do.
        modern.html — 0 only in the confirmed single-page + branding-off
        cell where footer.html renders nothing at all. */
     margin: 20mm 18mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %};
-    {% include "invoices/_partials/footer.html" with footer_text_color="#70737f" footer_left_inset="-2mm" %}
+    {% include "invoices/_partials/footer.html" with footer_text_color="#70737f" footer_left_inset="-2mm" footer_right_inset="-25.282mm" %}
   }
   * { box-sizing: border-box; }
   body {

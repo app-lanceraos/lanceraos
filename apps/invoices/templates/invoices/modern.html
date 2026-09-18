@@ -48,7 +48,7 @@
        12mm, see professional.html's identical comment for the real
        measurement and parity re-verification behind this value. */
     margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
-    {% include "invoices/_partials/footer.html" with footer_text_color="#a8a5b8" footer_left_inset="16mm" %}
+    {% include "invoices/_partials/footer.html" with footer_text_color="#a8a5b8" footer_left_inset="16mm" footer_right_inset="-7.282mm" %}
   }
   * { box-sizing: border-box; }
   body {
@@ -244,11 +244,13 @@
     {% if freelancer.logo %}<img class="logo" src="{{ freelancer.logo }}" alt="">{% endif %}
     <div class="brandname">{{ freelancer.business_name|default:freelancer.display_name }}</div>
     <div class="divider"></div>
-    <div class="pay-block">
+    {% if qr_code_data_uri %}
+    <a class="pay-block" href="{{ invoice.payment_page_url }}" style="display:block; text-decoration:none; color:inherit;">
       <div class="lbl">Pay online</div>
-      {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
+      <img class="qr" src="{{ qr_code_data_uri }}" alt="">
       <div class="link">Scan to pay</div>
-    </div>
+    </a>
+    {% endif %}
     <div class="spacer"></div>
     <div class="contact">{{ invoice.user.email }}</div>
   </div>

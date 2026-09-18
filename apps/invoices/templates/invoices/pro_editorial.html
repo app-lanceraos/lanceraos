@@ -58,7 +58,7 @@ comment.
   @page {
     size: A4;
     margin: 18mm 16mm {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %};
-    {% include "invoices/_partials/footer.html" with footer_text_color="#6e6e74" footer_left_inset="0" %}
+    {% include "invoices/_partials/footer.html" with footer_text_color="#6e6e74" footer_left_inset="0" footer_right_inset="-23.282mm" %}
   }
   * { box-sizing: border-box; }
   body {

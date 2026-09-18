@@ -53,7 +53,7 @@ comment.
   @page {
     size: A4;
     margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
-    {% include "invoices/_partials/footer.html" with footer_text_color="#8c7f76" footer_left_inset="16mm" %}
+    {% include "invoices/_partials/footer.html" with footer_text_color="#8c7f76" footer_left_inset="16mm" footer_right_inset="-7.282mm" %}
   }
   * { box-sizing: border-box; }
   body {
@@ -120,13 +120,15 @@ comment.
     {% include "invoices/_partials/signature_block.html" %}
     <div class="sig-payment">
       {% include "invoices/_partials/payment_block.html" %}
-      <div class="pay-online" style="margin-top:6mm; justify-content:flex-end;">
+      {% if qr_code_data_uri %}
+      <a class="pay-online" href="{{ invoice.payment_page_url }}" style="margin-top:6mm; justify-content:flex-end; text-decoration:none; color:inherit;">
         <div>
           <div class="label">Pay online</div>
           <div class="link">Scan to pay</div>
         </div>
-        {% if qr_code_data_uri %}<img class="qr" src="{{ qr_code_data_uri }}" alt="">{% endif %}
-      </div>
+        <img class="qr" src="{{ qr_code_data_uri }}" alt="">
+      </a>
+      {% endif %}
     </div>
   </div>
 </div>

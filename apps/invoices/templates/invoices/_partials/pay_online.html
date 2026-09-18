@@ -30,19 +30,37 @@ reproduces each template's own previous inline top-margin — pass the
 literal value each call site used before this partial existed, so the
 surrounding vertical rhythm is unchanged.
 
-pro_signature.html and modern.html are NOT wired to this partial — both
-have a genuinely different element order/structure (QR after the text,
-or a single-column sidebar stack) that this partial's markup doesn't
-reproduce; each keeps its own local markup with the same "Scan to pay"
-text substitution applied directly. See the Part 5 entry in DECISIONS.md
-for the full reasoning on both.
+pro_signature.html, modern.html, and pro_statement.html are NOT wired to
+this partial — each has a genuinely different element order/structure
+(QR after the text, a single-column sidebar stack, or a persistent rail)
+that this partial's markup doesn't reproduce; each keeps its own local
+markup with the same "Scan to pay" text substitution applied directly.
+See the Part 5 entry in DECISIONS.md for the full reasoning on all three.
+
+Shared-Partials Hygiene pass (18 September 2026) — the whole block is now
+a real `<a href="{{ invoice.payment_page_url }}">`, not a plain `<div>`,
+so "Scan to pay" is an actual clickable/tappable link in the rendered PDF
+(a real PDF link annotation, confirmed by inspecting WeasyPrint's own
+output, not just markup) pointing at the exact same URL the QR code
+above it encodes (see this file's own comment above:
+`invoice.payment_page_url` is what `qr_code_data_uri` is built from).
+`text-decoration:none; color:inherit;` is set as an INLINE style directly
+on the `<a>` — the same "survive every template's own separately-authored
+CSS with no per-template override needed" reasoning STANDARDS.md already
+documents for the signature-size ceiling — so no template can accidentally
+leave this looking like a default blue underlined link. `.pay-online`'s
+own `display:flex` etc. (defined either locally per-template, or shared
+via `base_components.css`) carries over unchanged from `<div>` to `<a>` —
+confirmed by real render, not assumed; an anchor is not a flex container
+by default, but every existing `.pay-online` rule already sets its own
+`display`, which wins regardless of the element's default.
 {% endcomment %}
 {% if qr_code_data_uri %}
-<div class="pay-online"{% if wrapper_style %} style="{{ wrapper_style }}"{% endif %}>
+<a class="pay-online" href="{{ invoice.payment_page_url }}" style="{{ wrapper_style }}text-decoration:none; color:inherit;">
   <img class="qr" src="{{ qr_code_data_uri }}" alt="">
   <div>
     <div class="label">Pay online</div>
     <div class="link">Scan to pay</div>
   </div>
-</div>
+</a>
 {% endif %}
