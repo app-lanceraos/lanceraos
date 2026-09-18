@@ -60,28 +60,44 @@
     line-height: 1.55;
   }
 
-  /* full-height sidebar — position:fixed repeats it on every generated page.
-     Template Gallery Polish Pass (14 September 2026) — `bottom: 0`
-     (unconditional, no longer a render-time conditional) stops the
-     sidebar's dark background at the CONTENT BOX's own bottom edge —
-     it no longer bleeds into the reserved footer margin band at all.
-     This is a real, deliberate visual tradeoff, confirmed with Ali:
-     the sidebar no longer bleeds all the way to the true physical page
-     edge in the last ~16mm at the bottom-left corner (that strip is now
-     plain page background, matching professional.html/minimal.html,
-     which never had a sidebar to bleed in the first place) — the
-     sidebar still runs full-height through the rest of the content
-     area, this only affects that one bottom-left corner. This simplifies
-     what the Foundation pass (13 September 2026) added, not just fixes
-     it — that pass's own `-16mm` pull-back conditional (needed only to
-     counteract this exact bleed) is gone entirely, and so is the
-     58mm @bottom-left inset + explicit box widths it necessitated (see
-     the @page block's own comment above). */
-  .sidebar {
+  /* Invoice Template Review Phase 1.5 (17 September 2026) — the sidebar is
+     now TWO independent layers, not one. `.sidebar-bg` is decorative only
+     (color, no text/images) and stays `position: fixed` — WeasyPrint
+     repeats a fixed box on every generated page for free, which is exactly
+     right for a plain color fill. The real content (logo/brandname/QR/
+     contact) moved to `.sidebar`, now `position: absolute` — with NO
+     positioned ancestor, its containing block is the page's own initial
+     containing block, the identical reference `.sidebar-bg`'s `fixed`
+     positioning already uses (this is why both can share the same plain
+     `top:0; left:0; bottom:0` coordinates unchanged from the old single-
+     layer rule, no explicit height needed). The one real difference
+     between the two `position` values is what a paged-media renderer does
+     with a box anchored to that reference: `fixed` repeats it on every
+     generated page; `absolute` (with no positioned ancestor) associates it
+     with exactly one page — whichever page it naturally falls on in
+     document flow (page 1, since it's the first real element in `<body>`)
+     — and never repeats it. Real, confirmed via an isolated WeasyPrint
+     69.0 spike before this was applied here (see DECISIONS.md's
+     17 September 2026 "Phase 1.5" entry), including a real regression
+     this pass found and reverted: an earlier version of this fix wrapped
+     `.sidebar` in an extra `position: relative; height: 0;` container
+     (reasoning it needed an explicit positioned ancestor) and gave
+     `.sidebar` its own explicit `height` to replace `bottom: 0` — that
+     wrapper, not `position: absolute` itself, was what silently forced a
+     genuine 1-page invoice to render as 2 pages (confirmed by bisection,
+     not assumed) — removing it and keeping `bottom: 0` fixed the
+     regression outright, and turned out to be the simpler, more correct
+     mechanism besides. */
+  .sidebar-bg {
     position: fixed;
     top: 0; left: 0; bottom: 0;
     width: 42mm;
     background: {{ design_primary_color }};
+  }
+  .sidebar {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 42mm;
     color: #ffffff;
     padding: 14mm 6mm 12mm;
     display: flex;
@@ -223,6 +239,7 @@
 </head>
 <body>
 
+  <div class="sidebar-bg"></div>
   <div class="sidebar">
     {% if freelancer.logo %}<img class="logo" src="{{ freelancer.logo }}" alt="">{% endif %}
     <div class="brandname">{{ freelancer.business_name|default:freelancer.display_name }}</div>

@@ -10355,3 +10355,131 @@ renders already existed on disk, all before this session's own first tool call. 
 touched beyond what a `git stash`/`git worktree` cycle (both cleanly reverted) needed for this
 pass's own before/after verification — flagged here and in the session's own final report rather
 than silently worked around.
+
+**17 September 2026 (Invoice Template Review, Phase 1.5 — sidebar/rail page-1-only content).**
+Phase 1's own deliberate exclusion, closed: `modern.html`/Nova, `free_minimal.html`,
+`pro_atelier.html`, `pro_consulting.html`, `pro_statement.html` all used `position: fixed` for a
+persistent sidebar/rail carrying real content (business/client identity, a payment QR, contact
+info) — correct for a purely decorative fill, wrong for real content, since it reprints that
+content on every generated page. A design review confirmed this reads as the document not knowing
+it already introduced itself; the fix is to make ONLY the decorative fill repeat, and real content
+appear once, on page 1.
+
+**Part 0 — the real spike, before touching any template.** Built an isolated WeasyPrint 69.0
+fixture (fixed decorative background + a normal-flow, `position: relative` wrapper holding
+`position: absolute` content, planted at the top of `<body>`) and rendered it directly, real PDFs,
+real PyMuPDF inspection and real PNG screenshots — never assumed from the CSS spec alone.
+
+- *0a/0b (does absolute content repeat; does it align with the fixed layer):* confirmed positively
+  and visually. An 8-block, 2-page fixture showed full rail content (logo/brandname/QR/contact) on
+  page 1 only; page 2 showed the fixed decorative color with zero content, perfectly aligned with
+  page 1's own layer (both boxes share the same `top:0; left:0; width:Xmm` origin by construction).
+- *0c (overflow behavior with extreme content):* a REAL, found negative result. When the absolutely-
+  positioned content genuinely exceeds one page's height, it does NOT clip and does NOT stay
+  invisible — it fragments and BLEEDS onto page 2, interleaved with whatever real page-2 content
+  follows it (proven with a synthetic 60-field rail forced to ~780mm tall: fields 0-11 landed on
+  page 1, fields 12-23 bled onto page 2, verified via real PyMuPDF text extraction). Tried the
+  obvious mitigation — `overflow: hidden` plus an explicit height cap on the same box — and it did
+  NOT stop the bleed either (identical fragmentation, same field split); WeasyPrint's fragmentation
+  of an overflowing absolutely-positioned box takes priority over `overflow: hidden` in this
+  version. There is no CSS-only clipping guarantee here — the real mitigation is verifying, per
+  template, that realistic (even extreme) content never approaches a full page's height, which Part
+  1/2's own extreme-content renders below do directly, not by assumption.
+- *0d (interaction with the existing MANDATORY SAFE ORDER 2-pass render):* confirmed via the real
+  `render_invoice_pdf` pipeline, not just the isolated spike — see Part 1's own real regression
+  below, which this exact check caught.
+- *0e (does the main content column need a different width on continuation pages, or can it stay
+  constant):* a real negative finding — not cleanly achievable. `.main`'s own `margin-left` is a
+  single CSS property on one continuous box that spans every page of a multi-page invoice; CSS has
+  no selector for "this fragment of a box on page 2 specifically" (no `:nth-fragment`-equivalent
+  exists in this WeasyPrint version), and `@page :first` only targets the page BOX's own margins,
+  the wrong direction for "every page except the first." Reclaiming the sidebar's width on
+  continuation pages would require either a second, disconnected DOM element per fragment (real
+  pagination simulation, forbidden per this task's own Absolute Rule 5) or a fragile negative-margin
+  trick with no positive verification behind it. Kept constant (the reserved-margin band continues
+  as plain decorative color on later pages) — the lower-risk default, confirmed to be the only
+  clean option, not merely the first one tried.
+
+**Part 1 — proven first on Nova (modern.html).** Split `.sidebar` into `.sidebar-bg`
+(`position: fixed`, decorative fill only) and `.sidebar` (`position: absolute`, the real
+logo/brandname/QR/contact content). A REAL regression was found and fixed during this pass, not
+assumed away: the first working version wrapped `.sidebar` in an extra `position: relative;
+height: 0;` container (reasoning it needed an explicit positioned ancestor) and gave `.sidebar` an
+explicit `height` to replace `bottom: 0`. That combination silently turned a genuine 1-page invoice
+into a 2-page PDF — caught by `SignatureCenteringTests` (a real, pre-existing test, unrelated to
+this task, that happened to exercise a short fixture) going from 2/2 passing on the true baseline to
+2/2 failing after the change. Bisected directly (not guessed): reproduced the regression in total
+isolation confirmed height alone wasn't the cause (150mm still broke it), confirmed the wrapper WAS
+the cause (removing it and keeping plain `bottom: 0` — no positioned ancestor needed at all, since
+`position: absolute` with no positioned ancestor already resolves against the page's own initial
+containing block, the identical reference `position: fixed` uses — fixed the regression outright).
+This turned out to be the simpler, more correct mechanism besides, not just a workaround. Verified:
+`FooterAndSignaturePinningTests` + the whole `test_footer_rule.py` suite (33 tests, incl.
+`SignatureCenteringTests`, `ModernBrandnameSizingTests`, `PageCountParityTests`) — all pass; a real
+multi-page render (30 items, realistic + an extreme 84-character business name) showing full content
+page 1 only, decorative color pages 2-3, screenshotted directly; a page-count-parity sweep (1/3/12/40
+items, real git-stash before/after) — 1/1, 3/1, 12/2, 40/4, exact match both sides.
+
+**Part 2 — the remaining 4, each template's own rail content confirmed directly, not assumed
+uniform.** `free_minimal.html`'s `.m-rail` carries only real content (brand identity, both parties
+stacked, a meta strip) with NO decorative fill of its own (no background/border — confirmed by
+reading the file, not assumed) — the whole fix here is `position: fixed` → `position: absolute`
+alone, no second layer needed, since there's no decoration to keep repeating. The other 3 do have a
+decorative fill and got the same two-layer split as Nova: `pro_atelier.html`'s `.atl-rail`
+(logo/business name/"Invoice — No. X"/address+email — pure freelancer branding, no QR) split into
+`.atl-rail-bg` (tinted fill + border-right) + `.atl-rail`; `pro_consulting.html`'s `.con-side` (the
+CLIENT's own "Prepared for" identity + an invoice-number-led meta strip — genuinely NOT the
+freelancer's identity) split into `.con-side-bg` (tinted panel fill) + `.con-side`;
+`pro_statement.html`'s `.stm-rail` (logo/business name/"INVOICE"/a real QR + "Scan to pay" — the
+review's own literal example of content that shouldn't reprint) split into `.stm-rail-bg` (bold
+accent fill) + `.stm-rail`. Each of the 5 rails' own real content is preserved unchanged — only the
+mechanism (page-1-only real content, decorative-only repeat) is shared, confirmed directly per
+template rather than assumed from Nova's own shape.
+
+**A real test-suite gap found and fixed, not just the templates.** `test_template_import_batch5.py`'s
+own `test_rail_content_genuinely_repeats_on_a_real_second_page` asserted `'Horizon Studio' in
+page2_text` to prove the rail's real content still repeats — after this pass's fix, that assertion
+kept PASSING for the wrong reason: "Horizon Studio" is ALSO present in the page footer's own,
+separate, always-repeating business-info line (`footer.html`'s `@bottom-left`, unrelated to the
+rail), so the test silently stopped proving what its own docstring claimed the moment the real fix
+landed. Caught by reading the test's own logic against the new intent, not by a failure — the test
+was GREEN before this check and would have stayed green indefinitely, a real, confirmed false-
+positive. Rewrote it (renamed to `Batch5RailBackgroundRepeatsContentDoesNotTests`) to check each
+rail's own content within its own real x/y screen region specifically (bounded to `x < 250pt`,
+`y < 300pt` — well clear of the footer band), per-template markers (`'Horizon Studio'` for
+Atelier/Statement, `'Callahan'` — the client name — for Consulting, since Consulting's rail shows
+client identity, not the freelancer's), asserting present on page 1's own rail region and absent
+from page 2's same region. `test_template_import_batch3.py`'s
+`test_minimal_rail_uses_position_fixed_not_flex_shell` (a real, literal `'position: fixed' in html`
+assertion) was renamed and updated to assert `'position: absolute'`, matching free_minimal's own
+real fix. Both rewritten tests pass against the new templates and were verified to genuinely
+distinguish before/after (not just pass by coincidence) by running them against the reverted
+baseline templates too, where they correctly matched the OLD behavior.
+
+**Verification.** Real rendered PDFs for all 5 (realistic 30-item multi-page + an extreme
+84-character business-name stress case) — page 1 shows full rail content, every subsequent page
+shows decorative-only (or, for free_minimal, plain white — it has no decoration), screenshotted
+directly for all 5. Page-count-parity sweep (1/3/12/40 items, real git-stash before/after) for all
+5 templates: every single (template, item-count) pair matched exactly, zero differences. Full
+per-file regression suites (`test_footer_rule.py`, `test_pdf_pipeline.FooterAndSignaturePinningTests`,
+`test_template_import_batch3.py`, `test_template_import_batch5.py`) — all green, including the 2
+tests genuinely rewritten to match the new mechanism. Full project-wide backend suite
+(`python manage.py test apps.invoices apps.users --keepdb`) — **942 passing both before and after**
+(a real git-stash baseline run, not assumed identical to the count cited in this document's own
+Module Build Status table): zero regressions anywhere else in either app. `npx vite build` was not
+run this pass — no frontend files were touched (backend template/test files only).
+
+**Deliberate exclusions, restated.** The other 17 (non-sidebar) templates — untouched. Per-template
+composition/ordering issues (Ledger's orphaned closing page, Classic's missing From block,
+Statement's Total Due ordering, etc.) — Phase 2+, per this task's own explicit scope, unaffected by
+this pass. No further work on Phase 1's own 5 shared-component fixes (numeric-column gutters,
+signature sizing, logo containers, business-name nowrap, the shared `pay_online.html` partial) —
+confirmed none of Phase 1.5's changes required touching any of them.
+
+**What didn't work as hypothesized, stated plainly.** `overflow: hidden` does not clip an
+overflowing absolutely-positioned box in this WeasyPrint version — it fragments across pages
+regardless (Part 0c). A `position: relative; height: 0;` wrapper around the absolute content layer,
+originally assumed necessary to give `position: absolute` a definite containing block, was not only
+unnecessary but actively wrong — it introduced a real page-count regression fixed only by removing
+it. Reclaiming the sidebar's column width on continuation pages (Part 0e) has no clean CSS
+mechanism in this version and was not pursued further, per the task's own explicit allowance.

@@ -22,14 +22,23 @@ own comment.
 Real, preserved deviation #1: the persistent rail. The prototype's own
 `renderFull(inv, pages)` only renders the rail (`atl-shell`/`atl-rail`)
 on page 1 — continuation pages get a plain `continuationHeader` instead.
-Per free_minimal.html's own established precedent (Batch 3, itself
-mirroring production modern.html's own sidebar), this page-1-only
-treatment is a pagination-SIMULATION artifact (the prototype's `pages`
-array + per-chunk JS rendering has no equivalent in a real, continuously-
-flowing Django template) — not a real design requirement. Ported via the
-same proven `position: fixed` technique, which repeats the rail on every
-real page automatically, a strict improvement over the prototype's own
-page-1-only limitation, not a deviation from it.
+
+SUPERSEDED, Invoice Template Review Phase 1.5 (17 September 2026): this
+paragraph originally treated the prototype's page-1-only rail as a pure
+pagination-SIMULATION artifact and ported it via `position: fixed` to
+repeat on every real page — correct reasoning for the decorative fill,
+but wrong for this rail's real content (logo, business name, invoice
+number, address/email): a design review this same date found that
+reprinting a client's real identity content down every continuation
+page reads as the document not knowing it already introduced itself.
+The rail is now split into a decorative `position: fixed` background
+layer (still repeating every page, unchanged from this paragraph's
+original reasoning) and a `position: absolute` content layer (page 1
+only) — see `.atl-rail-bg`/`.atl-rail`'s own CSS rules and DECISIONS.md's
+17 September 2026 "Phase 1.5" entry for the full mechanism. The
+prototype's own page-1-only behavior turns out to have been the closer
+match to the right design all along, just for a reason (real-content
+reprint) the prototype itself never articulated.
 
 Real, preserved deviation #2: `body{ background: var(--paper) }` — a
 tinted page background across the WHOLE page (matching pro_studio.html's/
@@ -100,9 +109,27 @@ same reasoning as every prior batch.
   }
   {% include "invoices/_partials/base_components.css" %}
 
-  .atl-rail {
+  /* Invoice Template Review Phase 1.5 (17 September 2026) — split into two
+     layers: `.atl-rail-bg` is decorative only (the tinted fill + the
+     border-right rule — no text/images) and keeps `position: fixed`, so it
+     still repeats on every generated page for free; the real content
+     (logo, business name, "Invoice — No. X", address/email) stays in
+     `.atl-rail`, now `position: absolute` with no positioned ancestor —
+     its containing block is the page's own initial containing block, the
+     same reference `.atl-rail-bg`'s `fixed` positioning uses, so the
+     coordinates are unchanged — but it now associates with exactly the
+     one page it naturally falls on (page 1) instead of reprinting the
+     freelancer's own real identity content down every continuation page.
+     See modern.html's own identical rule for the full mechanism and the
+     real regression (a since-removed positioning wrapper) found and
+     fixed while proving it there first — see
+     DECISIONS.md's 17 September 2026 "Phase 1.5" entry. */
+  .atl-rail-bg {
     position: fixed; top: 0; left: 0; bottom: 0; width: 38mm;
     background: #efeae0; border-right: 1px solid var(--rule);
+  }
+  .atl-rail {
+    position: absolute; top: 0; left: 0; bottom: 0; width: 38mm;
     padding: 14mm 8mm; display: flex; flex-direction: column;
     justify-content: space-between; align-items: center; text-align: center;
   }
@@ -147,6 +174,7 @@ same reasoning as every prior batch.
 </head>
 <body>
 
+<div class="atl-rail-bg"></div>
 <aside class="atl-rail">
   <div class="atl-rail-top-group">
     {% if freelancer.logo %}<img src="{{ freelancer.logo }}" alt="">{% endif %}

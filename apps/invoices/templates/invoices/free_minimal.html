@@ -20,22 +20,26 @@ functions communicate via unbalanced string fragments its OWN pagination
 assembler stitches together — completely moot once ported to a real,
 single, fully-nested template.
 
-Better still: the actual mechanism used here — `position: fixed` on
-`.m-rail` — makes even the CONCEPT of "a wrapper spanning across the
-header/items/footer" disappear entirely, not just become writable as one
-normal nested div (contrast free_modern.html, which still needs one real
-`.page-body` wrapper div). A fixed-position element is removed from
-normal document flow, so `.m-rail` is a fully self-contained, completely
-closed block; `.m-main` is a plain, independently normal-flow container
-needing exactly one wrapping div. This is the exact same proven
-mechanism the ALREADY-SHIPPING modern.html uses for its own persistent
-sidebar (`.sidebar{ position:fixed; top:0; left:0; bottom:0; ...}` +
-`.main{ margin-left:42mm; }`, confirmed by reading that file directly) —
-not a new pattern invented for this template, and not something that
-needs pagination-porting to repeat per page: WeasyPrint's own paged-media
-`position:fixed` already repeats the rail on every page for free, exactly
-like modern.html's own sidebar already does for any of its own
-multi-page invoices.
+Better still: the actual mechanism used here removes `.m-rail` from
+normal document flow entirely — no wrapper div needed spanning across
+the header/items/footer the way free_modern.html still needs one real
+`.page-body` wrapper for (contrast that file's own `wrapsBody: true`
+handling). `.m-rail` is a fully self-contained, completely closed
+block; `.m-main` is a plain, independently normal-flow container
+needing exactly one wrapping div.
+
+SUPERSEDED, Invoice Template Review Phase 1.5 (17 September 2026): the
+paragraph above originally continued describing `position: fixed` as
+the mechanism, on the reasoning that it's "the exact same proven
+mechanism" modern.html's own sidebar used — that was correct THEN
+(this rail carries real content — brand identity, both parties, the
+meta strip — and `fixed` repeats real content on every generated page,
+which is exactly the page-1-only design review this same date found
+wrong for a content-bearing rail). `.m-rail` is now `position: absolute`
+instead — see its own CSS rule below for the real mechanism and
+DECISIONS.md's 17 September 2026 "Phase 1.5" entry for the full
+reasoning, including a real regression found and fixed while proving
+this same mechanism on modern.html first.
 
 Real, preserved deviation: both parties render as bare, vertically
 stacked `.party` divs in the rail (`parties_row.html`'s new `stacked`
@@ -76,11 +80,22 @@ comment.
   }
   {% include "invoices/_partials/base_components.css" %}
 
-  /* Persistent left rail — position:fixed removes it from normal flow
-     entirely and repeats it on every real page automatically, the exact
-     mechanism modern.html's own .sidebar already proves in production
-     (see this file's own top comment). */
-  .m-rail { position: fixed; top: 0; left: 0; bottom: 0; width: 54mm; padding: 26mm 8mm 16mm 22mm; }
+  /* Invoice Template Review Phase 1.5 (17 September 2026) — this rail
+     carries only real content (brand identity, both parties, the meta
+     strip) and no decorative fill of its own (no background/border —
+     confirmed directly, this file never set one), so unlike
+     modern.html's own two-layer split there is nothing decorative here
+     that should still repeat on every page. `position: absolute`
+     (rather than `fixed`) is the whole fix: with no positioned ancestor,
+     its containing block is the page's own initial containing block —
+     the same reference `fixed` used — so `top:0; left:0; bottom:0` are
+     unchanged from the old rule, but the box now associates with
+     exactly the one page it naturally falls on (page 1) instead of
+     repeating. See modern.html's own identical rule for the full
+     mechanism and the real regression (a since-removed positioning
+     wrapper) found and fixed while proving it there first — see
+     DECISIONS.md's 17 September 2026 "Phase 1.5" entry. */
+  .m-rail { position: absolute; top: 0; left: 0; bottom: 0; width: 54mm; padding: 26mm 8mm 16mm 22mm; }
   .m-rail .brand-lockup { flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12mm; }
   .m-rail .brand-logo { width: 8mm; height: 8mm; }
   /* white-space:normal overrides the shared .brand-name nowrap rule

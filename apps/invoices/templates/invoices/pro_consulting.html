@@ -10,9 +10,19 @@ items table, and a standard footer.
 Real, preserved deviation #1: the persistent side panel. Same
 pagination-simulation-artifact reasoning as pro_atelier.html/
 free_minimal.html's own rails — the prototype's own `renderFull` only
-shows the panel on page 1; ported via `position: fixed` so it repeats on
-every real page automatically, matching every other persistent-panel
-template in this whole import.
+shows the panel on page 1.
+
+SUPERSEDED, Invoice Template Review Phase 1.5 (17 September 2026): this
+paragraph originally ported the panel via `position: fixed` so it
+repeats on every real page — correct for the decorative panel fill, but
+wrong for its real content (the CLIENT's own "Prepared for" identity):
+a design review this same date found that reprinting a client's real
+identity content down every continuation page reads as the document
+not knowing it already introduced itself. The panel is now split into a
+decorative `position: fixed` background layer (still repeating every
+page) and a `position: absolute` content layer (page 1 only) — see
+`.con-side-bg`/`.con-side`'s own CSS rules and DECISIONS.md's
+17 September 2026 "Phase 1.5" entry for the full mechanism.
 
 Real, preserved deviation #2: the panel's own content is genuinely NOT a
 "From" party — it's `partyHtml("Prepared for", cliName(inv.client),
@@ -82,9 +92,28 @@ same reasoning as every prior batch.
   }
   {% include "invoices/_partials/base_components.css" %}
 
-  .con-side {
+  /* Invoice Template Review Phase 1.5 (17 September 2026) — split into two
+     layers: `.con-side-bg` is decorative only (the tinted panel fill — no
+     text/images) and keeps `position: fixed`, so it still repeats on
+     every generated page for free; the real content (the client's own
+     "Prepared for" identity, the invoice-number-led meta strip) stays in
+     `.con-side`, now `position: absolute` with no positioned ancestor —
+     its containing block is the page's own initial containing block, the
+     same reference `.con-side-bg`'s `fixed` positioning uses, so the
+     coordinates are unchanged — but it now associates with exactly the
+     one page it naturally falls on (page 1) instead of reprinting the
+     client's own identity down every continuation page. See modern.html's
+     own identical rule for the full mechanism and the real regression (a
+     since-removed positioning wrapper) found and fixed while proving it
+     there first — see DECISIONS.md's 17 September 2026 "Phase 1.5"
+     entry. */
+  .con-side-bg {
     position: fixed; top: 0; left: 0; bottom: 0; width: 62mm;
-    background: var(--panel); padding: 16mm 12mm;
+    background: var(--panel);
+  }
+  .con-side {
+    position: absolute; top: 0; left: 0; bottom: 0; width: 62mm;
+    padding: 16mm 12mm;
   }
   .con-side .party-label { margin-bottom: 6px; }
   .con-side .party-name { font-size: 17px; margin-bottom: 8px; }
@@ -116,6 +145,7 @@ same reasoning as every prior batch.
 </head>
 <body>
 
+<div class="con-side-bg"></div>
 <aside class="con-side">
   {% include "invoices/_partials/parties_row.html" with bill_to_only=True bill_to_label="Prepared for" %}
   <div class="con-side-divider"></div>

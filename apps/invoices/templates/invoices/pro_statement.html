@@ -19,18 +19,34 @@ simulation-artifact reasoning as pro_atelier.html/pro_consulting.html/
 free_minimal.html; ported via `position: fixed`, repeating on every real
 page automatically.
 
+SUPERSEDED, Invoice Template Review Phase 1.5 (17 September 2026): this
+paragraph originally described the WHOLE rail as `position: fixed` — a
+design review this same date found that wrong for this rail's real
+content specifically (logo, business name, and — its own literal
+example — a QR/"Scan to pay" payment block reprinted down every
+continuation page). The rail is now split into a decorative
+`position: fixed` background layer (`.stm-rail-bg`, still repeating
+every page, unchanged from this paragraph's original reasoning) and a
+`position: absolute` content layer (`.stm-rail`, page 1 only) — see
+those rules' own CSS and DECISIONS.md's 17 September 2026 "Phase 1.5"
+entry for the full mechanism. Deviation #2 immediately below, which
+depends on "the rail repeats on every page," now refers specifically to
+`.stm-rail-bg` (still true, still fixed, still unchanged) — its own
+conclusion (keep the total bar confined to the main column) is
+unaffected by this split.
+
 Real, preserved deviation #2 (a real, deliberate SIMPLIFICATION, not a
 faithful port): the prototype's own `stm-total-bar` sits OUTSIDE the
 rail+main grid entirely — a full page-width flex sibling beneath both
 columns, spanning under where the rail's own colored fill sits too. That
-shape cannot be safely reproduced here: the rail is `position: fixed`
-(so it repeats, unconditionally, on EVERY real page — including
-whichever page the total bar naturally lands on), and a real full-width,
-non-fixed block appearing later in DOM order would paint OVER the rail's
-own color/content in that overlapping region on that page, since fixed-
-position elements do not automatically create an isolated stacking
-context above later normal-flow content in WeasyPrint. Rather than
-building and finger-crossing a z-index-flavored fix for a single cell of
+shape cannot be safely reproduced here: the rail's own background layer
+is `position: fixed` (so it repeats, unconditionally, on EVERY real
+page — including whichever page the total bar naturally lands on), and
+a real full-width, non-fixed block appearing later in DOM order would
+paint OVER the rail's own color/content in that overlapping region on
+that page, since fixed-position elements do not automatically create an
+isolated stacking context above later normal-flow content in WeasyPrint.
+Rather than building and finger-crossing a z-index-flavored fix for a single cell of
 this template, the total bar here is confined to the MAIN column's own
 width (starting after the rail, like `pro_editorial.html`'s own
 `edt-total-bar`) — the real, meaningful part of this deviation (a bold,
@@ -79,9 +95,29 @@ same reasoning as every prior batch.
   }
   {% include "invoices/_partials/base_components.css" %}
 
-  .stm-rail {
+  /* Invoice Template Review Phase 1.5 (17 September 2026) — split into two
+     layers: `.stm-rail-bg` is decorative only (the bold accent fill — no
+     text/images) and keeps `position: fixed`, so it still repeats on
+     every generated page for free; the real content (logo, business
+     name, the "INVOICE" word, the QR + "Scan to pay" payment block)
+     stays in `.stm-rail`, now `position: absolute` with no positioned
+     ancestor — its containing block is the page's own initial containing
+     block, the same reference `.stm-rail-bg`'s `fixed` positioning uses,
+     so the coordinates are unchanged — but it now associates with
+     exactly the one page it naturally falls on (page 1) instead of
+     reprinting a QR/payment link down every continuation page (the
+     review's own literal example of why this mattered). See modern.html's
+     own identical rule for the full mechanism and the real regression (a
+     since-removed positioning wrapper) found and fixed while proving it
+     there first — see DECISIONS.md's 17 September 2026 "Phase 1.5"
+     entry. */
+  .stm-rail-bg {
     position: fixed; top: 0; left: 0; bottom: 0; width: 46mm;
-    background: var(--accent); color: #fff;
+    background: var(--accent);
+  }
+  .stm-rail {
+    position: absolute; top: 0; left: 0; bottom: 0; width: 46mm;
+    color: #fff;
     padding: 14mm 8mm; display: flex; flex-direction: column;
     justify-content: space-between; align-items: center; text-align: center;
   }
@@ -122,6 +158,7 @@ same reasoning as every prior batch.
 </head>
 <body>
 
+<div class="stm-rail-bg"></div>
 <aside class="stm-rail">
   <div class="stm-rail-top-group">
     {% if freelancer.logo %}<img src="{{ freelancer.logo }}" alt="">{% endif %}
