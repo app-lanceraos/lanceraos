@@ -10958,3 +10958,156 @@ takeaway is narrower than "atomicity is free" — it held here because Fix 3's o
 reduction had already left enough headroom on the receiving page in every tested case; a differently-
 proportioned totals block, or a template without Fix 3's own margin trims, could plausibly see a real
 page-count increase from the same `break-inside: avoid` change.
+
+---
+
+**19 September 2026 (Nova / modern.html — per-template fix pass, 5 issues, one real mid-pass pivot).**
+Following the same pattern as Ledger's own two-session fix pass, plus a dedicated same-day isolated
+spike proving `float: left` (sized to one page's usable height) correctly narrows page-1 content and
+lets it go full width from page 2 on, for PLAIN flowing content. This pass found, the hard way, that
+"for plain flowing content" was load-bearing — Nova's real content is not plain, and the float approach
+had to be abandoned mid-pass for a real, better alternative once combined with Nova's actual markup.
+
+**Fix 1 — the float pivot, in full, including the dead end.** Implemented first exactly as the
+isolated spike proved: `.sidebar-bg`/`.sidebar` changed `position: fixed` → `absolute` (matching the
+spike's page-1-only association); `.main`'s `margin-left: 42mm` replaced with an invisible
+`float: left` spacer sized to one page's real usable height. Combined with Fix 2 (below) as instructed
+— not verified against a zero top margin first — which surfaced the identical Ledger-spine finding:
+`position: absolute`/`fixed` with no positioned ancestor resolves against the `@page`-margin-inset
+content area, so `.sidebar-bg`/`.sidebar` needed `top: -14mm` once `@page` gained a real top margin.
+
+**Two real, confirmed blockers found combining the float with THIS file's actual content — neither
+ever exercised by the original isolated spike, which used plain `<div>` rows, not flex containers or a
+real `<table>`.**
+
+1. **`display: flex` containers do not avoid a preceding float in this WeasyPrint version at all.**
+   Confirmed in total isolation before touching the real file: a plain block sibling following a float
+   correctly starts past the float's own edge (58mm in a 42mm-float/16mm-margin fixture); an otherwise
+   identical flex-container sibling starts at the container's own left edge instead (16mm) — flush
+   overlap, as if the float didn't exist. Neither `overflow: hidden` nor `display: flow-root` on a
+   wrapping ancestor fixed it (both tried directly) — `overflow: hidden` in particular made even a
+   PLAIN block wrapped inside it stop avoiding the float too (18mm → 16mm, avoidance lost), a real,
+   separate finding. Reproduced live in `modern.html` itself: rendering the real 40-item fixture with
+   the float in place showed the invoice number and the "Bill to" party rendering literally behind the
+   navy sidebar, both real flex containers (`.masthead`, `.parties`).
+2. **A real `<table>` does not flow beside a float at all — it waits for the float to end, regardless
+   of overlap duration.** Confirmed with an isolated 2-row table behind a 200mm float: the table
+   started at y=218mm (2mm past the float's own 216mm bottom edge), not beside it. Reproduced live,
+   worse: with the float sized to nearly the whole page (as Fix 1 needs, so the sidebar reads as a
+   real full-page sidebar), the ENTIRE item table — every single row, confirmed at both 40 items and
+   at 1 item — rendered on page 2, none of it on page 1, wasting almost the whole first page. A
+   shorter float (just enough for the masthead/parties) doesn't fix this either — it trades this bug
+   for the original one, since `.sidebar-bg`'s own visible background height is independent of the
+   float's height and would then show full-width text drawn across the navy fill for the rest of
+   page 1.
+
+**The real fix: `@page :first`.** A real, spec-compliant CSS Paged Media selector, confirmed directly
+in an isolated spike (a 90-row table forced across 3 pages) to give page 1 alone a wider left margin
+while every other generated page — including later fragments of the SAME table — automatically
+reverts to the base `@page` margin, with zero special-casing needed for flex containers or the table.
+Measured: 58.0mm on page 1, 18.26mm (16mm base margin + the table's own cell padding) on pages 2 and
+3. This is the one thing neither a static `margin-left` nor a float could provide (a real per-page-
+different value for a single continuously-fragmenting box) and, unlike the float, composes correctly
+with this file's real content. All of Fix 1's float-era CSS was removed: `.sidebar-float` (both the
+rule and the HTML div), and the `margin-left: 42mm`/`{% if single_page_layout %}margin-left: 42mm{%
+endif %}` hacks that had been added to `.masthead`/`.parties`/`.totals-row`/`.lower` to work around
+the flex-vs-float bug — none of that special-casing is needed once `@page :first` handles the whole
+page uniformly. `.sidebar-bg`/`.sidebar` also gained `left: -42mm` (the same negative-counter-offset
+principle as their own `top: -14mm`, on the other axis): since they only ever render on page 1, and
+`@page :first` moved page 1's own containing-block left edge inward by 42mm, `left: 0` would otherwise
+land them 42mm right of the true left edge instead of bled against it — confirmed by real render,
+both measure x0=0.00mm on page 1, unchanged from before `@page :first` existed.
+
+**A real regression this pass's own test run caught, not assumed safe.** `@page :first`'s new 42mm
+left margin also shifted the FOOTER's own `@bottom-left` position on page 1 specifically — a margin
+box's own `margin-left` (`footer_left_inset`) adds to whatever the PAGE's own left margin is for that
+page, so page 1's footer text landed at a real measured 58.0mm instead of the expected 16.0mm, caught
+by `ModernFooterMatchesTheOtherTwoTests` failing outright. Fixed with a real, isolated-spike-confirmed
+counter-override: `@page :first { @bottom-left { margin-left: -26mm; } }` (16mm base footer inset −
+42mm page-margin addition = −26mm), landing page 1's footer at the identical real 16.0mm every other
+page already has. Re-ran `test_footer_rule.py` in full after the fix: 21/21 passing, including
+`SignatureCenteringTests`, `ModernBrandnameSizingTests`, and `ModernFooterMatchesTheOtherTwoTests` —
+none assumed still-passing, all re-run.
+
+**Verification, Fix 1 + Fix 2 combined (not sequentially).**
+- Real 40-item render: page 1 shows the sidebar bled to the true top/left edges exactly as before,
+  the table narrowed beside it (real measured header-band x0=58.0mm), rows wrapping to 2 lines where
+  the narrower column requires it (a real, honest, visible consequence of the narrower page-1 column,
+  screenshotted, not smoothed over). Pages 2/3: zero sidebar (color or content), table header band at
+  x0=16.0mm/y0=14.0mm — full width, correct clearance.
+- A short, single-page invoice (1-3 items): CONFIRMED FIXED, not just re-verified — the float-era
+  version of this fix had a real, separate bug here too (see below) that `@page :first` also resolved
+  as a side effect. Real screenshot: sidebar at full page-1 height even with only 3 items of real
+  content, table/totals/notes/payment/signature all correctly narrowed beside it, `.main-single`'s own
+  `justify-content: space-between` bottom-pin working correctly alongside `@page :first` with no
+  conflict.
+- **A real, separate short-invoice regression found under the FLOAT approach, before the pivot, worth
+  recording:** with the float in place, even a genuinely 1-item invoice rendered as 2 pages — the
+  float's own near-full-page height (271mm, exactly matching the also-271mm usable content area with
+  zero slack) combined with the table's own "wait for the float" behavior meant the table was ALWAYS
+  pushed to page 2 regardless of how little content preceded it. Fully resolved by the `@page :first`
+  pivot (confirmed: 1/2/3-item invoices all real single pages again) — not investigated further as its
+  own isolated bug, since the mechanism that caused it no longer exists in the final fix.
+- Page-count-parity sweep (1/3/12/40 items): 1/1/2/3 — one real, explained difference from the true
+  original baseline (40 items: 4→3 pages) — a genuine improvement, not a regression: continuation
+  pages now correctly use the full page width instead of staying needlessly narrowed, so more content
+  fits per page.
+
+**Fix 3 — closing content orphaning, honestly improved, not eliminated.** Halved the 3 stacked margins
+(`.totals-row` 6mm→3mm, `.lower` 12mm→6mm, `.sign-block` 16mm→8mm; 34mm→17mm total), matching Ledger's
+own halving approach. Real, honest before/after (with Fix 1/2 already applied as the real baseline):
+- n_items=5: FIXED outright — 2 pages → 1 page.
+- n_items=6-13, 25, 30: STILL orphan (`last_page_has_item_row=False` unchanged) — remainder sizes
+  shifted (mostly increased by several mm rather than decreased) as the exact item-count boundary
+  where content redistributes moved, not eliminated. For the cases that were ALREADY sharing a page
+  successfully (`has_item_row=True`, e.g. n=14/15/20/35/40), the remainder increased by almost exactly
+  the full 17mm saved — expected and benign, since that page already had enough room and the saved
+  margin simply became extra headroom, not a sign of anything wrong.
+- Page count itself: only n=5 changed (2→1) across the full 1-44 item sweep; every other count's page
+  total is unchanged from before Fix 3.
+
+**Fix 4 — `.totals` atomicity, real insurance, not a fix for a live bug.** Unlike Ledger's original
+bug, no split was ever observed here: `.totals` is a flex ITEM of `.totals-row` (`display: flex`), and
+flex items are already atomic by construction in this WeasyPrint version — confirmed by an exhaustive
+sweep (1-89 items × 3 real description-length variants, 267 renders) finding zero splits both BEFORE
+and AFTER `break-inside: avoid; page-break-inside: avoid;` was added to `.totals`. Added anyway, per
+this pass's own explicit scope, as real, low-risk insurance against a future structural change (e.g.
+`.totals-row` losing its own `display: flex`) reintroducing Ledger's exact bug here. Page-count-parity
+re-swept (1-44 items, tax-inclusive): byte-for-byte identical before/after.
+
+**Fix 5 — `.lower`/`.pay-block2` dead-column, same pattern as Ledger's Fix 6.** `.notes-block` used to
+render unconditionally (an empty 56%-wide flex child whenever `invoice.notes`/`invoice.terms` were
+both blank); `payment_block.html` already renders nothing when no payment method is configured —
+together leaving a dead column whenever only one side had content. Fixed identically to Ledger:
+`.notes-block`'s own wrapper conditional on the same notes/terms check its inner content already used;
+the whole `.lower` block conditional on either side having content; a new `.lower-solo` modifier
+(added by the template when exactly one side renders) makes that side take the full row width — full
+width over centering, same reasoning as Ledger's own version. Tested all 4 real combinations directly:
+both (unchanged 56/40 split, real measured edges); notes-only (left edge unchanged at 164.4pt since
+it was already left-aligned, but its own text now wraps out to 541.1pt instead of 375.0pt — confirmed
+via the RIGHT edge, not just the left, since the left-edge check alone can't distinguish 56% from
+100% for an already-left-aligned block); payment-only (left edge moved from 395.7pt, narrow/right-
+aligned, to 164.4pt, full width — screenshotted); neither (real confirmed collapse, no residual gap).
+
+**Full page-by-page visual review (this codebase's own standing rule).** Rendered a real 4-page
+fixture (55 items, 8.5% tax, a $150 discount) and reviewed all 4 pages individually, not just the
+things changed this pass. Nothing else found — item table pagination, header repetition, footer
+position (left AND right), sidebar bleed and page-1-only association, and the fully-atomic
+totals+notes+payment+signature closing block on page 4 all rendered correctly and consistently.
+
+**Full `apps.invoices` test suite + `test_footer_rule.py` specifically:** see this entry's own closing
+verification line for the real counts — both re-run after every fix, not assumed still passing given
+this exact file's own history of the sidebar mechanism breaking tests before (Phase 1.5's own
+`position: relative; height: 0;` regression).
+
+**What didn't work as hypothesized, stated plainly.** The float approach — this session's own starting
+point, based on a real same-day isolated spike — worked perfectly for the case that spike actually
+tested (plain flowing content) and failed on real, confirmed, structural grounds the moment it met
+this file's actual markup: flex containers ignore floats entirely in this WeasyPrint version, and
+tables don't flow beside them at all, only after them. Neither failure mode was a subtle edge case —
+both were total, reproducible, and immediately visible on the very first real render. The lesson isn't
+"floats don't work" — it's that a mechanism proven against one content shape doesn't transfer to a
+structurally different one without its own real verification, exactly the standing rule this whole
+week of fix passes keeps re-confirming. `@page :first`, the actual fix, was never in this pass's own
+starting plan; it was found only after the float's real failure forced a search for an alternative,
+and turned out to be simpler and more robust than the approach it replaced.

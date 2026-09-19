@@ -1982,6 +1982,26 @@ Fix 3's own earlier margin reduction had already left enough headroom to absorb 
 DECISIONS.md's 19 September 2026 entry for full before/after evidence and the honest interaction
 check against Fix 3's own still-orphaning item-count ranges.
 
+**19 September 2026 (Nova / modern.html — per-template fix pass).** 5 real, template-specific issues
+fixed, with one real mid-pass pivot: a `float: left` sidebar-width spacer (proven that same day in an
+isolated spike for plain flowing content) was implemented first, then found — by real render of this
+file's actual markup — to break in two confirmed ways the spike never exercised: `display:flex`
+containers (`.masthead`/`.parties`/`.totals-row`/`.lower`, all four) don't avoid a preceding float in
+this WeasyPrint version at all, and a real `<table>` doesn't flow beside a float either — it waits
+for the float to end regardless of overlap duration, which with a near-full-page float meant the
+ENTIRE item table rendered on page 2 every time, even for a 1-item invoice. Replaced with `@page
+:first` — a real, spec-compliant CSS Paged Media selector that gives page 1 alone a wider left margin
+while every other page (including later fragments of the same table) reverts automatically, composing
+correctly with both flex and the table with zero special-casing. A real regression this pass's own
+test run caught: `@page :first`'s new margin also shifted the FOOTER's own left position on page 1
+(`ModernFooterMatchesTheOtherTwoTests` failed at 58mm instead of 16mm) — fixed with a counter-override
+inside `@page :first`'s own `@bottom-left` block. Also fixed: continuation-page top clearance (same
+`@page margin-top` move as Ledger's Fix 2); closing-content orphaning, honestly improved not
+eliminated; `.totals` atomicity (real insurance — no live split was ever found, since `.totals` is
+already a flex item and flex items proved atomic by construction here); and the same notes/payment
+dead-column fix as Ledger's Fix 6. See DECISIONS.md's 19 September 2026 Nova entry for the full
+float-vs-flex/float-vs-table evidence and every fix's real before/after.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

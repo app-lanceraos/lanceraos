@@ -46,9 +46,54 @@
        own results.
        Footer Refinement pass (15 September 2026) — reduced from 16mm to
        12mm, see professional.html's identical comment for the real
-       measurement and parity re-verification behind this value. */
-    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+       measurement and parity re-verification behind this value.
+       Nova Fix Pass (19 September 2026) — top margin added (14mm, was 0),
+       moved out of `.main`'s own padding-top so it genuinely repeats on
+       every page — see `.main`'s own comment below for the full
+       reasoning (identical to Ledger's own Fix 2). This is also what
+       makes `.sidebar-bg`/`.sidebar`'s own negative-counter-offset fix
+       necessary — see their own comments. */
+    margin: 14mm 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
     {% include "invoices/_partials/footer.html" with footer_text_color="#a8a5b8" footer_left_inset="16mm" footer_right_inset="11.112mm" %}
+  }
+  /* Nova Fix Pass (19 September 2026) — Fix 1, real, evidence-based
+     PIVOT from the float-based approach this pass started with (see
+     `.main`'s own comment below for why the float was abandoned, not
+     just switched quietly). `@page :first` is the real, spec-compliant,
+     WeasyPrint-69-confirmed way to give page 1 alone a wider left
+     margin (reserving the sidebar's 42mm) while every OTHER generated
+     page — including later fragments of a table that starts on page 1
+     and continues past it — automatically reverts to the base `@page`
+     margin above (0mm left). This is exactly the "different margin per
+     page for the SAME continuously-fragmenting box" capability neither
+     a static `margin-left` nor a float could provide; unlike the float,
+     it composes correctly with this file's real content (flex
+     containers and a real `<table>`), confirmed by a real isolated
+     spike before being applied here: a 90-row table split across 3
+     pages measured a real 58mm left-edge on page 1 and 18.26mm
+     (16mm page margin + the table's own small cell padding) on pages 2
+     and 3, with no special-casing needed anywhere in the page's own
+     content. `.main`'s own `padding-left` (below) supplies the
+     remaining 16mm of the real 58mm total gap uniformly on every page —
+     see that rule's own comment for why this composes correctly without
+     needing to differ per page itself.
+
+     A real regression this pass's own test run caught, not assumed
+     safe: `@page :first`'s new 42mm left margin also shifts the
+     FOOTER's own `@bottom-left` position on page 1 specifically, since
+     a margin box's own `margin-left` (`footer_left_inset`, in
+     footer.html) ADDS to whatever the PAGE's own left margin is for
+     that page — confirmed by `ModernFooterMatchesTheOtherTwoTests`
+     failing at a real measured 58.0mm instead of the expected 16.0mm on
+     page 1 only. Fixed with a real, isolated-spike-confirmed
+     counter-override: `@page :first`'s own `@bottom-left` block
+     subtracts the same 42mm back out (`footer_left_inset` is 16mm;
+     16 − 42 = −26mm), landing page 1's footer at the identical real
+     16.0mm every other page already has — confirmed by real render
+     after the fix, not assumed from the arithmetic. */
+  @page :first {
+    margin-left: 42mm;
+    @bottom-left { margin-left: -26mm; }
   }
   * { box-sizing: border-box; }
   body {
@@ -61,42 +106,67 @@
   }
 
   /* Invoice Template Review Phase 1.5 (17 September 2026) — the sidebar is
-     now TWO independent layers, not one. `.sidebar-bg` is decorative only
-     (color, no text/images) and stays `position: fixed` — WeasyPrint
-     repeats a fixed box on every generated page for free, which is exactly
-     right for a plain color fill. The real content (logo/brandname/QR/
-     contact) moved to `.sidebar`, now `position: absolute` — with NO
-     positioned ancestor, its containing block is the page's own initial
-     containing block, the identical reference `.sidebar-bg`'s `fixed`
-     positioning already uses (this is why both can share the same plain
-     `top:0; left:0; bottom:0` coordinates unchanged from the old single-
-     layer rule, no explicit height needed). The one real difference
-     between the two `position` values is what a paged-media renderer does
-     with a box anchored to that reference: `fixed` repeats it on every
-     generated page; `absolute` (with no positioned ancestor) associates it
-     with exactly one page — whichever page it naturally falls on in
-     document flow (page 1, since it's the first real element in `<body>`)
-     — and never repeats it. Real, confirmed via an isolated WeasyPrint
-     69.0 spike before this was applied here (see DECISIONS.md's
-     17 September 2026 "Phase 1.5" entry), including a real regression
-     this pass found and reverted: an earlier version of this fix wrapped
-     `.sidebar` in an extra `position: relative; height: 0;` container
-     (reasoning it needed an explicit positioned ancestor) and gave
-     `.sidebar` its own explicit `height` to replace `bottom: 0` — that
-     wrapper, not `position: absolute` itself, was what silently forced a
-     genuine 1-page invoice to render as 2 pages (confirmed by bisection,
-     not assumed) — removing it and keeping `bottom: 0` fixed the
-     regression outright, and turned out to be the simpler, more correct
-     mechanism besides. */
+     TWO independent layers. `.sidebar-bg` is decorative only (color, no
+     text/images); `.sidebar` holds the real content (logo/brandname/QR/
+     contact). Both `position: absolute` with no positioned ancestor —
+     their containing block is the page's own initial containing block,
+     so both associate with exactly one page: whichever page they
+     naturally fall on in document flow (page 1, since they're the first
+     real elements in `<body>`) — and never repeat. Real, confirmed via
+     an isolated WeasyPrint 69.0 spike before this was applied here (see
+     DECISIONS.md's 17 September 2026 "Phase 1.5" entry), including a
+     real regression this pass found and reverted: an earlier version of
+     this fix wrapped `.sidebar` in an extra `position: relative;
+     height: 0;` container (reasoning it needed an explicit positioned
+     ancestor) and gave `.sidebar` its own explicit `height` to replace
+     `bottom: 0` — that wrapper, not `position: absolute` itself, was
+     what silently forced a genuine 1-page invoice to render as 2 pages
+     (confirmed by bisection, not assumed) — removing it and keeping
+     `bottom: 0` fixed the regression outright, and turned out to be the
+     simpler, more correct mechanism besides.
+
+     Nova Fix Pass (19 September 2026) — `.sidebar-bg` changed from
+     `position: fixed` to `absolute`: it used to repeat the decorative
+     fill on every page (correct when the goal was "fill persists,
+     content doesn't"); the real requirement now is nothing at all past
+     page 1, matching `.sidebar`'s own long-standing behavior exactly —
+     confirmed by real render, the navy fill no longer appears on any
+     continuation page.
+
+     Both elements also gained `top: -14mm` — the real, previously-
+     established Ledger-spine finding applies here identically: an
+     absolutely-positioned element with no positioned ancestor resolves
+     against the @page-margin-INSET content area, not the raw page box,
+     so the moment @page gained a real 14mm top margin (below), `top: 0`
+     alone would land both 14mm short of the true top edge. `bottom: 0`
+     is deliberately left UNCHANGED (no negative offset) — unlike the
+     spine, this sidebar's bottom edge was already correctly stopping at
+     the content-area's own bottom boundary before this pass (a
+     deliberate fix from 14 September 2026, see the footer-collision
+     comment on @page above), not bleeding into the reserved footer
+     band; that behavior doesn't depend on the top margin at all, so it
+     needed no change — confirmed by real render, not assumed just
+     because the top needed one.
+
+     Both elements ALSO gained `left: -42mm`, for the identical reason
+     but on the other axis: `@page :first` (above) gives page 1 its own
+     42mm LEFT margin (reserving the sidebar's own width for the real
+     main content, see Fix 1's own comment there) — since `.sidebar-bg`/
+     `.sidebar` only ever render on page 1 anyway, their own containing
+     block's left edge moved 42mm inward the moment that rule was added,
+     which would otherwise land them 42mm right of the true left edge
+     instead of bled against it. Confirmed by real render: both still
+     measure a real x0=0.00mm on page 1, byte-identical to before
+     `@page :first` existed. */
   .sidebar-bg {
-    position: fixed;
-    top: 0; left: 0; bottom: 0;
+    position: absolute;
+    top: -14mm; left: -42mm; bottom: 0;
     width: 42mm;
     background: {{ design_primary_color }};
   }
   .sidebar {
     position: absolute;
-    top: 0; left: 0; bottom: 0;
+    top: -14mm; left: -42mm; bottom: 0;
     width: 42mm;
     color: #ffffff;
     padding: 14mm 6mm 12mm;
@@ -128,26 +198,68 @@
   .sidebar .spacer { flex: 1; }
   .sidebar .contact { font-size: 7.5pt; color: #c3c0e0; }
 
-  /* main content, offset past the sidebar */
-  .main { margin-left: 42mm; padding: 14mm 16mm 16mm; }
+  /* Nova Fix Pass (19 September 2026) — `.main`'s own `margin-left: 42mm`
+     is GONE. A real, confirmed dead end tried first and abandoned, not
+     silently skipped: a `float: left` sidebar-width spacer (sized to
+     one page's usable height, the mechanism an earlier isolated spike
+     had proven for plain flowing content) was implemented here first,
+     then found — by real render of THIS file's actual content, not
+     assumed safe from the isolated spike alone — to break in two
+     separate, confirmed ways neither the original spike nor Ledger's
+     own history had ever exercised: (1) `display:flex` containers
+     (`.masthead`, `.parties`, `.totals-row`, `.lower` — all four, this
+     file leans on flex throughout) do not avoid a preceding float in
+     this WeasyPrint version AT ALL — their content renders flush at the
+     container's own edge as if the float didn't exist, a real,
+     reproduced overlap (confirmed via an isolated spike: a plain block
+     sibling correctly starts past a float's edge, an identical flex
+     sibling starts at x=0 instead, ignoring it outright; neither
+     `overflow:hidden` nor `display:flow-root` on a wrapping ancestor
+     fixed it, both tried directly). (2) Worse, a real `<table>` —
+     exactly what the item table is — does not flow BESIDE a float at
+     all in this engine; it waits until the float's own bottom edge
+     before starting, at ANY overlap duration, confirmed with a real
+     40-item and a real 1-item render: the ENTIRE table, every single
+     time, rendered on page 2 rather than starting on page 1 beside the
+     sidebar, because the float was sized to nearly the whole page. A
+     float short enough to avoid this would leave the VISIBLE sidebar
+     background (independent of the float's own height) exposed with
+     full-width text drawn across it for the rest of page 1 — trading
+     one real bug for another.
+     The actual fix: `@page :first` (above) — a real, spec-compliant,
+     directly WeasyPrint-69-confirmed mechanism for exactly this "wider
+     margin on page 1 only" requirement, composing correctly with BOTH
+     flex containers and a real fragmenting `<table>` with no special-
+     casing anywhere in `.main`'s own content, confirmed by an isolated
+     90-row/3-page spike: 58mm left edge on page 1, 18.26mm (this file's
+     own real values) on every page after. `.main`'s own `padding-left`
+     (16mm, unchanged since before this pass) supplies the remainder of
+     the real 58mm total gap uniformly on every page — it doesn't need
+     to differ per page itself, since `@page :first`'s own extra 42mm
+     already does that job entirely at the page-margin level, before
+     `.main`'s own box is even laid out. */
+  .main { padding: 0 16mm 16mm; }
   /* Signature pinned to the true bottom — see professional.html's
      identical .page.page-single rule for the full reasoning (confirmed
      WeasyPrint mechanism, confirmed NOT margin-top:auto, never applied to
-     a multi-page render). min-height (297mm page − @page's own real 16mm
-     bottom margin, see @page's own comment) is the real, full page-box
-     height available to .main — content extending past this would
-     fragment onto a real 2nd page rather than render into the reserved
-     margin, so this value must match that boundary exactly, not just be
-     "generously tall". */
+     a multi-page render).
+     Nova Fix Pass (19 September 2026) — `.main`'s own top padding (14mm)
+     moved to `@page`'s own margin-top (above), the same fix and the same
+     reasoning as Ledger's own Fix 2: a plain `padding-top` on a box that
+     WeasyPrint slices across physical pages only renders at the very
+     start of the whole box, not on every page it spans — confirmed by
+     real render, continuation pages started at ~3.8mm of clearance
+     instead of the real ~14mm page 1 has. min-height recomputed to
+     match: 297mm page − 14mm new @page top margin − whatever @page's own
+     bottom margin actually is on THIS render — 271mm (297-14-12) when a
+     footer is reserved, 283mm (297-14-0) on the one no-footer cell (was
+     285mm/297mm, from before the 14mm existed at the @page level at
+     all). Re-verified by real render, not assumed correct on paper. */
   .main.main-single {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    /* 297mm page minus whatever @page's own bottom margin actually is on
-       THIS render — 285mm (297-12) when a footer is reserved, the full
-       297mm on the one no-footer cell. Real page-count parity verified
-       directly. */
-    min-height: {% if single_page_layout and not wordmark_data_uri %}297mm{% else %}285mm{% endif %};
+    min-height: {% if single_page_layout and not wordmark_data_uri %}283mm{% else %}271mm{% endif %};
   }
 
   .masthead { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8mm; }
@@ -189,8 +301,31 @@
   table.items tbody td.num { text-align: right; font-family: 'IBM Plex Mono', monospace; }
   table.items tbody td.desc { padding-right: 6mm; }
 
-  .totals-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 6mm; }
-  .totals { width: 62mm; }
+  /* Nova Fix Pass (19 September 2026) — Fix 3: trimmed from 6mm, part of
+     a 3-element margin reduction (with .lower/.sign-block below) aimed
+     at reducing how often the closing block gets orphaned onto its own
+     near-empty trailing page — the same real, confirmed WeasyPrint
+     flex-fragmentation behavior Ledger's own Fix 3 addressed, not
+     something margin trimming alone fully eliminates. See DECISIONS.md's
+     19 September 2026 Nova entry for the real before/after item-count
+     sweep. */
+  .totals-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 3mm; }
+  /* Nova Fix Pass (19 September 2026) — Fix 4: `break-inside: avoid`
+     (plus the legacy `page-break-inside: avoid` alias, no existing
+     precedent for this property in this codebase so both are set
+     rather than assuming only one is respected) added defensively.
+     Unlike Ledger's own original bug, this was NOT observed to actually
+     split in real testing here — `.totals` is a flex ITEM of
+     `.totals-row` (`display:flex` above), and flex items are already
+     atomic by construction in this WeasyPrint version (confirmed: an
+     exhaustive real sweep, 1-89 items × 3 real description-length
+     variants, 267 renders total, found zero cases where Subtotal/Tax
+     landed on a different page than the total pill, both before AND
+     after this property was added). Added anyway per this pass's own
+     explicit scope — real, low-risk insurance against a structural
+     change (e.g. `.totals-row` ever losing its own `display:flex`)
+     reintroducing Ledger's original bug here, not a fix for a live one. */
+  .totals { width: 62mm; break-inside: avoid; page-break-inside: avoid; }
   .totals .row { display: flex; justify-content: space-between; font-size: 9pt; color: #4b4860; padding: 1.4mm 3mm; }
   .total-pill {
     display: inline-block; background: {{ design_secondary_color }}; color: #16151c;
@@ -199,7 +334,24 @@
   }
   .totals .pkr { font-size: 7.5pt; color: #a8a5b8; margin-top: 2mm; padding: 0 3mm; }
 
-  .lower { display: flex; justify-content: space-between; gap: 10mm; margin-top: 12mm; }
+  /* Nova Fix Pass (19 September 2026) — Fix 3: trimmed from 12mm, see
+     .totals-row's identical comment above. */
+  .lower { display: flex; justify-content: space-between; gap: 10mm; margin-top: 6mm; }
+  /* Nova Fix Pass (19 September 2026) — Fix 5: same real dead-column bug
+     Ledger's own Fix 6 found and fixed, same pattern applied here.
+     `.notes-block` used to render unconditionally (an empty 56%-wide
+     flex child whenever invoice.notes/terms were both blank) and
+     `payment_block.html` already renders nothing at all when no payment
+     method is configured — together leaving a real, visible dead column
+     whenever only one side had content, and a bare near-empty flex row
+     when neither did. Fixed the same way: `.notes-block`'s own wrapping
+     div is now conditional on the same invoice.notes/invoice.terms check
+     its inner content already used; the whole `.lower` block is
+     conditional on either side having real content; `.lower-solo`
+     (added by the template when exactly one side renders) makes that
+     side take the full row width. Full width over centering, same
+     reasoning as Ledger's own version of this fix. */
+  .lower-solo .notes-block, .lower-solo .pay-block2 { width: 100%; }
   .notes-block { width: 56%; }
   .notes-block .label, .pay-block2 .label {
     font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; letter-spacing: 0.18em;
@@ -219,8 +371,10 @@
   /* Signature centering pass (15 September 2026) — margin-left:auto still
      positions the whole block at the row's right end via flexbox (kept
      unchanged); text-align now centers BOTH the signature image and the
-     "AUTHORISED SIGNATURE" label inside the block itself. */
-  .sign-block { width: 60mm; margin-left: auto; margin-top: 16mm; text-align: center; }
+     "AUTHORISED SIGNATURE" label inside the block itself.
+     Nova Fix Pass (19 September 2026) — Fix 3: margin-top trimmed from
+     16mm to 8mm, see .totals-row's identical comment above. */
+  .sign-block { width: 60mm; margin-left: auto; margin-top: 8mm; text-align: center; }
   .sign-block img.sig { margin-bottom: -2mm; }
   .sign-block .line {
     border-top: 0.3mm solid {{ design_primary_color }}; padding-top: 2.5mm;
@@ -321,7 +475,9 @@
       </div>
     </div>
 
-    <div class="lower">
+    {% if invoice.notes or invoice.terms or freelancer.bank_name or freelancer.payoneer_email or freelancer.jazzcash_number or freelancer.easypaisa_number or freelancer.wise_profile_id %}
+    <div class="lower{% if not invoice.notes and not invoice.terms %} lower-solo{% elif not freelancer.bank_name and not freelancer.payoneer_email and not freelancer.jazzcash_number and not freelancer.easypaisa_number and not freelancer.wise_profile_id %} lower-solo{% endif %}">
+      {% if invoice.notes or invoice.terms %}
       <div class="notes-block">
         {% if invoice.notes %}
         <div class="label">Notes</div>
@@ -332,8 +488,10 @@
         <p>{{ invoice.terms|linebreaksbr }}</p>
         {% endif %}
       </div>
+      {% endif %}
       {% include "invoices/_partials/payment_block.html" with class_name="pay-block2" %}
     </div>
+    {% endif %}
     </div>
 
     {% include "invoices/_partials/signature_block.html" %}
