@@ -1954,6 +1954,21 @@ sub-0.001mm" claim is what let this ship undetected. See DECISIONS.md's second 1
 entry (explicitly marked as a correction to the entry above) for the full root cause, corrected
 per-template values, and re-verification evidence.
 
+**18 September 2026 (Ledger / professional.html — per-template fix pass).** 6 real, template-
+specific issues fixed on `professional.html` alone: the ledger spine (`.spine`) now bleeds on every
+page (`position: fixed`, not `absolute`); continuation pages now get the same 16mm top clearance as
+page 1 (moved from `.page`'s own padding to a real `@page margin-top`, which surfaced and fixed a
+genuine new interaction with the spine fix — `fixed` positioning's containing block turned out to
+be the `@page`-margin-inset content area, not the raw page box); the closing block (totals/notes/
+payment/signature) orphaning onto its own near-empty trailing page is measurably improved (some
+item counts fixed outright, others still orphan with a real, honestly-reported partial reduction —
+not eliminated, matching this project's own `free_simple.html` precedent); "PAY ONLINE" no longer
+wraps to two lines; the QR code got a real card treatment (white chip, accent border, modest size
+increase to a measured 21mm); and `.lower` (notes/terms vs. payment methods) no longer leaves a dead
+blank column when only one side has real content. See DECISIONS.md's third 18 September 2026 entry
+for the full per-fix before/after evidence, including the real Fix 1 × Fix 2 interaction found and
+fixed along the way.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

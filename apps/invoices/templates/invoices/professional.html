@@ -40,7 +40,18 @@
        leaves ~2.96mm each side, still comfortable. Re-verified page-count
        parity with/without this exact value across all 3 templates and
        the same content-length sweep as before — zero regressions. */
-    margin: 0 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    /* Ledger Fix Pass (18 September 2026) — top margin moved here from
+       .page's own padding-top (was 16mm). .page is one continuous box
+       WeasyPrint slices across physical pages; a plain CSS `padding-top`
+       on a box like that only renders at the very start of the whole
+       box, not on every page it spans — confirmed by real render, every
+       continuation page's content started essentially flush against the
+       true page top. @page's own margin-top genuinely repeats on every
+       page (the same reason footer_left_inset/footer_right_inset above
+       already rely on this). Left/right stay 0 so the spine still
+       bleeds; bottom keeps its existing conditional. See .page's own
+       min-height comment below for the matching recalculation. */
+    margin: 16mm 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
     {% include "invoices/_partials/footer.html" with footer_text_color="#a09a89" footer_left_inset="16mm" footer_right_inset="11.112mm" %}
   }
   * { box-sizing: border-box; }
@@ -55,19 +66,22 @@
   .page {
     position: relative;
     width: 210mm;
-    /* 297mm page minus whatever @page's own bottom margin actually is on
-       THIS render (see the @page block above) — 285mm (297-12) when a
-       footer is reserved, the full 297mm on the one no-footer cell.
-       Real page-count parity (with/without this exact change) verified
-       directly, not assumed — see the @page block's own comment. */
-    min-height: {% if single_page_layout and not wordmark_data_uri %}297mm{% else %}285mm{% endif %};
-    padding: 16mm 16mm 0 20mm;
+    /* 297mm page minus @page's own top margin (16mm, moved there above)
+       minus whatever @page's own bottom margin actually is on THIS
+       render — 269mm (297-16-12) when a footer is reserved, 281mm
+       (297-16-0) on the one no-footer cell. Recomputed for the Ledger
+       Fix Pass's top-margin move (was 297mm/285mm, from before that
+       16mm existed at the @page level at all); re-verified with a real
+       page-count-parity sweep, not assumed correct on paper — see
+       DECISIONS.md's 18 September 2026 Ledger entry. */
+    min-height: {% if single_page_layout and not wordmark_data_uri %}281mm{% else %}269mm{% endif %};
+    padding: 0 16mm 0 20mm;
   }
   /* Signature pinned to the true bottom (Part 2 of the 30 August 2026
      footer+signature pass) — applied ONLY when pdf_generator.py's own
      2-pass render has already confirmed this exact content is genuinely
      1 page (single_page_layout, see the @page block's own comment above).
-     `.spine` stays absolutely positioned (out of flow — not a flex item
+     `.spine` stays fixed-positioned (out of flow — not a flex item
      either way) regardless. `justify-content: space-between` with exactly
      2 real flex children (`.page-body`, wrapping everything else, and
      `.sign-row` itself) is the one mechanism actually confirmed to push
@@ -83,20 +97,45 @@
     flex-direction: column;
     justify-content: space-between;
   }
-  /* signature element: the ledger spine */
+  /* The ledger spine — purely decorative (no text/logo/data-driven
+     content), so per this project's own Phase 1.5 principle
+     (DECISIONS.md: decorative-only content repeats via `position: fixed`;
+     only real, data-driven content is deliberately once-only), it
+     repeats on every page rather than being tied to whichever single
+     page it happened to fall on in the underlying flow. Ledger Fix Pass
+     (18 September 2026) — was `position: absolute`, confirmed by real
+     render to appear on page 1 only of a multi-page invoice.
+
+     A real, previously-unconfirmed finding surfaced while combining this
+     with this same pass's @page margin-top change (below): a `fixed`
+     element's containing block in this WeasyPrint version is the @page
+     CONTENT AREA (the page box inset by @page's own margins on every
+     side), not the raw page box — `top:0; height:100%` therefore landed
+     16mm below the true page top and stopped 12mm short of the true
+     bottom, a real, measured, undesired gap that didn't exist before this
+     same pass introduced a nonzero @page margin-top (modern.html's own
+     `.sidebar-bg` never surfaced this, since ITS @page top margin is
+     always 0 — the two cases never actually agreed, they just looked
+     identical while the offset was 0 on both sides). Fixed by counter-
+     offsetting with the exact negative of each @page margin value
+     (known at render time from the same Django conditionals @page's own
+     margin already uses) and dropping the explicit height — with both
+     `top`/`bottom` set, height is computed to fill exactly that span.
+     Confirmed by real render: y0=0.00mm / y1=297.00mm on every page,
+     true full-bleed, not assumed from the arithmetic alone. */
   .spine {
-    position: absolute;
-    top: 0; left: 0;
+    position: fixed;
+    top: -16mm; left: 0;
+    bottom: {% if single_page_layout and not wordmark_data_uri %}0{% else %}-12mm{% endif %};
     width: 3mm;
-    height: 100%;
     background: {{ design_primary_color }};
   }
   .spine::after {
     content: '';
-    position: absolute;
-    top: 0; left: 3mm;
+    position: fixed;
+    top: -16mm; left: 3mm;
+    bottom: {% if single_page_layout and not wordmark_data_uri %}0{% else %}-12mm{% endif %};
     width: 0.4mm;
-    height: 100%;
     background: #d9c9a8;
   }
 
@@ -232,7 +271,15 @@
   .totals {
     width: 62mm;
     margin-left: auto;
-    margin-top: 6mm;
+    /* Ledger Fix Pass (18 September 2026) — trimmed from 6mm, part of a
+       3-element margin reduction (with .lower/.sign-row below) aimed at
+       reducing how often the closing block (totals/notes/payment/
+       signature) gets orphaned onto its own near-empty final page — a
+       real, confirmed WeasyPrint flex-container-fragmentation behavior,
+       not something margin trimming alone fully eliminates. See
+       DECISIONS.md's 18 September 2026 Ledger entry for the real
+       before/after item-count sweep. */
+    margin-top: 3mm;
   }
   .totals .row {
     display: flex;
@@ -269,9 +316,33 @@
   .lower {
     display: flex;
     justify-content: space-between;
-    margin-top: 14mm;
+    /* Ledger Fix Pass (18 September 2026) — trimmed from 14mm, see
+       .totals's identical comment above. */
+    margin-top: 7mm;
     gap: 10mm;
   }
+  /* Ledger Fix Pass (18 September 2026) — `.notes-block` used to render
+     unconditionally (an empty 56%-wide flex child whenever
+     invoice.notes/terms were both blank) and payment_block.html renders
+     nothing at all when no payment method is configured, together
+     leaving a real, visible dead column whenever only one side had
+     content, and a bare near-empty flex row (just its own 14mm
+     margin-top) when NEITHER did. Fixed at the template level (the CSS
+     alone can't know whether either side will render): `.notes-block`'s
+     own wrapping div is now conditional on the same
+     invoice.notes/invoice.terms check its inner content already used,
+     the whole `.lower` block is conditional on EITHER side having real
+     content (collapses entirely, no residual margin, when neither
+     does), and `.lower-solo` (added by the template when exactly one
+     side renders) makes that one side's block take the full row width
+     rather than sitting in its own fixed 56%/40% slot beside empty
+     space. Full width chosen over centering for both cases — notes/terms
+     is left-aligned prose that reads naturally as a plain continuation
+     of the page's own column width; a centered flex row would still
+     leave the payment list's own left-right-justified rows reading
+     oddly if centered as a block, so one consistent full-width rule for
+     either side was simpler and clearer than two different treatments. */
+  .lower-solo .notes-block, .lower-solo .pay-block { width: 100%; }
   .notes-block { width: 56%; }
   .notes-block .label, .pay-block .label {
     font-family: 'IBM Plex Mono', monospace;
@@ -302,7 +373,9 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
-    margin-top: 18mm;
+    /* Ledger Fix Pass (18 September 2026) — trimmed from 18mm, see
+       .totals's identical comment above. */
+    margin-top: 9mm;
   }
   /* Signature centering pass (15 September 2026) — both the signature
      image and the "Authorised signature" label center over the line's
@@ -338,7 +411,25 @@
     align-items: center;
     gap: 4mm;
   }
-  .pay-online img.qr { width: 20mm; height: 20mm; }
+  /* Ledger Fix Pass (18 September 2026) — QR card treatment: a white
+     chip with a subtle accent-tone border and soft rounded corners,
+     mirroring the proven `.pay-block img.qr` pattern already shipping
+     in modern.html (background:#fff + padding + border-radius directly
+     on the <img>, no wrapper needed — this file's own global
+     `* { box-sizing: border-box; }` makes that padding count toward the
+     declared width/height, confirmed by real render: modern.html's own
+     26mm box + 2mm padding produces a real 22mm rendered QR, not 26mm).
+     Sized here so the real QR content lands at ~21mm (a modest increase
+     from the previous bare 20mm) once the 2.5mm padding + 0.3mm border
+     on each side are accounted for — confirmed by real render below,
+     not assumed from the arithmetic alone. */
+  .pay-online img.qr {
+    width: 26.6mm; height: 26.6mm;
+    padding: 2.5mm;
+    background: #fff;
+    border: 0.3mm solid {{ design_primary_color }};
+    border-radius: 2mm;
+  }
   .pay-online .label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 7.5pt;
@@ -346,6 +437,12 @@
     text-transform: uppercase;
     color: {{ design_primary_color }};
     margin-bottom: 1.5mm;
+    /* Ledger Fix Pass (18 September 2026) — was missing the same
+       white-space:nowrap already given to .pay-online .link right below
+       it, so "PAY ONLINE" (letter-spaced uppercase) wrapped to "PAY" /
+       "ONLINE" on two lines. Confirmed after adding this: fits on one
+       line with no overflow or collision with the QR image beside it. */
+    white-space: nowrap;
   }
   .pay-online .link {
     font-family: 'IBM Plex Mono', monospace;
@@ -425,7 +522,9 @@
     {% if invoice.client_currency_conversion %}<div class="pkr">≈ {{ invoice.client_currency_conversion.symbol }}{{ invoice.client_currency_conversion.converted_total|floatformat:2|intcomma }} at rate {{ invoice.client_currency_conversion.rate }}</div>{% endif %}
   </div>
 
-  <div class="lower">
+  {% if invoice.notes or invoice.terms or freelancer.bank_name or freelancer.payoneer_email or freelancer.jazzcash_number or freelancer.easypaisa_number or freelancer.wise_profile_id %}
+  <div class="lower{% if not invoice.notes and not invoice.terms %} lower-solo{% elif not freelancer.bank_name and not freelancer.payoneer_email and not freelancer.jazzcash_number and not freelancer.easypaisa_number and not freelancer.wise_profile_id %} lower-solo{% endif %}">
+    {% if invoice.notes or invoice.terms %}
     <div class="notes-block">
       {% if invoice.notes %}
       <div class="label">Notes</div>
@@ -436,8 +535,10 @@
       <p>{{ invoice.terms|linebreaksbr }}</p>
       {% endif %}
     </div>
+    {% endif %}
     {% include "invoices/_partials/payment_block.html" %}
   </div>
+  {% endif %}
   </div>
 
   <div class="sign-row">

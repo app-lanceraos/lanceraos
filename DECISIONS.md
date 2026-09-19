@@ -10717,3 +10717,145 @@ here — proving the method detects a KNOWN bad state before trusting it to conf
 check did not exist in the prior pass and is the actual root cause of the regression reaching
 DECISIONS.md as a false "zero clipping" claim, not the arithmetic itself (which was internally
 correct for the element it was measuring).
+
+---
+
+**18 September 2026 (Ledger / professional.html — per-template fix pass, 6 real issues).** A
+dedicated pass on `professional.html` alone (display name "Ledger"), following two sessions that
+each got burned by trusting a measurement method without first proving it saw the real problem.
+Step 0 applied that lesson directly before touching anything.
+
+**Step 0 — real baseline, proven measurement methods.** Rendered a 40-item fixture (notes+terms+
+Bank+Wise payment+signature, `professional` base_template) and confirmed, with methods each proven
+against a known state first: (1) the wordmark fix from the same day's earlier correction pass held
+for this template specifically — `page.get_drawings()` measured 17.0004mm on all 3 pages, zero
+overflow; (2) `.spine`'s real presence — a naive first check (any full-height fill near x=0) false-
+positived on the page's own `#faf9f6` body-background fill; corrected to match the real spine's own
+fill color (`design_primary_color`, `#a8813c` for this template) — confirmed present on page 0 only,
+absent on pages 1-2, matching the reported bug exactly before any fix was attempted; (3) continuation-
+page top clearance — page 0's first text starts at 16.26mm, pages 1+ start at 0.26mm, confirming the
+`.page` padding-vs-`@page`-margin bug; (4) "PAY"/"ONLINE" render on two distinct y-ranges (761-771pt
+vs 772-782pt) — confirmed the wrap; (5) orphaning — a naive first "empty remainder" measurement
+returned a constant, suspicious 3.0mm at every item count, traced to including the FIXED FOOTER TEXT
+in the "content bottom" calculation (a real measurement bug of this pass's own, caught before it
+produced a wrong conclusion); corrected to exclude the footer band, revealing the real bug: at
+n_items=4-14 and again 28-35, the closing block orphans onto its own page with up to **236.9mm** of
+real empty space (of ~285mm usable).
+
+**Fix 1 — spine `position: fixed`.** Purely decorative, no data-driven content — per the Phase 1.5
+principle, changed `position: absolute` → `fixed` so it repeats every page instead of associating
+with page 1 only (the page it happened to fall on in document flow). Verified: spine present on all
+3 pages of the 40-item render, byte-identical geometry each time.
+
+**Fix 2 — continuation pages start flush at the top.** `.page`'s own `padding: 16mm 16mm 0 20mm`
+only renders its top inset at the very start of the whole (multi-page-spanning) box, not per page —
+confirmed directly, continuation pages started at 0.26mm. Moved the 16mm top inset to `@page`'s own
+`margin-top` (margins declared at the `@page` level genuinely repeat every page, the same mechanism
+`footer_left_inset`/`footer_right_inset` already rely on); left `.page`'s own padding-left/right
+alone (those are inline-axis, already fine per-fragment, confirmed before assuming only top needed
+fixing). Recomputed `.page`'s own `min-height` (297mm − 16mm new top margin − whatever the bottom
+margin is on this render: 269mm branded / 281mm no-footer, down from 285mm/297mm). Verified: all 3
+pages of the 40-item render now start at an identical 16.26mm — matches page 1's original value
+exactly.
+
+**A real Fix 1 × Fix 2 interaction, found and fixed, not assumed safe.** Combining both surfaced a
+genuinely new WeasyPrint finding: a `fixed` element's containing block in this version is the `@page`
+CONTENT AREA (the page box inset by `@page`'s own margins), not the raw page box — `top:0;
+height:100%` therefore landed the spine 16mm below the true page top and 12mm short of the true
+bottom the moment a real `@page margin-top` existed (confirmed by real measurement: y0=45.35pt,
+not 0). `modern.html`'s own `.sidebar-bg` never surfaced this because its `@page` top margin is
+always 0 — the two cases only ever looked equivalent while the offset was 0 on both. Fixed by
+counter-offsetting with the exact negative of each `@page` margin value (`top: -16mm; bottom:
+{0 or -12mm}`, no explicit height — with both top and bottom set, height is computed to fill exactly
+that span). Verified by real render, not assumed from the arithmetic: y0=0.00mm, y1=297.00mm on
+every page — true full-bleed restored, confirmed by screenshot showing zero gap at the top on both
+page 1 and a continuation page.
+
+**Fix 2's own page-count-parity sweep (1/3/12/40 items, combined with Fix 1):** 1/1/2/3 pages,
+identical to the true pre-session baseline — zero regressions.
+
+**Fix 3 — closing-block orphaning, honestly improved, not eliminated.** Halved the 3 stacked margins
+(`.totals` 6mm→3mm, `.lower` 14mm→7mm, `.sign-row` 18mm→9mm; 38mm→19mm total) — real numbers chosen
+by rendering and measuring, not guessed, then re-swept across the full n_items=3-40 range.
+**Real, honest before/after:**
+- n_items 4-5: FIXED outright — 2 pages → 1 page (the closing block now fits on page 1 alongside the
+  items).
+- n_items 6-14 (and 28-35, one page-cycle later): STILL orphans — remainder only dropped ~7mm
+  (236.9mm → 229.9mm at the n=6-8 sub-range) — NOT eliminated, matching this project's own
+  `free_simple.html` precedent that trailing whitespace from real pagination isn't automatically a
+  bug to force away. A real, honest nuance found while investigating why the raw mm improvement was
+  so small: at n_items=8 specifically, the qualitative failure mode changed for the better even
+  though the raw number barely moved — before, the WHOLE closing block (totals+notes+terms+payment+
+  signature) was stranded together on page 2; after, `.totals`/`.lower` (notes/terms/payment) now
+  fit on page 1 (confirmed: page 0 ends at 274.2mm of ~286mm usable, essentially full) and ONLY
+  `.sign-row` (the smallest of the three) is left alone on page 2 — a materially better failure mode
+  (far less real content stranded) that the raw "empty mm" metric alone doesn't capture, since
+  removing content from an already-2-page document doesn't shrink the trailing blank space unless
+  the split disappears entirely.
+- n_items ≥15: unaffected either way (item rows already reach the last page).
+
+Page-count-parity sweep (1/3/12/40 items, the project's own standard checkpoints) shows **zero
+regressions** — identical to the true baseline (1/1/2/3 pages) — because none of those 4 specific
+checkpoints happen to land inside the 4-14/28-35 orphaning windows Fix 3 actually touches; the real
+effect of this fix is only visible in the finer n_items=4-40 sweep above, not the standard 4-point
+one, which is why this pass ran the finer sweep at all rather than relying on the standard
+checkpoints alone.
+
+**Fix 4 — "PAY ONLINE" two-line wrap.** `.pay-online .label` was missing the same
+`white-space: nowrap` its sibling `.link` already had. Added it. Verified: "PAY" and "ONLINE" now
+share an identical y-range (one line), no overflow, no collision with the QR image beside it (real
+measured gap: ~11pt between the QR's right edge and the text's left edge).
+
+**Fix 5 — QR card treatment.** Mirrored `modern.html`'s own proven `.pay-block img.qr` pattern
+(background/padding/border-radius directly on the `<img>`, no wrapper markup needed — confirmed this
+codebase's global `* { box-sizing: border-box; }` makes an `<img>`'s padding count toward its
+declared width/height in this WeasyPrint version: `modern.html`'s own 26mm box + 2mm padding
+produces a real, measured 22mm rendered image, not 26mm, confirmed by direct render before assuming
+the same math for Ledger). Set Ledger's own box to `26.6mm` with `2.5mm` padding + `0.3mm` border
+(accent-tone) + `2mm` radius, targeting a real ~21mm visible QR (a modest, deliberate increase from
+the previous bare 20mm) — confirmed by direct render: actual rendered QR image bbox measured exactly
+21.0mm × 21.0mm. QR generation itself (`_generate_qr_data_uri`) untouched, per this task's own scope
+limit. Real screenshot taken (genuine design call, shown rather than asserted).
+
+**Fix 6 — `.lower`'s fixed 56%/40% split left a dead column when one side was empty.**
+`.notes-block` rendered unconditionally (an empty 56%-wide flex child whenever `invoice.notes`/
+`invoice.terms` were both blank) while `payment_block.html` already renders nothing at all when no
+payment method is configured — together leaving a real, visible blank column whenever only one side
+had content, and a bare near-empty flex row (just its own margin) when neither did. Fixed at the
+template level (the CSS alone can't know what a Django `{% include %}` will render): `.notes-block`'s
+own wrapping div is now conditional on `invoice.notes or invoice.terms` (mirroring
+`payment_block.html`'s own existing guard exactly, so the two sides' presence checks agree); the
+whole `.lower` block is conditional on either side having real content, collapsing entirely with no
+residual margin when neither does; a new `.lower-solo` modifier class (added by the template when
+exactly one side renders) makes that one side take the full row width. **Full width chosen over
+centering for both cases** — notes/terms is left-aligned prose that reads as a natural continuation
+of the page's own column width; centering the payment list's own left-right-justified rows as a
+block would still read oddly, so one consistent full-width rule for either side was simpler and
+clearer than two different treatments per side.
+
+Tested all 4 real combinations directly, not assumed: **both** — unchanged 56/40 split (notes right
+edge at x=332.3pt, bank row left edge at x=352.6pt, confirming the original split geometry);
+**notes-only** — notes now spans the full row (right edge grew to x=487.8pt); **payment-only** —
+payment now spans the full row (left edge moved from x=352.6pt to x=56.7pt, essentially the page's
+own left content edge); **neither** — confirmed both `'Notes'` and `'Payment methods'` absent from
+the rendered text, and the block collapses with no residual gap (real screenshot: totals flow
+directly toward the page bottom with nothing in between). All 4 screenshotted.
+
+**Combined verification, all 6 fixes together.**
+- Page-count-parity sweep (1/3/12/40 items, the full fixture with notes+terms+payment+signature):
+  1/1/2/3 pages — identical to the true pre-session baseline, zero regressions from the combined
+  effect of all 6 changes (Fix 3's own real effect only shows up in the finer n_items=4-40 sweep
+  above, as noted there).
+- Full `apps.invoices` test suite: see this entry's own closing verification line for the real count.
+- Real screenshots: spine full-bleed on pages 0/1/2 of a 40-item render; continuation-page top
+  clearance before/after; "PAY ONLINE" one line with no QR collision; the QR card treatment; all 4
+  `.lower` combinations; a full single-page render showing all 6 fixes together with nothing broken.
+
+**What didn't work as hypothesized, stated plainly.** The Fix 1 × Fix 2 interaction (above) is the
+main one — `position: fixed`'s containing block was assumed, from `modern.html`'s own precedent, to
+be the raw page box; it is actually the `@page`-margin-inset content area, and `modern.html` never
+exposed the difference because its own top margin is always 0. Fix 3's own raw "empty remainder in
+mm" metric was a weaker signal than expected — a real, qualitative improvement (far less content
+stranded per orphaned page) can coexist with an almost-unchanged raw mm number, because the metric
+only shrinks the moment the whole page split disappears, not proportionally as content migrates off
+the orphaned page.
