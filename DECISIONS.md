@@ -10859,3 +10859,102 @@ mm" metric was a weaker signal than expected — a real, qualitative improvement
 stranded per orphaned page) can coexist with an almost-unchanged raw mm number, because the metric
 only shrinks the moment the whole page split disappears, not proportionally as content migrates off
 the orphaned page.
+
+---
+
+**19 September 2026 (Ledger fix pass, continued — Regression A + Regression B, corrections to the
+18 September entry above).** Two real regressions found in the result of that same pass, confirmed
+directly against real rendered output before touching anything (per this codebase's own now-standing
+rule: prove a verification method detects the current, real, unfixed state first).
+
+**Regression A — white band at the top of every page.** Fix 2 (above) moved `.page`'s top inset from
+its own padding into `@page`'s own `margin-top`, correctly making it repeat every page — but the
+ledger's cream page color (`body { background: #faf9f6; }`, confirmed as the real, current
+declaration before assuming) doesn't reach that reclaimed margin strip, since a margin area sits
+outside `body`'s own box entirely. Confirmed by real pixel sampling (4x-zoom `page.get_pixmap` +
+direct pixel read, not visual impression) down the top 20mm of pages 0, 1, and 3 of a real 4-page,
+55-item/8.5%-tax render (the same fixture that reproduces Regression B below): pure white
+`(255,255,255)` from y=0 to y=15mm on every page tested, including page 1, then a hard cutover to
+cream `(249,249,246)` at y=16mm.
+
+Two approaches investigated, not assumed from which "seemed cleaner": (1) `@page { background: ...; }`
+— the CSS-Paged-Media-spec way to paint the full page canvas including margin areas, with no prior
+use anywhere in this codebase; (2) the same `position: fixed` + negative-counter-offset technique
+already proven for `.spine` in the entry above. A real isolated spike (a minimal multi-page HTML doc,
+`@page { margin: 16mm 0 12mm 0; background: #faf9f6; }`, sampled at y=0/5/16mm and the bottom margin
+band on all 4 generated pages) confirmed `@page background` paints edge-to-edge on every page in this
+WeasyPrint version with zero offset arithmetic needed — chosen over a second fixed-layer hack as the
+simpler, spec-correct, lower-risk option, now that it has a real, verified track record here too.
+Applied as a single `background: #faf9f6;` line inside `professional.html`'s own `@page` rule.
+
+**Verification, Regression A.** Real pixel sampling (same method, proven against the known-bad state
+first) of all 4 pages of the 55-item render, at y=0/16/280/290/296mm each: every sample on every page
+now reads the uniform cream `(249,249,246)` — zero white band anywhere, top or bottom. Real
+screenshots of page 1's and page 2's top ~40mm confirm the same visually: spine still bleeds cleanly
+to the true page edge, header/table content renders correctly on top, nothing obscured — the page
+canvas background paints first, behind everything, with no z-index needed.
+
+**Regression B — the totals block split mid-block.** `.totals` (Subtotal / Tax / Discount / TOTAL
+DUE) is a plain block with independently-breakable child rows, unlike `.lower`/`.sign-row` (flex
+containers, already atomic). Reproducing the exact bug required finding a real fixture that lands the
+totals block across a page boundary — a sweep of `professional`, tax_rate=8.5%, n_items 1-89 found 5
+real split cases (12, 13, 34, 55, 76 items), all showing the identical pattern: confirmed on the
+55-item/4-page case specifically — page 3 ends with `Subtotal\n$5,500.00\nTax (8.50%)\n$467.50` (no
+TOTAL DUE), page 4 opens with `TOTAL DUE\n$5,967.50` alone, disconnected from the numbers it sums.
+
+Fix: `break-inside: avoid;` plus the legacy `page-break-inside: avoid;` alias (no existing precedent
+for this property in this codebase on a plain block, so both are set rather than assuming only one is
+respected in this WeasyPrint version) added to `.totals`. Verified against the exact same known-split
+55-item case: page 3 no longer contains any totals content at all; page 4 now opens with
+`Subtotal\n$5,500.00\nTax (8.50%)\n$467.50\nTOTAL DUE\n$5,967.50` — the whole block moved together, as
+one screenshotted, confirmed unit. Re-ran the full 1-89 item sweep (same tax_rate=8.5%): **zero splits
+found anywhere** — not just the 5 originally-found cases, the entire range.
+
+**Page-count-parity, honestly reported, not assumed byte-identical.** The standard 1/3/12/40-item
+sweep (no tax, matching this project's own long-standing checkpoint convention) shows identical page
+counts before/after (1/1/2/3) — but this task's own instructions correctly anticipated that forcing
+atomicity CAN push a whole block to a new page, so the standard checkpoints alone don't tell the real
+story here (none of them happen to sit on a split boundary). Re-ran the full 1-89-item, tax-inclusive
+sweep that actually found the bug, before vs. after Fix 8: **the two page-count arrays are byte-for-
+byte identical at every single item count from 1 to 89.** This was independently spot-checked at
+n_items=12 (one of the 5 originally-split cases) to confirm it wasn't a coincidence of the diff tool:
+before, page 0 had Subtotal+Tax with TOTAL DUE alone on page 1; after, page 0 has neither (confirmed
+directly — no totals content at all) and page 1 has all three rows together — the block relocated in
+full, page count unchanged, because the 2 short rows that used to fit on the item-table page were
+small enough that removing them from page 0 and adding them to page 1 (which already had headroom
+from Fix 3's own margin reduction) never tipped either page over its own limit, at any tested count.
+
+**Honest interaction check against Fix 3's own orphaning findings (4-14, 28-35 still-orphaning
+ranges).** Re-ran the exact orphaning-detection sweep from the 18 September entry (no tax, matching
+that entry's own fixture) with Fix 7+8 both applied. Every row matches the 18 September entry's own
+recorded numbers exactly EXCEPT two: n_items=13 (`content_top`/`remainder` moved from 21.9mm/169.1mm
+to 17.9mm/161.2mm) and n_items=35 (16.3mm/162.8mm → 17.9mm/161.2mm) — both converging to the exact
+same value n_items=14 already had. Root cause, confirmed rather than assumed: even without tax
+(a 2-row totals block, Subtotal+TOTAL DUE), n=13 and n=35 were themselves small, previously-unnoticed
+split cases (Subtotal fit on the item page, TOTAL DUE alone didn't) — Fix 8 closed these too, as a
+real, direct, honest side effect. No page-count changes and no NEW orphaning anywhere in the 4-14/
+28-35 ranges; the still-orphaning item counts themselves are unchanged (has_item_row remains False
+for the identical set of counts) — the interaction is real but narrow, confined to the totals block's
+own internal layout at exactly 2 item counts, not a change to which pages orphan.
+
+**Full page-by-page visual review (this codebase's own standing rule after two same-day surprise
+interactions already found this way).** Rendered a real 4-page fixture (55 items, 8.5% tax, a $150
+discount — a genuinely different, more heavily-loaded configuration than either fix's own targeted
+test, to maximize the chance of spotting something unrelated) and reviewed all 4 pages in full, not
+just the two things changed this pass. Nothing else found: item table pagination, header repetition,
+footer wordmark/page-counter, spine bleed, and the fully-atomic totals+notes+payment+signature
+closing block on page 4 all rendered correctly and consistently across every page.
+
+**Full `apps.invoices` test suite:** see this entry's own closing verification line for the real
+count — re-run after both fixes, zero regressions.
+
+**What didn't work as hypothesized, stated plainly.** Nothing about the Fix 7 mechanism itself failed
+— the spec-correct `@page background` approach worked on the first real attempt, no surprises. The
+genuinely surprising result was Fix 8's OWN page-count-parity sweep: the task's own instructions
+correctly warned not to expect byte-identical results, since forcing atomicity can push a whole block
+to a new page — and yet, across the full 89-item tested range, it never did. Independently spot-
+checked at n=12 to rule out a measurement artifact before trusting the aggregate diff. The real
+takeaway is narrower than "atomicity is free" — it held here because Fix 3's own earlier margin
+reduction had already left enough headroom on the receiving page in every tested case; a differently-
+proportioned totals block, or a template without Fix 3's own margin trims, could plausibly see a real
+page-count increase from the same `break-inside: avoid` change.

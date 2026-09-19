@@ -1969,6 +1969,19 @@ blank column when only one side has real content. See DECISIONS.md's third 18 Se
 for the full per-fix before/after evidence, including the real Fix 1 × Fix 2 interaction found and
 fixed along the way.
 
+**19 September 2026 (Ledger fix pass, continued).** Two real regressions from the pass above,
+corrected same continuation: (1) a white band at the top of every page — the reclaimed `@page
+margin-top` from Fix 2 wasn't covered by `body`'s own cream background, since a margin area sits
+outside `body`'s box; fixed with `@page { background: #faf9f6; }` (this codebase's first real use of
+that spec-correct mechanism, verified by real pixel sampling to paint edge-to-edge on every page);
+(2) `.totals` (Subtotal/Tax/TOTAL DUE) could split mid-block across a page boundary, since unlike
+`.lower`/`.sign-row` it's a plain block, not a flex container — fixed with `break-inside: avoid`.
+Genuinely surprising, honestly-verified result: the page-count-parity sweep (1-89 items) found ZERO
+page-count changes from forcing totals atomicity, even at the exact item counts that used to split —
+Fix 3's own earlier margin reduction had already left enough headroom to absorb the relocation. See
+DECISIONS.md's 19 September 2026 entry for full before/after evidence and the honest interaction
+check against Fix 3's own still-orphaning item-count ranges.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

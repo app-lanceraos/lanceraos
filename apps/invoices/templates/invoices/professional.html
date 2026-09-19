@@ -52,6 +52,31 @@
        bleeds; bottom keeps its existing conditional. See .page's own
        min-height comment below for the matching recalculation. */
     margin: 16mm 0 {% if single_page_layout and not wordmark_data_uri %}0{% else %}12mm{% endif %} 0;
+    /* Ledger Fix Pass, continued (19 September 2026) — Regression A: the
+       16mm top margin above genuinely repeats on every page (correct,
+       that was Fix 2's whole point), but the ledger's cream page color
+       (`body`'s own `background: #faf9f6` below) does NOT reach that
+       reclaimed margin strip — a margin area sits outside `body`'s own
+       box entirely, confirmed by real pixel sampling: pure white
+       (255,255,255) from y=0 to ~15mm on every page including page 1,
+       then a hard cutover to cream. `.spine`'s own fix (the 1×2
+       interaction, above) only ever covered its own 3mm bar, never the
+       page background.
+       Fixed with `@page { background: ... }` — the CSS-Paged-Media-spec
+       way to paint the FULL page canvas including margin areas, not
+       previously used anywhere in this codebase. Investigated the
+       alternative already proven in this file (a `position: fixed`
+       layer with the same negative-counter-offset technique `.spine`
+       uses) but didn't need it: a real isolated spike confirmed
+       `@page background` paints edge-to-edge (y=0 through the true
+       bottom) on every generated page in this WeasyPrint version with
+       no offset arithmetic at all — simpler and lower-risk than a
+       second fixed-layer hack. Renders as the page canvas itself,
+       painted before any body content, so it sits behind the spine,
+       header, table, and everything else with no z-index needed —
+       confirmed by real render: nothing is obscured, the spine and its
+       accent line still draw on top exactly as before. */
+    background: #faf9f6;
     {% include "invoices/_partials/footer.html" with footer_text_color="#a09a89" footer_left_inset="16mm" footer_right_inset="11.112mm" %}
   }
   * { box-sizing: border-box; }
@@ -280,6 +305,24 @@
        DECISIONS.md's 18 September 2026 Ledger entry for the real
        before/after item-count sweep. */
     margin-top: 3mm;
+    /* Ledger Fix Pass, continued (19 September 2026) — Regression B:
+       unlike `.lower`/`.sign-row` (flex containers, already atomic by
+       construction), `.totals` is a plain block with independently-
+       breakable child rows — confirmed on a real 55-item render:
+       Subtotal + Tax landed on page 3, TOTAL DUE alone opened page 4,
+       disconnected from the numbers it sums. `break-inside: avoid`
+       (plus the legacy `page-break-inside: avoid` alias — no prior
+       precedent for this property in this codebase, so both are set
+       rather than assuming only one is respected) makes the whole block
+       move together. Confirmed by real render of the exact same known-
+       split case: the split is gone and Subtotal/Tax/TOTAL DUE now
+       always render on the same page — see DECISIONS.md's 19 September
+       2026 entry for the real before/after and the honest
+       page-count-parity result (this is NOT expected to be byte-
+       identical to before — forcing atomicity can genuinely push the
+       whole block to a new page where it used to split across one). */
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
   .totals .row {
     display: flex;
