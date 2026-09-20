@@ -8,25 +8,23 @@
 // takes the current page/total and calls back on navigation, with no
 // opinion of its own about how the caller re-fetches.
 //
-// Desktop: "Showing 1-20 of N {itemLabel}" left, numbered page buttons
-// (with ellipsis truncation for many pages) + a "20 / page" label right.
+// Desktop: "Showing 1-20 of N {itemLabel}" left, a sliding window of
+// exactly min(3, totalPages) numbered page buttons (no ellipsis, no
+// anchored first/last — see pageNumbers()) + a "20 / page" label right.
 // Mobile (`compact`): a shorter "< Page X of Y >" strip — full numbered
 // navigation doesn't fit at phone width.
 export const PAGE_SIZE = 20
 
 function pageNumbers(current, total) {
-  // Always shows first/last + a window of 1 around `current`, collapsing
-  // any gap into a single '…' — never lists every page for a large total.
-  const pages = new Set([1, total, current - 1, current, current + 1])
-  const sorted = [...pages].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b)
-  const withEllipsis = []
-  let prev = null
-  for (const p of sorted) {
-    if (prev !== null && p - prev > 1) withEllipsis.push('…')
-    withEllipsis.push(p)
-    prev = p
-  }
-  return withEllipsis
+  // A plain sliding window of exactly min(3, total) consecutive page
+  // numbers, centered on `current` where possible — no anchored first/
+  // last shortcuts, no ellipsis. Prev/Next remain the only way to reach
+  // a page outside this window. A deliberate UX tradeoff, not an
+  // oversight — see DECISIONS.md.
+  const windowSize = Math.min(3, total)
+  let start = current - Math.floor((windowSize - 1) / 2)
+  start = Math.max(1, Math.min(start, total - windowSize + 1))
+  return Array.from({ length: windowSize }, (_, i) => start + i)
 }
 
 export default function Pagination({ page, total, itemLabel = 'items', onPageChange, compact = false, loading = false }) {
@@ -61,26 +59,22 @@ export default function Pagination({ page, total, itemLabel = 'items', onPageCha
         <button className="fos-btn fos-btn-ghost" disabled={loading || page <= 1} onClick={() => onPageChange(page - 1)} aria-label="Previous page" style={{ padding: '6px 10px' }}>
           <ChevronIcon dir="left" />
         </button>
-        {pageNumbers(page, totalPages).map((p, i) => (
-          p === '…' ? (
-            <span key={`ellipsis-${i}`} style={{ padding: '0 4px', color: 'var(--text-tertiary)', fontSize: '0.78rem' }}>…</span>
-          ) : (
-            <button
-              key={p}
-              onClick={() => onPageChange(p)}
-              disabled={loading}
-              className="fos-btn"
-              style={{
-                minWidth: 32, padding: '6px 8px', fontSize: '0.78rem', fontWeight: p === page ? 700 : 500,
-                borderRadius: 'var(--radius-md)',
-                background: p === page ? 'var(--accent-glow)' : 'transparent',
-                color: p === page ? 'var(--accent)' : 'var(--text-secondary)',
-                border: `1.5px solid ${p === page ? 'var(--accent)' : 'transparent'}`,
-              }}
-            >
-              {p}
-            </button>
-          )
+        {pageNumbers(page, totalPages).map((p) => (
+          <button
+            key={p}
+            onClick={() => onPageChange(p)}
+            disabled={loading}
+            className="fos-btn"
+            style={{
+              minWidth: 32, padding: '6px 8px', fontSize: '0.78rem', fontWeight: p === page ? 700 : 500,
+              borderRadius: 'var(--radius-md)',
+              background: p === page ? 'var(--accent-glow)' : 'transparent',
+              color: p === page ? 'var(--accent)' : 'var(--text-secondary)',
+              border: `1.5px solid ${p === page ? 'var(--accent)' : 'transparent'}`,
+            }}
+          >
+            {p}
+          </button>
         ))}
         <button className="fos-btn fos-btn-ghost" disabled={loading || page >= totalPages} onClick={() => onPageChange(page + 1)} aria-label="Next page" style={{ padding: '6px 10px' }}>
           <ChevronIcon dir="right" />

@@ -450,7 +450,20 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   // convention throughout). ──
   const moreMenuItems = []
   if (!isDraft) {
-    const dueDateEditable = ['created', ...ACTIVE_STATUSES].includes(invoice.status)
+    // Narrowed to 'created' only (20 September 2026 — see DECISIONS.md):
+    // matches the backend's own due_date_only_eligible scope exactly,
+    // which no longer allows a due-date-only PUT for sent/viewed/
+    // partially_paid. Kept as its own named condition, separate from
+    // downloadReachableInMoreMenu below — the two happened to share the
+    // same status set before this change, but they're independent
+    // decisions (one an authorization scope, one a footer-vs-More-menu
+    // layout choice) that shouldn't be silently coupled.
+    const dueDateOnlyEditable = invoice.status === 'created'
+    // Download appears in the footer directly for terminal statuses (see
+    // footerShowsDuplicate's own sibling logic above) and here, in the
+    // More menu, for every other non-draft status — unrelated to due-date
+    // editability, so this keeps its original, unnarrowed status set.
+    const downloadReachableInMoreMenu = ['created', ...ACTIVE_STATUSES].includes(invoice.status)
     // Skip when the footer already shows it as a real button — this
     // panel's own established rule (see the header's "View Invoice is
     // already reachable from the header — redundant as a footer
@@ -460,11 +473,11 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
       moreMenuItems.push({ key: 'duplicate', label: 'Duplicate', Icon: Copy, onClick: handleDuplicate })
     }
     moreMenuItems.push({ key: 'save_preset', label: 'Save as Preset', Icon: BookmarkPlus, onClick: () => setModal({ kind: 'save_preset' }) })
-    if (dueDateEditable) {
+    if (dueDateOnlyEditable) {
       moreMenuItems.push({ key: 'change_due_date', label: 'Change Due Date', Icon: CalendarClock, onClick: () => setModal({ kind: 'change_due_date' }) })
     }
     moreMenuItems.push({ key: 'copy_link', label: 'Copy Invoice Link', Icon: Link2, onClick: copyInvoiceLink })
-    if (dueDateEditable) {
+    if (downloadReachableInMoreMenu) {
       moreMenuItems.push({ key: 'download', label: 'Download Invoice', Icon: Download, onClick: openDownload })
     }
     if (['paid', 'partially_paid'].includes(invoice.status)) {
@@ -899,7 +912,15 @@ function SaveStatusIndicator({ state }) {
 // (+ Subtotal/Total) -> Payment Terms/Currency -> Payment Status
 // (progress bar) -> Recurring (if applicable) -> Reminders section.
 function DetailsTab({ invoice, busy, onPauseResume, onEditSeries }) {
-  const showPaymentProgress = Number(invoice.amount_paid) > 0 && invoice.status !== 'paid'
+  // 'paid' is excluded because a fully-paid invoice shows its own status
+  // elsewhere in this tab, not a progress bar. The rest of the exclusion
+  // reuses the same NO_PAYMENT_STATUSES this file already established
+  // for the Undo Payment gate (cancelled/bad_debt/refunded/draft) —
+  // "X% paid" doesn't make sense once an invoice is refunded or written
+  // off any more than "undo the payment" does; this was a real drift
+  // (a second, narrower, hand-rolled exclusion) rather than a deliberate
+  // second list.
+  const showPaymentProgress = Number(invoice.amount_paid) > 0 && invoice.status !== 'paid' && !NO_PAYMENT_STATUSES.includes(invoice.status)
 
   return (
     <div>

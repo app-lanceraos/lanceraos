@@ -306,9 +306,34 @@ def get_template(key):
     return _BY_KEY.get(key)
 
 
+def _gallery_sort_group(entry):
+    """
+    Invoice List & Template Gallery Polish batch (20 September 2026) —
+    the gallery groups Ledger/Nova (the 2 original templates) and every
+    pro_* import ahead of every free_* import, regardless of Nova's own
+    `tier: 'free'` metadata: this is "original-plus-new-pro templates vs.
+    the newer free-tier batch," not a strict tier sort (which would split
+    Nova away from Ledger). Returns a group priority only — sorted()
+    below is stable, so within each group entries keep TEMPLATES' own
+    relative order, unchanged.
+    """
+    if entry['key'] in ('professional', 'modern') or entry['key'].startswith('pro_'):
+        return 0
+    return 1
+
+
 def selectable_templates():
-    """Manifest entries offered in the gallery — excludes any retired (selectable=False) template."""
-    return [t for t in TEMPLATES if t['selectable']]
+    """
+    Manifest entries offered in the gallery — excludes any retired
+    (selectable=False) template. Sorted for DISPLAY only
+    (_gallery_sort_group) — this is deliberately NOT a reordering of
+    TEMPLATES itself, which stays in its own literal, historical order:
+    that order is what test_manifest_drift.py's ordered-list assertions
+    depend on, and what Invoice.base_template's/FreelancerProfile.
+    INVOICE_TEMPLATE_CHOICES' own `choices=` tuples are generated from
+    (see DECISIONS.md for why reordering the source list was ruled out).
+    """
+    return sorted((t for t in TEMPLATES if t['selectable']), key=_gallery_sort_group)
 
 
 def template_keys():

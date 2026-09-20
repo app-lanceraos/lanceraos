@@ -147,13 +147,6 @@ export default function TemplateGallery() {
         <span>Template Gallery</span>
       </div>
 
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)' }}>Template Gallery</h1>
-        <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
-          Pick which invoice template new invoices use.
-        </p>
-      </div>
-
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, padding: '10px 14px',
         background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',

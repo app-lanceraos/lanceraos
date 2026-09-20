@@ -657,7 +657,25 @@ export default function AppShell({ children }) {
               maxWidth: collapsed ? 0 : 190,
               transition: 'opacity var(--t), max-width var(--t)',
             }}>
-              <WordmarkSVG width={128} height={19} />
+              {/* Vertical-alignment fix, real measured value (Invoice List
+                  & Template Gallery Polish batch, 20 September 2026): this
+                  wordmark's own artwork (Brand.jsx's WordmarkSVG, never
+                  altered — DESIGN.md forbids it) reserves empty space
+                  BELOW the glyphs inside its viewBox (no descenders in
+                  "LanceraOS"), not evenly above/below — so centering its
+                  BOX (this wrapper's own alignItems:'center', which was
+                  already correct) still left the visible INK sitting
+                  ~2.6px above the logo's own ink center at this height.
+                  Measured via Playwright getBBox() against the real
+                  rendered SVG, not guessed: wordmark ink center was 27.4px
+                  against the logo's 30.0px (header center) at height=19.
+                  A wrapping span with translateY nudges the ink down to
+                  match — container-only, no change to WordmarkSVG itself
+                  (shared by AuthLayout.jsx too, out of this item's scope)
+                  or its proportions. */}
+              <span style={{ display: 'block', transform: 'translateY(2.6px)' }}>
+                <WordmarkSVG width={128} height={19} />
+              </span>
             </div>
           </Link>
           <button
@@ -695,7 +713,14 @@ export default function AppShell({ children }) {
           </Link>
         )}
 
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: isMobile ? '0 20px 0 10px' : '0 20px 0 18px', minWidth: 0 }}>
+        {/* Desktop toggle-to-title gap: real, measured reduction (Invoice
+            List & Template Gallery Polish batch, 20 September 2026) — was
+            34px combined (the fixed left block's own 16px right padding +
+            this row's 18px left padding), measured via Playwright bounding
+            boxes against the real running app, not assumed. Now 16px + 8px
+            = 24px; mobile's own spacing (already tightened in an earlier
+            pass, see the comment above) is untouched. */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: isMobile ? '0 20px 0 10px' : '0 20px 0 8px', minWidth: 0 }}>
           <span style={{
             fontSize: 22, fontWeight: 400, letterSpacing: '-0.04em',
             color: 'var(--header-title)', whiteSpace: 'nowrap',
@@ -827,7 +852,13 @@ export default function AppShell({ children }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', height: 'var(--header-h)', flexShrink: 0 }}>
               <LogoSVG size={30} />
               <div style={{ display: 'flex', alignItems: 'center', height: 20 }}>
-                <WordmarkSVG width={107} height={16} />
+                {/* Same real, measured ink-vs-box vertical-alignment fix as
+                    the desktop header's own brand lockup above, scaled to
+                    this instance's height (16px): 2.6 * 16/19 ≈ 2.2px. See
+                    that block's own comment for the full measurement. */}
+                <span style={{ display: 'block', transform: 'translateY(2.2px)' }}>
+                  <WordmarkSVG width={107} height={16} />
+                </span>
               </div>
             </div>
           </Link>

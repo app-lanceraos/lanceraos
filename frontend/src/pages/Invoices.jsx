@@ -83,6 +83,7 @@ export default function Invoices() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [overdueOnly, setOverdueOnly] = useState(false)
+  const [recurringOnly, setRecurringOnly] = useState(false)
   const [currencyFilter, setCurrencyFilter] = useState('')
   const [availableCurrencies, setAvailableCurrencies] = useState([])
   const [sort, setSort] = useState('recent')
@@ -155,9 +156,11 @@ export default function Invoices() {
     if (sort) params.sort = sort
     const statusVal = 'status' in overrides ? overrides.status : statusFilter
     const overdueVal = 'overdue' in overrides ? overrides.overdue : overdueOnly
+    const recurringVal = 'recurring' in overrides ? overrides.recurring : recurringOnly
     const currencyVal = 'currency' in overrides ? overrides.currency : currencyFilter
     if (statusVal) params.status = statusVal
     if (overdueVal) params.overdue = 'true'
+    if (recurringVal) params.recurring = 'true'
     if (currencyVal) params.currency = currencyVal
     return params
   }
@@ -219,14 +222,24 @@ export default function Invoices() {
   function selectStatusFilter(key) {
     setStatusFilter(key)
     setOverdueOnly(false)
-    load(1, { status: key, overdue: false })
+    setRecurringOnly(false)
+    load(1, { status: key, overdue: false, recurring: false })
   }
 
   function toggleOverdueFilter(forceOn) {
     const next = forceOn !== undefined ? forceOn : !overdueOnly
     setOverdueOnly(next)
     setStatusFilter('')
-    load(1, { status: '', overdue: next })
+    setRecurringOnly(false)
+    load(1, { status: '', overdue: next, recurring: false })
+  }
+
+  function toggleRecurringFilter(forceOn) {
+    const next = forceOn !== undefined ? forceOn : !recurringOnly
+    setRecurringOnly(next)
+    setStatusFilter('')
+    setOverdueOnly(false)
+    load(1, { status: '', overdue: false, recurring: next })
   }
 
   function selectCurrencyFilter(value) {
@@ -335,12 +348,13 @@ export default function Invoices() {
   // ── Filter row chips + real measured-width overflow ──
   const statusChips = STATUS_FILTER_OPTIONS.map((opt) => ({
     type: 'pill', key: opt.key || 'all', label: opt.label,
-    active: statusFilter === opt.key && !overdueOnly,
+    active: statusFilter === opt.key && !overdueOnly && !recurringOnly,
     onClick: () => selectStatusFilter(opt.key),
   }))
   const overdueChip = { type: 'pill', key: 'overdue', label: 'Overdue', active: overdueOnly, onClick: () => toggleOverdueFilter() }
+  const recurringChip = { type: 'pill', key: 'recurring', label: 'Recurring', active: recurringOnly, onClick: () => toggleRecurringFilter() }
   const currencyChip = { type: 'currency', key: 'currency', value: currencyFilter, options: availableCurrencies, onChange: selectCurrencyFilter }
-  const allChips = [...statusChips, overdueChip, currencyChip]
+  const allChips = [...statusChips, overdueChip, recurringChip, currencyChip]
   const { containerRef, measureRefs, moreRef, visibleCount } = useFilterOverflow(allChips.length)
   const visibleChips = allChips.slice(0, visibleCount)
   const overflowChips = allChips.slice(visibleCount)
@@ -422,12 +436,17 @@ export default function Invoices() {
       {/* Mobile (≤768px): status/Overdue as one dropdown, currency as a second — folded into the existing mobile filter-dropdown pattern. */}
       <div className="filter-row-mobile" style={{ display: 'none', gap: 8, marginBottom: 20 }}>
         <select
-          value={overdueOnly ? '__overdue__' : statusFilter}
-          onChange={(e) => (e.target.value === '__overdue__' ? toggleOverdueFilter(true) : selectStatusFilter(e.target.value))}
+          value={overdueOnly ? '__overdue__' : recurringOnly ? '__recurring__' : statusFilter}
+          onChange={(e) => {
+            if (e.target.value === '__overdue__') toggleOverdueFilter(true)
+            else if (e.target.value === '__recurring__') toggleRecurringFilter(true)
+            else selectStatusFilter(e.target.value)
+          }}
           className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }}
         >
           {STATUS_FILTER_OPTIONS.map((opt) => <option key={opt.key || 'all'} value={opt.key}>{opt.label}</option>)}
           <option value="__overdue__">Overdue</option>
+          <option value="__recurring__">Recurring</option>
         </select>
         {availableCurrencies.length > 0 && (
           <select value={currencyFilter} onChange={(e) => selectCurrencyFilter(e.target.value)} className="fos-input fos-select" style={{ flex: 1, minWidth: 0 }} aria-label="Filter by currency">
@@ -495,7 +514,7 @@ export default function Invoices() {
       )}
 
       {!loading && !error && invoices.length === 0 && (
-        <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} onCreate={handleNewInvoice} />
+        <EmptyState search={search} statusFilter={statusFilter} overdueOnly={overdueOnly} recurringOnly={recurringOnly} onCreate={handleNewInvoice} />
       )}
 
       {/* ── Bulk-select floating action bar — unified across desktop and
@@ -734,15 +753,17 @@ function InvoiceGridSkeleton() {
 }
 
 // ── EmptyState ────────────────────────────────────────────────────
-function EmptyState({ search, statusFilter, overdueOnly, onCreate }) {
-  const isFiltered = Boolean(search) || Boolean(statusFilter) || overdueOnly
+function EmptyState({ search, statusFilter, overdueOnly, recurringOnly, onCreate }) {
+  const isFiltered = Boolean(search) || Boolean(statusFilter) || overdueOnly || recurringOnly
   const copy = search
     ? `No invoices matching "${search}".`
     : overdueOnly
       ? 'No overdue invoices right now.'
-      : statusFilter
-        ? `No ${(INVOICE_STATUS_META[statusFilter]?.label || statusFilter).toLowerCase()} invoices.`
-        : 'No invoices yet.'
+      : recurringOnly
+        ? 'No recurring invoices yet.'
+        : statusFilter
+          ? `No ${(INVOICE_STATUS_META[statusFilter]?.label || statusFilter).toLowerCase()} invoices.`
+          : 'No invoices yet.'
 
   return (
     <div style={{ textAlign: 'center', padding: '48px 24px', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)' }}>

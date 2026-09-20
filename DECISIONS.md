@@ -11247,3 +11247,196 @@ in `apps/invoices/tests/` already cover. Frontend: `npx vitest run` — **20 tes
 passed**; `npx vite build` — clean, only the pre-existing unrelated `authStore.js` dynamic/static
 dual-import warning (unchanged from before this fix). No backend file was touched by this pass, so no
 backend suite run was needed or performed.
+
+---
+
+Date: 20 September 2026 (Invoice List & Template Gallery Polish batch — 8 items)
+Decision/Reason:
+
+One pass, 8 mostly-independent fixes across the invoice list and template gallery. Full verification run
+once at the end, not per item: backend `python manage.py test --keepdb` — **1098 tests, OK, 0 failures**
+(up from a confirmed 1091 baseline before this pass); frontend `npx vitest run` — **20 test files, 251
+tests, all passed**; `npx vite build` — clean (same pre-existing, unrelated `authStore.js` chunking
+warning every prior pass has also seen). Per-item detail below.
+
+**Item 1 — Pagination: hard cap at 3 page numbers, sliding, no anchors.** `Pagination.jsx`'s
+`pageNumbers()` used to always pin page 1 and the last page visible plus a window of 1 around `current`,
+collapsing any real gap into `…` — at small-to-moderate total page counts (e.g. exactly 5 pages) that
+window plus the two anchors covered the whole range with nothing ever collapsed, and even once it did
+collapse, the two anchors alone kept the visible count above 3. Replaced the whole anchor+window+ellipsis
+scheme with a plain sliding window of exactly `min(3, totalPages)` consecutive pages, recomputed from
+`current`/`totalPages` on every navigation, clamped at both edges (`Math.max(1, Math.min(start, total -
+windowSize + 1))`) — no ellipsis, no permanent first/last shortcuts; Prev/Next remain the only way to
+reach a page outside the current window. A real, accepted UX tradeoff (no more instant jump to page 1 or
+the last page via a number button), not a bug being reintroduced. `Pagination.test.jsx`'s own
+ellipsis-collapse test (which asserted page 1 AND page 100 both visible at once) is gone, replaced by a
+parametrized sweep (`it.each`) asserting the exact window at every position across totals of 1/2/3/5/10/
+100 pages, including the exact boundary case that triggered the report (5 total pages, on page 3 — window
+`[2,3,4]`) and both low/high clamp edges.
+
+**Item 2 — Refunded/bad-debt invoices still showed a payment progress bar.** Confirmed directly:
+`InvoiceDetailPanel.jsx`'s `showPaymentProgress` was `Number(invoice.amount_paid) > 0 && invoice.status
+!== 'paid'` — excluded only `paid`, nothing else, so a refunded or bad-debt invoice with a real
+pre-existing `amount_paid` (neither `invoice_refund` nor `invoice_mark_bad_debt` reset that field — a
+partial refund from `partially_paid`, or a bad-debt write-off from an invoice with recorded payments,
+both leave `amount_paid` exactly as it was) still rendered "X% paid, Y outstanding." This file already had
+`NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']` (the INV-009/FE-001 audit-fix
+constant the Undo Payment gate reads from) — exactly the shared list this condition should have been
+reading from instead of its own narrower, independently-hand-rolled exclusion, the identical shape of
+drift that constant's own history already warns about. Fixed by reusing it directly:
+`showPaymentProgress = amount_paid > 0 && status !== 'paid' && !NO_PAYMENT_STATUSES.includes(status)` —
+`paid` stays its own separate exclusion (a fully-paid invoice shows its status elsewhere in the tab, not a
+progress bar), the other four ride the existing constant, no third copy created. New tests in
+`InvoiceDetailPanel.test.jsx` cover refunded (with a real nonzero `amount_paid`, matching what
+`invoice_refund` actually leaves behind — not the unrealistic `0.00` an earlier draft of this fix's own
+test would have used), bad_debt (with a real partial-payment history), and a no-regression check against
+the pre-existing paid exclusion.
+
+**Item 3 — Due date: narrowed where it's editable, and the frozen PDF now regenerates when it changes.**
+Confirmed both halves directly before changing anything. Scope: `invoice_detail`'s PUT handler computed
+`due_date_only_eligible = invoice.status in ('created',) + ACTIVE_STATUSES` — broader than draft+finalised,
+and per its own docstring/DECISIONS.md this was this app's own prior judgment call, not an explicit spec
+requirement, so narrowing it to `invoice.status == 'created'` is a legitimate product decision here, not a
+bug fix. PDF regen: separately, and regardless of scope, a successful due-date change through this path
+never touched `pdf_url`/`pdf_generated_at`/`pdf_public_id` at all — a `created` invoice already has a
+frozen PDF from `_finalise_invoice`, so a due-date edit left the stored document showing the stale date
+forever (no live-render fallback exists for `created`-status invoices — `invoice_pdf` only live-renders
+`draft`). Fixed by calling the exact same `apps.invoices.tasks.render_and_store_invoice_pdf.delay(...)`
+`_finalise_invoice` itself fires — never a second, parallel render path — right after the
+`DueDateOnlySerializer` save succeeds. A necessary, related frontend fix landed alongside this, beyond
+what this item's own file list named: `InvoiceDetailPanel.jsx`'s own `dueDateEditable` local variable used
+the OLD, broader status set (`['created', ...ACTIVE_STATUSES]`) to gate BOTH the "Change Due Date"
+More-menu item AND, independently, whether "Download" appears in the More menu (an unrelated
+footer-vs-More-menu layout decision that happened to share the same status set by coincidence, not
+design) — narrowing only the backend would have left "Change Due Date" visibly offered, and silently
+403ing, for sent/viewed/partially_paid invoices. Split into two independently-named conditions:
+`dueDateOnlyEditable` (narrowed, matches the backend exactly) and `downloadReachableInMoreMenu`
+(unchanged). New backend tests: `test_rejected_for_each_active_status` (renamed/inverted from
+`test_allowed_for_each_active_status`, now asserts 403 + unchanged `due_date`),
+`test_due_date_change_re_renders_and_re_stores_the_frozen_pdf` (mocks `store_invoice_pdf` — not
+`.delay()`, which `CELERY_TASK_ALWAYS_EAGER` runs synchronously under `manage.py test` — and asserts the
+mock was called with the invoice's own already-updated `due_date`, `pdf_url`/`pdf_public_id` changed, and
+`pdf_generated_at` advanced past a real stale baseline), and
+`test_due_date_change_uses_the_real_finalise_pdf_task_not_a_second_path` (mirrors
+`test_finalise_fires_the_pdf_render_as_a_background_task_not_inline`'s own pattern — asserts `.delay()`
+was called and `store_invoice_pdf` was never invoked directly). New frontend tests in
+`InvoiceDetailPanel.test.jsx` cover the narrowed More-menu scope and confirm Download's own, separate
+condition is untouched.
+
+**Item 4 — Escalation banner: sending a Formal Notice now also dismisses it (a real, deliberate
+reversal).** Read Step 17's own DECISIONS.md entry first, since this reverses a documented decision, not
+a bug: `escalation_dismissed` used to change only via the explicit Dismiss button, on the reasoning that
+"dismissing the prompt doesn't mean the invoice stopped being severely overdue." That reasoning still
+holds for `escalation_required` itself (the permanent historical record, untouched here) and for Formal
+Notice's own eligibility check (`escalation_required OR status == 'bad_debt'`, still reading
+`escalation_required` alone, never `and not escalation_dismissed` — a formal notice stays sendable even
+after this change, exactly as before). The NEW product decision is narrower: sending a Formal Notice is a
+strong enough action that the BANNER specifically should also clear. `invoice_send_formal_notice` now
+sets `escalation_dismissed = True` in the same `save()` as `formal_notice_sent_at`, after a successful
+send. New test: `test_sending_also_dismisses_the_escalation_banner_but_never_touches_escalation_required`
+— asserts both halves in one call (dismissed flips, required stays true), alongside the pre-existing
+`test_reachable_once_escalation_required_even_if_dismissed`, confirmed still passing unchanged (proving
+the reversal didn't quietly weaken that guarantee).
+
+**Item 5 — Removed the redundant "Template Gallery" `<h1>`.** `TemplateGallery.jsx` rendered its own
+`<h1>Template Gallery</h1>` + subtitle paragraph directly above content that AppShell's shared header
+already titles via `PAGE_TITLES['/invoices/templates']`. Same redundancy already fixed once on
+`Invoices.jsx`/`Clients.jsx` (DECISIONS.md's own "Item 1 — the page title + count line above the KPI cards
+removed, both pages" entry, List/Table restructure pass) — confirmed neither file has an `<h1>` today
+before assuming that precedent's shape, then applied identically here: removed the whole title block, not
+just the `<h1>` text, matching what that precedent actually did (no orphaned subtitle left with no
+heading). `TemplateGallery.test.jsx`'s own breadcrumb test asserted against `getByRole('heading', {level:
+1, name: 'Template Gallery'})` directly — updated to assert on the breadcrumb's own already-present
+"Template Gallery" text instead, plus a new explicit regression test
+(`no longer renders its own <h1> heading`) asserting `queryByRole('heading', {level: 1})` is null.
+
+**Item 6 — Template Gallery ordering: Ledger/Nova/every pro_* template now sorts before every free_*
+template.** Confirmed the real order first: `template_manifest.TEMPLATES` lists `professional` (Ledger),
+`minimal` (retired), `modern` (Nova), then all 9 `free_*` entries, then all 10 `pro_*` entries — so the
+real gallery showed Ledger first, then a long free-tier run, then every pro template bunched at the very
+end. Checked `test_manifest_drift.py` BEFORE choosing an implementation, per this item's own explicit
+instruction: `test_freelancer_profile_choices_match_the_manifest_keys_exactly` and
+`test_invoice_base_template_choices_are_generated_from_the_manifest` both do real ORDERED-list
+`assertEqual`s against `template_manifest.template_keys()` (raw `TEMPLATES` order), and
+`Invoice.base_template`'s own `choices=` are generated directly from that same raw order — reordering
+`TEMPLATES` itself would risk a Django `makemigrations`-detectable `choices=` change (this file's own
+comment already flags that as intentionally NOT versioned via migration, but reordering would still be a
+real, avoidable behavior change to a value 3 things depend on for reasons unrelated to gallery display).
+Did NOT reorder the source list. Instead added `_gallery_sort_group()` + sorted `selectable_templates()`
+only — `TEMPLATES`'/`template_keys()`'s own literal order is completely untouched, so
+`test_manifest_drift.py`'s existing ordered-list tests needed zero changes. The grouping is
+"original-plus-pro templates vs. the newer free-tier batch," not a strict tier sort: Nova (`modern`) sorts
+into the pro group despite its own real `tier: 'free'` metadata, matching the item's explicit
+specification. New test: `test_gallery_order_puts_ledger_nova_and_every_pro_template_before_every_free_
+template` — asserts the real `GET /api/invoices/templates/` response order against a freshly-computed
+expected order derived from the real manifest data (never a hardcoded key list), plus an explicit
+assertion that `TEMPLATES`' own raw order is unchanged.
+
+**Item 7 — Header: logo/wordmark vertical alignment + toggle-to-title spacing, both real, measured
+fixes.** Ran the actual app locally (no project run-skill existed — `redis-server`/`postgresql@17` were
+already running; started `runserver`/`vite` directly, no Celery needed since nothing here touches a
+background task) and drove it with a real headless Chromium session (`playwright`, installed into the
+session scratchpad, not the repo) — logged in as a fresh throwaway account, since a first login redirects
+to `/onboarding` (no AppShell/header) until `FreelancerProfile.onboarding_completed`, flipped directly via
+`manage.py shell` to reach the real header. (a) Vertical alignment: `getBoundingClientRect()` on the real
+rendered `<header>` showed every relevant box (logo, wordmark, toggle, title) already perfectly centered
+on the header's own midline (`centerY: 30` for all, at width=1280) — so this was never a flexbox
+`align-items` bug. A second measurement using `getBBox()` on the actual SVG `<path>` elements (ink bounds,
+not the declared box) found the real cause: `WordmarkSVG`'s own artwork (`Brand.jsx`, never altered — this
+item is explicit that only container/alignment CSS is in scope) reserves empty space BELOW the glyphs
+inside its `viewBox="0 0 140 21"` (no descenders in "LanceraOS"), not evenly above/below — ink spans
+y≈0–15.34 out of 21, so the visible glyphs sit flush at the top of their own box. Measured: wordmark ink
+center 27.44px vs. the logo's own ink center of exactly 30.0px at height=19 (header center is 30) — a real
+2.56px optical offset, matching the report exactly ("sits slightly higher"). Fixed with a wrapping `<span
+style={{transform: 'translateY(2.6px)'}}>` around each of the file's two `WordmarkSVG` usages (the desktop
+header's own 128×19 instance, and the mobile drawer's 107×16 instance, scaled proportionally to 2.2px) —
+container-only, `Brand.jsx` untouched, so `AuthLayout.jsx`'s own separate wordmark usage (out of this
+item's scope) is unaffected. Re-measured after: ink centers now 30.0px vs. 30.04px (desktop) and 28.0px
+vs. 28.04px (mobile drawer) — both effectively exact. (b) Toggle-to-title gap: measured at 34px (`toggle.
+right=236` to `title.left=270` at width 1280) — two separately-set paddings compounding (the fixed-left
+block's own 16px right padding + the title row's own 18px left padding, desktop only; mobile's own
+spacing was already tightened in an earlier pass and is untouched). Reduced the title row's own left
+padding from 18px to 8px, re-measured: 24px. Real screenshots taken before and after at 1280px (full
+header, a tight brand-lockup crop, and a 3×-scaled zoom) and at 768px (mobile header, confirming zero
+regression) and for the mobile drawer specifically (480px, hamburger opened) — all three confirm the fix
+visually, matching the numeric measurements. No project run-skill existed for this app before this
+session; none was created either (a one-off visual measurement task, not a recurring need).
+
+**Item 8 — Added a "Recurring" filter pill (real server-side, not client-side — see the correction
+below).** The item's own original framing assumed status/Overdue filtering was still "done client-side
+over the currently-loaded invoices array (no network refetch per click)," with a comment in `Invoices.jsx`
+explaining why, and an existing test already covering that zero-network-call behavior to mirror. Verified
+directly before writing anything: NONE of that is true of the current code. `Invoices.jsx`'s own header
+comment (its FIRST lines) already states plainly that the 17 August 2026 List/Table restructure made
+"every filter/search/sort/currency combination... a uniform, real server-paginated query" — status and
+Overdue included; `buildParams()`/`load()` send `status`/`overdue`/`currency`/`search` as real
+`api.get('/invoices/', {params})` query parameters, and `invoices.map()` renders the server's own returned
+page directly, with no client-side `.filter()` anywhere in the file. No "zero network calls" test exists
+in `Invoices.test.jsx` for status pills, and no "may undercount against what's loaded" alert exists
+anywhere in the rendered page — both were true of an EARLIER architecture (the 11 August 2026 "reload-feel
+fix," itself superseded by the List/Table restructure), not the current one. This is exactly the "more
+history than it first looks like" trap this batch's own prompt warned about. Implemented the actual intent
+(a working Recurring filter, matching the established pattern other pills use) against the REAL current
+architecture instead of the described-but-superseded one: `apps/invoices/views.py`'s `invoice_list` gained
+a real `?recurring=true` → `qs.filter(is_recurring=True)` WHERE-clause filter, composing with every other
+filter in the same chain exactly like `overdue`/`currency` already do. `Invoices.jsx` gained a
+`recurringOnly` state, a `toggleRecurringFilter()` handler mirroring `toggleOverdueFilter()` exactly
+(mutually exclusive with status AND Overdue, each clearing the other two), a `recurringChip` in the same
+pill row, and a `'__recurring__'` option folded into the existing mobile status/Overdue `<select>`.
+`EmptyState` gained a real "No recurring invoices yet." message on the same pattern as its Overdue/status
+messages. The "may undercount" alert-extension instruction doesn't apply — no such alert exists to extend.
+New backend tests: `test_recurring_filter`, `test_recurring_filter_excludes_non_recurring_invoices`,
+`test_recurring_filter_composes_with_currency`. New frontend tests (a new describe block, explicitly
+noting the architecture correction in its own header comment) prove: clicking Recurring sends a real
+`recurring=true` request and clears `status`/`overdue`; selecting a status pill or toggling Overdue each
+clear an active Recurring filter (both directions); the mobile dropdown offers "Recurring" and selecting
+it sends the real server filter. Every new test uses this suite's own established two-step mock pattern
+(register the initial response, wait for it to render, THEN re-register the filtered response before
+firing the action) — two of these tests initially failed against a single, prematurely-shared mock
+response and were fixed to match that established pattern before this pass's own final verification run.
+
+**What's out of scope, confirmed untouched:** the invoice checkbox/bulk-delete column (Item 8's own
+carve-out — a separate prompt's territory); the template manifest's own CONTENTS (Item 6 changed ordering
+only, zero templates added/removed/renamed); `escalation_required`'s semantics (Item 4 — only
+`escalation_dismissed`'s new side-effect trigger changed); recurring-invoice creation/pause/resume/
+generation itself (Item 8 is filter-only).

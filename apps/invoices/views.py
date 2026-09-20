@@ -308,6 +308,18 @@ def invoice_list(request):
         # the query level instead of instantiating every row in Python.
         qs = qs.exclude(status__in=NON_OVERDUE_STATUSES).filter(due_date__lt=timezone.now().date())
 
+    # Invoice List & Template Gallery Polish batch (20 September 2026) —
+    # a real WHERE-clause filter, matching every other filter on this
+    # endpoint (status/overdue/currency/search are all real server
+    # queries, not a client-side window over already-loaded data — see
+    # DECISIONS.md for why this item's own original framing assumed the
+    # opposite, stale architecture). Mutually exclusive with status/
+    # overdue at the frontend call-site level (Invoices.jsx never sends
+    # more than one of status/overdue/recurring at once), but composes
+    # safely here regardless, same as every other filter in this chain.
+    if request.query_params.get('recurring') == 'true':
+        qs = qs.filter(is_recurring=True)
+
     client_id = request.query_params.get('client')
     if client_id:
         qs = qs.filter(client_id=client_id)
@@ -399,13 +411,19 @@ def invoice_detail(request, pk):
     changed here — "edit the whole series going forward" — via
     RecurringSeriesSettingsSerializer, never the general InvoiceSerializer.
 
-    Bug-hardening round's own narrow exception, same shape: a non-draft,
-    non-terminal invoice (created/sent/viewed/partially_paid — i.e. still
-    has a real due date that matters) may still have exactly its
-    due_date changed here — InvoiceDetailPanel's "Change Due Date"
-    More-menu action — via DueDateOnlySerializer. A terminal invoice
-    (paid/cancelled/refunded/bad_debt) is excluded — nothing left to
-    reschedule once resolved.
+    Bug-hardening round's own narrow exception, same shape: a
+    `created`-status invoice may still have exactly its due_date changed
+    here — InvoiceDetailPanel's "Change Due Date" More-menu action — via
+    DueDateOnlySerializer, which also re-queues the frozen PDF's
+    render+store (see below) so the stored document doesn't show a stale
+    date. NARROWED (Invoice List & Template Gallery Polish batch, 20
+    September 2026 — see DECISIONS.md): previously also allowed for
+    sent/viewed/partially_paid (ACTIVE_STATUSES) — that broader scope was
+    this app's own prior judgment call, not an explicit spec requirement,
+    and has been narrowed to `created` only as a deliberate product
+    decision. A terminal invoice (paid/cancelled/refunded/bad_debt) was
+    already excluded and still is — nothing left to reschedule once
+    resolved.
 
     A non-root invoice touching anything outside these two narrow
     allowances, or a terminal-status invoice, still hits the ordinary
@@ -440,7 +458,15 @@ def invoice_detail(request, pk):
             logger.info('[INVOICES] Updated recurring series settings on root invoice %s.', invoice.pk)
             return Response(InvoiceListSerializer(invoice).data)
 
-        due_date_only_eligible = invoice.status in ('created',) + ACTIVE_STATUSES
+        # Narrowed from ('created',) + ACTIVE_STATUSES to just ('created',)
+        # — the broader scope was this app's own prior judgment call, not
+        # an explicit spec requirement (see DECISIONS.md), and is narrowed
+        # here as a deliberate product decision. A `created` invoice
+        # already has a frozen PDF (_finalise_invoice); sent/viewed/
+        # partially_paid invoices no longer get a due-date-only allowance
+        # at all — they fall through to the ordinary is_editable rejection
+        # below like any other post-draft edit.
+        due_date_only_eligible = invoice.status == 'created'
         if due_date_only_eligible and submitted_fields and submitted_fields.issubset({'due_date'}):
             if _check_moderate_rate_limit('update', request.user):
                 return _too_many_requests('Too many updates. Please try again later.')
@@ -448,7 +474,17 @@ def invoice_detail(request, pk):
             if not serializer.is_valid():
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             serializer.save()
-            logger.info('[INVOICES] Due date changed to %s for invoice %s.', invoice.due_date, invoice.invoice_number)
+            # The invoice already has a frozen PDF from _finalise_invoice
+            # (status='created' implies one was rendered) showing the OLD
+            # due date — re-render+re-store via the exact same background
+            # task _finalise_invoice fires, never a second, parallel
+            # PDF-generation path. Non-fatal by construction, same as
+            # _finalise_invoice's own use of it: a render/upload hiccup
+            # here just leaves pdf_url at its prior (now stale) value,
+            # and invoice_pdf/fetch_invoice_pdf_bytes' own self-heal chain
+            # already treats that as "render live instead," not an error.
+            render_and_store_invoice_pdf.delay(str(invoice.pk))
+            logger.info('[INVOICES] Due date changed to %s for invoice %s; PDF re-render queued.', invoice.due_date, invoice.invoice_number)
             return Response(InvoiceListSerializer(invoice).data)
 
         return Response(
@@ -1515,6 +1551,19 @@ def invoice_send_formal_notice(request, pk):
     surfaces, in the response, that one already went out (the frontend
     uses this to show a warning before the freelancer confirms again,
     not to prevent the action).
+
+    REVERSED (Invoice List & Template Gallery Polish batch, 20 September
+    2026 — see DECISIONS.md): a successful send now also sets
+    escalation_dismissed=True, clearing the escalation BANNER. This does
+    NOT touch escalation_required — that stays the permanent historical
+    record that the invoice did cross the threshold, and the eligibility
+    check above still reads escalation_required alone (not "and not
+    escalation_dismissed"), so a formal notice stays sendable even after
+    the banner is cleared, exactly as before. The product decision is
+    narrower than it looks: sending a Formal Notice is a strong enough
+    action that the PROMPT specifically should clear, the same as an
+    explicit Dismiss click — the underlying "this did escalate" fact is
+    unaffected either way.
     """
     if not request.data.get('confirm'):
         return Response({'error': 'confirm: true is required to send a formal notice.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1547,7 +1596,8 @@ def invoice_send_formal_notice(request, pk):
         return Response({'error': f'Could not send the formal notice: {detail}.'}, status=status.HTTP_502_BAD_GATEWAY)
 
     invoice.formal_notice_sent_at = timezone.now()
-    invoice.save(update_fields=['formal_notice_sent_at', 'updated_at'])
+    invoice.escalation_dismissed = True
+    invoice.save(update_fields=['formal_notice_sent_at', 'escalation_dismissed', 'updated_at'])
 
     emit('FormalNoticeSent', invoice_id=str(invoice.pk), user_id=str(request.user.pk))
     logger.info('[INVOICES] Formal notice sent for invoice %s.', invoice.invoice_number)

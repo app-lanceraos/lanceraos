@@ -1616,7 +1616,10 @@ Key API endpoints — apps/invoices/ Escalation + Formal Notice (built, real —
   escalation_required OR status='bad_debt'; a real, distinct, firmer-toned email reusing the same
   send-email routing chain every other invoice email uses; tracked via formal_notice_sent_at, never
   blocks a deliberate re-send; a real, server-enforced FreelancerProfile.formal_notice_enabled kill
-  switch, not just hidden client-side — Settings > Business's "Invoicing Defaults" card)
+  switch, not just hidden client-side — Settings > Business's "Invoicing Defaults" card. A successful
+  send now ALSO sets escalation_dismissed=True, 20 September 2026 — see DECISIONS.md — so dismiss-
+  escalation is no longer the only way the banner clears; escalation_required and this endpoint's own
+  eligibility check are both untouched by that change)
 
 Key API endpoints — apps/invoices/ Analytics (built, real — Step 18):
 - GET /api/invoices/analytics/?months=<int> (default 6, clamped [1,24] — month-over-month
@@ -2028,6 +2031,42 @@ eliminated; `.totals` atomicity (real insurance — no live split was ever found
 already a flex item and flex items proved atomic by construction here); and the same notes/payment
 dead-column fix as Ledger's Fix 6. See DECISIONS.md's 19 September 2026 Nova entry for the full
 float-vs-flex/float-vs-table evidence and every fix's real before/after.
+
+**20 September 2026 (Invoice List & Template Gallery Polish batch — 8 items).** Pagination
+(`Pagination.jsx`): the old anchor+window+ellipsis scheme (always pinned page 1 and the last page,
+plus a window of 1 around the current page) is gone — numbered page buttons are now a plain sliding
+window of exactly `min(3, totalPages)` consecutive pages, no ellipsis, no permanent first/last
+shortcuts; Prev/Next remain the only way to reach a page outside that window. Due-date editability
+(`invoice_detail`'s PUT handler): the narrow due-date-only allowance is now `created` only — no
+longer also `sent`/`viewed`/`partially_paid` (that broader scope was this app's own prior judgment
+call, not an explicit spec requirement — narrowing it here is a deliberate product decision, not a
+bug fix); a successful due-date change on a `created` invoice now also re-renders and re-stores the
+frozen PDF via the exact same background task `_finalise_invoice` uses
+(`render_and_store_invoice_pdf`), so the stored document no longer shows a stale date.
+`InvoiceDetailPanel.jsx`'s own "Change Due Date" More-menu item is narrowed to match; "Download"
+staying in the More menu for active statuses is an unrelated, unchanged condition that happened to
+share the same status set before. Escalation banner: sending a Formal Notice
+(`invoice_send_formal_notice`) now ALSO sets `escalation_dismissed=True` (a real, deliberate reversal
+of Step 17's original design — see DECISIONS.md for the full before/after reasoning) — the banner
+clears, but `escalation_required` itself (the permanent historical record) and Formal Notice's own
+eligibility check are both untouched, so a formal notice stays sendable afterward exactly as before.
+Template Gallery: its own redundant in-page `<h1>Template Gallery</h1>` is removed (AppShell's shared
+header already titles the page — same fix already applied once to Invoices.jsx/Clients.jsx). Template
+Gallery default ordering: `template_manifest.selectable_templates()` now sorts Ledger (`professional`),
+Nova (`modern`), and every `pro_*` template ahead of every `free_*` template for gallery DISPLAY only —
+`TEMPLATES`' own raw list order (and everything derived from it byte-for-byte: `template_keys()`,
+`Invoice.base_template`'s/`FreelancerProfile.INVOICE_TEMPLATE_CHOICES`'s own `choices=` tuples) is
+untouched, to avoid any risk to `test_manifest_drift.py`'s ordered-list assertions or an avoidable
+Django `choices=` migration. Invoice list: added a real "Recurring" filter pill
+(`GET /api/invoices/?recurring=true` → `qs.filter(is_recurring=True)`), mutually exclusive with the
+status pills and Overdue the same way those two already are with each other — implemented as a real
+server-side query param, matching every other filter this list already uses (status/overdue/currency/
+search are ALL real, independently-paginated server queries as of the 17 August 2026 List/Table
+restructure — status/Overdue filtering is NOT client-side, despite this item's own original task
+framing assuming otherwise; see DECISIONS.md for the full correction). See DECISIONS.md's 20 September
+2026 "Invoice List & Template Gallery Polish batch" entry for the full per-item root cause, fix, and
+verification detail (backend: 1098 tests passing; frontend: 251 tests passing; `vite build` clean; real
+Playwright screenshots for the header alignment/spacing fix specifically).
 
 ---
 
