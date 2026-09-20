@@ -45,21 +45,21 @@ export default function SecuritySection() {
     }
   }
 
-  // ── 2FA ───────────────────────────────────────────────────────
+  // ── 2FA enable (single-step, password only — turning 2FA ON is
+  // security-increasing and doesn't need a second factor) ───────────
   const updateUser = useAuthStore((s) => s.updateUser)
   const [twoFaPassword, setTwoFaPassword] = useState('')
   const [twoFaSaving, setTwoFaSaving] = useState(false)
   const twoFaMsg = useTimedMessage()
 
-  const handleToggle2FA = async () => {
+  const handleEnable2FA = async () => {
     if (!twoFaPassword) {
       twoFaMsg.show('error', 'Password is required.')
       return
     }
     setTwoFaSaving(true)
     try {
-      const action = user?.two_fa_enabled ? 'disable' : 'enable'
-      const res = await api.post('/auth/2fa/toggle/', { action, password: twoFaPassword })
+      const res = await api.post('/auth/2fa/toggle/', { action: 'enable', password: twoFaPassword })
       updateUser(res.data.user)
       setTwoFaPassword('')
       twoFaMsg.show('success', res.data.message || 'Two-factor authentication updated.')
@@ -67,6 +67,61 @@ export default function SecuritySection() {
       twoFaMsg.show('error', err.response?.data?.error || 'Failed to update two-factor authentication.')
     } finally {
       setTwoFaSaving(false)
+    }
+  }
+
+  // ── 2FA disable (password -> OTP, mirrors the account-deletion flow
+  // below — turning 2FA OFF removes the account's own protection, so a
+  // password alone must not be sufficient) ───────────────────────────
+  const [tfdStep, setTfdStep] = useState(0)
+  const [tfdPassword, setTfdPassword] = useState('')
+  const [tfdOtp, setTfdOtp] = useState('')
+  const [tfdSessionId, setTfdSessionId] = useState('')
+  const [tfdMasked, setTfdMasked] = useState('')
+  const [tfdSaving, setTfdSaving] = useState(false)
+  const [tfdPwErr, setTfdPwErr] = useState('')
+  const [tfdOtpErr, setTfdOtpErr] = useState('')
+
+  const handleDisable2FARequest = async () => {
+    if (!tfdPassword) {
+      setTfdPwErr('Password is required.')
+      return
+    }
+    setTfdSaving(true)
+    setTfdPwErr('')
+    try {
+      const res = await api.post('/auth/2fa/disable/request/', { password: tfdPassword })
+      setTfdSessionId(res.data.session_id)
+      setTfdMasked(res.data.masked_email)
+      setTfdPassword('')
+      setTfdStep(1)
+    } catch (err) {
+      setTfdPwErr(err.response?.data?.error || 'Incorrect password.')
+    } finally {
+      setTfdSaving(false)
+    }
+  }
+
+  const handleDisable2FAConfirm = async () => {
+    if (!tfdOtp || tfdOtp.length < 6) {
+      setTfdOtpErr('Enter the 6-digit code.')
+      return
+    }
+    setTfdSaving(true)
+    setTfdOtpErr('')
+    try {
+      const res = await api.post('/auth/2fa/disable/confirm/', { session_id: tfdSessionId, otp_code: tfdOtp })
+      updateUser(res.data.user)
+      setTfdStep(0)
+      setTfdOtp('')
+      setTfdSessionId('')
+      setTfdMasked('')
+      twoFaMsg.show('success', res.data.message || 'Two-factor authentication disabled.')
+    } catch (err) {
+      setTfdOtpErr(err.response?.data?.error || 'Incorrect code.')
+      setTfdOtp('')
+    } finally {
+      setTfdSaving(false)
     }
   }
 
@@ -306,21 +361,68 @@ export default function SecuritySection() {
             ? 'A 6-digit code will be emailed to you each time you sign in from a new device.'
             : 'Add an extra layer of security — a 6-digit code will be emailed to you at sign-in.'}
         </p>
-        <div style={{ display: 'flex', gap: 10, maxWidth: 400, alignItems: 'flex-end' }}>
-          <div style={{ flex: 1 }}>
-            <FormField
-              label="Confirm with your password" type="password" autoComplete="current-password"
-              value={twoFaPassword} onChange={(e) => setTwoFaPassword(e.target.value)}
-            />
+
+        {!user?.two_fa_enabled && (
+          <div style={{ display: 'flex', gap: 10, maxWidth: 400, alignItems: 'flex-end' }}>
+            <div style={{ flex: 1 }}>
+              <FormField
+                label="Confirm with your password" type="password" autoComplete="current-password"
+                value={twoFaPassword} onChange={(e) => setTwoFaPassword(e.target.value)}
+              />
+            </div>
+            <button onClick={handleEnable2FA} disabled={twoFaSaving} className="fos-btn fos-btn-accent">
+              {twoFaSaving ? <><span className="fos-spinner" /> Saving…</> : 'Enable'}
+            </button>
           </div>
-          <button
-            onClick={handleToggle2FA}
-            disabled={twoFaSaving}
-            className={user?.two_fa_enabled ? 'fos-btn fos-btn-danger' : 'fos-btn fos-btn-accent'}
-          >
-            {twoFaSaving ? <><span className="fos-spinner" /> Saving…</> : user?.two_fa_enabled ? 'Disable' : 'Enable'}
-          </button>
-        </div>
+        )}
+
+        {user?.two_fa_enabled && tfdStep === 0 && (
+          <div style={{ maxWidth: 400 }}>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: 10 }}>
+              Disabling 2FA requires your password and a verification code, since it removes your
+              account's own protection.
+            </p>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <FormField
+                  label="Confirm with your password" type="password" autoComplete="current-password"
+                  value={tfdPassword}
+                  onChange={(e) => { setTfdPassword(e.target.value); setTfdPwErr('') }}
+                  error={tfdPwErr}
+                />
+              </div>
+              <button onClick={handleDisable2FARequest} disabled={!tfdPassword || tfdSaving} className="fos-btn fos-btn-danger">
+                {tfdSaving ? <><span className="fos-spinner" /> Sending…</> : 'Disable'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {user?.two_fa_enabled && tfdStep === 1 && (
+          <div style={{ maxWidth: 360 }}>
+            <div style={{ marginBottom: 12 }}>
+              <FosAlert type="info">
+                A 6-digit code was sent to <strong>{tfdMasked}</strong>. Enter it below to confirm disabling 2FA.
+              </FosAlert>
+            </div>
+            <FormField
+              label="Verification Code"
+              value={tfdOtp}
+              onChange={(e) => { setTfdOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setTfdOtpErr('') }}
+              error={tfdOtpErr}
+              placeholder="000000"
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button onClick={() => { setTfdStep(0); setTfdOtp(''); setTfdOtpErr('') }} className="fos-btn fos-btn-ghost" style={{ flex: 1 }}>
+                Back
+              </button>
+              <button onClick={handleDisable2FAConfirm} disabled={tfdOtp.length < 6 || tfdSaving} className="fos-btn fos-btn-danger" style={{ flex: 1 }}>
+                {tfdSaving ? <><span className="fos-spinner" /> Verifying…</> : 'Verify and Disable'}
+              </button>
+            </div>
+          </div>
+        )}
       </Card>
 
       <Card title="Danger Zone">

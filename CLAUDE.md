@@ -494,7 +494,17 @@ revocable at GET/DELETE /api/auth/sessions/ (frontend: Settings > Sessions).
 2FA: OTP via email. Optional but available — requires a real password,
 so an OAuth-only account must add one first (see below) before 2FA can
 be enabled at all. A trusted-device cookie (httpOnly, 30 days) can skip
-2FA on a recognized device.
+2FA on a recognized device. Enabling 2FA is password-only (security-
+increasing action, no second factor needed to gate it). Disabling 2FA
+requires password + OTP (20 September 2026 fix — a correct password
+alone used to be sufficient to disable 2FA, defeating the protection
+it exists to supplement; see DECISIONS.md): Settings > Security's
+Disable action calls POST /api/auth/2fa/disable/request/ (password,
+emails a 6-digit code) then POST /api/auth/2fa/disable/confirm/
+(session_id + otp_code), mirroring the account-deletion
+password -> OTP -> confirm pattern below. POST /api/auth/2fa/toggle/
+now only accepts action=enable; the old action=disable branch on that
+endpoint was removed rather than left as a second working path.
 
 OAuth-only accounts adding a password: an account that signed up via
 Google/Facebook and never set a password (is_oauth_only()) can add one
@@ -581,6 +591,8 @@ Key API endpoints:
 - GET /api/auth/sessions/ + DELETE /api/auth/sessions/<id>/
   + POST /api/auth/sessions/<id>/rename/
 - POST /api/auth/2fa/verify/ + /api/auth/2fa/resend/ + /api/auth/2fa/toggle/
+  (action=enable only) + /2fa/disable/request/ + /2fa/disable/confirm/
+  (disable's own password -> OTP -> confirm pair, 20 September 2026)
 - POST /api/auth/change-password/
 - POST /api/auth/forgot-password/ + /api/auth/reset-password/<uid>/<token>/
 - POST /api/auth/security/add-password/request/

@@ -184,6 +184,18 @@ def send_2fa_enabled_email(user, ip_address, user_agent, timestamp) -> bool:
     return send_email(user.email, 'Two-factor authentication enabled', _html(body))
 
 
+def send_2fa_disable_otp_email(user, otp_code: str) -> bool:
+    body = (
+        _heading('Confirm disabling two-factor authentication')
+        + _paragraph(f'Hi {_name(user)}, enter this code to confirm you want to turn off two-factor '
+                     'authentication on your account:')
+        + _code_box(otp_code)
+        + _paragraph('This code expires in 10 minutes. If you didn\'t request this, someone may have '
+                     'your password — consider changing it. Your two-factor authentication is still active.')
+    )
+    return send_email(user.email, f'Confirm disabling 2FA: {otp_code}', _html(body))
+
+
 def send_2fa_disabled_email(user, ip_address, user_agent, timestamp) -> bool:
     when = timestamp.strftime('%B %d, %Y at %I:%M %p').replace(' 0', ' ')
     body = (

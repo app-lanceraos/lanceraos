@@ -22,7 +22,9 @@ urlpatterns = [
     # ── 2FA ──────────────────────────────────────────────────────
     path('2fa/verify/', auth.verify_2fa, name='2fa_verify'),
     path('2fa/resend/', auth.resend_2fa, name='2fa_resend'),
-    path('2fa/toggle/', security.toggle_2fa, name='2fa_toggle'),
+    path('2fa/toggle/', security.toggle_2fa, name='2fa_toggle'),  # action='enable' only — see security.py
+    path('2fa/disable/request/', security.request_disable_2fa, name='2fa_disable_request'),
+    path('2fa/disable/confirm/', security.disable_2fa_confirm, name='2fa_disable_confirm'),
 
     # ── OAuth ────────────────────────────────────────────────────
     path('google/', oauth.google_login, name='google_login'),

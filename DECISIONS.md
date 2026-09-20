@@ -11111,3 +11111,80 @@ structurally different one without its own real verification, exactly the standi
 week of fix passes keeps re-confirming. `@page :first`, the actual fix, was never in this pass's own
 starting plan; it was found only after the float's real failure forced a search for an alternative,
 and turned out to be simpler and more robust than the approach it replaced.
+
+---
+
+Date: 20 September 2026 (2FA disable now requires OTP, not password alone)
+Decision/Reason:
+
+`toggle_2fa` (`apps/users/views/security.py`) handled both `action=enable` and `action=disable` on one
+endpoint, and for both actions the only verification was the caller's current password
+(`user.check_password(password)`). Turning 2FA OFF removed the account's own second-factor protection
+using nothing but the single factor 2FA exists to supplement — a leaked, reused, shoulder-surfed, or
+device-saved password was sufficient on its own to strip an account of 2FA entirely, with no OTP, no
+email confirmation, nothing. `enable` was never the problem — turning 2FA ON is security-increasing and
+correctly stays password-only.
+
+Fixed by splitting disable into its own two-step flow, mirroring `apps/users/views/deletion.py`'s own
+password -> OTP -> confirm pattern (the closest existing precedent for "a consequential security action
+needs more than a password"), rather than making `toggle_2fa` itself stateful on OTP presence: a new
+`request_disable_2fa` (`POST /api/auth/2fa/disable/request/`, password-gated, rate-limited via the same
+shared `password_check_{user.pk}` counter `toggle_2fa`/`change_password` already use, plus a
+`deletion_req`-style `2fa_disable_req_{user.pk}` cap of 3/hour on session creation) issues a 6-digit OTP
+into a cache-based session (`2fa_disable_session_{session_id}`, `make_password`-hashed, 10-minute TTL,
+5-attempt cap — byte-for-byte the same convention `verify_2fa`/`verify_deletion_otp` already use, not a
+new mechanism) and emails it via a new `send_2fa_disable_otp_email` (a dedicated function with its own
+"confirm disabling 2FA" wording, matching deletion's own dedicated `send_account_deletion_otp_email`
+rather than reusing login's `send_2fa_code_email`, which would read confusingly like a login code). A
+new `disable_2fa_confirm` (`POST /api/auth/2fa/disable/confirm/`) verifies the OTP against that cache
+session and then performs exactly what `toggle_2fa`'s old disable branch did: `two_fa_enabled=False`,
+`two_fa_code`/`two_fa_code_expiry` cleared, every `TrustedDevice.skip_2fa` reset to `False` (rows
+preserved, not deleted — device recognition must survive 2FA being turned off), `send_2fa_disabled_email`,
+`log_event('2fa_disabled', ...)`. `toggle_2fa`'s own `disable` branch was removed outright (not left as a
+second, silent working path) — it now only ever returns `{'error': 'Invalid action.'}` for
+`action=disable`, so a caller can't bypass the new OTP requirement by hitting the old route. `enable` is
+untouched.
+
+Option A (the two-named-endpoints split above) vs. Option B (one stateful endpoint branching on whether
+`otp_code` is present in the body): took Option A, because every other multi-step security flow already
+in this codebase — login 2FA (`verify_2fa`/`resend_2fa`), deletion (`initiate_deletion`/
+`verify_deletion_otp`/`confirm_deletion`), email change (`request_email_change`/
+`complete_email_change_step1`/`activate_new_email`) — uses distinct named endpoints per step. A single
+stateful endpoint would be the only multi-step flow in the app shaped that way, for no real benefit over
+matching the existing convention.
+
+Audited the codebase for the same shape of gap elsewhere — every place a view reads a password from the
+request body and treats a correct check as authorization (`grep` for `request.data.get('password'` and
+`user.check_password(password)` across `apps/`, views only): `change_password` (intentionally
+password-only, per this task's own scope — changing to a NEW password one already knows is not a
+privilege-escalation action the way disabling 2FA is); `complete_email_change_step1` (email change step
+1C) takes a password but is only step 1 of 3 — nothing takes effect until step 2's separate confirmation
+link is clicked in the NEW inbox, an already-adequate dual-inbox-confirmation design, not a bare
+password gate; `initiate_deletion`/`initiate_deletion_oauth` are already the correct precedent
+(password/OAuth-reauth + OTP + confirm), not the problem; `admin_login`
+(`apps/admin_panel/views.py`) checks password only as step 1 of a login flow where 2FA is mandatory for
+every admin account (`admin_login` rejects outright if `two_fa_enabled=False`) — not a standalone
+consequential action; `complete_add_password` reads a password to SET it (protected by an
+email-confirmed token, not treated as an authorization credential) — setting a first password is not the
+same shape of problem as removing a protection with one already known. No other unaddressed gap of this
+shape was found; nothing beyond 2FA-disable was changed.
+
+Verification: full backend suite, `python manage.py test --keepdb` — **1091 tests, OK, 0 failures** (this
+pass's own change replaced 2 pre-existing `Toggle2FATests` disable cases with 4 `Toggle2FATests`
+enable-only cases plus a new 6-test `Disable2FAOTPTests` class, net +8 in `apps/users`; no regressions
+anywhere else in the suite). Real 2FA test coverage already existed at
+`apps/users/tests/test_security.py`'s `Toggle2FATests` class (a separate `test_2fa.py` file exists in the
+same directory but is empty, 0 bytes — confirmed directly, not assumed, before writing anything new).
+New/updated tests, all in `test_security.py`: `Toggle2FATests.test_disable_action_on_old_toggle_endpoint_is_rejected_not_a_silent_bypass`
+proves (a) — the old route now rejects `action=disable` outright and 2FA stays on. A new
+`Disable2FAOTPTests` class proves (b) — `test_full_password_otp_disable_flow_produces_identical_end_state`
+walks the real password -> OTP -> disable path end to end and asserts the exact same end-state the old
+disable branch produced (state fields, `TrustedDevice` rows preserved with `skip_2fa` reset, the disabled
+email sent); (c) — `test_wrong_otp_rejected_disables_nothing` asserts a wrong code is rejected with 2FA
+still on; (d) — `test_otp_session_expires_same_as_login_2fa_session` (cache-key deletion simulating TTL
+expiry produces the same "session expired" class of error `verify_deletion_otp` gives) and
+`test_otp_attempt_cap_matches_5_attempt_convention` (6th wrong attempt after 5 real ones locks the session
+out and deletes it, matching `verify_2fa`/`verify_deletion_otp`'s own off-by-one-at-the-6th-attempt
+behavior exactly, verified against their real code rather than assumed). Frontend: `npx vitest run` —
+**222 passed (222)**, no test file exists for `SecuritySection.jsx` so none needed updating; `npx vite
+build` — clean, only the pre-existing unrelated `authStore.js` dynamic/static dual-import warning.

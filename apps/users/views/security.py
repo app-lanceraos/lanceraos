@@ -1,9 +1,11 @@
 # apps/users/views/security.py
 import hashlib
 import hmac
+import uuid
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password, make_password
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -21,6 +23,7 @@ from core.observability import get_client_ip, get_user_agent, log_event
 from ..authentication import enforce_csrf_standalone
 from ..cookies import REFRESH_COOKIE_NAME, set_auth_cookies
 from ..emails import (
+    send_2fa_disable_otp_email,
     send_2fa_disabled_email,
     send_2fa_enabled_email,
     send_email_change_step1_email,
@@ -31,7 +34,7 @@ from ..emails import (
 from ..models import EmailChangeRequest, FreelancerProfile, Session
 from ..serializers import DISPOSABLE_DOMAINS, UserSerializer, validate_password_strength
 from ..token_service import issue_tokens_and_session, rotate_session
-from .auth import NO_AUTH, _generate_token, _mask_email
+from .auth import NO_AUTH, _generate_otp, _generate_token, _mask_email
 
 User = get_user_model()
 
@@ -130,12 +133,20 @@ def change_password(request):
 
 
 # ══════════════════════════════════════════════════════════════════
-# 2FA ENABLE / DISABLE
+# 2FA ENABLE (password-only — turning 2FA ON is security-increasing and
+# doesn't need a second factor to gate it)
 # ══════════════════════════════════════════════════════════════════
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def toggle_2fa(request):
+    """
+    Handles action='enable' only. Disabling 2FA is a security-DECREASING
+    action and requires a second factor beyond the password alone — see
+    request_disable_2fa/disable_2fa_confirm below, which replace what used
+    to be this view's 'disable' branch (removed rather than left as a
+    silent bypass of the OTP requirement).
+    """
     user = request.user
 
     key = f'password_check_{request.user.pk}'
@@ -157,33 +168,138 @@ def toggle_2fa(request):
     if not user.check_password(password):
         return Response({'error': 'Incorrect password.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    from core.observability import normalize_user_agent
-    ip = get_client_ip(request)
-    ua_normalized = normalize_user_agent(get_user_agent(request))
-
     if action == 'enable':
+        from core.observability import normalize_user_agent
+        ip = get_client_ip(request)
+        ua_normalized = normalize_user_agent(get_user_agent(request))
         user.two_fa_enabled = True
         user.save(update_fields=['two_fa_enabled'])
         send_2fa_enabled_email(user, ip, ua_normalized, timezone.now())
         log_event('2fa_enabled', user=user, request=request)
         return Response({'message': '2FA enabled.', 'two_fa_enabled': True, 'user': UserSerializer(user).data})
 
-    if action == 'disable':
-        user.two_fa_enabled = False
-        user.two_fa_code = ''
-        user.two_fa_code_expiry = None
-        user.save(update_fields=['two_fa_enabled', 'two_fa_code', 'two_fa_code_expiry'])
-        # Only revokes the 2FA-skip privilege, NOT device recognition itself
-        # — TrustedDevice rows also drive the new-device-login email now
-        # (see checklist items 1-2), so wiping them entirely here would
-        # cause a burst of "new device" emails for already-known devices
-        # on their next login, purely because 2FA was turned off.
-        user.trusted_devices.update(skip_2fa=False)
-        send_2fa_disabled_email(user, ip, ua_normalized, timezone.now())
-        log_event('2fa_disabled', user=user, request=request)
+    return Response({'error': 'Invalid action.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 2FA DISABLE — password -> OTP -> disable (mirrors the account-deletion
+# password -> OTP -> confirm pattern in views/deletion.py; turning 2FA OFF
+# removes the account's own protection, so a leaked/reused/shoulder-surfed
+# password alone must not be sufficient to do it)
+# ══════════════════════════════════════════════════════════════════
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def request_disable_2fa(request):
+    """Step 1: user enters their password. Sends a 6-digit OTP to confirm disabling 2FA."""
+    user = request.user
+
+    key = f'password_check_{user.pk}'
+    count = cache.get(key, 0)
+    if count >= 10:
+        return Response({'error': 'Too many attempts. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
+
+    password = request.data.get('password', '')
+
+    if user.is_oauth_only():
+        return Response(
+            {'error': 'Accounts linked via Google or Facebook manage 2FA through that provider.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not user.two_fa_enabled:
+        return Response({'error': 'Two-factor authentication is already disabled.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not password:
+        return Response({'error': 'Password is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not user.check_password(password):
+        return Response({'error': 'Incorrect password.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    req_key = f'2fa_disable_req_{user.pk}'
+    req_count = cache.get(req_key, 0)
+    if req_count >= 3:
+        return Response({'error': 'Too many requests. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(req_key, req_count + 1, timeout=3600)
+
+    otp = _generate_otp()
+    session_id = str(uuid.uuid4())
+    cache.set(f'2fa_disable_session_{session_id}', {
+        'otp_hash': make_password(otp),
+        'user_id': str(user.pk),
+        'attempt_count': 0,
+        'created_at': timezone.now().isoformat(),
+    }, timeout=600)
+
+    if not send_2fa_disable_otp_email(user, otp):
+        cache.delete(f'2fa_disable_session_{session_id}')
+        return Response(
+            {'error': 'Failed to send verification email. Please try again shortly.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    log_event('2fa_disable_requested', user=user, request=request)
+
+    return Response({
+        'message': 'A 6-digit verification code has been sent to your email.',
+        'session_id': session_id,
+        'masked_email': _mask_email(user.email),
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def disable_2fa_confirm(request):
+    """Step 2: user enters the OTP. On success, performs the exact same state change toggle_2fa's old disable branch did."""
+    user = request.user
+    session_id = request.data.get('session_id', '').strip()
+    otp_code = request.data.get('otp_code', '').strip()
+
+    if not session_id or not otp_code:
+        return Response({'error': 'Session ID and code are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    cache_key = f'2fa_disable_session_{session_id}'
+    cached = cache.get(cache_key)
+    if not cached:
+        return Response({'error': 'Session expired. Please start again.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if cached['user_id'] != str(user.pk):
+        return Response({'error': 'Invalid session.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    attempt_count = cached.get('attempt_count', 0)
+    if attempt_count >= 5:
+        cache.delete(cache_key)
+        return Response({'error': 'Too many incorrect attempts. Please start again.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not check_password(otp_code, cached['otp_hash']):
+        cached['attempt_count'] = attempt_count + 1
+        cache.set(cache_key, cached, timeout=600)
+        remaining = 5 - (attempt_count + 1)
+        return Response({'error': f'Incorrect code. {remaining} attempt(s) remaining.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    cache.delete(cache_key)
+
+    if not user.two_fa_enabled:
+        # Already disabled — nothing left to do (e.g. a second tab already
+        # completed this flow). Report the current, correct state rather
+        # than re-sending the disabled email/audit event a second time.
         return Response({'message': '2FA disabled.', 'two_fa_enabled': False, 'user': UserSerializer(user).data})
 
-    return Response({'error': 'Invalid action.'}, status=status.HTTP_400_BAD_REQUEST)
+    from core.observability import normalize_user_agent
+    ip = get_client_ip(request)
+    ua_normalized = normalize_user_agent(get_user_agent(request))
+
+    user.two_fa_enabled = False
+    user.two_fa_code = ''
+    user.two_fa_code_expiry = None
+    user.save(update_fields=['two_fa_enabled', 'two_fa_code', 'two_fa_code_expiry'])
+    # Only revokes the 2FA-skip privilege, NOT device recognition itself
+    # — TrustedDevice rows also drive the new-device-login email now
+    # (see checklist items 1-2), so wiping them entirely here would
+    # cause a burst of "new device" emails for already-known devices
+    # on their next login, purely because 2FA was turned off.
+    user.trusted_devices.update(skip_2fa=False)
+    send_2fa_disabled_email(user, ip, ua_normalized, timezone.now())
+    log_event('2fa_disabled', user=user, request=request)
+    return Response({'message': '2FA disabled.', 'two_fa_enabled': False, 'user': UserSerializer(user).data})
 
 
 # ══════════════════════════════════════════════════════════════════
