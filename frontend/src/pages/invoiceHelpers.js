@@ -114,6 +114,88 @@ export function daysSince(isoTimestamp) {
   return Math.floor(ms / (1000 * 60 * 60 * 24))
 }
 
+// ── Invoice action eligibility ──────────────────────────────────────
+// Per-Row Quick Actions pass (20 September 2026) — moved here from
+// InvoiceDetailPanel.jsx (ACTIVE_STATUSES/NO_PAYMENT_STATUSES were local
+// consts there) so InvoiceTable.jsx's new per-row quick-actions menu can
+// read the exact same rules instead of re-deriving its own copy. This is
+// the same lesson NO_PAYMENT_STATUSES's own history already teaches
+// (see DECISIONS.md, audit finding INV-009/FE-001): that constant
+// existed, but the actual Undo Payment gate was a separately hand-rolled
+// condition that drifted from it and omitted 'refunded', making Undo
+// Payment reachable — and briefly destructive — on a refunded invoice.
+// Every `canX(invoice)` function below is now the ONE place its action's
+// eligibility rule lives; InvoiceDetailPanel.jsx and the new
+// InvoiceRowQuickActions.jsx both import and call these directly rather
+// than each keeping their own status-list copy.
+export const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']
+// Matches invoice_add_payment/invoice_mark_paid/invoice_undo_payment's
+// own status guard on the backend exactly — keep both in sync.
+export const NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']
+// Matches apps/invoices/views.py's invoice_detail DELETE rule exactly
+// ("Only draft or created invoices can be deleted").
+export const DELETE_ELIGIBLE_STATUSES = ['draft', 'created']
+
+// Duplicate/Copy Invoice Link/Download Invoice are all reachable
+// SOMEWHERE in InvoiceDetailPanel.jsx (footer or More menu, depending on
+// status) for every non-draft invoice — a draft has no frozen PDF/
+// portal link yet, and no meaningful content to duplicate as "a copy of
+// a sent invoice." This is the coarser "can this action happen at all"
+// question the quick-actions menu needs; InvoiceDetailPanel.jsx's own
+// footerShowsDuplicate/downloadReachableInMoreMenu/isTerminal booleans
+// stay exactly as they are — those decide WHERE within the panel an
+// already-eligible action shows (a layout choice), not whether it's
+// eligible at all, so they aren't duplicated eligibility rules and
+// aren't touched by this pass.
+export function canDuplicateInvoice(invoice) {
+  return invoice.status !== 'draft'
+}
+
+export function canCopyInvoiceLink(invoice) {
+  return invoice.status !== 'draft' && !!invoice.portal_view_url
+}
+
+export function canDownloadInvoice(invoice) {
+  return invoice.status !== 'draft'
+}
+
+export function canResendInvoice(invoice) {
+  return ACTIVE_STATUSES.includes(invoice.status)
+}
+
+export function canCancelInvoice(invoice) {
+  return ACTIVE_STATUSES.includes(invoice.status)
+}
+
+export function canMarkInvoiceBadDebt(invoice) {
+  return ACTIVE_STATUSES.includes(invoice.status)
+}
+
+export function canRefundInvoice(invoice) {
+  return ['paid', 'partially_paid'].includes(invoice.status)
+}
+
+export function canUndoInvoicePayment(invoice) {
+  return Number(invoice.amount_paid) > 0 && !NO_PAYMENT_STATUSES.includes(invoice.status)
+}
+
+export function canDeleteInvoice(invoice) {
+  return DELETE_ELIGIBLE_STATUSES.includes(invoice.status)
+}
+
+export function canPauseResumeRecurring(invoice) {
+  return !!invoice.is_recurring
+}
+
+// Shared with InvoiceDetailPanel.jsx's own requestUndoPayment (which
+// already has a loaded `timeline` array to search) and
+// InvoiceRowQuickActions.jsx (which fetches one invoice's timeline
+// on demand, only when Undo Payment is actually clicked) — the same
+// "find the most recent payment event" logic, not re-derived twice.
+export function findLastPaymentEvent(timelineEntries) {
+  return [...timelineEntries].reverse().find((e) => e.type === 'payment') || null
+}
+
 // ── Invoice form state helpers ──────────────────────────────────────
 // Moved out of InvoiceFormFields.jsx (a real bug fix, not a style choice):
 // that file's default export is a React component, and Vite/React Fast

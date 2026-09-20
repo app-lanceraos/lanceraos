@@ -2,7 +2,7 @@
 //
 // Desktop invoice list — a real table (List/Table restructure pass),
 // replacing the old card grid at desktop widths. Columns: checkbox |
-// Invoice # | Client | Amount | Issue Date | Due Date | Status.
+// Invoice # | Client | Amount | Issue Date | Due Date | Status | Actions.
 // Mobile keeps the pre-existing card layout (Invoices.jsx renders
 // InvoiceCard directly at ≤768px) — this component is desktop-only.
 //
@@ -29,6 +29,17 @@
 // view showing only ineligible invoices (e.g. filtered to Sent) hides
 // the whole selection affordance (header cell included), rather than
 // rendering an empty, useless column.
+//
+// Per-Row Quick Actions pass (20 September 2026, see DECISIONS.md) — a
+// real, deliberate PARTIAL reversal of the above: this is a genuinely NEW
+// column (InvoiceRowQuickActions.jsx per row), not the old single-icon
+// Action column restored, and not merged into the checkbox column, which
+// stays exactly as it was. The whole-row-opens-panel behavior above is
+// unchanged — the new column's own trigger stops click propagation the
+// same way the checkbox cell already does, so opening the quick-actions
+// menu never also opens the panel. Desktop only, matching this
+// component's own existing scope (InvoiceCard/mobile is untouched).
+import InvoiceRowQuickActions from './InvoiceRowQuickActions'
 import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
@@ -37,7 +48,10 @@ import {
 const th = { textAlign: 'left', padding: '10px 12px', fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }
 const td = { padding: '12px', fontSize: '0.84rem', color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' }
 
-export default function InvoiceTable({ invoices, deleteEligibleStatuses, selectedIds, onToggleSelect, onSelectAllEligible, onClearSelection, onOpen }) {
+export default function InvoiceTable({
+  invoices, deleteEligibleStatuses, selectedIds, onToggleSelect, onSelectAllEligible, onClearSelection, onOpen,
+  onRowActionChanged, onRowActionError,
+}) {
   const eligibleIds = invoices.filter((inv) => deleteEligibleStatuses.includes(inv.status)).map((inv) => inv.id)
   const hasEligible = eligibleIds.length > 0
   const allEligibleSelected = hasEligible && eligibleIds.every((id) => selectedIds.has(id));
@@ -48,7 +62,7 @@ export default function InvoiceTable({ invoices, deleteEligibleStatuses, selecte
         .invoice-row { cursor: pointer; transition: background var(--transition-fast); }
         .invoice-row:not([data-selected="true"]):hover { background: var(--bg-surface-2); }
       `}</style>
-      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 740 }}>
         <thead>
           <tr style={{ background: 'var(--bg-surface-2)' }}>
             {hasEligible && (
@@ -68,6 +82,7 @@ export default function InvoiceTable({ invoices, deleteEligibleStatuses, selecte
             <th style={th}>Issue Date</th>
             <th style={th}>Due Date</th>
             <th style={th}>Status</th>
+            <th style={{ ...th, width: 44 }} aria-label="Actions" />
           </tr>
         </thead>
         <tbody>
@@ -113,6 +128,9 @@ export default function InvoiceTable({ invoices, deleteEligibleStatuses, selecte
                     <InvoiceStatusBadge meta={meta} />
                     {isOverdue && <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[OVERDUE_BADGE.statusKey] }}>{OVERDUE_BADGE.label}</span>}
                   </div>
+                </td>
+                <td style={{ ...td, textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                  <InvoiceRowQuickActions invoice={inv} onChanged={onRowActionChanged} onError={onRowActionError} />
                 </td>
               </tr>
             )

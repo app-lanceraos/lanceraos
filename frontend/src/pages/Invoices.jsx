@@ -60,14 +60,8 @@ import InvoiceStatusBadge from '@/components/InvoiceStatusBadge'
 import Pagination, { PAGE_SIZE } from '@/components/Pagination'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
-  STATUS_FILTER_OPTIONS, SORT_OPTIONS, daysOverdueLabel,
+  STATUS_FILTER_OPTIONS, SORT_OPTIONS, daysOverdueLabel, DELETE_ELIGIBLE_STATUSES,
 } from './invoiceHelpers'
-
-// Matches apps/invoices/views.py's invoice_detail DELETE rule exactly
-// ("Only draft or created invoices can be deleted") — reused here, not
-// re-derived, so this can never silently drift from the real server-side
-// rule.
-const DELETE_ELIGIBLE_STATUSES = ['draft', 'created']
 
 export default function Invoices() {
   useTitle('LanceraOS | Invoices')
@@ -303,17 +297,44 @@ export default function Invoices() {
     else setSelectedInvoiceId(invoice.id)
   }
 
-  function handleInvoiceChanged(updated, opts) {
+  // Updates `invoices` in place — shared by the detail panel's own
+  // onChanged callback and InvoiceTable.jsx's new per-row quick-actions
+  // menu, so a quick action (Cancel/Refund/Duplicate/etc.) updates the
+  // row's data immediately without forcing a full list refetch for
+  // something this small. `opts.id` (not just the panel's own
+  // selectedInvoiceId) is what the deleted branch reads, so this is
+  // correct regardless of which surface triggered the delete — see
+  // InvoiceDetailPanel.jsx's own handleDelete for the matching id-passing
+  // fix this required.
+  function applyInvoiceUpdate(updated, opts) {
     if (opts?.deleted) {
-      setInvoices((prev) => prev.filter((inv) => inv.id !== selectedInvoiceId))
-      setSelectedInvoiceId(null)
+      const deletedId = opts.id ?? selectedInvoiceId
+      setInvoices((prev) => prev.filter((inv) => inv.id !== deletedId))
+      if (deletedId === selectedInvoiceId) setSelectedInvoiceId(null)
     } else if (updated) {
       setInvoices((prev) => {
         const exists = prev.some((inv) => inv.id === updated.id)
         return exists ? prev.map((inv) => (inv.id === updated.id ? updated : inv)) : [updated, ...prev]
       })
     }
+  }
+
+  // The detail panel's own change handler — same in-place update as
+  // above, PLUS a full refetch, unchanged from before this pass (the
+  // panel can change filter-relevant fields like status in ways that
+  // affect KPI totals/pagination, so a refetch there stays correct).
+  function handleInvoiceChanged(updated, opts) {
+    applyInvoiceUpdate(updated, opts)
     refreshAfterChange()
+  }
+
+  // The new per-row quick-actions menu's own change handler — in-place
+  // update ONLY, deliberately no refetch (see this file's own header
+  // comment / DECISIONS.md): a quick action is a single-row change, and
+  // re-fetching the whole page for it would reintroduce the loading-dim
+  // flicker this list's own filter pills were built to avoid.
+  function handleQuickActionChanged(updated, opts) {
+    applyInvoiceUpdate(updated, opts)
   }
 
   function handleWizardClosed(createdId) {
@@ -485,6 +506,8 @@ export default function Invoices() {
               onSelectAllEligible={selectAllEligible}
               onClearSelection={clearSelection}
               onOpen={openDetail}
+              onRowActionChanged={handleQuickActionChanged}
+              onRowActionError={(msg) => setCreateError(msg)}
             />
           </div>
           <div

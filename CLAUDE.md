@@ -2068,6 +2068,34 @@ framing assuming otherwise; see DECISIONS.md for the full correction). See DECIS
 verification detail (backend: 1098 tests passing; frontend: 251 tests passing; `vite build` clean; real
 Playwright screenshots for the header alignment/spacing fix specifically).
 
+**20 September 2026 (Per-Row Quick Actions on the Invoice List).** A real, deliberate PARTIAL reversal of
+the 17 August 2026 InvoiceDetailPanel redesign's own "the whole row opens the panel, no dedicated Action
+column" decision described just above — that decision itself stays true (clicking a row still opens the
+panel), but the list gained a genuinely new 8th column, `InvoiceRowQuickActions.jsx`
+(`InvoiceTable.jsx`, desktop only — mobile's `InvoiceCard` is untouched), a real per-row actions menu
+(`DropdownMenu.jsx`, icon-only trigger) covering Duplicate, Copy Invoice Link, Download Invoice, Resend
+Invoice, Pause/Resume Recurring, Refund, Undo Payment, Cancel, Mark Bad Debt, and Delete — reachable
+without opening the full panel first. Deliberately excluded from this menu (not overlooked): Save as
+Preset, Change Due Date, Formal Notice, Edit Series (need richer context than a single click), and every
+footer PRIMARY action (Finalise/Send/Mark as Sent/Add Payment/Send Reminder N — the panel's own main
+forward-progression actions, a different tier). Every action's eligibility rule (status/payment/recurring
+gating) now lives in exactly one place, `frontend/src/pages/invoiceHelpers.js`'s `canX(invoice)` exports
+(`canDuplicateInvoice`/`canCopyInvoiceLink`/`canDownloadInvoice`/`canResendInvoice`/`canCancelInvoice`/
+`canMarkInvoiceBadDebt`/`canRefundInvoice`/`canUndoInvoicePayment`/`canDeleteInvoice`/
+`canPauseResumeRecurring`, plus `ACTIVE_STATUSES`/`NO_PAYMENT_STATUSES`/`DELETE_ELIGIBLE_STATUSES`, all
+three moved there from local consts) — `InvoiceDetailPanel.jsx`'s own footer/More menu and the new
+quick-actions menu both read these same exports, following the exact lesson `NO_PAYMENT_STATUSES`'s own
+history already teaches (audit finding INV-009/FE-001: a shared constant existed, but the real gate was a
+separately hand-rolled condition that drifted from it). Every action needing a confirmation/input modal
+reuses the identical component `InvoiceDetailPanel.jsx` already had (`ConfirmModal`/`RefundModal`/
+`UndoPaymentModal`/`ResendModal`, now also exported from there) — one shared refund-amount/undo-payment/
+resend UI, not a second copy. Backend: untouched — every action already had a real, working endpoint. See
+DECISIONS.md's 20 September 2026 "Per-Row Quick Actions on the Invoice List" entry for the full reasoning,
+including why the panel's own footer-vs-More-menu PLACEMENT logic for Duplicate/Download was deliberately
+left alone (a layout choice, not a duplicated eligibility rule), the `handleInvoiceChanged`/id-passing fix
+this reuse required, and the new `applyInvoiceUpdate` split (in-place update only for quick actions, no
+forced refetch). Full frontend suite: 289 passing (up from 251); `vite build` clean.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

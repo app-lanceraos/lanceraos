@@ -11440,3 +11440,126 @@ carve-out — a separate prompt's territory); the template manifest's own CONTEN
 only, zero templates added/removed/renamed); `escalation_required`'s semantics (Item 4 — only
 `escalation_dismissed`'s new side-effect trigger changed); recurring-invoice creation/pause/resume/
 generation itself (Item 8 is filter-only).
+
+---
+
+Date: 20 September 2026 (Per-Row Quick Actions on the Invoice List)
+Decision/Reason:
+
+Real, deliberate partial reversal of the InvoiceDetailPanel redesign's own "the whole row opens the panel,
+no dedicated Action column" decision (`InvoiceTable.jsx`'s own header comment; this doc's "Invoice list —
+the whole row opens the panel" entry). That decision itself is untouched — clicking anywhere on a row still
+opens the detail panel exactly as before. What's added is a genuinely NEW 8th column
+(`InvoiceRowQuickActions.jsx` per row, reusing `DropdownMenu.jsx`, icon-only trigger matching AppShell's own
+convention) so common utility/destructive actions don't require opening the full panel first. The checkbox/
+bulk-delete column is untouched, a separate column, unmerged.
+
+**The one thing this pass cared about most: not recreating the NO_PAYMENT_STATUSES drift.** Before writing
+any new gating, every real eligibility condition already in `InvoiceDetailPanel.jsx` was read directly (not
+assumed from this doc's own prior entries) — status checks, `amount_paid > 0`, `is_recurring`. Every one of
+them is now a single named export in `frontend/src/pages/invoiceHelpers.js`
+(`canDuplicateInvoice`/`canCopyInvoiceLink`/`canDownloadInvoice`/`canResendInvoice`/`canCancelInvoice`/
+`canMarkInvoiceBadDebt`/`canRefundInvoice`/`canUndoInvoicePayment`/`canDeleteInvoice`/
+`canPauseResumeRecurring`, plus `findLastPaymentEvent` for the "which payment would Undo Payment remove"
+logic), and `ACTIVE_STATUSES`/`NO_PAYMENT_STATUSES`/`DELETE_ELIGIBLE_STATUSES` all moved there too (all
+three used to be local consts — `ACTIVE_STATUSES`/`NO_PAYMENT_STATUSES` in `InvoiceDetailPanel.jsx`,
+`DELETE_ELIGIBLE_STATUSES` in `Invoices.jsx`). `InvoiceDetailPanel.jsx`'s own More-menu/DetailsTab gating
+was rewritten to call these same exports instead of its own inline conditions (Cancel/Mark Bad
+Debt/Refund/Undo Payment/Resend/Delete-in-More-menu/Pause-Resume); `InvoiceRowQuickActions.jsx` calls the
+identical functions. Neither surface keeps its own copy of any of these rules — exactly the fix
+`NO_PAYMENT_STATUSES`'s own history already prescribes (audit finding INV-009/FE-001: that constant
+existed, sitting a few lines from the actual gate, but the gate itself was a separately hand-rolled
+condition that had drifted from it and omitted `'refunded'`, making Undo Payment reachable — and briefly
+destructive — on a refunded invoice; see that constant's own comment, now in `invoiceHelpers.js`).
+
+**Deliberately NOT unified: `InvoiceDetailPanel.jsx`'s own footer-vs-More-menu PLACEMENT logic for
+Duplicate/Download** (`footerShowsDuplicate`, `downloadReachableInMoreMenu`, `isTerminal`). These decide
+WHERE within the panel an already-eligible action shows — a layout choice specific to having both a footer
+and a More menu — not a duplicated ELIGIBILITY rule; the quick-actions menu has no footer/More split at
+all, so it only needs the coarser "is this action possible on this invoice at all" question, which for both
+Duplicate and Download is simply "not a draft" (confirmed directly: the union of the panel's own footer-
+terminal-case and More-menu-active-case for Download covers every non-draft status; Duplicate is
+unconditionally available whenever `!isDraft` already). `canDuplicateInvoice`/`canCopyInvoiceLink`/
+`canDownloadInvoice` encode that coarser fact and are used by the quick-actions menu only —
+`InvoiceDetailPanel.jsx`'s own placement variables are untouched, so its visible layout can't have changed.
+
+**Actions covered (10):** Duplicate, Copy Invoice Link, Download Invoice, Resend Invoice, Pause/Resume
+Recurring, Refund, Undo Payment, Cancel, Mark Bad Debt, Delete. **Deliberately excluded, not overlooked** —
+Save as Preset, Change Due Date, Formal Notice, and Edit Series (each needs richer context: a curation
+step, a date picker with its own PDF-regen side effect, a kill-switch setting, an interval choice — better
+suited to "open the panel first" than a single quick click); and every footer PRIMARY action (Finalise,
+Send, Mark as Sent, Add Payment, Send Reminder N) — those are the panel's own main forward-progression
+actions, a different tier from the utility/destructive actions this menu covers. If the utility tier proves
+too narrow in practice, extending it is a small, additive change given the shared-export foundation this
+pass lays — not a reason to have included everything up front.
+
+**Modal reuse — every action needing input/confirmation reuses the EXACT existing component, none
+extracted (all four were already separate, standalone functions inside `InvoiceDetailPanel.jsx`, just not
+exported):** `ConfirmModal` (generic — reused for Cancel/Mark Bad Debt/Delete, exactly as the panel itself
+already reuses it for those three), `RefundModal`, `UndoPaymentModal`, `ResendModal`. All four gained an
+`export` keyword and nothing else — one refund-amount UI, one undo-payment UI, one resend UI, both surfaces
+now importing the same components from `InvoiceDetailPanel.jsx` rather than a second copy living in the new
+file. No circular import risk: `InvoiceRowQuickActions.jsx` imports named exports from
+`InvoiceDetailPanel.jsx`; that file imports neither `InvoiceTable.jsx` nor `InvoiceRowQuickActions.jsx`.
+
+**Undo Payment's own real complication, solved without duplicating logic:** the modal needs the most
+recently recorded payment and its age, which the panel already has from its own loaded `timeline` state
+(`requestUndoPayment`) — a list row has no timeline loaded at all. `InvoiceRowQuickActions.jsx` fetches
+`GET /invoices/{id}/timeline/` on demand, ONLY when Undo Payment is actually clicked (never eagerly per
+row), then calls the same shared `findLastPaymentEvent` helper the panel's own `requestUndoPayment` now
+also calls (moved there from that function's own inline `[...timeline].reverse().find(...)`), so the
+"which payment would this actually undo" logic isn't written twice either.
+
+**A real generalization fix `handleInvoiceChanged` needed to be reusable at all:** the panel's own
+`handleDelete` called `onChanged?.(null, { deleted: true })` with no id — `Invoices.jsx`'s handler filtered
+`invoices` by its own `selectedInvoiceId` closure, which is only ever set when the PANEL is open. A
+quick-action delete has no `selectedInvoiceId` at all. Fixed by having `handleDelete` pass its own
+`invoiceId` explicitly (`{ deleted: true, id: invoiceId }`), and `Invoices.jsx` now reads `opts.id` (falling
+back to `selectedInvoiceId` only if absent, preserving the panel's own exact prior behavior). This is a
+real, necessary fix for the reuse this pass asked for, not scope creep — without it, a list-row delete
+would silently fail to remove the row (or worse, remove the wrong one) if a panel happened to be closed.
+
+**In-place update, deliberately WITHOUT the panel's own full refetch:** `Invoices.jsx`'s `handleInvoiceChanged`
+already did two things — update `invoices` in place, then unconditionally call `refreshAfterChange()` (a
+full re-fetch of the current page). Extracted the in-place half into its own `applyInvoiceUpdate(updated,
+opts)`; `handleInvoiceChanged` (still the panel's own callback) is now `applyInvoiceUpdate` + refetch,
+UNCHANGED behavior; a new `handleQuickActionChanged` (the quick-actions menu's own callback) is
+`applyInvoiceUpdate` alone — no refetch, per this task's own explicit "don't force a full list refetch for
+something this small" instruction. The panel keeps refetching because it can change filter/KPI-relevant
+data in ways a single row update doesn't fully capture (e.g. status changes affecting the KPI strip); a
+single quick action doesn't need that.
+
+**Error feedback:** quick actions bubble their real backend error message up to `Invoices.jsx`'s own
+pre-existing `createError`/`FosAlert` mechanism (already used for bulk-delete failures and preset-creation
+failures) via a new `onRowActionError` callback — no new toast system introduced for this. Success is
+communicated by the row's own visible data changing immediately (status badge, amount, etc.) — no success
+toast was added; flagged here as a deliberate, small scope choice, easy to add later if wanted.
+
+**Verification:** `frontend/src/pages/invoiceHelpers.js`'s new `canX(invoice)` exports are the ONE oracle
+both the new `InvoiceRowQuickActions.test.jsx` and this pass's own `InvoiceDetailPanel.test.jsx` additions
+assert against — never a hardcoded/re-derived expected-item list, so these tests can't silently drift from
+the real gating rule the way the original bug did. `InvoiceRowQuickActions.test.jsx` (new file): a
+parametrized sweep across draft/created/sent/viewed/partially_paid/paid/cancelled/refunded/bad_debt,
+asserting the real rendered `role="menuitem"` count against `ALL_ACTION_DEFS.filter((def) =>
+def.can(invoice)).length` computed from the actual imported functions; a recurring-invoice case (both
+paused and not); and one test per action proving it calls the real, correct endpoint (Duplicate ->
+`POST .../duplicate/`, Copy Link -> clipboard write with zero network calls, Download -> `GET .../pdf/` as
+a blob, Resend -> `POST .../resend/` with `confirm:true` after confirming the shared `ResendModal`,
+Pause/Resume -> `POST .../pause-recurring/` or `.../resume-recurring/`, Refund -> `POST .../refund/` with
+the shared `RefundModal`'s entered amount, Cancel/Mark Bad Debt/Delete -> their real endpoints via the
+shared `ConfirmModal`, Undo Payment -> the on-demand timeline fetch + `DELETE .../payments/undo/`), plus a
+real backend-error-surfaces-via-onError test. `InvoiceDetailPanel.test.jsx` gained a new "action visibility
+unchanged after the shared-gating-helpers refactor" describe block (Cancel/Mark Bad Debt present for every
+`ACTIVE_STATUSES` member and absent for created/paid/cancelled/refunded/bad_debt; Refund present for
+paid/absent for sent; Delete present for created; Pause/Resume still renders when `is_recurring`) — on top
+of the pre-existing Resend/Undo-Payment/Change-Due-Date describe blocks, which needed zero changes and
+still pass unmodified, itself real evidence nothing the refactor touched actually changed behavior.
+`InvoiceTable.test.jsx`'s own column-count assertions updated (7→8 columns with the checkbox column, 6→7
+without) plus two new tests for the new column's own stopPropagation guard and that a real trigger renders
+for a non-draft status.
+
+Full frontend suite: `npx vitest run` — **21 test files, 289 tests, all passed**. `npx vite build` — clean
+(same pre-existing, unrelated `authStore.js` chunking warning every prior pass has also seen). **No backend
+file was touched** — every action here already had a real, working endpoint (confirmed directly against
+`apps/invoices/urls.py`/`views.py` before writing any frontend call), so this was a frontend-only surface
+change exactly as scoped; no backend suite run was needed or performed.

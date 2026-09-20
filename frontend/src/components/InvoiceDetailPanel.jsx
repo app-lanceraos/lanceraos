@@ -77,27 +77,21 @@ import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
   PAYMENT_SOURCE_OPTIONS, RECURRING_INTERVAL_OPTIONS, REMINDERS_HIDDEN_STATUSES, UNDO_CONFIRMATION_AGE_DAYS,
+  ACTIVE_STATUSES, NO_PAYMENT_STATUSES,
+  canCancelInvoice, canDeleteInvoice, canMarkInvoiceBadDebt, canPauseResumeRecurring,
+  canRefundInvoice, canResendInvoice, canUndoInvoicePayment, findLastPaymentEvent,
   daysSince, dueDateCountdown, getSendBannerCopy, invoiceToForm, timelineDotColor, timelineLabel,
 } from '@/pages/invoiceHelpers'
 
-const ACTIVE_STATUSES = ['sent', 'viewed', 'partially_paid']
-// Audit fix (LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md, 19 August
-// 2026, finding INV-009/FE-001): this constant existed but was dead code
-// — the actual "Undo Payment" More-menu gate was a separately hand-rolled
-// `!['cancelled', 'bad_debt'].includes(...)` that had drifted from this
-// list and omitted 'refunded', making Undo Payment reachable (and, before
-// the matching backend fix in apps/invoices/views.py's
-// invoice_undo_payment, actually destructive) on a refunded invoice —
-// live-reproduced on invoice 76472345-cdb5-4800-a2f0-6cc8ba1547e8 /
-// INV-2026-0025. This list is now the ONE place that decision lives; the
-// gate below reads it directly instead of re-deriving its own copy.
-// Matches invoice_add_payment/invoice_mark_paid/invoice_undo_payment's
-// own status guard on the backend exactly — keep both in sync.
-const NO_PAYMENT_STATUSES = ['cancelled', 'bad_debt', 'refunded', 'draft']
-// REMINDERS_HIDDEN_STATUSES lives in invoiceHelpers.js — imported above,
-// not redefined here — so RemindersOffBanner/the Details-tab toggle and
-// getSendBannerCopy can never drift apart again (bug-fix round; see that
-// file's own comment for the real bug this originally fixed).
+// ACTIVE_STATUSES/NO_PAYMENT_STATUSES/REMINDERS_HIDDEN_STATUSES and the
+// canX(invoice) action-eligibility functions all live in invoiceHelpers.js
+// now (Per-Row Quick Actions pass, 20 September 2026 — see DECISIONS.md),
+// not redefined here — so this panel's own footer/More menu and
+// InvoiceTable.jsx's new per-row quick-actions menu can never drift apart
+// the way Undo Payment's own gate once did (audit finding INV-009/FE-001:
+// NO_PAYMENT_STATUSES existed, but the actual gate was a separately
+// hand-rolled condition that omitted 'refunded', making Undo Payment
+// reachable — and briefly destructive — on a refunded invoice).
 
 // initialTab: opens directly on a specific tab instead of the 'details'
 // default. Real consumer: Invoices.jsx's notification click-through (a
@@ -226,7 +220,11 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
 
   const handleDelete = () => runAction('delete', async () => {
     await api.delete(`/invoices/${invoiceId}/`)
-    onChanged?.(null, { deleted: true })
+    // id passed explicitly (not just relied on via the caller's own
+    // selectedInvoiceId closure) so this same {deleted, id} shape is
+    // generalizable to InvoiceRowQuickActions.jsx's own delete call too —
+    // see Invoices.jsx's applyInvoiceUpdate.
+    onChanged?.(null, { deleted: true, id: invoiceId })
     onClose()
   })
 
@@ -358,7 +356,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   }, 'Due date updated.')
 
   function requestUndoPayment() {
-    const lastPayment = [...timeline].reverse().find((e) => e.type === 'payment')
+    const lastPayment = findLastPaymentEvent(timeline)
     const age = lastPayment ? daysSince(lastPayment.timestamp) : null
     setModal({ kind: 'undo', lastPayment, age })
   }
@@ -480,21 +478,30 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     if (downloadReachableInMoreMenu) {
       moreMenuItems.push({ key: 'download', label: 'Download Invoice', Icon: Download, onClick: openDownload })
     }
-    if (['paid', 'partially_paid'].includes(invoice.status)) {
+    if (canRefundInvoice(invoice)) {
       moreMenuItems.push({ key: 'refund', label: 'Refund', Icon: Undo2, danger: true, onClick: () => setModal({ kind: 'refund' }) })
     }
-    if (Number(invoice.amount_paid) > 0 && !NO_PAYMENT_STATUSES.includes(invoice.status)) {
+    if (canUndoInvoicePayment(invoice)) {
       moreMenuItems.push({ key: 'undo_payment', label: 'Undo Payment', Icon: Undo2, onClick: requestUndoPayment })
     }
-    if (ACTIVE_STATUSES.includes(invoice.status)) {
+    if (canResendInvoice(invoice)) {
       moreMenuItems.push({ key: 'resend', label: 'Resend Invoice', Icon: RefreshCw, onClick: () => setModal({ kind: 'resend' }) })
+    }
+    if (canCancelInvoice(invoice)) {
       moreMenuItems.push({ key: 'cancel', label: 'Cancel', Icon: Ban, danger: true, onClick: () => setModal({ kind: 'cancel' }) })
+    }
+    if (canMarkInvoiceBadDebt(invoice)) {
       moreMenuItems.push({ key: 'bad_debt', label: 'Mark Bad Debt', Icon: ShieldAlert, danger: true, onClick: () => setModal({ kind: 'bad_debt' }) })
     }
     if ((invoice.escalation_required || invoice.status === 'bad_debt') && formalNoticeEnabled) {
       moreMenuItems.push({ key: 'formal_notice', label: 'Formal Notice', Icon: Gavel, danger: true, onClick: () => setModal({ kind: 'formal_notice' }) })
     }
-    if (invoice.status === 'created') {
+    // canDeleteInvoice(invoice) covers draft+created, but this branch only
+    // ever runs for !isDraft (draft's own Delete is the footer button
+    // below), so in practice this still only fires for 'created' —
+    // unchanged behavior, now reading the shared rule instead of a
+    // locally re-derived 'created'-only check.
+    if (canDeleteInvoice(invoice)) {
       moreMenuItems.push({ key: 'delete', label: 'Delete', Icon: Trash2, danger: true, onClick: () => setModal({ kind: 'delete' }) })
     }
   }
@@ -979,7 +986,7 @@ function DetailsTab({ invoice, busy, onPauseResume, onEditSeries }) {
 
       {showPaymentProgress && <PaymentProgressBar invoice={invoice} />}
 
-      {invoice.is_recurring && (
+      {canPauseResumeRecurring(invoice) && (
         <div style={{ marginBottom: 16, padding: '10px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>
             {invoice.recurring_paused ? 'Recurring — paused' : `Recurring — next ${invoice.next_recurring_date || 'unscheduled'}`}
@@ -1184,7 +1191,13 @@ function ModalShell({ title, onClose, children, maxWidth = 420 }) {
   )
 }
 
-function ConfirmModal({ title, body, confirmLabel, danger, busy, onConfirm, onClose }) {
+// Exported (ConfirmModal/RefundModal/UndoPaymentModal/ResendModal) —
+// Per-Row Quick Actions pass, 20 September 2026: InvoiceRowQuickActions.jsx
+// (InvoiceTable.jsx's new per-row menu) reuses these exact components for
+// Cancel/Mark Bad Debt/Delete (ConfirmModal), Refund, Undo Payment, and
+// Resend Invoice — one shared confirmation/input UI per action, not a
+// second independently-maintained copy. See DECISIONS.md.
+export function ConfirmModal({ title, body, confirmLabel, danger, busy, onConfirm, onClose }) {
   return (
     <ModalShell title={title} onClose={onClose}>
       <p style={{ margin: '0 0 20px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>{body}</p>
@@ -1340,7 +1353,7 @@ function PartialPaymentForm({ invoice, busy, onBack, onConfirm, onClose }) {
   )
 }
 
-function RefundModal({ invoice, busy, onConfirm, onClose }) {
+export function RefundModal({ invoice, busy, onConfirm, onClose }) {
   const [amount, setAmount] = useState(invoice.amount_paid)
   const [error, setError] = useState('')
 
@@ -1382,7 +1395,7 @@ function RefundModal({ invoice, busy, onConfirm, onClose }) {
   )
 }
 
-function UndoPaymentModal({ age, lastPayment, busy, onConfirm, onClose }) {
+export function UndoPaymentModal({ age, lastPayment, busy, onConfirm, onClose }) {
   const isOld = age !== null && age > UNDO_CONFIRMATION_AGE_DAYS
   return (
     <ModalShell title="Undo Last Payment" onClose={onClose}>
@@ -1546,7 +1559,7 @@ function SendReminderModal({ invoice, nextReminderNumber, busy, onConfirm, onClo
 }
 
 // ── ResendModal — new this round ─────────────────────────────────────
-function ResendModal({ invoice, busy, onConfirm, onClose }) {
+export function ResendModal({ invoice, busy, onConfirm, onClose }) {
   return (
     <ModalShell title="Resend Invoice" onClose={onClose}>
       <p style={{ margin: '0 0 14px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
