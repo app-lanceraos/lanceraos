@@ -11188,3 +11188,62 @@ out and deletes it, matching `verify_2fa`/`verify_deletion_otp`'s own off-by-one
 behavior exactly, verified against their real code rather than assumed). Frontend: `npx vitest run` —
 **222 passed (222)**, no test file exists for `SecuritySection.jsx` so none needed updating; `npx vite
 build` — clean, only the pre-existing unrelated `authStore.js` dynamic/static dual-import warning.
+
+---
+
+Date: 20 September 2026 (notification category copy fixed to match what actually fires — no functional change)
+Decision/Reason:
+
+Settings > Notifications' 3 toggle hints (`frontend/src/pages/settings/NotificationsSection.jsx`'s
+`TOGGLES` array) described events that don't match what's actually gated behind each toggle, confirmed
+directly against `apps/invoices/notifications.py`'s real handlers and `core/notifications.py`'s
+`NOTIFICATION_EVENTS` allowlist rather than assumed from the old copy or this task's own prompt:
+
+- **Invoice Events** read "Sent, viewed, paid, and overdue notices." Sent and Viewed have no
+  notification handler anywhere in the codebase at all — deliberate, per `_record_invoice_sent`'s own
+  self-trigger-exclusion docstring (a freelancer doesn't need a bell ping about an action they just took
+  themselves). Paid (`invoice_paid`/`invoice_partially_paid`, `_record_invoice_paid`/
+  `_record_invoice_partially_paid`) is AuditLog-only for the identical self-trigger reason and was never
+  gated by `notif_invoice_events` — it isn't even in `NOTIFICATION_EVENTS`, so it can't reach the bell at
+  all regardless of this toggle. What `notif_invoice_events` actually gates today, all via
+  `_get_user_and_gate(user_id, 'notif_invoice_events')`: `InvoiceAcknowledged`, `EscalationRequired`,
+  `RecurringInvoiceGenerated`, `RecurringGenerationFailed`, `RecurringGenerationPaused`,
+  `StaleDraftsDigest` — recurring-invoice activity, client acknowledgment, severe-overdue escalation, and
+  the weekly stale-drafts digest.
+- **Payments** read "When a payment is recorded against an invoice." Confirmed the only handler checking
+  `profile.notif_payments` is `_notify_payment_claim_submitted` (`PaymentClaimSubmitted`) — a client
+  submitting a payment claim via the portal for the freelancer to review. No payment-recording call site
+  anywhere (`invoice_add_payment`, `invoice_mark_paid`, claim confirm) checks this toggle or any toggle at
+  all — those are the same AuditLog-only, self-triggered writes Paid falls under above.
+- **Client Messages** read "When a client sends you a message in the portal" — confirmed accurate as-is:
+  `_record_comment_posted`'s own `if author_type != 'client': return` plus its `notif_client_messages`
+  check is exactly what the existing copy describes. No change made to this one.
+
+This is a copy/documentation-accuracy fix by explicit product decision, not a functional gap — the gating
+logic itself (which events reach the bell, which toggle gates which handler, the self-trigger-exclusion
+pattern) is correct and intentional throughout `apps/invoices/notifications.py`, confirmed by its own
+extensive docstrings. No new notification events were added for Sent/Viewed/Paid/Overdue, no changes to
+`core/notifications.py`'s `NOTIFICATION_EVENTS` allowlist, no changes to any handler, no new database
+fields or migrations. Fixed the 2 inaccurate hints in `NotificationsSection.jsx`'s `TOGGLES` array to the
+wording above; grepped the full repo (frontend, backend, every `.md` file — `DATABASE.md`, `EMAILS.md`,
+`ADMIN.md`, `ADMIN_PANEL_DESIGN.md`, `DESIGN.md`, `STANDARDS.md`) for the same stale phrasing ("sent,
+viewed, paid", "payment is recorded against an invoice") and any other description of what these 3
+toggles gate — `NotificationsSection.jsx` was the only file containing either stale phrase; `DATABASE.md`
+line 198 and `CLAUDE.md`'s own pre-existing "Notification preferences" paragraph name the 3 fields but
+never described their per-event mapping, so neither was factually wrong, just silent on the detail — added
+the same accurate per-category mapping to `CLAUDE.md` alongside this fix so the two docs stay in sync.
+`v1-reference/` (a separate historical reference copy of the prior codebase, not live product surface —
+per CLAUDE.md's own "ported from v1" convention throughout) was deliberately left untouched; it isn't
+served to any real user and isn't part of what this fix corrects.
+
+Alternatives considered: none — this is a direct text correction to match already-confirmed, already-
+intentional backend behavior; no design decision was needed.
+
+Verification: no test in the repo asserted either old hint string verbatim (grepped
+`frontend/src/**/*.test.jsx` for `Sent, viewed, paid`, `payment is recorded against`, and the `TOGGLES`
+array's `hint:` key directly — no matches), so no test needed updating; no new test was added either,
+since this is copy with no new behavior to assert beyond what the existing (untouched) handler-level tests
+in `apps/invoices/tests/` already cover. Frontend: `npx vitest run` — **20 test files, 222 tests, all
+passed**; `npx vite build` — clean, only the pre-existing unrelated `authStore.js` dynamic/static
+dual-import warning (unchanged from before this fix). No backend file was touched by this pass, so no
+backend suite run was needed or performed.

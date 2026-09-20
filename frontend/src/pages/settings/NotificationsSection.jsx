@@ -8,9 +8,9 @@ import Card from '@/components/Card'
 import FosAlert from '@/components/FosAlert'
 
 const TOGGLES = [
-  { field: 'notif_invoice_events', label: 'Invoice Events', hint: 'Sent, viewed, paid, and overdue notices', Icon: FileText },
+  { field: 'notif_invoice_events', label: 'Invoice Events', hint: 'Recurring invoice activity, client acknowledgments, overdue escalations, and stale-draft reminders', Icon: FileText },
   { field: 'notif_client_messages', label: 'Client Messages', hint: 'When a client sends you a message in the portal', Icon: MessageSquare },
-  { field: 'notif_payments', label: 'Payments', hint: 'When a payment is recorded against an invoice', Icon: Wallet },
+  { field: 'notif_payments', label: 'Payments', hint: 'When a client reports a payment for you to review and confirm', Icon: Wallet },
 ]
 
 function Toggle({ checked, onChange, disabled }) {

@@ -559,6 +559,21 @@ disabled, by omission of any control rather than a disabled-but-visible
 one. Every notification a user receives beyond security alerts is one
 they have explicitly enabled; nothing is opt-out.
 
+What each category actually gates (Settings > Notifications hint text
+corrected to match this, 20 September 2026 — see DECISIONS.md): Invoice
+Events gates recurring-invoice generation/failure/pause,
+client-acknowledgment, severe-overdue-escalation, and the weekly
+stale-drafts-digest notifications (apps/invoices/notifications.py's
+_get_user_and_gate handlers) — NOT Sent/Viewed (deliberately no handler
+exists for either; see InvoiceSent's own self-trigger-exclusion
+docstring) and NOT Paid (invoice_paid/invoice_partially_paid are
+AuditLog-only, not gated by this toggle at all). Payments gates only a
+client submitting a payment claim via the portal for the freelancer to
+review (PaymentClaimSubmitted) — not any payment being recorded, by
+anyone. Client Messages gates a client-authored portal comment
+(comment_posted) — the freelancer's own comments never self-notify,
+same self-trigger-exclusion reasoning.
+
 Account deletion: password -> OTP -> confirm -> 30-day recovery window
 -> anonymize (never hard-delete) -> financial records (future modules)
 retain a PROTECT relationship to the now-anonymized user, in anonymized
