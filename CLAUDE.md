@@ -2134,6 +2134,26 @@ live-reproduction evidence (real URLs, real cookies, real before/after database 
 above. Full frontend suite: 295 passing (up from 289); full backend suite: 1099 passing (up from 1098);
 `vite build` clean.
 
+**21 September 2026 (Dropdown Portal Fix — corrects the entry just above's Item A).** The `flippedPlacement`
+fix described above solved the wrong constraint and did not actually cure the reported bug: `InvoiceTable.jsx`'s
+wrapper sets only `overflowX: 'auto'`, which the CSS Overflow spec forces to compute `overflow-y: auto` too
+(confirmed against the real computed style), so it clips a plain `position: absolute` `DropdownMenu` panel at
+the TABLE's bottom edge — well above the browser window's — while the flip check only ever compared against
+`window.innerHeight`. Reproduced first in real Chromium on the old component (menu inside the window, "Mark Bad
+Debt" clipped and un-clickable), then fixed at the root: `DropdownMenu.jsx` now renders the open panel through a
+React portal to `document.body` with `position: fixed` viewport coordinates, so no local overflow ancestor —
+this one or any future one — can clip it. `clampedLeft`/`flippedPlacement`/`effectivePlacement` are replaced by a
+single measured `{top, left, maxHeight}` computed in one `useLayoutEffect` (same 8px-margin clamp and
+respect-`placement`-unless-it-doesn't-fit flip decisions, plus: when neither side fits, take the roomier side
+and shrink `maxHeight` so every item stays reachable). The outside-click handler now treats the portaled panel as
+"inside"; scroll (capture phase, any nested container) and resize while open CLOSE the menu rather than
+re-tracking a trigger that may itself be clipped or scrolled away. Verified in real Chromium against the same
+geometry that reproduced the bug (all items on-screen and hit-test clickable; a real click on the formerly
+clipped item works) plus the header "More", `InvoiceDetailPanel.jsx`'s footer "More" (1280px and 375px) and
+AppShell's mobile 3-dot menu; jsdom tests cover only the placement arithmetic and event wiring, and say so.
+Full frontend suite: 306 passing (up from 295); `vite build` clean. See DECISIONS.md's 21 September 2026
+"Dropdown Portal Fix" entry.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

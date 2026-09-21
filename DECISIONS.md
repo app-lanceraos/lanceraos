@@ -11746,3 +11746,113 @@ just implied by the renamed test's own new assertions.
 Backend verification: `apps.clients.tests.test_portal` + `apps.invoices.tests.test_portal` +
 `apps.invoices.tests.test_acknowledgment` — **109 tests, all passed** (up from 108 — the one new sibling
 test). Full backend suite: `python manage.py test --keepdb` — **1099 tests, OK, 0 failures** (up from 1098).
+
+---
+
+Date: 21 September 2026 (Dropdown Portal Fix — CORRECTS the 20 September 2026 "Dropdown Overflow Fix" entry, Item A)
+Decision/Reason:
+
+**The 20 September "Dropdown Overflow Fix" (Item A, `flippedPlacement`) solved the wrong constraint. It is
+kept above as history, not edited; this entry is the correction.** After that fix shipped, the user's own
+follow-up screenshots showed the invoice list's per-row quick-actions menu still opening downward and still
+being cut off, never flipping.
+
+**Real root cause, confirmed against the real computed style (not read from JSX).**
+`InvoiceTable.jsx`'s wrapping div sets only `overflowX: 'auto'`. The CSS Overflow spec forbids leaving one
+axis `visible` while the other is non-`visible`, so the browser computes `overflow-y: auto` as well.
+Confirmed live in Chromium: `getComputedStyle(wrapper)` → `{overflowX: "auto", overflowY: "auto"}` with the
+inline style containing only `overflow-x: auto`. That wrapper therefore clips vertical overflow of every
+descendant's PAINTING — including `DropdownMenu`'s panel, which was a plain `position: absolute` child of a
+`rootRef` div nested inside the wrapper. `position: absolute` removes an element from normal FLOW but does
+not escape an ancestor's overflow clipping while the descendant's containing block is still inside it.
+(AppShell's own main-content frame is a second, further-out clipping ancestor of the same kind.)
+
+The 20 September flip decision compared the panel's `getBoundingClientRect().bottom` against
+`window.innerHeight` — the whole browser window. The real clipping boundary was the table wrapper's own
+bottom edge, which sits well above the window's bottom edge. So the logic could correctly conclude "plenty of
+room before the screen edge", not flip, and the menu was still cut off by a nearer, invisible boundary it
+never checked.
+
+**Why the prior verification missed it.** Its 5 tests mock `getBoundingClientRect`/`window.innerHeight` in
+jsdom, which does no real CSS layout — they could only prove the flip arithmetic was self-consistent, never
+that the rendered page doesn't clip regardless. Its live check used a 700px viewport with the menu flipped
+upward off the window edge, i.e. the case where the WINDOW edge was the binding constraint. It never
+exercised a scroll position where the table wrapper's edge was.
+
+**Reproduced first, on the OLD component, in a real browser (Playwright/Chromium) before changing anything**
+— 25 seeded invoices (page size 20), 1280x1300 viewport, scroll container at the bottom, quick-actions menu
+opened on each of the last 8 rows and every menu item hit-tested with `document.elementFromPoint` (a real
+hit-test that respects clipping, not a geometry comparison). Row 16 (4th from last): menu spans y=1052–1274,
+inside the 1300px window (so the old flip check saw no overflow and stayed downward) but past the table
+wrapper's bottom edge at y=1218 — "Cancel" half-visible, "Mark Bad Debt" not clickable. Screenshot matched
+the user's own screenshots. (The last 3 rows correctly flipped upward even before the fix, because for them
+the WINDOW edge is close enough — which is exactly why the earlier fix looked like it worked.)
+
+**The fix: render the open panel through a React portal to `document.body` with `position: fixed`.**
+Comparing against a different boundary (the wrapper's rect, say) would only patch this one call site: ANY
+ancestor with non-visible overflow between the trigger and the viewport can clip an absolute panel, and
+this component is used inside AppShell's mobile header, `Invoices.jsx`/`Clients.jsx` headers,
+`InvoiceDetailPanel.jsx`'s bounded footer, and the table rows — another clipping ancestor could appear at
+any time. Portaling removes the whole class: a portaled fixed panel has no local ancestor left to clip it,
+so its only constraint IS the real viewport, which is what the placement math now measures against.
+
+- **Placement math kept, restructured into one computation.** The 20 September clamp/flip decisions carry
+  over unchanged in intent (8px viewport margin; `align` picks the trigger edge to line up with, then clamps
+  to both viewport sides; the caller's `placement` is respected when it fits and overridden when it doesn't,
+  symmetrically for top and bottom) — but they now produce fixed viewport coordinates `{top, left,
+  maxHeight}` from the trigger's `getBoundingClientRect()` and the panel's measured size, instead of a
+  relative `clampedLeft`/`flippedPlacement` pair applied as `position: absolute` offsets. `clampedLeft`,
+  `flippedPlacement` and `effectivePlacement` are gone. One deliberate addition: when NEITHER side fits the
+  whole panel, it takes the roomier side and shrinks `maxHeight` to that room (the panel already scrolls
+  internally), so no item can ever be unreachable — the old code could leave a too-tall menu partly
+  off-screen with nowhere to flip.
+- **Two-phase render, no flash.** The panel first renders `visibility: hidden` at 0,0 so its natural size
+  can be measured, then coordinates are set in the same `useLayoutEffect` pass, before paint.
+- **Outside-click handling had to change.** The portaled panel is no longer a DOM descendant of `rootRef`,
+  so the native `mousedown` outside-click check treated a mousedown on a menu item as an outside click —
+  closing and unmounting the item before its `click` fired. The handler now treats both `rootRef` and
+  `panelRef` as "inside" (covered by a unit test that fires mousedown then click on an item).
+- **Portal side effects checked, not assumed.** Theme variables live on `<html data-theme>` (`main.jsx`/
+  `useTheme.js`), so a `<body>` child inherits light/dark correctly (dark-theme screenshot verified).
+  React synthetic events still bubble through portals along the React tree, so `InvoiceTable`'s
+  `<td onClick={stopPropagation}>` still stops a menu-item click from opening the row's detail panel
+  (verified live: a real click on an item opened its own confirm modal and NOT the detail panel). z-index:
+  the panel's 500 now competes at the root stacking level rather than inside a local context; it clears
+  every overlay a menu opens from (InvoiceDetailPanel 101, modals 200, AppShell mobile drawer 400) and
+  matches AppShell's own popup (verified live over the detail panel's overlay).
+
+**Decision on scroll/resize while open: CLOSE the menu (option b), not re-track (option a).** A fixed
+panel doesn't move with its trigger. Re-tracking on scroll/resize would keep the menu glued to the trigger,
+but it cannot tell when the trigger itself has been scrolled out of, or clipped by, its own overflow
+container — the menu would keep floating over unrelated content, detached from a trigger the user can no
+longer see, which is the same class of bug this portal exists to fix. Closing is simpler, has no drift or
+stale-coordinates edge cases, and matches native OS context menus. Implemented with a capture-phase
+`scroll` listener on `window` (scroll events don't bubble, so the capture phase is what catches the table
+wrapper's own scroll and AppShell's inner scroll container, neither of which is `window`) plus a `resize`
+listener, both alongside the existing outside-click/Escape listeners and removed with them. A scroll
+originating INSIDE the panel (a long menu at its `maxHeight`) is deliberately ignored so a menu can be
+scrolled without closing itself.
+
+**Verification.**
+- `DropdownMenu.test.jsx` rewritten (16 tests, up from 5): portal-to-body + `position: fixed`, positioned
+  (not left hidden) after layout, downward/upward/explicit-top/explicit-top-flips-down/neither-fits-shrinks,
+  horizontal clamp both edges, item click after inside-mousedown, outside-mousedown closes, scroll closes
+  (nested container, capture phase), internal panel scroll does NOT close, resize closes. **These prove the
+  placement arithmetic and event wiring only, not that a real browser no longer clips** — jsdom can't.
+- **Real Chromium, identical script and geometry as the reproduction above, on the NEW component:** row 16's
+  menu is at the same y=1052–1274 (still extends past the table wrapper's bottom edge at y=1218) with all 6
+  items on-screen and hit-testing as clickable (`portaled=true`, `position: fixed`); all 8 tested rows pass.
+  Screenshot reviewed directly. A real click on "Mark Bad Debt", inside the previously-clipped zone, opened
+  its confirm modal. Dark theme rendered correctly. At a 1000px viewport the last row still flips upward
+  (window edge binding), 649–871 fully on-screen. Scrolling the page with a menu open closes it.
+- **Other consumers, real Chromium, every item hit-tested:** `Invoices.jsx` header "More" (1280px);
+  `InvoiceDetailPanel.jsx` footer "More" (`placement="top"`) at 1280px and 375px — rendered above the
+  panel's overlay; AppShell's mobile 3-dot menu at 375px.
+- Full frontend suite `npx vitest run`: **22 files, 306 tests, all passed** (up from 295). `npx vite build`:
+  clean (same pre-existing chunk-size warning). No backend file touched. `InvoiceTable.jsx`'s
+  `overflowX: 'auto'` is left as-is — it is needed for the table's own horizontal scroll on narrow
+  viewports; the fix belongs in `DropdownMenu.jsx` alone.
+- Test setup note: the local login rate limiter (`ratelimit_login_*`, strict auth tier) tripped from
+  repeated scripted logins during verification; the script was changed to log in once and reuse the saved
+  session. Only that one dev-cache key was cleared. A throwaway dev account `dropdown-check@example.com`
+  with 25 seeded invoices was created in the dev database for this verification and left in place.

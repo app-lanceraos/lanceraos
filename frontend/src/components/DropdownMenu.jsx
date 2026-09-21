@@ -1,95 +1,116 @@
 // src/components/DropdownMenu.jsx
 //
-// Generic small trigger-button + absolutely-positioned item list —
-// AppShell's mobile 3-dot header menu and any page's desktop "More"
-// header dropdown (e.g. Invoices.jsx's Manage Designs/From Preset)
-// both compose from this one primitive rather than each hand-rolling
-// their own open/close/outside-click logic. `items`:
-// [{ key, label, Icon, onClick, disabled? }].
+// Generic small trigger-button + item list — AppShell's mobile 3-dot
+// header menu and any page's desktop "More" header dropdown (e.g.
+// Invoices.jsx's Manage Designs/From Preset) both compose from this one
+// primitive rather than each hand-rolling their own open/close/outside-
+// click logic. `items`: [{ key, label, Icon, onClick, disabled? }].
+//
+// The open panel is rendered through a React portal to document.body with
+// `position: fixed` viewport coordinates, NOT as a `position: absolute`
+// child of the trigger's own wrapper (Dropdown Portal Fix, 21 September
+// 2026 — see DECISIONS.md, which corrects the 20 September "Dropdown
+// Overflow Fix" entry). An absolutely-positioned panel is still clipped
+// by ANY ancestor with non-visible overflow between it and the viewport
+// (InvoiceTable.jsx's `overflowX: 'auto'` wrapper forces `overflow-y:
+// auto` too, per the CSS Overflow spec), no matter which edge of the
+// browser window the flip/clamp math measured against. A portaled fixed
+// panel has no such ancestor left, so its only constraint is the real
+// viewport — which is exactly what the placement math below measures.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
+
+const VIEWPORT_MARGIN = 8
+const TRIGGER_GAP = 6
 
 export default function DropdownMenu({ trigger, triggerLabel, items, align = 'right', placement = 'bottom', triggerStyle, triggerClassName, bareTrigger = false, showChevron = false }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef(null)
   const panelRef = useRef(null)
-  // Overrides the CSS align-based positioning below only when it would
-  // actually overflow the viewport — a real, confirmed bug (mobile
-  // screenshot verification, InvoiceDetailPanel redesign round): a
-  // trigger near the left edge (e.g. a footer that's wrapped onto its
-  // own line at narrow widths) combined with align='right' anchors the
-  // menu's right edge to the trigger, which pushes the menu's LEFT edge
-  // past x=0 and clips every item's text. Same clamping approach
-  // useAppTooltip.js already uses for the same class of problem.
-  const [clampedLeft, setClampedLeft] = useState(null)
-  // The vertical equivalent (Dropdown Overflow Fix pass, 20 September
-  // 2026 — see DECISIONS.md): `placement` used to be a static, once-only
-  // choice made at the call site ('bottom'/top:'100%' by default,
-  // 'top'/bottom:'100%' only when a caller explicitly opted in). A
-  // caller like InvoiceRowQuickActions.jsx can't know ahead of time
-  // whether ITS OWN instance will render near the bottom of the
-  // viewport — for a table row that depends entirely on scroll
-  // position, which changes constantly, unlike a fixed footer button
-  // (which genuinely does know its own position won't change, and can
-  // still pass placement='top' as a correct, unmeasured shortcut).
-  // `flippedPlacement` holds the real, measured correction — null until
-  // proven necessary, same "only overrides when it would actually
-  // overflow" shape as clampedLeft.
-  const [flippedPlacement, setFlippedPlacement] = useState(null)
-  const effectivePlacement = flippedPlacement || placement
+  // Real viewport coordinates for the portaled panel, { top, left,
+  // maxHeight } — null until measured. The panel first renders
+  // `visibility: hidden` at 0,0 so its natural size can be measured, then
+  // this is set in the same layout-effect pass, before the browser paints
+  // (no visible flash at the wrong position).
+  const [coords, setCoords] = useState(null)
 
   useEffect(() => {
     if (!open) return
-    const handler = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false) }
+    // The panel is no longer a DOM descendant of rootRef, so the outside-
+    // click check must treat it as "inside" explicitly — otherwise a
+    // mousedown on a menu item counts as an outside click, closes the
+    // menu, and unmounts the item before its click event ever fires.
+    const handler = (e) => {
+      if (rootRef.current?.contains(e.target) || panelRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
     const escHandler = (e) => { if (e.key === 'Escape') setOpen(false) }
+    // Scroll/resize-while-open: CLOSE the menu rather than re-tracking the
+    // trigger. A fixed-position panel doesn't move with its trigger, and
+    // re-tracking can't tell when the trigger itself has been scrolled out
+    // of (or clipped by) its own overflow container — the menu would keep
+    // floating over unrelated content, detached from a trigger the user
+    // can no longer see, the same class of bug this portal exists to fix.
+    // Capture phase so a scroll inside ANY nested scroll container (the
+    // table wrapper, AppShell's main content area) is caught, since scroll
+    // events don't bubble; the panel's own internal scroll (long menu at
+    // maxHeight) is deliberately ignored.
+    const scrollHandler = (e) => {
+      if (panelRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
+    const resizeHandler = () => setOpen(false)
     document.addEventListener('mousedown', handler)
     window.addEventListener('keydown', escHandler)
+    window.addEventListener('scroll', scrollHandler, true)
+    window.addEventListener('resize', resizeHandler)
     return () => {
       document.removeEventListener('mousedown', handler)
       window.removeEventListener('keydown', escHandler)
+      window.removeEventListener('scroll', scrollHandler, true)
+      window.removeEventListener('resize', resizeHandler)
     }
   }, [open])
 
   useLayoutEffect(() => {
-    if (!open || !panelRef.current || !rootRef.current) { setClampedLeft(null); setFlippedPlacement(null); return }
+    if (!open || !panelRef.current || !rootRef.current) { setCoords(null); return }
+    const triggerRect = rootRef.current.getBoundingClientRect()
     const panelRect = panelRef.current.getBoundingClientRect()
-    const rootRect = rootRef.current.getBoundingClientRect()
-    const margin = 8
-    const desiredViewportLeft = Math.max(margin, Math.min(panelRect.left, window.innerWidth - panelRect.width - margin))
-    if (desiredViewportLeft !== panelRect.left) {
-      setClampedLeft(desiredViewportLeft - rootRect.left)
-    } else {
-      setClampedLeft(null)
-    }
+    const vw = window.innerWidth
+    const vh = window.innerHeight
 
-    // Real, reported bug (screenshot evidence): a table row near the
-    // bottom of a scrolled list opens its menu downward (the default)
-    // and the menu's own items run off the bottom of the screen, some
-    // fully inaccessible. Measures the panel's REAL rendered rect at
-    // its current (pre-flip) placement and flips vertically when it
-    // would overflow — mirrors clampedLeft's own approach exactly,
-    // just on the other axis. This overrides even an explicit
-    // placement='bottom' when it would genuinely overflow: a caller's
-    // static guess about its own position is worth less than a real
-    // measurement of actual overflow, and the alternative is the exact
-    // off-screen-content bug being fixed here. placement='top' (a
-    // caller that already knows its position is fixed, e.g. a footer-
-    // anchored menu) is still respected as-is UNLESS flipping it open
-    // would itself overflow the top of the viewport, in which case it
-    // flips back down — the same "never render off-screen" guarantee,
-    // symmetric on both edges.
-    const overflowsBottom = panelRect.bottom > window.innerHeight - margin
-    const overflowsTop = panelRect.top < margin
-    const flipUpWouldFit = rootRect.top - margin >= panelRect.height
-    const flipDownWouldFit = window.innerHeight - rootRect.bottom - margin >= panelRect.height
-    if (placement !== 'top' && overflowsBottom && flipUpWouldFit) {
-      setFlippedPlacement('top')
-    } else if (placement === 'top' && overflowsTop && flipDownWouldFit) {
-      setFlippedPlacement('bottom')
-    } else {
-      setFlippedPlacement(null)
+    // Horizontal: `align` says which trigger edge the panel's matching
+    // edge lines up with, then the result is clamped so it never runs off
+    // either side of the viewport (a footer "More" button wrapped onto its
+    // own line at 375px sits near x=24 — align='right' alone would push the
+    // panel's left edge past x=0).
+    const idealLeft = align === 'left' ? triggerRect.left : triggerRect.right - panelRect.width
+    const left = Math.max(VIEWPORT_MARGIN, Math.min(idealLeft, vw - panelRect.width - VIEWPORT_MARGIN))
+
+    // Vertical: the caller's `placement` is respected when it fits, and
+    // overridden when it genuinely doesn't — a caller's static guess about
+    // its own position (a table row's depends on scroll position) is worth
+    // less than a real measurement against the real viewport. Symmetric
+    // for both directions. If neither side fits the whole panel, it takes
+    // the roomier side and shrinks `maxHeight` to that room (the panel
+    // already scrolls internally), so no item is ever unreachable.
+    const spaceBelow = vh - triggerRect.bottom - TRIGGER_GAP - VIEWPORT_MARGIN
+    const spaceAbove = triggerRect.top - TRIGGER_GAP - VIEWPORT_MARGIN
+    const fits = { top: spaceAbove >= panelRect.height, bottom: spaceBelow >= panelRect.height }
+    const other = placement === 'top' ? 'bottom' : 'top'
+    let side = placement === 'top' ? 'top' : 'bottom'
+    if (!fits[side]) {
+      if (fits[other]) side = other
+      else side = spaceAbove > spaceBelow ? 'top' : 'bottom'
     }
-  }, [open, placement])
+    const room = Math.max(0, side === 'top' ? spaceAbove : spaceBelow)
+    const maxHeight = Math.min(vh * 0.6, room)
+    const height = Math.min(panelRect.height, maxHeight)
+    const top = side === 'top' ? triggerRect.top - TRIGGER_GAP - height : triggerRect.bottom + TRIGGER_GAP
+
+    setCoords({ top, left, maxHeight })
+  }, [open, placement, align])
 
   return (
     <div ref={rootRef} style={{ position: 'relative', display: 'inline-flex' }}>
@@ -118,36 +139,25 @@ export default function DropdownMenu({ trigger, triggerLabel, items, align = 'ri
         {showChevron && <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />}
       </button>
 
-      {open && (
+      {open && createPortal(
         <div
           ref={panelRef}
           role="menu"
           style={{
-            position: 'absolute',
-            // 'top' placement (e.g. a footer-anchored "More" button near
-            // the bottom of a bounded panel) opens the menu UPWARD —
-            // `top: '100%'` would otherwise render the panel below the
-            // trigger and get clipped by the panel's own overflow, since
-            // this is `position: absolute` relative to the trigger, not
-            // `position: fixed` to the viewport. effectivePlacement
-            // (not the raw `placement` prop) drives this so the dynamic,
-            // measured vertical flip above can override a caller's
-            // static choice when it would genuinely overflow.
-            ...(effectivePlacement === 'top' ? { bottom: '100%', marginBottom: 6 } : { top: '100%', marginTop: 6 }),
-            // clampedLeft (viewport-overflow correction, computed above)
-            // replaces the align-based left/right positioning entirely
-            // when the trigger sits close enough to a viewport edge that
-            // the natural position would clip the menu — e.g. a footer
-            // "More" button wrapped onto its own line at 375px, near
-            // x=24, with align='right' anchoring the menu's right edge to
-            // it and pushing most of the menu's own width off-screen to
-            // the left.
-            ...(clampedLeft !== null ? { left: clampedLeft, right: 'auto' } : { [align]: 0 }),
-            minWidth: 200, maxWidth: 280, maxHeight: '60vh', overflowY: 'auto',
+            position: 'fixed',
+            top: coords ? coords.top : 0,
+            left: coords ? coords.left : 0,
+            visibility: coords ? 'visible' : 'hidden',
+            minWidth: 200, maxWidth: 280, maxHeight: coords ? coords.maxHeight : '60vh', overflowY: 'auto',
             background: 'var(--menu-bg, var(--bg-surface))',
             border: '1px solid var(--border-subtle)',
             borderRadius: 'var(--radius-lg)',
             boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+            // Portaled to <body>, so this z-index now competes at the root
+            // stacking level rather than inside whichever local stacking
+            // context the trigger lives in — 500 clears every overlay a
+            // menu can be opened from (InvoiceDetailPanel 101, modals 200,
+            // AppShell's mobile drawer 400), matching AppShell's own popup.
             padding: 6, zIndex: 500,
             display: 'flex', flexDirection: 'column', gap: 2,
           }}
@@ -168,6 +178,7 @@ export default function DropdownMenu({ trigger, triggerLabel, items, align = 'ri
                 border: 'none', background: 'transparent', width: '100%',
                 fontFamily: 'var(--font)',
                 transition: 'background var(--fast)',
+                flexShrink: 0,
               }}
               onMouseEnter={(e) => { if (!item.disabled) e.currentTarget.style.background = 'var(--nav-hover-bg, var(--bg-surface-2))' }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
@@ -176,7 +187,8 @@ export default function DropdownMenu({ trigger, triggerLabel, items, align = 'ri
               {item.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
