@@ -30,6 +30,7 @@ import TermsOfService from '@/pages/TermsOfService'
 import ClientPortal from '@/pages/portal/ClientPortal'
 import PortalEnter from '@/pages/portal/PortalEnter'
 import InvoiceView from '@/pages/InvoiceView'
+import InvoicePreviewPdf from '@/pages/InvoicePreviewPdf'
 
 export default function App() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -87,6 +88,19 @@ export default function App() {
         <Route path="/invoice/:token" element={<InvoiceView />} />
 
         {/* Private — require an active session */}
+        {/* NewInvoiceWizard.jsx's "Preview PDF" action — real bug fix,
+            see InvoicePreviewPdf.jsx's own header comment and
+            DECISIONS.md: used to navigate a new tab directly to the raw
+            backend host, the freelancer's own version of the exact
+            backend-host-leak problem InvoiceView.jsx above already fixed
+            for clients. Private (this is the freelancer's own
+            authenticated /invoices/<id>/pdf/ live-render, not a public
+            token-authenticated route), shell-less (a document preview,
+            same convention InvoiceView.jsx uses). */}
+        <Route
+          path="/invoices/:id/preview-pdf"
+          element={<PrivateRoute><InvoicePreviewPdf /></PrivateRoute>}
+        />
         {/* Onboarding is deliberately NOT wrapped in AppShell — it's a
             continuation of the signup journey, not a page within the
             app itself (see PrivateRoute.jsx for the redirect that sends

@@ -115,7 +115,7 @@ def _check_portal_acknowledge_rate_limit(identifier):
     return False
 
 
-def _record_invoice_view_if_appropriate(invoice, request):
+def _record_invoice_view_if_appropriate(invoice, request, portal_session=None):
     """
     The one real "a client viewed this invoice" side effect, called
     exactly once (from portal_invoice_view_html) — never from
@@ -134,8 +134,18 @@ def _record_invoice_view_if_appropriate(invoice, request):
     only suppresses this side effect when the authenticated freelancer
     session actually belongs to THIS invoice's own owner, not merely
     "some freelancer is logged in somewhere."
+
+    portal_session (real bug fix, see DECISIONS.md): the caller's own
+    already-resolved ClientPortalSession from THIS request (passed
+    straight through to is_freelancer_previewing_portal) — required
+    because portal_invoice_view_html mints/renews that session via
+    issue_or_renew_session moments before calling this, and a
+    freshly-minted session cookie never appears in request.COOKIES
+    until the browser's NEXT request. Without this, the freelancer's own
+    very first visit to their own invoice link was live-reproduced to
+    incorrectly flip status to 'viewed' and log a real InvoiceViewEvent.
     """
-    if is_freelancer_previewing_portal(request, owner_user_id=invoice.user_id):
+    if is_freelancer_previewing_portal(request, owner_user_id=invoice.user_id, portal_session=portal_session):
         return
 
     InvoiceViewEvent.objects.create(
@@ -304,13 +314,20 @@ def portal_invoice_view_html(request, view_token):
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
+    portal_session = None
     if invoice.client_id:
-        issue_or_renew_session(invoice.client, request, response)
+        portal_session = issue_or_renew_session(invoice.client, request, response)
     # else: a one-time client's invoice — no Client row to attach a
     # session to. Access stays scoped to this exact invoice's own
     # view_token, per the spec's "no portal, no session" rule.
 
-    _record_invoice_view_if_appropriate(invoice, request)
+    # portal_session passed straight through (real bug fix — see
+    # DECISIONS.md and is_freelancer_previewing_portal's own docstring):
+    # a session minted JUST NOW by issue_or_renew_session above is only
+    # on the outgoing `response`, never in `request.COOKIES` yet, so the
+    # guard needs the already-resolved object, not a second, stale
+    # re-read of the incoming request's cookies.
+    _record_invoice_view_if_appropriate(invoice, request, portal_session=portal_session)
 
     logger.info(
         '[INVOICES] portal_invoice_view_html total_ms=%s for invoice_id=%s request_id=%s (see the paired '

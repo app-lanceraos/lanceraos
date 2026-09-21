@@ -182,19 +182,30 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
   async function handlePreviewPdf() {
     if (!invoiceId) return
     setActionError('')
-    // Real bug, found by testing this in an actual browser, not trusted
-    // from v1's identical-looking pattern on faith: the original
-    // approach (await a blob GET via axios, then window.open() the
-    // resulting blob: URL) opened a real tab but Chrome never actually
-    // navigated it. Fixed by skipping the blob step entirely — the tab
-    // navigates directly to the real, authenticated GET endpoint (a
-    // normal top-level navigation, so the httpOnly auth cookie rides
-    // along on same-site). Opened synchronously, before any await, so
-    // it's still a direct result of the click.
+    // Real bug history, both halves found by testing in an actual
+    // browser, not trusted on faith (see DECISIONS.md for the full
+    // live-investigation evidence of the second one):
+    //   1. The ORIGINAL approach (await a blob GET via axios in THIS
+    //      tab, then window.open() the resulting blob: URL) opened a
+    //      real tab but Chrome never actually navigated it — a blob: URL
+    //      is scoped to the document that created it and isn't reliably
+    //      usable as a NEW tab's initial destination.
+    //   2. The fix for #1 (skip the blob step, navigate the tab directly
+    //      to the raw backend GET endpoint) worked, but leaked the raw
+    //      backend host into the freelancer's own address bar — the
+    //      exact class of bug InvoiceView.jsx already closed for clients.
+    // This fixes #2 without reintroducing #1: the tab still opens
+    // synchronously (before any await, so it's still a direct result of
+    // the click, satisfying popup blockers) and still navigates via a
+    // normal top-level URL (never a blob: URL handed across tabs) — just
+    // to this app's OWN frontend route (InvoicePreviewPdf.jsx) instead of
+    // the backend host. That page does its own blob fetch internally,
+    // inside ITS OWN document, the same proven pattern InvoiceView.jsx
+    // already uses — never a second, parallel PDF-fetching mechanism.
     const tab = window.open('about:blank', '_blank')
     try {
       await flushPendingSave()
-      const targetUrl = `${api.defaults.baseURL}/invoices/${invoiceId}/pdf/`
+      const targetUrl = `${window.location.origin}/invoices/${invoiceId}/preview-pdf`
       if (tab) tab.location.href = targetUrl
     } catch (e) {
       tab?.close()

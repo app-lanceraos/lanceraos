@@ -2096,6 +2096,44 @@ left alone (a layout choice, not a duplicated eligibility rule), the `handleInvo
 this reuse required, and the new `applyInvoiceUpdate` split (in-place update only for quick actions, no
 forced refetch). Full frontend suite: 289 passing (up from 251); `vite build` clean.
 
+**20 September 2026 (Dropdown Overflow Fix + Two Live Investigations).** `DropdownMenu.jsx` gained a
+vertical equivalent of its own existing horizontal `clampedLeft` overflow correction — a real, reported bug
+(screenshot evidence): `InvoiceRowQuickActions`'s per-row menu (added the same day, see the entry just
+above) on a row near the bottom of a scrolled invoice list opened downward and ran off the bottom of the
+screen. `placement` used to be a static, once-only choice per call site; a new `flippedPlacement` state,
+computed in the same `useLayoutEffect` pass that already computes `clampedLeft`, measures the panel's real
+rendered position and flips it to the opposite direction when it would overflow — including overriding an
+explicit `placement="bottom"`/`"top"` prop when it genuinely would overflow, on the reasoning that a real
+measurement beats a caller's static guess. Live-verified against the real running dev app: a row directly
+above the pagination footer at a 700px viewport now opens its menu upward, fully on-screen (screenshot
+evidence). Separately, two live investigations, one real bug found and fixed in each: (1)
+`NewInvoiceWizard.jsx`'s "Preview PDF" action used to open a new tab at the raw backend host
+(`api.defaults.baseURL`, e.g. `http://localhost:8000/api/...`) — live-reproduced with Playwright driving
+the real wizard UI — the freelancer's own version of the backend-host-leak problem `InvoiceView.jsx`
+already closed for clients; fixed with a new `/invoices/:id/preview-pdf` frontend route
+(`InvoicePreviewPdf.jsx`, `PrivateRoute`-wrapped, shell-less) that fetches the PDF as a same-origin blob
+inside its own document, mirroring `InvoiceView.jsx`'s already-proven pattern exactly — live-verified the
+new tab now shows the frontend host with a same-origin `blob:` iframe src. `Invoice.payment_page_url`/
+`portal_view_url` themselves were confirmed, live, already correct in this environment (a plain
+`@property`, computed fresh on every read, never cached — real API response showed the correct frontend
+URL) — that half of the original report predates the fix already on record in this doc's own
+real-frontend-domain-invoice-view-page entry; no change made there. (2) A freelancer's own first-ever visit
+to their own just-sent invoice's public link was live-reproduced to incorrectly flip its status to
+`viewed` and log a real `InvoiceViewEvent` — `apps.clients.portal.is_freelancer_previewing_portal`'s own
+guard re-derives "has a portal session" from `request.COOKIES`, but `portal_invoice_view_html` mints that
+very session moments earlier in the SAME request, and a cookie set on a response can never appear in that
+same request's own `request.COOKIES` — the most common real path (nobody has a portal session for a given
+client until someone visits at least once), not a rare edge case. Fixed by threading the already-resolved
+session `issue_or_renew_session` returns straight through to the guard instead of re-deriving it from a
+stale snapshot; the other 4 real call sites of this guard are structurally immune (each requires an
+already-established session just to be reachable at all) and were left untouched. A pre-existing test that
+had pinned down the buggy behavior as intentional was reversed to assert the corrected outcome, with a new
+sibling test keeping the "genuine client still tracked normally" guarantee explicitly covered. See
+DECISIONS.md's 20 September 2026 "Dropdown Overflow Fix + Two Live Investigations" entry for the full
+live-reproduction evidence (real URLs, real cookies, real before/after database state) behind every item
+above. Full frontend suite: 295 passing (up from 289); full backend suite: 1099 passing (up from 1098);
+`vite build` clean.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

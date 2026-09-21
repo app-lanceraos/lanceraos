@@ -118,7 +118,7 @@ def clear_session_cookie(response):
     return clear_portal_session_cookie(response)
 
 
-def is_freelancer_previewing_portal(request, owner_user_id):
+def is_freelancer_previewing_portal(request, owner_user_id, portal_session=None):
     """
     Detects the "Preview mode" safety-net scenario per
     INVOICES_CLIENTS_TECHNICAL_SPEC.md: the SAME browser carries both a
@@ -175,6 +175,31 @@ def is_freelancer_previewing_portal(request, owner_user_id):
     portal session (a freelancer just using their own app), or a
     freelancer/portal-session pairing that belongs to two DIFFERENT
     people — must never be flagged.
+
+    `portal_session` (optional — real, live-reproduced bug fix, see
+    DECISIONS.md): pass the ALREADY-RESOLVED ClientPortalSession when the
+    caller just minted or renewed one via issue_or_renew_session earlier
+    in this SAME request (portal_invoice_view_html's own call site,
+    below). A session minted for the first time (a client's very first
+    visit, or — the bug this fixes — the freelancer's own very first
+    visit to their own invoice link) is only ever written to the
+    OUTGOING response's Set-Cookie header; it can never appear in
+    `request.COOKIES` until the browser sends it back on a LATER
+    request. Re-deriving `has_portal_session` from `request.COOKIES` a
+    second time here, ignoring the session the caller already resolved
+    moments earlier, always read stale (not-yet-issued) state on a
+    brand-new client — live-reproduced: a freelancer's first-ever visit
+    to their own just-sent invoice's public link flipped its status to
+    'viewed' and logged a real InvoiceViewEvent, exactly the outcome
+    this guard exists to prevent, even though the freelancer WAS
+    correctly authenticated as the invoice's own owner. A second visit
+    (browser now holding the round-tripped session cookie) was correctly
+    suppressed — confirming the gap was specific to the mint-then-check
+    ordering, not a broken owner check. Callers that never mint a
+    session themselves within this same request (comment posting, claim
+    submission, acknowledgment, comment read-marking — all of which only
+    ever run against an ALREADY-established session from a prior visit)
+    omit this and keep the original cookie-based lookup, unaffected.
     """
     from apps.users.authentication import CookieJWTAuthentication
 
@@ -189,7 +214,10 @@ def is_freelancer_previewing_portal(request, owner_user_id):
     if freelancer_user is None:
         return False
 
-    has_portal_session = _get_session_from_cookie(request) is not None
+    if portal_session is not None:
+        has_portal_session = True
+    else:
+        has_portal_session = _get_session_from_cookie(request) is not None
     if not has_portal_session:
         return False
 

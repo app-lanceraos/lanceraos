@@ -11563,3 +11563,186 @@ Full frontend suite: `npx vitest run` — **21 test files, 289 tests, all passed
 file was touched** — every action here already had a real, working endpoint (confirmed directly against
 `apps/invoices/urls.py`/`views.py` before writing any frontend call), so this was a frontend-only surface
 change exactly as scoped; no backend suite run was needed or performed.
+
+---
+
+Date: 20 September 2026 (Dropdown Overflow Fix + Two Live Investigations)
+Decision/Reason:
+
+Three separate items — one real, confirmed frontend bug fixed directly; two real, live investigations that
+each turned up a genuine, confirmed bug and got fixed at its actual root cause. All three verified against
+the real running dev app (`redis-server`/`postgresql@17` already running; `runserver`/`celery worker
+--pool=solo`/`celery beat` not needed for A, `runserver`+`celery worker --pool=solo`+`vite` for B/C since
+PDF rendering is a background task; `playwright`, reused from a prior session's scratchpad install rather
+than reinstalled) — real browser sessions, real HTTP sessions via `requests` with explicit cookie-jar
+handling (Python's `http.cookiejar`/`requests` has a real matching quirk for the `localhost` pseudo-TLD's
+leading-dot cookie domain that silently drops auto-resent cookies unless passed explicitly per-request —
+hit and worked around directly, not assumed away), and real database queries before/after each action.
+
+**Item A — DropdownMenu opens off the bottom of the screen.** Confirmed directly: `clampedLeft` already
+measures the real rendered panel via `getBoundingClientRect()` and shifts it left when it would overflow
+the right edge of the viewport; there was no vertical equivalent — `placement` was a static, once-only
+choice made at the call site (`'bottom'`/`top:'100%'` by default, `'top'`/`bottom:'100%'` only when a
+caller explicitly opted in), and a table-row trigger like `InvoiceRowQuickActions.jsx` can't know ahead of
+time whether ITS OWN instance will render near the bottom of the viewport — that depends entirely on
+scroll position. Fixed by adding `flippedPlacement` state, computed in the SAME `useLayoutEffect` pass that
+already computes `clampedLeft` (mirrors that mechanism exactly, other axis): measures the panel's real
+rendered `bottom`/`top` against `window.innerHeight`/`0` (same 8px margin convention `clampedLeft` already
+uses) and flips to the opposite placement when it would overflow AND the opposite direction has room.
+`effectivePlacement = flippedPlacement || placement` drives the actual CSS instead of the raw `placement`
+prop, so the dynamic correction transparently overrides a caller's static choice.
+
+**Design call: the dynamic correction overrides even an explicit `placement="bottom"` or `placement="top"`
+when it would genuinely overflow.** A caller's static guess about its own position is worth less than a
+real measurement of actual overflow, and the alternative is the exact off-screen-content bug being fixed —
+so `placement='top'` (a footer-anchored "More" button that already knows its own position won't change,
+e.g. `InvoiceDetailPanel.jsx`'s footer) is still respected as-is in the common case, but flips back DOWN if
+opening upward would itself overflow the top of the viewport, the same symmetric "never render off-screen"
+guarantee on both edges. `placement` itself (the prop) is unchanged in meaning — it's still the caller's
+initial/default choice; only the CSS that actually gets applied (`effectivePlacement`) can differ from it.
+
+Verification: `DropdownMenu.test.jsx` (new file) — mocks `HTMLElement.prototype.getBoundingClientRect`
+(branching on the panel's own `role="menu"` attribute, since jsdom never lays out real pixel geometry) and
+`window.innerHeight`/`innerWidth` directly, matching this codebase's own `useFilterOverflow.test.js`
+precedent for testing measured-layout logic in jsdom. 5 tests: flips upward when a trigger near the bottom
+of a small viewport would overflow downward; stays downward with plenty of room below (no regression); an
+explicit `placement="top"` caller still opens upward when it genuinely fits; that same caller flips back
+DOWN when upward would itself overflow the top; no flip when the overflow is within the 8px margin
+(boundary case). Live-verified beyond the unit tests, per this item's own explicit request: created 40 real
+invoices for the dev account via the real API, opened the real `/invoices` list in a real Chromium session
+at a deliberately short viewport (700px) so real rows sit near the bottom, clicked
+`InvoiceRowQuickActions`'s trigger on a row right above the pagination footer — the menu opened UPWARD,
+fully on-screen (bounding box `y:418.5` to `y:570.5`, both within the 700px viewport) — screenshot evidence
+shows all 4 items (Duplicate/Copy Invoice Link/Download Invoice/Delete) fully visible and unclipped, the
+exact scenario the original report described. Full frontend suite: `npx vitest run` — **22 test files, 295
+tests, all passed** (up from 289 — the new `DropdownMenu.test.jsx`'s 5 tests plus one added for Item B
+below). `npx vite build` — clean.
+
+**Item B — where does "Pay Online"/"Preview" on an invoice actually go, live?** Investigated exactly as
+instructed, not from source alone.
+
+1. `Invoice.payment_page_url`/`portal_view_url` (`apps/invoices/models.py`) are BOTH plain `@property`
+   methods, computed fresh on every read — confirmed directly, there is no field, no cache, nothing stored;
+   `portal_view_url` returns `f'{settings.FRONTEND_URL}/invoice/{self.view_token}/'`. This rules out
+   investigation point 4 (a stale, cached value on an old row) categorically — there is no cache for this
+   property to go stale IN.
+2. `FRONTEND_URL` in the actual running dev settings: `'http://localhost:5173'` — the frontend, not the
+   backend. Confirmed via `manage.py shell` against the real running app, not read from `.env` on faith.
+3. Created a real client + invoice via the real API, `mark-sent` (the real `/send/` endpoint 502'd in this
+   dev environment — no email provider configured locally, unrelated to this investigation, worked around
+   by using the manual mark-sent path instead, which sets the same real `status`/`view_token` fields), and
+   read the real API response: `"portal_view_url":"http://localhost:5173/invoice/<token>/"` — the correct
+   frontend URL, live, in this exact environment. **The QR-code/payment_page_url half of the report is
+   already fixed** — this is a report from before that fix landed (see this doc's own
+   real-frontend-domain-invoice-view-page entry), not a current bug. No change made here.
+4. `NewInvoiceWizard.jsx`'s "Preview PDF" action (`handlePreviewPdf`) — a REAL, CURRENT, CONFIRMED bug:
+   `targetUrl = \`${api.defaults.baseURL}/invoices/${invoiceId}/pdf/\`` — `api.defaults.baseURL` is
+   `${VITE_API_URL}/api`, the raw BACKEND host (`http://localhost:8000/api` in this dev environment,
+   confirmed directly from `frontend/.env`'s real `VITE_API_URL=http://localhost:8000` value and
+   `frontend/src/lib/api.js`'s own `baseURL` construction). Live-reproduced with Playwright driving the
+   real wizard UI through a real client fill-in, stage 2, and a real click on "Preview PDF": the new tab's
+   own URL was confirmed as `http://localhost:8000/api/invoices/<uuid>/pdf/` before this fix — the backend
+   host, directly in the freelancer's own address bar, exactly matching the report's "a 'Preview' link"
+   half. (A separate, environment-specific wrinkle found along the way and explicitly NOT treated as a
+   product bug: Playwright's own Chromium has its built-in PDF viewer disabled, so navigating to ANY
+   `application/pdf` response — even one with no `Content-Disposition` at all, confirmed against a genuine
+   draft invoice's own inline live-render — triggers `page.goto: Download is starting` in that automation
+   environment specifically; a real end user's actual Chrome, with its PDF viewer enabled by default as
+   virtually every real installation has, does not hit this. Verified this was a testing-environment
+   artifact, not chased as a second product bug.)
+
+**Fix (Item B, the one real code change): `InvoicePreviewPdf.jsx` (new page) + a new `/invoices/:id/
+preview-pdf` route (`App.jsx`, `PrivateRoute`-wrapped, no `AppShell` — shell-less, matching
+`InvoiceView.jsx`'s own convention) + `handlePreviewPdf` now opens that frontend route instead of the raw
+backend URL.** Mirrors `InvoiceView.jsx`'s own already-proven pattern exactly: fetch via axios as a `blob`
+inside the NEW tab's own document (never a blob created in the opener tab and handed across — that's the
+ORIGINAL bug this exact code's own comment already documents finding and fixing once, via real testing:
+"opened a real tab but Chrome never actually navigated it," a real blob-URL cross-tab-scoping limitation,
+not reintroduced here) and display it via a same-origin `blob:` URL in an unsandboxed `<iframe>` (sandboxing
+breaks Chrome's own PDF-viewer toolbar, per `InvoiceView.jsx`'s own documented reasoning, reused verbatim
+here since the same browser mechanics apply). The new tab still opens synchronously
+(`window.open('about:blank', '_blank')`, before any `await`, satisfying popup blockers) and still navigates
+via a normal top-level URL — just to this app's own frontend origin instead of the backend's. Live-verified
+post-fix: the same Playwright wizard flow now shows the new tab's URL as
+`http://localhost:5173/invoices/<id>/preview-pdf`; network inspection confirms the actual PDF bytes are
+fetched via a background request to the backend (invisible in the address bar) and the `<iframe>`'s own
+`src` is a same-origin `blob:http://localhost:5173/...` URL — the backend host is not visible ANYWHERE a
+freelancer could see it, matching `InvoiceView.jsx`'s own guarantee for clients. New test:
+`NewInvoiceWizard.test.jsx`'s own new case asserts the real `window.open`/`tab.location.href` call sequence
+against a mocked tab object, confirming the target URL never contains `:8000` or `/api/`.
+
+**Item C — does a freelancer viewing their own invoice link still get counted as a client view?** A real,
+confirmed, live-reproduced bug — not a report predating the guard, not a misconfiguration.
+
+**Root cause.** `apps.clients.portal.is_freelancer_previewing_portal` requires BOTH a valid freelancer
+session AND a valid portal-session cookie to be present on the SAME incoming request before it will
+suppress view-tracking. `portal_invoice_view_html` (`apps/invoices/views_portal.py`) calls
+`issue_or_renew_session(invoice.client, request, response)` — which, on a client's (or freelancer's) very
+first visit, mints a brand-new `ClientPortalSession` and writes its cookie ONLY onto the OUTGOING
+`response` — THEN calls `_record_invoice_view_if_appropriate(invoice, request)`, whose guard re-derives
+"has a portal session" by re-reading `request.COOKIES` a second time. A cookie set on a response can never
+appear in `request.COOKIES` for that SAME request — it only reaches the browser, and only gets sent back on
+the NEXT request. So on literally the first-ever visit to a given invoice/client's portal link — the most
+common real path, since no portal session exists for any client until someone visits at least once — the
+guard's own `has_portal_session` check was reading stale, not-yet-issued state, regardless of call order
+(reordering the two calls would not help; the session genuinely does not exist server-side as far as THIS
+request's own `request.COOKIES` can ever show, until the response round-trips).
+
+**Live reproduction (before the fix), using a real HTTP session mimicking exactly what a browser sends:**
+logged in as the freelancer (`live-check@example.com`) via the real `/api/auth/login/`, created a real
+client + invoice, `mark-sent` (status='sent'), confirmed baseline DB state (0 `InvoiceViewEvent` rows, 0
+`ClientPortalSession` rows for this client). Then, in the SAME authenticated session (same cookies,
+including the freelancer's own real JWT), issued a real `GET /api/invoices/portal/view/<token>/` — the
+exact same request the "View Invoice Online" email link and the QR code both resolve to. Result: **status
+flipped from `sent` to `viewed`, and a real `InvoiceViewEvent(source='platform_view')` row was created** —
+exactly the outcome every docstring in this codebase states must never happen ("a freelancer who clicked
+their own client's magic link without logging out of their own LanceraOS account first must never have
+that count as a real client view"). A SECOND visit, now that the browser held the round-tripped portal-
+session cookie from the first response, was correctly suppressed (0 additional events) — confirming the gap
+was specific to the mint-then-check ordering on a first visit, not a broken owner check or a broken guard
+in general. Repeated the isolated repro a second time with a fresh invoice/client pair for a clean, precise
+before/after comparison, with identical results both times.
+
+**The other 4 real call sites of `is_freelancer_previewing_portal` are structurally immune** — confirmed by
+reading each one directly, not assumed: `portal_invoice_comments` (both GET and POST),
+`portal_invoice_claims`, `portal_invoice_acknowledge` all call `resolve_session_from_request(request)`
+FIRST and return a real 401 if it finds no EXISTING session — none of them ever mint a new session inline
+before checking the guard, so none of them share this exact bug. Only `portal_invoice_view_html` calls
+`issue_or_renew_session` (the ONLY minting call site in the app) immediately before the guard check.
+
+**Fix, at the actual root cause — not a second, redundant check:** `is_freelancer_previewing_portal` gained
+an optional `portal_session` parameter; when the caller has already resolved a session THIS SAME request
+(via `issue_or_renew_session`'s own return value), passing it through skips the stale `request.COOKIES`
+re-read entirely and uses the caller's already-known, definitely-current answer instead.
+`_record_invoice_view_if_appropriate` gained the same optional parameter, threading it straight through.
+`portal_invoice_view_html` now captures `portal_session = issue_or_renew_session(...)` and passes it to
+`_record_invoice_view_if_appropriate`. The other 4 call sites are untouched — they never mint a session
+inline, so they keep the original cookie-based lookup, unaffected by this change either way.
+
+**Live-verified post-fix, same exact repro, fresh invoice/client pair:** the freelancer's own first-ever
+visit to their own just-sent invoice's link — status stayed `sent`, 0 `InvoiceViewEvent` rows. A genuinely
+separate, unauthenticated `requests.Session()` (no freelancer JWT cookie at all, matching a real client's
+browser) visiting the SAME link correctly still tracked normally — status flipped to `viewed`, 1 real event
+— confirming the fix is scoped to the freelancer-session case only and doesn't suppress genuine client
+traffic, including a genuine client's own first-ever visit (which also has no pre-existing portal session,
+proving the fix isn't "just always trust an existing session" but specifically "trust the session this
+exact request just resolved").
+
+**A real, necessary test reversal, not silently left in place:** `apps/invoices/tests/test_portal.py` had
+an existing test, `test_freelancer_session_alone_with_no_portal_session_still_tracks_normally`, whose own
+docstring described the PRE-FIX (buggy) behavior as intentional ("is not the preview scenario... since
+is_freelancer_previewing_portal requires BOTH") — a circular justification (restating what the code
+happened to do, not tracing to an actual product requirement) that, on inspection, was pinning down exactly
+this bug as if it were a deliberate design choice. Given the unconditional stated requirement in every
+other docstring in this file ("must never have that count as a real client view") and the live-reproduced
+evidence that the pre-fix behavior violated it on the most common real path, this test was renamed and
+reversed — `test_freelancer_session_alone_with_no_prior_portal_session_is_still_suppressed_real_bug_fix` —
+to assert the corrected outcome, with its own docstring explaining the full before/after and why the
+change was made rather than treating the old test as ground truth. A new sibling test,
+`test_a_genuine_client_with_no_freelancer_session_at_all_still_tracks_normally_on_their_own_first_visit`,
+was added alongside it to keep the "genuine client still tracked" guarantee explicitly covered by name, not
+just implied by the renamed test's own new assertions.
+
+Backend verification: `apps.clients.tests.test_portal` + `apps.invoices.tests.test_portal` +
+`apps.invoices.tests.test_acknowledgment` — **109 tests, all passed** (up from 108 — the one new sibling
+test). Full backend suite: `python manage.py test --keepdb` — **1099 tests, OK, 0 failures** (up from 1098).
