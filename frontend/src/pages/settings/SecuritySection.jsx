@@ -45,6 +45,32 @@ export default function SecuritySection() {
     }
   }
 
+  // ── Forgot current password (emailed reset link, while signed in) ────
+  // The second entry point into the same reset mechanism the login
+  // page's "Forgot Password?" uses — for someone who is signed in but
+  // can't supply the current password Change Password above requires.
+  const [resetLinkSending, setResetLinkSending] = useState(false)
+  const resetLinkMsg = useTimedMessage()
+
+  const handleRequestResetLink = async () => {
+    setResetLinkSending(true)
+    try {
+      await api.post('/auth/security/password-reset/request/')
+      // autoDismissMs: 0 keeps this on screen until dismissed — it carries
+      // the "you will be signed out everywhere" warning, which shouldn't
+      // vanish after 5 seconds the way a plain "saved" toast does.
+      resetLinkMsg.show(
+        'success',
+        'Check your email for a link to set a new password. Using it will sign you out of every device, including this one.',
+        { autoDismissMs: 0 },
+      )
+    } catch (err) {
+      resetLinkMsg.show('error', err.response?.data?.error || 'Failed to send the reset link.')
+    } finally {
+      setResetLinkSending(false)
+    }
+  }
+
   // ── 2FA enable (single-step, password only — turning 2FA ON is
   // security-increasing and doesn't need a second factor) ───────────
   const updateUser = useAuthStore((s) => s.updateUser)
@@ -347,6 +373,24 @@ export default function SecuritySection() {
               {pwSaving ? <><span className="fos-spinner" /> Changing…</> : 'Change Password'}
             </button>
           </div>
+        </div>
+
+        <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border-subtle)', maxWidth: 400 }}>
+          <p style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
+            Don't know your current password?
+          </p>
+          <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.55 }}>
+            We'll email you a link to set a new one. Using the link signs you out of every device,
+            including this one — you'll sign back in with your new password.
+          </p>
+          {resetLinkMsg.message && (
+            <div style={{ marginBottom: 14 }}>
+              <FosAlert type={resetLinkMsg.message.type} onDismiss={resetLinkMsg.clear}>{resetLinkMsg.message.text}</FosAlert>
+            </div>
+          )}
+          <button onClick={handleRequestResetLink} disabled={resetLinkSending} className="fos-btn fos-btn-ghost">
+            {resetLinkSending ? <><span className="fos-spinner" /> Sending…</> : 'Email Me a Reset Link'}
+          </button>
         </div>
       </Card>
 

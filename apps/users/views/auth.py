@@ -716,6 +716,33 @@ def check_verification_status(request):
 # PASSWORD RESET
 # ══════════════════════════════════════════════════════════════════
 
+def send_password_reset_link(user, request, trigger):
+    """
+    The one real "email this account a password-reset link" mechanism, with
+    two entry points: forgot_password below (anonymous, reached from the
+    login page) and security.request_password_reset (an authenticated user
+    who has forgotten their password reaching it from Settings > Security).
+    Both end at the same reset_password endpoint with a token from the same
+    password_reset_token generator, and send the same email.
+
+    The caller is responsible for every eligibility check (verified,
+    non-OAuth-only) and for its own rate limiting — those legitimately
+    differ between the two entry points (anonymous: dual IP+email limiting
+    and a uniform response that never reveals whether an account exists;
+    authenticated: a per-user cap and explicit rejection messages). This
+    function only does the part that must be identical.
+
+    `trigger` names the entry point in the audit row's metadata; the event
+    itself stays `password_reset_request` for both, since it is the same
+    action reached two ways, so anything already querying that event sees
+    every reset request.
+    """
+    uid = encode_uid(user)
+    token = password_reset_token.make_token(user)
+    send_password_reset_email_task.delay(str(user.pk), token, uid)
+    log_event('password_reset_request', user=user, request=request, metadata={'trigger': trigger})
+
+
 @api_view(['POST'])
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
@@ -748,10 +775,7 @@ def forgot_password(request):
             token = email_verification_token.make_token(user)
             send_verification_email_task.delay(str(user.pk), token, uid)
         else:
-            uid = encode_uid(user)
-            token = password_reset_token.make_token(user)
-            send_password_reset_email_task.delay(str(user.pk), token, uid)
-            log_event('password_reset_request', user=user, request=request)
+            send_password_reset_link(user, request, trigger='forgot_password')
     except User.DoesNotExist:
         pass  # Always 200 — never reveal whether an email exists.
 

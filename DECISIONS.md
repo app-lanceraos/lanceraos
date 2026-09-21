@@ -11856,3 +11856,77 @@ scrolled without closing itself.
   repeated scripted logins during verification; the script was changed to log in once and reuse the saved
   session. Only that one dev-cache key was cleared. A throwaway dev account `dropdown-check@example.com`
   with 25 seeded invoices was created in the dev database for this verification and left in place.
+
+---
+
+Date: 21 September 2026 (Self-serve password-reset link while logged in)
+Decision/Reason:
+
+**The gap.** `forgot_password` (anonymous, needs the account's email) was the only way to get a reset link.
+Someone who is signed in but has forgotten their password can't use `change_password` (it requires the old
+one), and had to log out and go through the anonymous flow first.
+
+**One mechanism, two entry points — a real extraction, not a copy.** `forgot_password`'s existing-verified-
+non-OAuth branch (build uid + token, dispatch `send_password_reset_email_task.delay(...)`, log
+`password_reset_request`) is now `auth.send_password_reset_link(user, request, trigger)`; `forgot_password`
+calls it and the new `security.request_password_reset` calls it. Same `password_reset_token` generator, same
+`encode_uid`, same Celery task, same email (`send_password_reset_email`, no new template), same completion
+endpoint (`reset_password`, untouched). Eligibility checks and rate limiting deliberately stay OUTSIDE the
+shared function, in each caller, because they legitimately differ: the anonymous path needs dual IP+email
+limiting and a uniform response that never reveals whether an account exists; the authenticated path can
+reject plainly. `forgot_password`'s external behavior is unchanged (its whole existing test file passes
+unmodified apart from one added assertion).
+
+**New endpoint:** `POST /api/auth/security/password-reset/request/` (`security.request_password_reset`,
+`IsAuthenticated`, no body). Named after the closest precedent, `security/add-password/request/`; lives in
+`security.py` beside `change_password`, its sibling authenticated password action. Gating, in order:
+1. **OAuth-only -> 400**, "This account has no password to reset. Add a password from Settings > Security
+   instead." (mirrors `toggle_2fa`'s own OAuth-only rejection shape/status; there's nothing to reset).
+2. **Unverified -> 403** with `email_not_verified: true` (same key `login` uses), see below.
+3. **Rate limit: 3/hour per user**, key `password_reset_self_req_<user pk>`. Chosen to match the two closest
+   authenticated request-a-link/OTP precedents (`request_disable_2fa`'s and `request_add_password`'s own
+   3/hour caps), not `change_password`'s 10/hour, which caps password GUESSES — this endpoint has no guess
+   to make, it just sends mail, so the tighter mail-sending cap is the right shape. Per-user only: no IP/email
+   dual limiting needed since the caller is authenticated. Counted only for requests that pass checks 1-2,
+   same as those two precedents. Separate from `forgot_password`'s own counters (they don't share keys).
+4. Success: shared function + plain message.
+
+**Can an unverified user reach an authenticated endpoint? Yes — confirmed, so the branch exists.** Traced
+every session-minting call site (`issue_tokens_and_session`/`rotate_session`): `login` refuses an unverified
+account (403, resends verification) before minting anything, and `verify_2fa` only follows a passed login;
+BUT `oauth.link_or_create_user` case 2 links a Google/Facebook sign-in to an existing email-registered
+account and mints a session WITHOUT flipping `is_email_verified` (only brand-new OAuth accounts are created
+verified). So a person can hold a real session on an unverified address, and CookieJWTAuthentication doesn't
+check verification either. Handled by rejecting (never mailing a reset link to a never-confirmed address —
+consistent with `forgot_password`, which sends a verification link instead in that situation). This endpoint
+does NOT also dispatch a verification email: that would duplicate `forgot_password`'s unverified branch at a
+second call site, the opposite of this pass's point; the message tells the person to verify first. **Flagged,
+not fixed (out of scope):** the OAuth-link path arguably should mark the account verified, since the provider
+just proved control of that email — that's what would make this branch unreachable, and is a separate product
+decision.
+
+**Audit event:** kept `password_reset_request` for both paths — it is the same action from two doors, and
+anything already filtering on that event should see every reset request. The entry points are distinguished
+by a new `metadata.trigger` (`forgot_password` | `settings_security`) instead of a second event name. This
+also adds a `trigger` key to `forgot_password`'s own audit rows going forward (nothing reads that event's
+metadata today).
+
+**Frontend.** `SecuritySection.jsx`: a "Don't know your current password?" block inside the Change Password
+card (divider below the existing form), with an "Email Me a Reset Link" button. The copy states BEFORE the
+click that using the link signs the person out of every device including the current one, and the success
+message repeats it and stays on screen until dismissed (`autoDismissMs: 0`) rather than auto-clearing after
+5s like a plain toast, since it carries the warning. Backend rejection messages (unverified, rate limit) are
+shown as returned. Not rendered for OAuth-only accounts (they already only see "Add a Password").
+`reset_password`'s existing full session wipe is unchanged and applies to the requesting session too.
+
+**Verification.** Backend, `test_security.py::RequestPasswordResetTests` (8 tests) + 1 added to
+`test_password_reset.py`: 401 unauthenticated with nothing dispatched; a real token (`check_token` passes,
+uid matches) and the same Celery task for a normal user; audit event + `trigger` marker; OAuth-only rejected
+with the right message, nothing sent; unverified rejected (403), nothing sent; 3 succeed then 429; the cap
+is per-user (a second logged-in user is unaffected after the first hits 429); and the integration test —
+captures the token/uid handed to the email task, submits them UNAUTHENTICATED to the existing
+`reset_password`, and asserts the password really changed, the requesting session was wiped (`/me/` -> 401),
+and the token can't be replayed. Frontend: `SecuritySection.test.jsx` (new file, 5 tests — SecuritySection
+had no test before). Full backend suite `python manage.py test --keepdb`: **1108 tests, OK, 0 failures**
+(up from 1099 — the 9 new tests). Full frontend suite `npx vitest run`: **23 files, 311 tests, all passed**
+(up from 306). `npx vite build`: clean (same pre-existing chunk-size warning).

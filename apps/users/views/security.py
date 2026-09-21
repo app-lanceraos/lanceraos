@@ -34,7 +34,7 @@ from ..emails import (
 from ..models import EmailChangeRequest, FreelancerProfile, Session
 from ..serializers import DISPOSABLE_DOMAINS, UserSerializer, validate_password_strength
 from ..token_service import issue_tokens_and_session, rotate_session
-from .auth import NO_AUTH, _generate_otp, _generate_token, _mask_email
+from .auth import NO_AUTH, _generate_otp, _generate_token, _mask_email, send_password_reset_link
 
 User = get_user_model()
 
@@ -130,6 +130,68 @@ def change_password(request):
     response = Response({'message': 'Password changed successfully.', 'user': UserSerializer(user).data})
     set_auth_cookies(response, access, refresh_str, refresh_lifetime_days=days)
     return response
+
+
+# ══════════════════════════════════════════════════════════════════
+# REQUEST A PASSWORD-RESET LINK WHILE LOGGED IN — for someone who is
+# signed in but has forgotten their password (so change_password, which
+# needs the old one, is unusable). The second entry point into the SAME
+# reset mechanism forgot_password uses (auth.send_password_reset_link):
+# same token generator, same task and email, completed at the same
+# unauthenticated reset_password endpoint — which, unchanged, wipes every
+# session including the one that requested it.
+# ══════════════════════════════════════════════════════════════════
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def request_password_reset(request):
+    """
+    Emails the authenticated user a password-reset link. No request body.
+
+    Deliberately NOT gated on the current password (that's the whole
+    point). Being signed in already proves control of a live session, and
+    the link itself still only goes to the account's own inbox — so a
+    hijacked session gains nothing it couldn't already do, and (as with
+    add-password) actually completing the reset still requires that inbox.
+    Unlike forgot_password's uniform-response design, an authenticated
+    caller can be told plainly why a request is ineligible.
+    """
+    user = request.user
+
+    if user.is_oauth_only():
+        return Response(
+            {'error': 'This account has no password to reset. Add a password from Settings > Security instead.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Confirmed reachable, not theoretical: login() refuses an unverified
+    # account, but oauth.link_or_create_user() links a Google/Facebook
+    # sign-in to an existing email-registered account WITHOUT flipping
+    # is_email_verified, so that person holds a real session on an
+    # unverified address. Mailing a reset link to an address that was
+    # never confirmed doesn't make sense (forgot_password sends a
+    # verification link in this situation instead, never a reset link).
+    if not user.is_email_verified:
+        return Response(
+            {
+                'error': 'Your email address has not been verified yet. Verify it first, then try again.',
+                'email_not_verified': True,
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Per-user (no IP/email dual limiting — the caller is authenticated),
+    # same 3/hour shape as request_disable_2fa's and request_add_password's
+    # own request caps. Counted only for eligible requests, like those two.
+    key = f'password_reset_self_req_{user.pk}'
+    count = cache.get(key, 0)
+    if count >= 3:
+        return Response({'error': 'Too many requests. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    cache.set(key, count + 1, timeout=3600)
+
+    send_password_reset_link(user, request, trigger='settings_security')
+
+    return Response({'message': 'A link to set a new password has been sent to your email.'})
 
 
 # ══════════════════════════════════════════════════════════════════

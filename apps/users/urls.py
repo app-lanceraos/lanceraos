@@ -39,6 +39,7 @@ urlpatterns = [
     path('forgot-password/', auth.forgot_password, name='forgot_password'),
     path('reset-password/<str:uid>/<str:token>/', auth.reset_password, name='reset_password'),
     path('change-password/', security.change_password, name='change_password'),
+    path('security/password-reset/request/', security.request_password_reset, name='request_password_reset'),
 
     # ── Add password (OAuth-only accounts) ──────────────────────────
     path('security/add-password/request/', add_password.request_add_password, name='request_add_password'),

@@ -540,8 +540,10 @@ product decision to split them — see DECISIONS.md):
     profile-completion indicator.
   - Settings (/settings): 7 sections — Account (email/username/name/DOB),
     Business (address, currency, payment terms, bank/JazzCash/Easypaisa/
-    Payoneer), Tax & PSEB (CNIC/NTN/PSEB), Security (password, 2FA,
-    add-password for OAuth-only accounts, danger-zone deletion),
+    Payoneer), Tax & PSEB (CNIC/NTN/PSEB), Security (password — including
+    an "Email Me a Reset Link" action for someone signed in who doesn't
+    know their current password, 2FA, add-password for OAuth-only
+    accounts, danger-zone deletion),
     Sessions, Notifications, Email Sending (SMTP). Email-change is
     hidden entirely (not shown-but-disabled) inside Account for an
     OAuth-only account — with no password to confirm the change with,
@@ -610,6 +612,13 @@ Key API endpoints:
   (disable's own password -> OTP -> confirm pair, 20 September 2026)
 - POST /api/auth/change-password/
 - POST /api/auth/forgot-password/ + /api/auth/reset-password/<uid>/<token>/
+- POST /api/auth/security/password-reset/request/ (21 September 2026 — the AUTHENTICATED second entry
+  point into the same reset mechanism: no body, no current password needed; rejects an OAuth-only
+  account (400, points at add-password) and an unverified one (403, `email_not_verified`); 3/hour per
+  user. Both entry points call one shared `auth.send_password_reset_link(user, request, trigger)` —
+  same `password_reset_token`, `send_password_reset_email_task`, email, and `password_reset_request`
+  audit event (`metadata.trigger` = `forgot_password` | `settings_security`) — and both are completed
+  at the unchanged `reset_password`, which still wipes every session, the requesting one included)
 - POST /api/auth/security/add-password/request/
   + /security/add-password/validate/<uidb64>/<token>/ (GET)
   + /security/add-password/complete/<uidb64>/<token>/ (OAuth-only accounts)
