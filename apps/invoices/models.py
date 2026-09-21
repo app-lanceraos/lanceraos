@@ -413,21 +413,25 @@ class Invoice(models.Model):
     def payment_page_url(self):
         """
         The public "pay online" URL the PDF's QR code (and the "Pay
-        online" link beside it) encode.
+        online" link beside it) encode: the frontend's dedicated
+        `/invoice/<token>/pay/` payment-details page (PaymentDetails.jsx) —
+        who to pay, the outstanding amount, and every configured payment
+        method with per-field copy buttons.
 
-        FIXED (item 11 of the verification pass — real, confirmed bug):
-        this used to point at f'{FRONTEND_URL}/pay/{view_token}' — a
-        route that has never existed anywhere in frontend/src/App.jsx
-        (confirmed directly), inherited unchanged from v1's own
-        get_payment_page_url() despite v2 having no payment gateway to
-        build a real dedicated pay flow around. Every real invoice's QR
-        code and "Pay online" link led to a dead page. Since there's no
-        gateway, the correct real destination is this SAME invoice's own
-        portal_view_url (below) — the real, live-rendered page that
-        already shows payment methods (item 7) and, for a saved client
-        with a portal session, the Report-a-Payment claim form.
+        HISTORY (see DECISIONS.md, 21 September 2026): this used to point
+        at a `/pay/<token>` route that never existed, was then repointed
+        at portal_view_url, and that link's old docstring claimed it was a
+        live-rendered page with payment methods and a claim form. Neither
+        was true of the destination by then — portal_view_url serves the
+        frozen invoice PDF in a viewer, with nothing to copy and no form.
+        portal_view_url itself is unchanged and stays the invoice
+        DOCUMENT link (emails, the portal list, "View Invoice").
+
+        A PDF's QR code is frozen at finalise: an invoice finalised before
+        this change still encodes the old portal_view_url, and keeps
+        working — it just opens the document rather than this page.
         """
-        return self.portal_view_url
+        return f'{settings.FRONTEND_URL}/invoice/{self.view_token}/pay/'
 
     @property
     def portal_view_url(self):

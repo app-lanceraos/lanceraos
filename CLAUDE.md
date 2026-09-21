@@ -876,7 +876,7 @@ screen visiting the Timeline tab of a paid/partially-paid invoice (a real `Refer
 `invoiceHelpers.js` — `formatMoney` was only ever re-exported, never locally imported, so
 `timelineLabel`'s own call to it threw; a new general-purpose `ErrorBoundary` component now also wraps
 the Timeline tab); the PDF/portal "Pay online" link/QR pointed at a `/pay/<token>` frontend route that
-never existed (`payment_page_url` now IS `portal_view_url`); Preview-as-Client silently failed to
+never existed (`payment_page_url` now IS `portal_view_url` — SUPERSEDED 21 September 2026, it is now its own dedicated `/invoice/<token>/pay/` page, see that entry below); Preview-as-Client silently failed to
 render in its own iframe (Django's own clickjacking protection, `X_FRAME_OPTIONS`, blocked it in both
 DEBUG and production — fixed with a single-view `@xframe_options_exempt`); a freelancer previewing
 their own client's real portal link could falsely mark their own messages "seen by the client" (GET's
@@ -1557,6 +1557,16 @@ apps.clients.portal's session utility, never the reverse — see DECISIONS.md):
   as the HTML view beside it, AllowAny, real 404 for an unknown token; proxies real bytes via
   fetch_invoice_pdf_bytes rather than redirecting, so it works even under this account's real
   Cloudinary raw/PDF-delivery ACL restriction)
+- GET /api/invoices/portal/view/<str:view_token>/payment-details/ (21 September 2026 — public, read-only,
+  AllowAny, view_token-is-the-credential like its two siblings above; the data behind the frontend's
+  /invoice/<token>/pay/ page. Business name + invoice number/status/currency/total/outstanding +
+  `accepts_payment` + `payment_methods`, only methods actually configured, only their non-blank fields.
+  Reads the freelancer's LIVE FreelancerProfile — deliberately NOT frozen like the invoice document —
+  and answers `Cache-Control: no-store`. NO session minting, NO Sent->Viewed, NO InvoiceViewEvent, no
+  freelancer-preview guard (it changes no invoice state, so there is nothing to misattribute). draft -> 404;
+  a paid/cancelled/refunded/bad_debt invoice returns an empty `payment_methods`; generous 120/hour/IP limit.
+  Built by apps/invoices/payment_details.py's PAYMENT_METHOD_SPECS allowlist — never iterates profile fields,
+  so wise_access_token/wise_refresh_token and other credentials cannot leak by construction)
 - GET /api/invoices/{id}/preview-as-client/ (freelancer-facing, IsAuthenticated — renders the same
   HTML inside the authenticated app; never mints a session, never logs a view — the one remaining
   real consumer of render_invoice_portal_html, since portal_invoice_view_html no longer calls it)
@@ -2169,6 +2179,30 @@ clipped item works) plus the header "More", `InvoiceDetailPanel.jsx`'s footer "M
 AppShell's mobile 3-dot menu; jsdom tests cover only the placement arithmetic and event wiring, and say so.
 Full frontend suite: 306 passing (up from 295); `vite build` clean. See DECISIONS.md's 21 September 2026
 "Dropdown Portal Fix" entry.
+
+**21 September 2026 (Public payment-details page — the QR code / "Pay online" link lands somewhere useful).**
+`Invoice.payment_page_url` (the PDF's QR code and "Pay online" link) no longer equals `portal_view_url`: it is
+now `{FRONTEND_URL}/invoice/<token>/pay/`, a real React page (`frontend/src/pages/PaymentDetails.jsx`,
+shell-less, DESIGN.md Section 10's fixed light palette) showing who to pay, the amount still due, and every
+configured payment method with a per-field Copy button (`navigator.clipboard`, a real "Copied" confirmation).
+`portal_view_url` is unchanged and remains the invoice-DOCUMENT link (emails, portal list, "View Invoice"). A
+live check confirmed the old link was a raw `application/pdf` in a viewer — no copyable methods, no claim form —
+so the old `payment_page_url` docstring ("live-rendered page that already shows payment methods and the claim
+form") had been stale since the 18 August 2026 frozen-PDF rework. The page reads the freelancer's CURRENT
+payment details on purpose — the opposite of the frozen invoice document, because a client paying a
+since-closed bank account is a real loss — from the new `GET .../portal/view/<token>/payment-details/`
+(endpoint list above). That endpoint has no side effects, so a QR scan no longer counts as the client
+"viewing" the invoice (it used to flip `sent` -> `viewed` and log an `InvoiceViewEvent`, confirmed live); the
+page's own "View invoice" link still goes to the tracking document route. Known limitation: a PDF's QR is
+frozen at finalise, so invoices finalised before this change still encode the old document URL and keep
+working as before. Wise: the "canonical/dynamic templates omit Wise" premise was about dead code (the removed
+free-canvas system's leftover files); every live template already renders Wise via the shared
+`payment_block.html` and is tested, and the new page includes it too — but `wise_profile_id` has NO input
+anywhere in Settings, so for a real user the Wise row can never appear on the PDF or the page (flagged, not
+built). No claim/"I've paid" form on this page (out of scope; suggested in DECISIONS.md). Backend 1141 tests
+passing (27 new, `test_payment_details.py`); frontend 328 passing (15 new, `PaymentDetails.test.jsx`);
+`vite build` clean; live-verified in real Chromium at 375px/1280px. Note the test files are gitignored in this
+repo. See DECISIONS.md's 21 September 2026 "Public payment-details page" entry.
 
 ---
 

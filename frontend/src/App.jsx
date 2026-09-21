@@ -30,6 +30,7 @@ import TermsOfService from '@/pages/TermsOfService'
 import ClientPortal from '@/pages/portal/ClientPortal'
 import PortalEnter from '@/pages/portal/PortalEnter'
 import InvoiceView from '@/pages/InvoiceView'
+import PaymentDetails from '@/pages/PaymentDetails'
 import InvoicePreviewPdf from '@/pages/InvoicePreviewPdf'
 
 export default function App() {
@@ -86,6 +87,14 @@ export default function App() {
             displays it, never a second reimplementation of the invoice
             layout; see that file's own comment. */}
         <Route path="/invoice/:token" element={<InvoiceView />} />
+
+        {/* The public payment-details page — where an invoice's QR code
+            and "Pay online" link land (Invoice.payment_page_url,
+            21 September 2026). Sibling of the document view above, same
+            public/shell-less convention; reads the freelancer's CURRENT
+            payment methods and has no view-tracking side effects — see
+            PaymentDetails.jsx's own header comment. */}
+        <Route path="/invoice/:token/pay" element={<PaymentDetails />} />
 
         {/* Private — require an active session */}
         {/* NewInvoiceWizard.jsx's "Preview PDF" action — real bug fix,

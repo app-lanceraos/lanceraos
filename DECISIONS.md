@@ -12004,3 +12004,143 @@ suite `python manage.py test --keepdb`: **1114 tests, OK, 0 failures** (up from 
 tests). Frontend `npx vitest run`: **23 files, 313 tests, all
 passed** (up from 311, +2 SecuritySection tests); `npx vite build` clean (no source change to
 `SecuritySection.jsx`).
+
+
+---
+
+Date: 21 September 2026 (Public payment-details page — the QR code / "Pay online" link finally lands somewhere useful)
+Decision/Reason:
+
+**Step 0 — what the old link actually did (confirmed live, not read off a docstring).** Cloned a real sent dev
+invoice into a throwaway row (one-time client, `sent`) and hit both halves of the old link against the running
+servers. `http://localhost:5173/invoice/<token>/` — what `payment_page_url` produced — is the SPA shell for
+`InvoiceView.jsx`, which fetches `GET /api/invoices/portal/view/<token>/`; that returned `200
+Content-Type: application/pdf`, `Content-Disposition: inline` (a 307 KB PDF, verified with `file`). So a client
+scanning the QR code got the frozen invoice PDF in a viewer: no copyable payment methods, no claim form, nothing
+interactive. **The `payment_page_url` docstring was stale** — it claimed the destination was "the real,
+live-rendered page that already shows payment methods (item 7) and, for a saved client with a portal session, the
+Report-a-Payment claim form". That was true of `portal_invoice_view_html` when the docstring was written (11-16
+August) and stopped being true on 18 August 2026 (second pass), when that endpoint was reworked to serve the frozen
+PDF and never live-render; the docstring was never updated. Also confirmed live: the old endpoint's view-tracking
+fires unconditionally — the same hit flipped the throwaway invoice `sent` → `viewed` and wrote one
+`InvoiceViewEvent`. (One-time client, so no `ClientPortalSession` was minted; for a saved client it also would
+have been.) Consequence worth stating plainly: until now, every QR scan from a printed or emailed PDF counted as
+"the client viewed the invoice". After this change it no longer does — see below.
+
+**What was built.** Purely additive; `portal_invoice_view_html`, the frozen-PDF path, view-tracking, session
+minting and the finalise/freeze timing are untouched.
+- `GET /api/invoices/portal/view/<view_token>/payment-details/` (`views_portal.portal_invoice_payment_details`,
+  `AllowAny`) — the same `view_token`-is-the-credential trust model as the document and PDF-download endpoints
+  beside it (the same bank details are already printed on the PDF this token unlocks); no new credential. Returns
+  business name, invoice number/status/currency/total/outstanding, `accepts_payment`, and `payment_methods`.
+- `apps/invoices/payment_details.py` — `PAYMENT_METHOD_SPECS`, an explicit allowlist of (method, profile attribute,
+  row label). A method appears only if at least one of its attributes is non-blank, and only its non-blank
+  attributes become rows (whitespace-only counts as blank), so there is never an empty "Bank transfer" row. Nothing
+  iterates the profile's fields, so `wise_access_token`/`wise_refresh_token`, SMTP password and the encrypted
+  CNIC/NTN cannot reach the response by construction (also asserted by a test that plants secrets and checks the raw
+  bytes).
+- `frontend/src/pages/PaymentDetails.jsx` at `/invoice/:token/pay` — a real React page (not an iframe/PDF), with a
+  Copy button per field (`navigator.clipboard.writeText`, a real "Copied" confirmation that resets after 2s, an
+  honest "Copy failed" when the clipboard is missing or rejects). Styled per DESIGN.md Section 10's fixed light
+  palette ("Payment Page" is named there), not the theme-token look `PortalLayout` uses — Section 10 is the
+  authoritative rule for public pages, and `InvoiceView.jsx`, its direct sibling, does the same. lucide icons only.
+- `Invoice.payment_page_url` now returns `{FRONTEND_URL}/invoice/<token>/pay/`. `portal_view_url` is unchanged and
+  still the invoice-document link everywhere it was used (email links, the portal list, "View Invoice", Copy
+  Invoice Link). The docstring on `payment_page_url` was rewritten to say what is true and to record the history.
+
+**LIVE profile data, deliberately — the opposite of how the invoice document is served.** The invoice PDF is
+frozen at finalise so a later profile edit can never silently change a document a client already received (the
+18 August drift bug). Payment *instructions* are a different kind of data: if a freelancer closes a bank account or
+changes Payoneer address, every still-unpaid invoice should send money to the new one, not to what was true the day
+the invoice was made — a client paying a stale account is a real loss, not a cosmetic drift. So this endpoint reads
+`invoice.user.profile` fresh on every request and answers `Cache-Control: no-store` so no shared cache serves
+yesterday's account. This is a real, intentional contrast with the frozen PDF, not an oversight, and it is tested
+(profile changed after the invoice exists → new value returned; method added → appears; method cleared → gone).
+The trade-off it accepts: the PDF's own printed "Payment methods" block can now disagree with the payment page
+after a profile edit. That is the intended direction of disagreement (the page is the authoritative, current one).
+
+**No session minting, no view-tracking, no freelancer-preview guard on this endpoint.** Step 0 confirmed the old
+endpoint's side effects are the `sent`→`viewed` flip, an `InvoiceViewEvent` and (saved clients) a portal session.
+The new endpoint changes no invoice state at all, so there is nothing to misattribute and
+`is_freelancer_previewing_portal` has nothing to guard — adding it would be dead code. Tested directly: repeated
+hits leave status `sent`, create zero `InvoiceViewEvent`s, mint no `ClientPortalSession` and set no cookie for a
+saved client, and a logged-in owner hitting their own page is equally a no-op. The one behavioural consequence is
+the one named in Step 0: a QR scan is no longer counted as a view. That is arguably more correct (opening a payment
+page is not reading the invoice, and a person scanning a QR from a PDF has by definition already seen the PDF), and
+the page's "View invoice" link goes to `/invoice/<token>`, which still tracks a genuine view exactly as before.
+
+**Small calls made, all reversible:** (1) `draft` → 404 (its token is never exposed anywhere; same boundary the
+portal list draws), every other status responds. (2) `accepts_payment` is true for `created`/`sent`/`viewed`/
+`partially_paid` with outstanding > 0; for `paid`/`cancelled`/`refunded`/`bad_debt` (or nothing outstanding) the
+backend returns an EMPTY `payment_methods` — the payload itself stops advertising bank details on a settled invoice,
+rather than relying on the frontend to hide them — and the page shows a one-line status message. `created` counts as
+payable because the PDF and QR exist from finalise and a freelancer can hand the PDF over without pressing Send.
+(3) A generous per-IP read-tier rate limit (120/hour, explicit cache check per CLAUDE.md rule 12) — its job is to
+make bulk-probing tokens through this endpoint expensive, not to meter real use. (4) Amounts show 2 decimals; the
+shared `formatMoney` rounds to whole units, which is wrong for something a person is about to type into a bank app.
+(5) A "View invoice" link and a one-line "use the invoice number as the payment reference" hint — small product
+copy, not asked for; trivial to drop.
+
+**Known limitation — frozen QR codes.** A PDF's QR code is baked in at finalise. Every invoice finalised before this
+change still encodes the old `/invoice/<token>/` URL and keeps working exactly as before (opens the invoice
+document); only PDFs rendered after this change encode `/pay/`. Not fixed here (it would mean re-freezing sent
+documents, which is precisely what the freeze exists to prevent). If it matters, the cheap bridge is a "Payment
+details" button on `InvoiceView.jsx` linking to `/invoice/<token>/pay`, which would give every old QR a one-tap route
+to the new page; not built, since `InvoiceView.jsx` wasn't in scope.
+
+**The Wise item — findings, and why there is no template change.** The brief said the "newer canonical/dynamic-
+element template system" omits Wise. That system is dead code: `apps/invoices/templates/invoices/canonical/` and the
+`dynamic_design.html`/`_dynamic_element_*.html` files are leftovers of the free-canvas editor removed by the 12
+September 2026 Full Reversion (already flagged as unreferenced in CLAUDE.md's 13 September entry; re-confirmed —
+no Python reference exists) and are never rendered. Every LIVE template — all 22 selectable plus legacy `minimal` —
+includes the shared `_partials/payment_block.html`, which already renders Wise when set, and
+`professional.html`/`modern.html` also carry `wise_profile_id` in their own `.lower` gating conditions. Existing
+tests (`test_template_import_batch1`–`5`) already assert Wise renders in real PDFs for every template. So the
+templates are already consistent and there was nothing to fix there; writing a redundant 23-template WeasyPrint
+sweep would only slow the suite. History, from `git log -S` and DECISIONS.md: Wise was first *deliberately omitted*
+(Step 7: "OAuth plumbing, not a client-facing payment identifier") and then *deliberately added* on 14 September
+(commit da2f2b8, Ali's decision, with an explicit note that "is a profile ID what a client should pay to" was left
+open). It was a considered reversal, not an oversight. The new payment page includes Wise on the same only-if-set
+basis. **The real remaining gap is different, and pre-existing:** `wise_profile_id` is technically writable through
+`PUT /api/auth/profile/` but **no UI anywhere sets it** — Settings > Business has Bank/JazzCash/Easypaisa/Payoneer
+and no Wise field — so for a real user the Wise row can never appear on either the PDF or this page. Not built
+(unplanned scope, and it reopens the still-open "what should the Wise value be" question); flagged for a decision.
+
+**Alternatives considered.** Adding the payment methods (and a claim form) to `InvoiceView.jsx`/the frozen document
+path — rejected: the brief forbids touching it, and mixing live data into a frozen-document page reintroduces exactly
+the drift the 18 August rework closed. Serving the details through the existing `portal_invoice_detail`/session
+endpoints — rejected: those need a portal session, which a one-time client (and anyone scanning a QR on a phone
+with no prior visit) doesn't have. Snapshotting payment methods at finalise — rejected for the stale-account reason
+above. Rendering server-side HTML instead of a React page — rejected: per-field clipboard copy needs real
+interactivity, and the SPA-with-JSON pattern is what `InvoiceView.jsx` already established. A claim/"I've paid" form
+on this page — not built per scope; **suggestion:** worth doing, since a client who has just copied an account
+number is at the exact moment they would report the payment — but it would need the same guard/rate-limit/CSRF
+treatment `portal_invoice_claims` already has, so it is its own piece of work, and for a saved client that flow
+already exists in `ClientPortal.jsx`.
+
+**Verification.** New backend `apps/invoices/tests/test_payment_details.py` (27 tests): only-configured-methods
+(bank set/Payoneer unset → no Payoneer row; nothing configured → empty list; whitespace-only counts as unset;
+partial bank shows only its set fields; all five methods in display order; Wise present iff set; OAuth secrets
+never in the raw response; business-name fallback), live-profile (bank changed after the invoice exists → new value;
+method added; method removed; `no-store`), token access (wrong token 404; no token has no route; another invoice's
+token returns only its own owner's data; draft 404; no login needed), no-side-effects (no view event, status
+unchanged, no portal session/cookie, owner's own visit is a no-op), settled invoices (paid/cancelled/refunded/
+bad_debt and a fully-paid active status advertise nothing; created/sent/viewed/partially_paid all accept), and rate
+limiting (429 after the cap; real use of 20 hits is nowhere near it). `test_pdf_templates.py`'s
+`test_payment_page_url_property`, which pinned the old `payment_page_url == portal_view_url` behavior, was rewritten
+to assert the new URL and that `portal_view_url` is unchanged. New frontend `PaymentDetails.test.jsx` (15 tests):
+endpoint/token, amount with cents, partly-paid shows outstanding + total, exactly-the-methods-given (nothing
+invented), no-methods message, settled message with no Copy buttons, document link, 404/429/500 states, and the Copy
+button (labelled per field, writes that field's own value, shows "Copied" for only the clicked field, resets after
+the window, "Copy failed" on a rejecting clipboard and on a missing `navigator.clipboard`). Full backend suite
+`python manage.py test --keepdb`: **1141 tests, OK, 0 failures** (up from 1114). Full frontend suite `npx vitest
+run`: **24 files, 328 tests, all passed**; `npx vite build` clean (only the pre-existing chunk-size warning). Live,
+against the running dev servers (real Chromium via Playwright, real backend, throwaway invoice deleted afterwards):
+the endpoint returned the correct JSON with `Cache-Control: no-store`, a wrong token was a 404, the invoice stayed
+`sent` with 0 view events after the page loaded, the page rendered correctly at 375px and 1280px with no console or
+page errors, and clicking Copy put the real account number on the real clipboard and flipped the button to "Copied".
+Not verified live: a *finalised* invoice's freshly-rendered PDF actually encoding the `/pay/` QR (the QR
+generation is asserted by the existing `test_qr_encodes_the_real_payment_page_url`, which reads the property, but no
+new PDF was rendered end-to-end and scanned). **Note:** the test files are gitignored in this repository
+(`.gitignore` lines 73/78: `apps/*/tests/`, `frontend/**/*.test.jsx`), so they exist locally but are not part of a
+commit.

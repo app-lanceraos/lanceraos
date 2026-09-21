@@ -53,6 +53,7 @@ from apps.users.authentication import enforce_csrf_standalone
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
 from .email_service import fetch_invoice_pdf_bytes
 from .models import Invoice, InvoiceComment, InvoiceViewEvent
+from .payment_details import build_payment_details
 from .pdf_generator import render_invoice_portal_html
 from .serializers_claims import PaymentClaimSerializer, PortalClaimCreateSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
@@ -110,6 +111,22 @@ def _check_portal_acknowledge_rate_limit(identifier):
     key = f'ratelimit_portal_acknowledge_{identifier}'
     count = cache.get(key, 0)
     if count >= PORTAL_ACKNOWLEDGE_RATE_LIMIT_PER_HOUR:
+        return True
+    cache.set(key, count + 1, timeout=3600)
+    return False
+
+
+# Generous read-only tier (CLAUDE.md rule 12): a client refreshing the page,
+# or several people behind one shared mobile-carrier IP opening their own
+# links, must never notice this. It exists to make bulk-probing view_tokens
+# through this endpoint expensive, not to meter real use.
+PORTAL_PAYMENT_DETAILS_RATE_LIMIT_PER_HOUR = 120
+
+
+def _check_portal_payment_details_rate_limit(identifier):
+    key = f'ratelimit_portal_payment_details_{identifier}'
+    count = cache.get(key, 0)
+    if count >= PORTAL_PAYMENT_DETAILS_RATE_LIMIT_PER_HOUR:
         return True
     cache.set(key, count + 1, timeout=3600)
     return False
@@ -388,6 +405,49 @@ def portal_invoice_pdf_download(request, view_token):
         '[INVOICES] portal_invoice_pdf_download total_ms=%s for invoice_id=%s request_id=%s.',
         int((time.perf_counter() - endpoint_started) * 1000), invoice.pk, request_id,
     )
+    return response
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def portal_invoice_payment_details(request, view_token):
+    """
+    The public payment-details payload behind the frontend's
+    `/invoice/<token>/pay` page (Invoice.payment_page_url — the PDF's QR
+    code and "Pay online" link): who to pay, how much is outstanding, and
+    every payment method the freelancer has actually configured.
+
+    Public/unauthenticated by design — view_token is the credential, the
+    same trust model as portal_invoice_view_html and
+    portal_invoice_pdf_download beside it (and the same bank details are
+    already printed on the PDF this token unlocks). A real 404 for an
+    unknown token, and for a draft, whose token is never exposed anywhere.
+
+    Reads the freelancer's CURRENT profile, not a frozen copy — see
+    payment_details.py's own docstring for why that is deliberately the
+    opposite of how the invoice document itself is served.
+
+    Deliberately NO session minting, NO Sent->Viewed transition, NO
+    InvoiceViewEvent, and therefore no is_freelancer_previewing_portal
+    guard: unlike portal_invoice_view_html this endpoint changes no
+    invoice state at all, so there is nothing to misattribute. Opening
+    the payment page is not "viewing the invoice" — a client who scans
+    the QR code straight from a printed PDF has, by definition, already
+    seen it. Response is `Cache-Control: no-store` so a shared cache never
+    serves yesterday's bank account after the freelancer changes it.
+    """
+    if _check_portal_payment_details_rate_limit(get_client_ip(request)):
+        return Response(
+            {'error': 'Too many requests. Please try again in a little while.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    invoice = get_object_or_404(Invoice.objects.select_related('user__profile'), view_token=view_token)
+    if invoice.status == 'draft':
+        return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    response = Response(build_payment_details(invoice))
+    response['Cache-Control'] = 'no-store'
     return response
 
 
