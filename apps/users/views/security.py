@@ -137,9 +137,11 @@ def change_password(request):
 # signed in but has forgotten their password (so change_password, which
 # needs the old one, is unusable). The second entry point into the SAME
 # reset mechanism forgot_password uses (auth.send_password_reset_link):
-# same token generator, same task and email, completed at the same
-# unauthenticated reset_password endpoint — which, unchanged, wipes every
-# session including the one that requested it.
+# same token generator and email, completed at the same unauthenticated
+# reset_password endpoint — which, unchanged, wipes every session including
+# the one that requested it. Differs from forgot_password in dispatch mode
+# ON PURPOSE: this one sends synchronously and reports a real failure (see
+# send_password_reset_link's docstring for why each caller differs).
 # ══════════════════════════════════════════════════════════════════
 
 @api_view(['POST'])
@@ -189,7 +191,16 @@ def request_password_reset(request):
         return Response({'error': 'Too many requests. Please try again in an hour.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
     cache.set(key, count + 1, timeout=3600)
 
-    send_password_reset_link(user, request, trigger='settings_security')
+    # Sent inline, not queued (synchronous=True): unlike forgot_password,
+    # this caller is authenticated, so there is no timing oracle to defend
+    # against — and a queued send here would report success while the
+    # email sat undelivered (no worker running, worker down). A failed send
+    # must be an error the person sees, never a "check your email".
+    if not send_password_reset_link(user, request, trigger='settings_security', synchronous=True):
+        return Response(
+            {'error': 'Failed to send the reset email. Please try again shortly.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     return Response({'message': 'A link to set a new password has been sent to your email.'})
 

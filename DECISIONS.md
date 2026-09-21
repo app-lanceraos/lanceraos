@@ -11930,3 +11930,77 @@ and the token can't be replayed. Frontend: `SecuritySection.test.jsx` (new file,
 had no test before). Full backend suite `python manage.py test --keepdb`: **1108 tests, OK, 0 failures**
 (up from 1099 — the 9 new tests). Full frontend suite `npx vitest run`: **23 files, 311 tests, all passed**
 (up from 306). `npx vite build`: clean (same pre-existing chunk-size warning).
+
+---
+
+Date: 21 September 2026 (CORRECTION — the authenticated password-reset endpoint must not depend on a Celery worker)
+Decision/Reason:
+
+**What went wrong, stated plainly.** The earlier same-day entry ("Self-serve password-reset link while logged
+in") extracted `forgot_password`'s send step into `auth.send_password_reset_link` and had the new
+authenticated endpoint call it. That function dispatched via `send_password_reset_email_task.delay(...)`,
+because that is what the code being extracted did. Nobody re-examined whether the REASON for that `.delay()`
+applied to the new caller. It didn't. The bug was hit for real: on a machine with no Celery worker running,
+`POST /auth/security/password-reset/request/` returned its normal success message ("check your email")
+immediately, while the email sat in Redis and never sent — a false success, not a background delay. The
+extraction itself was right and stays; the mistake was inheriting a dispatch mode implicitly, and my earlier
+entry even described "the same Celery task" as a feature of the design.
+
+**Why `forgot_password` is async, and the new endpoint has no such reason.** `forgot_password` is anonymous and
+returns the same generic message whether or not the email belongs to an account, so response timing can't be
+used to discover who is registered. If the "account exists" branch made a real Resend HTTP call inline while
+the "no such account" branch only did a cache write, the two would differ measurably in real time despite
+identical text. Moving the send onto Celery closes that gap — a security property, not background work for its
+own sake (its accepted trade-off is that it returns before anything is sent). The new endpoint's caller is
+already authenticated: there is no identity to protect from timing analysis, so sending inline reveals nothing.
+Confirmed against `EMAILS.md`: every other authenticated-action email (password changed, add-password
+confirmation, 2FA enabled/disabled, email-change steps) is sent synchronously; async dispatch is the exception
+for one specific anonymous-endpoint reason, and this endpoint should have followed the general practice.
+
+**Fix.** `send_password_reset_link(user, request, trigger, *, synchronous)` — the sync/async choice is now an
+explicit, keyword-only parameter with NO default, so every caller has to decide. `forgot_password` passes
+`synchronous=False` (unchanged: same `.delay()`, same args, same generic response, same timing);
+`request_password_reset` passes `synchronous=True`, calling `send_password_reset_email` directly. The
+function's docstring records the timing-safety-vs-not distinction and warns against "simplifying" back to
+`.delay()`, so the next reader sees why the callers differ, not just that they do.
+
+**Real failure handling on the sync path.** Read directly first: `send_password_reset_email` returns a bool and
+never raises, because `core.email.send_email` catches every provider failure (missing `RESEND_API_KEY`,
+connection error, HTTP >= 400) and returns `False` — so the return value is the only failure signal. The
+shared function returns `False` for a failed synchronous send (and `True` for sent/queued); the endpoint turns
+`False` into `503 {"error": "Failed to send the reset email. Please try again shortly."}` — the same status and
+wording shape `request_disable_2fa` already uses for a failed OTP email, and no `message` key, so nothing can
+be mistaken for success. The `password_reset_request` audit event is now logged only when the send succeeded
+(again matching `request_disable_2fa`, which logs after its send check) — a failed send no longer leaves a
+"reset requested" row for an email that never left. The token is stateless, so a failed send has nothing to
+clean up. `forgot_password`'s behavior — including logging its audit row regardless of delivery — is unchanged.
+
+**Frontend: checked, no change needed.** `handleRequestResetLink` already disables the button and shows
+"Sending…" for the whole request and re-enables it in `finally`; the backend send is bounded at 10s
+(`core.email.REQUEST_TIMEOUT_SECONDS`, no retries) against the shared axios instance's 15s timeout, so a slow
+provider becomes a real 503 before the client gives up rather than a client-side timeout. Rather than assume
+this, added tests holding the response open (button stays disabled, a second click fires no second request,
+no success text appears until it resolves) and asserting a 503 shows the real error and never the
+check-your-email text.
+
+**Deliberately untouched (per scope):** `forgot_password`'s dispatch/response/timing; `resend_verification` and
+every other anonymous endpoint; the 3/hour rate limit, the OAuth-only/unverified rejections, and the frontend's
+"signs you out everywhere" copy. One observation, not acted on: the 3/hour counter is incremented before the
+send, so with a provider outage a person can burn all three attempts on failures and be locked out for an hour;
+`request_disable_2fa` behaves the same way. Whether failed sends should refund the counter is a rate-limit
+decision left for the owner. Separately, `request_add_password` ignores `send_add_password_confirmation_email`'s
+bool and always reports success — the same class of false-positive, in a different endpoint, not fixed here.
+
+**Verification.** Backend (`test_security.py::RequestPasswordResetTests`, 12 tests; `test_password_reset.py`, 2
+new): success calls `send_password_reset_email` directly with a real token/uid and never touches `.delay()`; a
+version through the REAL `send_email` path (only `requests.post` stubbed) checks the actual Resend payload
+(recipient, subject, reset link) with no Celery involved; a mocked send failure, a real provider outage
+(`ConnectionError`), and a missing API key each return 503 with no `message` key and no audit row;
+`forgot_password` regression tests prove it still queues via `.delay()`, makes no inline send and no outbound
+HTTP call on the request thread, and returns an identical response for real and unknown emails even with the
+sync helper rigged to fail. **Mutation check:** temporarily flipping the endpoint back to `synchronous=False`
+made 7 of the new tests fail (restored immediately), so they genuinely catch the original bug. Full backend
+suite `python manage.py test --keepdb`: **1114 tests, OK, 0 failures** (up from 1108 — the 6 net new
+tests). Frontend `npx vitest run`: **23 files, 313 tests, all
+passed** (up from 311, +2 SecuritySection tests); `npx vite build` clean (no source change to
+`SecuritySection.jsx`).

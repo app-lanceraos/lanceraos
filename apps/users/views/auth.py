@@ -31,6 +31,7 @@ from ..emails import (
     send_account_locked_email,
     send_new_device_login_email,
     send_password_reset_completed_email,
+    send_password_reset_email,
     send_verification_email,
     send_welcome_email,
 )
@@ -716,21 +717,54 @@ def check_verification_status(request):
 # PASSWORD RESET
 # ══════════════════════════════════════════════════════════════════
 
-def send_password_reset_link(user, request, trigger):
+def send_password_reset_link(user, request, trigger, *, synchronous):
     """
     The one real "email this account a password-reset link" mechanism, with
     two entry points: forgot_password below (anonymous, reached from the
     login page) and security.request_password_reset (an authenticated user
     who has forgotten their password reaching it from Settings > Security).
-    Both end at the same reset_password endpoint with a token from the same
-    password_reset_token generator, and send the same email.
+    Both use the same token generator, send the same email, and end at the
+    same reset_password endpoint.
+
+    `synchronous` has no default on purpose: how the email is dispatched is
+    a decision each caller must make explicitly, because the two callers
+    have genuinely different reasons.
+
+    synchronous=False -> queued via send_password_reset_email_task.delay().
+        Required by forgot_password, and NOT for performance. That endpoint
+        is anonymous and always returns the same generic message whether or
+        not the email belongs to a real account, so an attacker can't use
+        it to discover who is registered. If the "account exists" branch
+        made a real Resend HTTP call inline while the "no such account"
+        branch only did a cache write, the two would take measurably
+        different real time even with identical response text, and the
+        timing alone would reveal which emails are registered. Moving the
+        send onto a Celery worker is what closes that gap. Trade-off, which
+        that endpoint accepts: it returns before anything is sent, so with
+        no worker running the email is queued and never delivered.
+
+    synchronous=True -> sent inline via send_password_reset_email().
+        Right for security.request_password_reset. Its caller is already
+        authenticated, so there is no identity to hide from timing
+        analysis, and, like every other authenticated-action email in this
+        app (password changed, add-password, 2FA), the request can wait on
+        the send and tell the person the truth about it. Do NOT "simplify"
+        this back to .delay(): an authenticated caller would get "check
+        your email" while the message sits unsent in Redis. This case was
+        hit for real, when the async dispatch was inherited from
+        forgot_password without asking whether its reason applied (see
+        DECISIONS.md, 21 September 2026 correction).
+
+    Returns True if the link was sent (synchronous) or queued
+    (asynchronous), False if a synchronous send failed. An asynchronous
+    call always returns True, since a queue write is all that can be
+    known. The audit event is logged only when True, so a failed send
+    doesn't leave a "reset requested" row for an email that never left.
 
     The caller is responsible for every eligibility check (verified,
-    non-OAuth-only) and for its own rate limiting — those legitimately
-    differ between the two entry points (anonymous: dual IP+email limiting
-    and a uniform response that never reveals whether an account exists;
-    authenticated: a per-user cap and explicit rejection messages). This
-    function only does the part that must be identical.
+    non-OAuth-only) and its own rate limiting — those legitimately differ
+    between the two entry points — and for turning a False return into an
+    error response.
 
     `trigger` names the entry point in the audit row's metadata; the event
     itself stays `password_reset_request` for both, since it is the same
@@ -739,8 +773,15 @@ def send_password_reset_link(user, request, trigger):
     """
     uid = encode_uid(user)
     token = password_reset_token.make_token(user)
-    send_password_reset_email_task.delay(str(user.pk), token, uid)
+    if synchronous:
+        # send_email() never raises — it returns False on any provider
+        # failure — so the return value IS the failure signal.
+        if not send_password_reset_email(user, token, uid):
+            return False
+    else:
+        send_password_reset_email_task.delay(str(user.pk), token, uid)
     log_event('password_reset_request', user=user, request=request, metadata={'trigger': trigger})
+    return True
 
 
 @api_view(['POST'])
@@ -775,7 +816,7 @@ def forgot_password(request):
             token = email_verification_token.make_token(user)
             send_verification_email_task.delay(str(user.pk), token, uid)
         else:
-            send_password_reset_link(user, request, trigger='forgot_password')
+            send_password_reset_link(user, request, trigger='forgot_password', synchronous=False)
     except User.DoesNotExist:
         pass  # Always 200 — never reveal whether an email exists.
 

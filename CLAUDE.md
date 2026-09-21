@@ -615,10 +615,17 @@ Key API endpoints:
 - POST /api/auth/security/password-reset/request/ (21 September 2026 — the AUTHENTICATED second entry
   point into the same reset mechanism: no body, no current password needed; rejects an OAuth-only
   account (400, points at add-password) and an unverified one (403, `email_not_verified`); 3/hour per
-  user. Both entry points call one shared `auth.send_password_reset_link(user, request, trigger)` —
-  same `password_reset_token`, `send_password_reset_email_task`, email, and `password_reset_request`
-  audit event (`metadata.trigger` = `forgot_password` | `settings_security`) — and both are completed
-  at the unchanged `reset_password`, which still wipes every session, the requesting one included)
+  user. Both entry points call one shared `auth.send_password_reset_link(user, request, trigger,
+  *, synchronous)` — same `password_reset_token`, email, and `password_reset_request` audit event
+  (`metadata.trigger` = `forgot_password` | `settings_security`) — and both are completed at the
+  unchanged `reset_password`, which still wipes every session, the requesting one included. They
+  DELIBERATELY differ in dispatch: `forgot_password` passes `synchronous=False` (queued via
+  `send_password_reset_email_task.delay()` — anonymous + uniform response, so the real send must stay
+  off the request thread or response timing reveals which emails are registered); this endpoint passes
+  `synchronous=True` (sent inline; the caller is authenticated so there's no timing oracle, and a send
+  failure returns a real 503 "Failed to send the reset email" instead of a false "check your email" —
+  the first version inherited `.delay()` and reported success with no worker running, corrected
+  21 September 2026, see DECISIONS.md). `synchronous` has no default: each caller must choose.)
 - POST /api/auth/security/add-password/request/
   + /security/add-password/validate/<uidb64>/<token>/ (GET)
   + /security/add-password/complete/<uidb64>/<token>/ (OAuth-only accounts)
