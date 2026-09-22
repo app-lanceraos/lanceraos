@@ -2376,6 +2376,46 @@ unchanged); `vite build` clean. See DECISIONS.md's 22 September 2026 Phase 3 ent
 findings (including the real `AnonRateThrottle` 429 hit mid-verification and how it was resolved), the gap's full
 reasoning, and every screenshot's real evidence.
 
+**22 September 2026 (Client Portal Redesign, Phase 3.5 — Theme, Mobile Nav, and Cross-Cutting Fixes).** The
+largest portal pass yet, touching every surface built so far (Phases 0/2/3) plus one small backend addition.
+**A real dark/light theme for the whole Client Portal** — a wholly separate mechanism from theme.css
+(`portalTheme.css`'s own `--portal-*` custom-property namespace, scoped under a `data-portal-theme` attribute
+on a new `PortalThemeRoot.jsx` layout route wrapping both `/portal` and `/portal/enter/:token`, never
+`<html>`/`[data-theme]` — see DESIGN.md's new Section 10a), defaulting to the visitor's OS
+`prefers-color-scheme` and manually toggleable from the account menu, persisted in `localStorage` under its own
+key. Every `portalShared.js` constant now resolves to a `var(--portal-*)` string instead of a literal hex, so
+every existing component re-themed automatically. Dark-mode contrast was computed, not eyeballed — accent teal
+needed no change (8.93:1), error and warning both needed real brightening to stay WCAG AA-legible on the dark
+background. A real bug was caught and fixed along the way: `NAVY` (heading text) had been coincidentally reused
+as a primary button's fill color too — fine in light mode, broken in dark mode where headings go near-white; a
+dedicated `--portal-button-bg` token fixed it. **The mobile bottom nav is now a floating pill** with a raised,
+accent-filled circular badge on the active tab, poking above the pill's own top edge, real 44×44 touch targets
+throughout. **A real mobile audit** found and fixed concrete issues: a modal with a fixed height that could
+overflow a short viewport, several touch targets under a comfortable minimum, a missing `flexWrap`/`flexShrink`
+combination that risked squeezing the invoice list row, and one real inconsistency where `PortalOverview.jsx`'s
+`NeedsAttentionRow` had no text-truncation handling while its own sibling `RecentInvoiceRow` already did. **The
+investigated-but-not-reproduced resize bug**: the existing mobile-detection code was already correct by direct
+Playwright testing (a real `setViewportSize` resize updated it fine) — switched to `matchMedia` anyway as the
+more robust, documented primitive for this class of report, stated honestly as a defensible improvement rather
+than a confirmed fix for a reproduced bug. **A real, narrow backend addition**: a new
+`PortalPaymentClaimSerializer` (`apps/invoices/serializers_portal.py`) adds `invoice_number`/`portal_view_url` to
+`GET /api/invoices/portal/payments/`'s own `claims` field — closing the Phase 3-reported gap — without touching
+`PaymentClaimSerializer` itself, confirmed unaffected for its two other real consumers. **Two deliberate product
+reversals**: the per-invoice "Report a Payment" button is now genuinely absent (not just hidden-but-reachable)
+once an invoice has nothing outstanding — reversing the 16 August 2026 verification pass's own "always shown"
+decision, since the Payments tab now covers that same "check my claim status" need across every invoice; and
+the account menu's logout is now a single "Log Out" button that always invalidates every session (the old
+separate single-session logout path is gone from the UI). The footer's plain text was replaced with the real
+`WordmarkSVG` brand asset. Verified live: a real resize-without-reload test proving the mobile↔desktop nav
+switch works; real light/dark screenshots at 375/1280px for every page; the claim button confirmed present on
+unpaid invoices and genuinely absent on paid ones (two real seeded clients); the Payments claims list confirmed
+linking correctly to its invoice; the single logout button confirmed to call the real logout-everywhere endpoint
+end to end. Backend: full combined suite (`apps.invoices apps.clients apps.users --keepdb`) — **1209 tests, OK, 0
+failures**, including the new serializer's own test and both other claim consumers, confirmed unaffected.
+Frontend: 370 passing (1 pre-existing, unrelated `SecuritySection.test.jsx` failure, unchanged); `vite build`
+clean. See DECISIONS.md's 22 September 2026 Phase 3.5 entry for the full investigation findings (including the
+real contrast-ratio evidence behind every dark-mode color choice) and every screenshot's real evidence.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

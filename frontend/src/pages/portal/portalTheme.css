@@ -1,0 +1,133 @@
+/* src/pages/portal/portalTheme.css
+ *
+ * Client Portal Redesign, Phase 3.5 — a wholly separate CSS custom-
+ * property namespace for the Client Portal only. This is DELIBERATELY
+ * NOT theme.css: it never reads or writes `[data-theme]`/`<html>`, and
+ * none of its variable names collide with theme.css's own (`--portal-*`
+ * throughout, never bare `--bg`/`--text`/etc.). Scoped under a
+ * `data-portal-theme` attribute set on PortalThemeRoot.jsx's own wrapper
+ * div — never on <html> or <body> — so this can never couple to, or be
+ * coupled to by, the authenticated freelancer app's own light/dark
+ * toggle (see DECISIONS.md's Phase 0 entry for the regression this
+ * guards against: theme.css tokens silently following the FREELANCER's
+ * own preference on a page a client, who has no such setting, is
+ * looking at).
+ *
+ * Light values are the exact DESIGN.md Section 10 palette (unchanged
+ * from Phase 0/2/3 — the light theme is not a redesign, just now named
+ * as CSS custom properties instead of literals scattered across every
+ * component). Dark values are a genuinely self-contained new palette,
+ * designed with theme.css's own dark-mode tokens as inspiration only
+ * (not copied) — see DECISIONS.md's Phase 3.5 entry for the full
+ * contrast-ratio evidence behind every choice, including the two colors
+ * (error, warning) that needed real brightening to stay accessible on a
+ * dark background; the accent teal needed no adjustment (8.93:1 against
+ * the dark background, confirmed by direct computation).
+ */
+
+[data-portal-theme="light"] {
+  color-scheme: light;
+
+  --portal-bg: #f8fafc;
+  --portal-card-bg: #ffffff;
+  --portal-card-border: rgba(0, 0, 0, .08);
+  --portal-divider: rgba(0, 0, 0, .07);
+  --portal-input-border: rgba(0, 0, 0, .15);
+  --portal-hover-bg: #f1f5f9;
+
+  --portal-heading: #1e3a5f;
+  --portal-heading-secondary: #2e5987;
+  --portal-text: #334155;
+  --portal-muted-text: #64748b;
+  /* A real, caught-during-build bug: NAVY doubles as both heading text
+     AND (light mode only, coincidentally) the primary-button fill. In
+     dark mode --portal-heading becomes near-white (correct for text on
+     a dark page) — reusing it as a button background would make white
+     button text unreadable. A dedicated token, matching NAVY here only
+     because light mode's existing button already looks this way. */
+  --portal-button-bg: #1e3a5f;
+
+  --portal-accent: #00c896;
+  --portal-accent-tint: rgba(0, 200, 150, .12);
+  --portal-accent-border-tint: rgba(0, 200, 150, .3);
+
+  --portal-error: #c0392b;
+  --portal-error-tint: rgba(192, 57, 43, .08);
+  --portal-error-border-tint: rgba(192, 57, 43, .25);
+
+  --portal-warning: #8a7d5c;
+  --portal-warning-tint: rgba(138, 125, 92, .14);
+
+  --portal-skeleton: rgba(30, 58, 95, .08);
+  --portal-card-shadow: 0 2px 12px rgba(0, 0, 0, .07);
+  --portal-modal-shadow: 0 8px 40px rgba(0, 0, 0, .25);
+  --portal-menu-shadow: 0 8px 28px rgba(0, 0, 0, .14);
+
+  --portal-bubble-other: #f8fafc;
+  --portal-wordmark: #0e0e1a;
+}
+
+[data-portal-theme="dark"] {
+  color-scheme: dark;
+
+  --portal-bg: #0d0d16;
+  --portal-card-bg: #17171f;
+  --portal-card-border: rgba(255, 255, 255, .1);
+  --portal-divider: rgba(255, 255, 255, .08);
+  --portal-input-border: rgba(255, 255, 255, .16);
+  --portal-hover-bg: rgba(255, 255, 255, .06);
+
+  --portal-heading: #f4f4fa;
+  --portal-heading-secondary: #c9c9ea;
+  --portal-text: #cfcfe0;
+  --portal-muted-text: #9292ab;
+  /* NOT --portal-heading (near-white — unreadable as a button fill with
+     white text). Reuses the light theme's own --portal-heading-secondary
+     value as a real, filled, distinct-from-the-page button color —
+     verified 7.25:1 contrast for white button text, 2.67:1 against the
+     page background (enough to read as a raised element, especially
+     combined with the button's own presence/shadow). See DECISIONS.md. */
+  --portal-button-bg: #2e5987;
+
+  /* Accent unchanged from light — 8.93:1 against --portal-bg, confirmed
+     by direct computation, no brightening needed (DECISIONS.md). */
+  --portal-accent: #00c896;
+  --portal-accent-tint: rgba(0, 200, 150, .16);
+  --portal-accent-border-tint: rgba(0, 200, 150, .35);
+
+  /* Brightened from the light theme's #c0392b (3.55:1 against this
+     background — fails WCAG AA for normal text) to a real, verified
+     6.97:1. See DECISIONS.md for the before/after ratios. */
+  --portal-error: #ff6b6b;
+  --portal-error-tint: rgba(255, 107, 107, .14);
+  --portal-error-border-tint: rgba(255, 107, 107, .3);
+
+  /* Brightened from the light theme's #8a7d5c (4.38:1 against the card
+     background — marginal for small badge text) to a real, verified
+     9.02:1. See DECISIONS.md for the before/after ratios. */
+  --portal-warning: #d4b483;
+  --portal-warning-tint: rgba(212, 180, 131, .16);
+
+  --portal-skeleton: rgba(255, 255, 255, .08);
+  --portal-card-shadow: 0 2px 12px rgba(0, 0, 0, .5);
+  --portal-modal-shadow: 0 8px 40px rgba(0, 0, 0, .7);
+  --portal-menu-shadow: 0 8px 28px rgba(0, 0, 0, .55);
+
+  --portal-bubble-other: #1c1c28;
+  /* Matches theme.css's own dark --wordmark value exactly (#ffffff) —
+     a deliberate exception to "inspiration only, not copied": the
+     wordmark IS the literal brand asset, not a portal-specific design
+     choice, so it should render identically to how the authenticated
+     app's own dark mode renders it. */
+  --portal-wordmark: #ffffff;
+}
+
+/* The scoped root itself — see PortalThemeRoot.jsx. Covers the full
+   viewport so no unstyled body ever peeks through underneath it, the
+   same reasoning PortalShell.jsx's own `minHeight: 100vh` wrapper and
+   PortalLayout.jsx already establish. */
+.portal-theme-root {
+  min-height: 100vh;
+  background: var(--portal-bg);
+  transition: background-color .15s ease;
+}

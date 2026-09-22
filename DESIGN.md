@@ -723,10 +723,13 @@ delay/duration (3–7s). Disabled under `prefers-reduced-motion: reduce`.
 
 ## 10. Public / Unauthenticated Pages
 
-Invoice View, Client Portal, Contract View, Payment Page, Proposal View,
-Income Certificate — these use a single fixed light palette, not theme.css.
+Invoice View, Contract View, Payment Page, Proposal View, Income
+Certificate — these use a single fixed light palette, not theme.css, and
+have no dark mode. The Client Portal is the one deliberate exception as
+of Client Portal Redesign, Phase 3.5 — see its own subsection below.
 
-In v2, all public pages share ONE palette (v1 had three inconsistent ones):
+In v2, all public pages share ONE light palette (v1 had three
+inconsistent ones):
 
 ```
 Page background:  #f8fafc
@@ -745,6 +748,84 @@ Divider:          rgba(0,0,0,.07)
 These pages do NOT use `var(--*)` tokens from theme.css.
 They are self-contained with hardcoded values from this palette only.
 Never introduce a fifth navy hex — use `#1e3a5f` or `#2e5987` only.
+
+### 10a. Client Portal — light AND dark, self-contained, portal-only
+
+REVISED, Phase 3.5 (deliberate rule change, not an oversight — the rule
+above, "fixed light palette only," held for the Client Portal through
+Phase 3): the Client Portal (`PortalShell.jsx` and everything that
+renders inside it — `PortalOverview.jsx`/`ClientPortal.jsx`/
+`PortalPayments.jsx`/`PortalBalances.jsx`/`PortalEnter.jsx`/
+`PortalRequestLinkForm.jsx`/`PortalLayout.jsx`, and `CommentThread.jsx`'s
+`palette="public"` path) now has a real light AND dark theme, both fully
+self-contained — genuinely independent of theme.css, never a copy of it.
+
+**This is NOT theme.css's `[data-theme]` mechanism reused.** A second,
+wholly separate CSS custom-property namespace
+(`frontend/src/pages/portal/portalTheme.css`), every variable prefixed
+`--portal-*` so nothing can collide with or be confused for a theme.css
+token, scoped under a `data-portal-theme="light"|"dark"` attribute set
+on `PortalThemeRoot.jsx`'s own wrapper div — never on `<html>` or
+`<body>`. This isolation is load-bearing, not incidental: theme.css's
+own `[data-theme]` reflects the FREELANCER's own authenticated-app
+preference; reusing it (or its tokens) for the portal would silently
+couple a page a client — who has no such setting — is looking at to
+someone else's toggle, exactly the regression Phase 0 fixed once
+already.
+
+```
+                     Light            Dark
+Page background      #f8fafc          #0d0d16
+Card background       #ffffff          #17171f
+Card border         rgba(0,0,0,.08)  rgba(255,255,255,.1)
+Divider             rgba(0,0,0,.07)  rgba(255,255,255,.08)
+Heading (NAVY)        #1e3a5f          #f4f4fa
+Heading, secondary    #2e5987          #c9c9ea
+Body text             #334155          #cfcfe0
+Muted text            #64748b          #9292ab
+Accent teal           #00c896          #00c896  (unchanged — 8.93:1
+                                                   against the dark bg)
+Error                #c0392b          #ff6b6b  (brightened — light
+                                                   value was 3.55:1 on
+                                                   dark, fails WCAG AA)
+Warning               #8a7d5c          #d4b483  (brightened — light
+                                                   value was 4.38:1 on
+                                                   the dark card, marginal
+                                                   for small badge text)
+Button fill        #1e3a5f          #2e5987  (a primary button needs
+                                                   its own token, separate
+                                                   from heading — reusing
+                                                   the heading color broke
+                                                   dark-mode button text,
+                                                   a real bug caught while
+                                                   building this)
+```
+
+The dark palette is designed FROM theme.css's own dark-mode tokens as a
+reference point (`--bg`/`--card-bg`/`--text-primary` etc.) but is not a
+copy of them — every value above was chosen and contrast-checked for
+this specific palette. Every color pairing a real component uses for
+readable text is checked against WCAG AA (4.5:1) at build time by
+computation, not by eye.
+
+**Default**: matches the visitor's OS `prefers-color-scheme` on first
+load, when no stored preference exists yet (`usePortalTheme.js`, mirrors
+`useTheme.js`'s own `matchMedia('(prefers-color-scheme: dark)')`
+pattern). **Manual override**: a real toggle in the account menu,
+persisted in `localStorage` under `lanceraos-portal-theme` — a distinct
+key from `useTheme.js`'s own `lanceraos-theme`, and a per-device
+preference only; no backend field, no `Client` model change.
+
+Component files reference these tokens exactly as the fixed-light-only
+pages reference literals — the difference is invisible at the call
+site: `portalShared.js`'s exported constants (`NAVY`, `ACCENT`,
+`MUTED_TEXT`, etc.) now resolve to `var(--portal-*)` strings instead of
+literal hex, so every component that already imports them re-themes
+automatically. A component-level modal backdrop/lightbox overlay
+(`rgba(0,0,0,.6)` and similar) is a deliberate exception, left as a
+literal in both themes — a translucent dark scrim reads correctly
+regardless of the page underneath it, and DESIGN.md's own Section 10
+palette table above never listed an overlay value to begin with.
 
 ---
 

@@ -23,7 +23,7 @@ export default function PortalLayout({ children, maxWidth = 480 }) {
     }}>
       <div style={{
         width: '100%', maxWidth, background: CARD_BG, border: `1px solid ${CARD_BORDER}`,
-        borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,.07)', padding: '28px 32px',
+        borderRadius: 12, boxShadow: 'var(--portal-card-shadow)', padding: '28px 32px',
       }}>
         {children}
       </div>

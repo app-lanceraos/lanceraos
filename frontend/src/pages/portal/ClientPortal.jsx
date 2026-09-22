@@ -48,17 +48,19 @@ import useTitle from '@/hooks/useTitle'
 import CommentThread from '@/components/CommentThread'
 import { PAYMENT_SOURCE_OPTIONS, formatMoney, todayInPlatformTimezone } from '@/pages/invoiceHelpers'
 import {
-  ACCENT, BODY_TEXT, CARD_SHADOW, CLAIM_STATUS_META, DIVIDER, ERROR, MUTED_TEXT, NAVY, STATUS_LABELS,
+  ACCENT, ACCENT_BORDER_TINT, ACCENT_TINT, BODY_TEXT, CARD_BG, CARD_SHADOW, CLAIM_STATUS_META, DIVIDER,
+  ERROR, ERROR_BORDER_TINT, ERROR_TINT, MUTED_TEXT, NAVY, PAGE_BG, STATUS_LABELS,
   disabledStyle, publicBtnGhost, publicBtnPrimary, publicInputStyle, publicLabelStyle,
   viewTokenFromPortalUrl,
 } from './portalShared'
 import PortalRequestLinkForm from './PortalRequestLinkForm'
 
 // A minimal, inline-styled stand-in for FosAlert (theme-dependent, see
-// this file's own header comment) — same visual shape, hardcoded colors.
+// this file's own header comment) — same visual shape, theme-aware
+// portal tokens (Phase 3.5), not hardcoded colors any more.
 function PublicAlert({ type = 'error', children, style }) {
-  const bg = type === 'error' ? 'rgba(192,57,43,.08)' : 'rgba(0,200,150,.1)'
-  const border = type === 'error' ? 'rgba(192,57,43,.25)' : 'rgba(0,200,150,.3)'
+  const bg = type === 'error' ? ERROR_TINT : ACCENT_TINT
+  const border = type === 'error' ? ERROR_BORDER_TINT : ACCENT_BORDER_TINT
   const color = type === 'error' ? ERROR : NAVY
   return (
     <div style={{ background: bg, border: `1px solid ${border}`, borderRadius: 8, padding: '10px 12px', fontSize: '0.82rem', color, ...style }}>
@@ -165,7 +167,7 @@ export default function ClientPortal() {
             <div
               key={inv.id}
               style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '8px 12px',
                 padding: '14px 16px', borderRadius: 10, border: `1px solid ${DIVIDER}`,
               }}
             >
@@ -195,35 +197,45 @@ export default function ClientPortal() {
                   </p>
                 )}
               </a>
-              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: NAVY }}>
+              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: NAVY, flexShrink: 0 }}>
                 {formatMoney(inv.total, inv.currency)}
               </p>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                 {!inv.client_acknowledged && (
                   <button
                     onClick={() => setAckInvoice(inv)}
-                    style={{ ...publicBtnGhost, fontSize: '0.78rem', padding: '8px 12px' }}
+                    style={{ ...publicBtnGhost, fontSize: '0.78rem', padding: '10px 12px', minWidth: 40, minHeight: 40 }}
                     aria-label={`Acknowledge ${inv.invoice_number || 'this invoice'}`}
                   >
                     <UserCheck size={14} />
                   </button>
                 )}
-                {/* Always shown now (item 5 of the 16 August 2026 second
-                    verification pass) — this doubles as "check your
-                    payment claim status" once outstanding hits 0, not
-                    just "report a new payment" while something's still
-                    owed; ClaimModal itself hides the submission form when
-                    there's nothing left to claim, showing history only. */}
-                <button
-                  onClick={() => setClaimInvoice(inv)}
-                  style={{ ...publicBtnGhost, fontSize: '0.78rem', padding: '8px 12px' }}
-                  aria-label={`Payment claims for ${inv.invoice_number || 'this invoice'}`}
-                >
-                  <Receipt size={14} />
-                </button>
+                {/* Phase 3.5 — REVERSAL of the 16 August 2026 second
+                    verification pass's own "always shown, doubles as
+                    check-status" decision (kept in DECISIONS.md as
+                    historical context, not current reasoning). This
+                    task explicitly requires the action to be genuinely
+                    absent — not disabled, not reachable — once nothing
+                    is left owing, reusing the same outstanding_amount
+                    field ClaimModal's own canSubmitNew already checks
+                    (no new computed value introduced). The "check my
+                    claim status once paid" need this used to double for
+                    is now covered by the Payments tab (Phase 3), which
+                    lists every claim across every invoice regardless of
+                    that invoice's current balance — nothing is actually
+                    lost by hiding this one per-invoice trigger. */}
+                {inv.outstanding_amount > 0 && (
+                  <button
+                    onClick={() => setClaimInvoice(inv)}
+                    style={{ ...publicBtnGhost, fontSize: '0.78rem', padding: '10px 12px', minWidth: 40, minHeight: 40 }}
+                    aria-label={`Payment claims for ${inv.invoice_number || 'this invoice'}`}
+                  >
+                    <Receipt size={14} />
+                  </button>
+                )}
                 <button
                   onClick={() => setMessagesInvoice(inv)}
-                  style={{ ...publicBtnGhost, fontSize: '0.78rem', padding: '8px 12px' }}
+                  style={{ ...publicBtnGhost, fontSize: '0.78rem', padding: '10px 12px', minWidth: 40, minHeight: 40 }}
                   aria-label={`Messages for ${inv.invoice_number || 'this invoice'}`}
                 >
                   <MessageCircle size={14} />
@@ -250,12 +262,17 @@ export default function ClientPortal() {
 function MessagesModal({ invoice, onClose }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: '#ffffff', borderRadius: 16, boxShadow: CARD_SHADOW, padding: '20px 24px', width: '100%', maxWidth: 480, height: 520, display: 'flex', flexDirection: 'column' }}>
+      {/* Mobile audit fix (Phase 3.5): this used a fixed `height: 520`
+          with no viewport-relative cap or scroll fallback — on a short
+          viewport (a small phone, or any phone in landscape) that
+          overflowed the screen with nothing scrollable to recover it.
+          `min(520px, 85vh)` matches ClaimModal's own 85vh convention. */}
+      <div style={{ background: CARD_BG, borderRadius: 16, boxShadow: CARD_SHADOW, padding: '20px 24px', width: '100%', maxWidth: 480, height: 'min(520px, 85vh)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: NAVY }}>
             {invoice.invoice_number || 'Messages'}
           </h3>
-          <button onClick={onClose} aria-label="Close" style={{ ...publicBtnGhost, padding: 6 }}><X size={16} /></button>
+          <button onClick={onClose} aria-label="Close" style={{ ...publicBtnGhost, padding: 8, minWidth: 36, minHeight: 36 }}><X size={16} /></button>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           <CommentThread
@@ -324,12 +341,12 @@ function ClaimModal({ invoice, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: '#ffffff', borderRadius: 16, boxShadow: CARD_SHADOW, padding: '20px 24px', width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
+      <div style={{ background: CARD_BG, borderRadius: 16, boxShadow: CARD_SHADOW, padding: '20px 24px', width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: NAVY }}>
             Payment Claims
           </h3>
-          <button onClick={onClose} aria-label="Close" style={{ ...publicBtnGhost, padding: 6 }}><X size={16} /></button>
+          <button onClick={onClose} aria-label="Close" style={{ ...publicBtnGhost, padding: 8, minWidth: 36, minHeight: 36 }}><X size={16} /></button>
         </div>
 
         <ClaimHistory claims={claims} currency={invoice.currency} />
@@ -384,7 +401,7 @@ function ClaimHistory({ claims, currency }) {
       {claims.map((claim) => {
         const meta = CLAIM_STATUS_META[claim.status] || CLAIM_STATUS_META.pending
         return (
-          <div key={claim.id} style={{ padding: '10px 12px', background: '#f8fafc', border: `1px solid ${DIVIDER}`, borderRadius: 10 }}>
+          <div key={claim.id} style={{ padding: '10px 12px', background: PAGE_BG, border: `1px solid ${DIVIDER}`, borderRadius: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: NAVY }}>
                 {formatMoney(claim.amount_claimed, currency)}
@@ -429,10 +446,10 @@ function AcknowledgeModal({ invoice, onAcknowledged, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: '#ffffff', borderRadius: 16, boxShadow: CARD_SHADOW, padding: '20px 24px', width: '100%', maxWidth: 400 }}>
+      <div style={{ background: CARD_BG, borderRadius: 16, boxShadow: CARD_SHADOW, padding: '20px 24px', width: '100%', maxWidth: 400, maxHeight: '85vh', overflowY: 'auto', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: NAVY }}>Acknowledge Invoice</h3>
-          <button onClick={onClose} aria-label="Close" style={{ ...publicBtnGhost, padding: 6 }}><X size={16} /></button>
+          <button onClick={onClose} aria-label="Close" style={{ ...publicBtnGhost, padding: 8, minWidth: 36, minHeight: 36 }}><X size={16} /></button>
         </div>
         {error && <PublicAlert type="error" style={{ marginBottom: 12 }}>{error}</PublicAlert>}
         <p style={{ margin: '0 0 18px', fontSize: '0.85rem', color: BODY_TEXT, lineHeight: 1.6 }}>

@@ -1,31 +1,64 @@
 // src/pages/portal/portalShared.js
 //
-// Client Portal Redesign, Phase 2 — the one shared module for every
-// value that was previously duplicated across ClientPortal.jsx,
-// PortalEnter.jsx, and PortalRequestLinkForm.jsx (confirmed by direct
-// inspection: all three hardcoded the same DESIGN.md Section 10 hex
-// values independently). Factored out here now, before PortalShell.jsx/
-// PortalOverview.jsx need the exact same values a fourth and fifth time.
+// Client Portal Redesign — the one shared module for every value
+// duplicated across the portal's own files (Phase 2's own investigation
+// confirmed ClientPortal.jsx/PortalEnter.jsx/PortalRequestLinkForm.jsx
+// each hardcoded the same values independently; factored out then).
 //
-// DESIGN.md Section 10's fixed public-page palette — self-contained
-// hardcoded values, never theme.css var(--*) tokens (this whole
-// directory is public/unauthenticated, see each file's own header
-// comment). Matches InvoiceView.jsx/PaymentDetails.jsx exactly.
-export const NAVY = '#1e3a5f'
-export const SECONDARY_NAVY = '#2e5987'
-export const ACCENT = '#00c896'
-export const BODY_TEXT = '#334155'
-export const MUTED_TEXT = '#64748b'
-export const DIVIDER = 'rgba(0,0,0,.07)'
-export const CARD_SHADOW = '0 8px 40px rgba(0,0,0,0.25)'
-export const ERROR = '#c0392b'
-export const WARNING = '#8a7d5c'
-export const PAGE_BG = '#f8fafc'
-export const CARD_BG = '#ffffff'
-export const CARD_BORDER = 'rgba(0,0,0,.08)'
+// Phase 3.5: every constant below now resolves to a `var(--portal-*)`
+// CSS custom property (portalTheme.css, scoped under PortalThemeRoot.jsx's
+// own `data-portal-theme` attribute) instead of a literal hex/rgba value.
+// This is the one place that change needed to happen — every component
+// that already imports NAVY/ACCENT/MUTED_TEXT/etc. and uses them inside
+// an inline `style={{color: NAVY}}` object re-themes automatically,
+// with zero changes to those components' own JSX, since a CSS custom
+// property is a perfectly valid inline-style value. See DECISIONS.md's
+// Phase 3.5 entry for the full palette (including the dark-mode
+// brightening ERROR/WARNING needed to stay accessible) and
+// portalTheme.css for the actual light/dark values these names resolve
+// to at runtime.
+export const NAVY = 'var(--portal-heading)'
+export const SECONDARY_NAVY = 'var(--portal-heading-secondary)'
+// A real bug caught during Phase 3.5's dark-mode build: NAVY doubles as
+// heading text everywhere else, but a primary button's own FILL needs a
+// separate token — in dark mode, --portal-heading resolves to a
+// near-white color (correct for text on a dark page), which would make
+// a NAVY-background button's white text unreadable. See
+// portalTheme.css's own --portal-button-bg for the real values/contrast
+// evidence and DECISIONS.md for the full before/after.
+export const BUTTON_BG = 'var(--portal-button-bg)'
+export const ACCENT = 'var(--portal-accent)'
+export const ACCENT_TINT = 'var(--portal-accent-tint)'
+export const ACCENT_BORDER_TINT = 'var(--portal-accent-border-tint)'
+export const BODY_TEXT = 'var(--portal-text)'
+export const MUTED_TEXT = 'var(--portal-muted-text)'
+export const DIVIDER = 'var(--portal-divider)'
+export const CARD_SHADOW = 'var(--portal-modal-shadow)'
+export const SMALL_CARD_SHADOW = 'var(--portal-card-shadow)'
+export const MENU_SHADOW = 'var(--portal-menu-shadow)'
+export const ERROR = 'var(--portal-error)'
+export const ERROR_TINT = 'var(--portal-error-tint)'
+export const ERROR_BORDER_TINT = 'var(--portal-error-border-tint)'
+export const WARNING = 'var(--portal-warning)'
+export const WARNING_TINT = 'var(--portal-warning-tint)'
+export const PAGE_BG = 'var(--portal-bg)'
+export const CARD_BG = 'var(--portal-card-bg)'
+export const CARD_BORDER = 'var(--portal-card-border)'
+export const INPUT_BORDER = 'var(--portal-input-border)'
+export const HOVER_BG = 'var(--portal-hover-bg)'
+export const SKELETON_BG = 'var(--portal-skeleton)'
+export const BUBBLE_OTHER = 'var(--portal-bubble-other)'
+export const WORDMARK_COLOR = 'var(--portal-wordmark)'
+// Theme-invariant on purpose: the accent teal itself doesn't change
+// between light/dark (8.93:1 against the dark background, confirmed —
+// see DECISIONS.md), so the one color that reads well ON it doesn't
+// need to change either. White fails badly here (2.16:1) — matches the
+// same reasoning PaymentDetails.jsx's own "Copied" pill comment already
+// documents for the identical teal-background case.
+export const TEXT_ON_ACCENT = '#00291f'
 
 export const publicInputStyle = {
-  width: '100%', boxSizing: 'border-box', background: '#ffffff', border: '1.5px solid rgba(0,0,0,.15)',
+  width: '100%', boxSizing: 'border-box', background: CARD_BG, border: `1.5px solid ${INPUT_BORDER}`,
   borderRadius: 8, padding: '10px 14px', fontFamily: "'DM Sans', sans-serif", fontSize: '0.9rem',
   color: BODY_TEXT, outline: 'none',
 }
@@ -37,8 +70,8 @@ const publicBtnBase = {
   padding: '10px 20px', borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: '0.88rem',
   fontWeight: 600, cursor: 'pointer',
 }
-export const publicBtnPrimary = { ...publicBtnBase, border: 'none', background: NAVY, color: '#ffffff' }
-export const publicBtnGhost = { ...publicBtnBase, border: '1.5px solid rgba(0,0,0,.15)', background: 'transparent', color: BODY_TEXT }
+export const publicBtnPrimary = { ...publicBtnBase, border: 'none', background: BUTTON_BG, color: '#ffffff' }
+export const publicBtnGhost = { ...publicBtnBase, border: `1.5px solid ${INPUT_BORDER}`, background: 'transparent', color: BODY_TEXT }
 
 export function disabledStyle(style, disabled) {
   return disabled ? { ...style, opacity: 0.5, cursor: 'not-allowed' } : style
@@ -71,11 +104,14 @@ export const NEEDS_ATTENTION_REASON_LABELS = {
 // this exact public portal (ClientPortal.jsx's own ClaimHistory,
 // confirmed unchanged since Phase 2), factored out here in Phase 3
 // so PortalPayments.jsx's own claims list reuses these same colors
-// instead of inventing a second, independently-chosen set.
+// instead of inventing a second, independently-chosen set. `tint` added
+// in Phase 3.5 for PortalPayments.jsx's own badge backgrounds — same
+// per-status color, just paired with its own theme-aware tint variable
+// instead of a separately-maintained literal rgba map.
 export const CLAIM_STATUS_META = {
-  pending: { label: 'Pending review', color: WARNING },
-  confirmed: { label: 'Confirmed', color: ACCENT },
-  rejected: { label: 'Rejected', color: ERROR },
+  pending: { label: 'Pending review', color: WARNING, tint: WARNING_TINT },
+  confirmed: { label: 'Confirmed', color: ACCENT, tint: ACCENT_TINT },
+  rejected: { label: 'Rejected', color: ERROR, tint: ERROR_TINT },
 }
 
 // PortalInvoiceListSerializer/PortalOverviewNeedsAttentionSerializer

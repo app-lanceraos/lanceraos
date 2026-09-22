@@ -9,11 +9,11 @@
 // this is a pure extraction, not a new design — Overview's own rendered
 // output is unchanged before/after (verified with a real screenshot
 // comparison, see DECISIONS.md).
-import { ACCENT, CARD_BORDER, DIVIDER, MUTED_TEXT, NAVY } from './portalShared'
+import { ACCENT, CARD_BG, CARD_BORDER, DIVIDER, MUTED_TEXT, NAVY } from './portalShared'
 import { formatMoney } from '@/pages/invoiceHelpers'
 
 export const cardStyle = {
-  background: '#ffffff', border: `1px solid ${CARD_BORDER}`, borderRadius: 12,
+  background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 12,
   padding: '16px 18px', boxSizing: 'border-box',
 }
 

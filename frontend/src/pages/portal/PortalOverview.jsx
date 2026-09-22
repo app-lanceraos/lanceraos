@@ -20,7 +20,7 @@ import useTitle from '@/hooks/useTitle'
 import usePortalOverview from '@/hooks/usePortalOverview'
 import { formatMoney } from '@/pages/invoiceHelpers'
 import {
-  ACCENT, BODY_TEXT, CARD_BORDER, DIVIDER, ERROR, MUTED_TEXT, NAVY,
+  ACCENT, BODY_TEXT, CARD_BG, CARD_BORDER, DIVIDER, ERROR, ERROR_TINT, MUTED_TEXT, NAVY,
   NEEDS_ATTENTION_REASON_LABELS, STATUS_LABELS,
 } from './portalShared'
 import BalancesSection, { cardStyle, sectionTitleStyle } from './PortalBalances'
@@ -38,7 +38,7 @@ function ReasonBadge({ reason }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', fontSize: '0.68rem', fontWeight: 600,
-      padding: '3px 8px', borderRadius: 999, background: 'rgba(192,57,43,.08)', color: ERROR,
+      padding: '3px 8px', borderRadius: 999, background: ERROR_TINT, color: ERROR,
     }}>
       {NEEDS_ATTENTION_REASON_LABELS[reason] || reason}
     </span>
@@ -51,14 +51,20 @@ function NeedsAttentionRow({ invoice }) {
       href={invoice.portal_view_url}
       style={{
         display: 'flex', flexDirection: 'column', gap: 6, textDecoration: 'none', color: 'inherit',
-        padding: '12px 14px', borderRadius: 10, border: `1px solid ${CARD_BORDER}`, background: '#ffffff',
+        padding: '12px 14px', borderRadius: 10, border: `1px solid ${CARD_BORDER}`, background: CARD_BG,
       }}
     >
+      {/* Mobile audit fix (Phase 3.5): the invoice number had no
+          truncation handling at all — inconsistent with
+          RecentInvoiceRow's own already-correct minWidth:0 +
+          flexShrink:0 pattern just below, and a real risk of an
+          uneven-height row or an awkward wrap on a long invoice number
+          at a narrow width. Matches that established pattern now. */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-        <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700, color: NAVY }}>
+        <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700, color: NAVY, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {invoice.invoice_number || '(unnumbered)'}
         </p>
-        <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>
+        <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700, color: NAVY, whiteSpace: 'nowrap', flexShrink: 0 }}>
           {formatMoney(invoice.total, invoice.currency)}
         </p>
       </div>

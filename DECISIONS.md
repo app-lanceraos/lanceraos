@@ -12996,3 +12996,193 @@ byte-for-byte untouched apart from the `CLAIM_STATUS_META` import-location chang
 passes unchanged). No backend file was touched — `portal_invoice_claims` and `portal_payments`'s response shape
 are both exactly as they were. Messages/My Details were not added as nav items. The `BalancesSection` extraction
 changed zero rendered output for Overview, confirmed by direct screenshot comparison, not assumed.
+
+**22 September 2026 (Client Portal Redesign, Phase 3.5 — Theme, Mobile Nav, and Cross-Cutting Fixes).** The
+largest single portal pass to date, touching every portal surface built so far (Phases 0/2/3) plus one small,
+deliberately narrow backend addition. Does not touch Messages/My Details (still no frontend).
+
+**Investigation findings — including where they differed from the prompt's own assumptions.**
+
+1. **The reported DevTools resize bug did not reproduce as described.** `PortalShell.jsx`'s existing mobile
+   detection (`window.addEventListener('resize', ...)`, properly added/removed in a `useEffect`) was read first
+   and looked structurally correct — no stale-read-once state, no deprecated `addListener`, no missing cleanup,
+   the 3 candidate causes this task named to check first. A real Playwright viewport-resize test (`setViewportSize`
+   375→1280 on an already-loaded page, no reload) confirmed the EXISTING code already updated `isMobile` correctly
+   in this environment. Chrome DevTools has no literal UI surface reachable from this headless environment, so the
+   exact reported interaction (toggling the device toolbar specifically) could not be reproduced directly either
+   way. Switched to `matchMedia('(max-width: 768px)')` + `addEventListener('change', ...)` anyway — the
+   documented, more robust primitive for exactly this class of report (tied to the browser's own live media-query
+   evaluation rather than a raw `resize` dispatch some device-emulation transitions are known to skip in some
+   browser/DevTools versions) — stated honestly as a defensible improvement made without a confirmed local
+   reproduction of the original report, not as "the bug, found and fixed." Re-verified the fix with the same
+   `setViewportSize` resize test against the new code: pill nav present at 375px, correctly replaced by the
+   desktop top nav at 1280px with no reload, mobile pill gone — real before/after evidence, see Verification below.
+2. `PaymentClaimSerializer` (`apps/invoices/serializers_claims.py`) confirmed exactly as Phase 3 reported: `id,
+   client_name, client_email, amount_claimed, currency, payment_source, payment_date, client_note, status,
+   submitted_at, reviewed_at, review_note` — no invoice-identifying field.
+3. The real LanceraOS wordmark asset is `WordmarkSVG` (`frontend/src/components/Brand.jsx`) — a hand-vectored SVG
+   path, not the backend's own `pdf_generator._generate_wordmark_data_uri` (a separate, WeasyPrint-specific
+   calibrated re-render of the same mark for PDF output, confirmed to be a different asset entirely, not
+   reusable here). `WordmarkSVG` hardcoded `fill="var(--wordmark)"` — unusable as-is inside the portal's own
+   isolated theme scope (see item 4) — so it gained an optional `fill` override prop, defaulting to the unchanged
+   `var(--wordmark)` for every existing authenticated-app caller.
+4. The full, real list of files carrying Section 10 palette values (confirmed by grep, not assumed from the
+   prompt's own partial list): `portalShared.js` (the values' one source), `PortalShell.jsx`, `PortalLayout.jsx`,
+   `PortalEnter.jsx`, `PortalRequestLinkForm.jsx`, `ClientPortal.jsx`, `PortalOverview.jsx`, `PortalPayments.jsx`,
+   `PortalBalances.jsx`, and `CommentThread.jsx`'s `palette="public"` path — matching the prompt's own list
+   exactly once actually enumerated. `InvoiceView.jsx`/`PaymentDetails.jsx` (the invoice-document/payment-details
+   public pages) ALSO carry Section 10 values but were deliberately left untouched — they are not part of "the
+   portal" (never rendered inside `PortalShell`, reached via separate top-level routes), and Phase 2's own
+   out-of-scope section already drew this exact boundary ("Do NOT touch `/invoice/:token` or `/invoice/:token/pay`
+   routes"). Flagged explicitly here rather than silently assumed in or out.
+5. `ClientPortal.jsx`'s claim button already reused the existing `outstanding_amount` field (`ClaimModal`'s own
+   `canSubmitNew = invoice.outstanding_amount > 0 && !submitted`) — confirmed, not reimplemented. Duplicate-pending-
+   claim prevention already exists server-side (`portal_invoice_claims`'s 18 August 2026 fix, confirmed still
+   present, unrelated to this pass) — nothing to build there, exactly as this task's own Step 1.6 anticipated.
+6. The account menu's two logout actions: `onLogout(false)` → `POST /clients/portal/logout/` (single-session),
+   `onLogout(true)` → `POST /clients/portal/logout-everywhere/` (all sessions) — confirmed directly in
+   `PortalShell.jsx` before either was touched.
+
+**What was built — B: the portal theme mechanism (2.B).** A wholly separate CSS custom-property namespace
+(`frontend/src/pages/portal/portalTheme.css`, every name `--portal-*`), scoped under `data-portal-theme` on a
+NEW `PortalThemeRoot.jsx` — a react-router layout route wrapping BOTH `/portal` (the shell) AND
+`/portal/enter/:token` (which has no session yet and lives outside the shell entirely), the same nested-route/
+`<Outlet/>` composition `PortalShell.jsx` itself established in Phase 2, reused here for the identical reason:
+one consistent theme scope/context across two sibling top-level routes, not the per-route `children`-prop
+convention that would recreate it fresh each time. `usePortalTheme.js` mirrors `useTheme.js`'s own
+localStorage/`matchMedia` shape closely (a distinct storage key, `lanceraos-portal-theme`) but applies
+`data-portal-theme` declaratively via JSX rather than a manual `document.documentElement.setAttribute` call,
+since this component owns direct render control over the one element that needs it. Every value in
+`portalShared.js` now resolves to a `var(--portal-*)` string instead of a literal hex — the single, surgical
+change that let every existing component re-theme automatically with zero changes to its own JSX, since a CSS
+custom property is a valid inline-style value. Dark-mode contrast was computed directly (WCAG relative-luminance
+formula), not eyeballed: the accent teal needed no adjustment (8.93:1 against the dark background); error and
+warning both needed real brightening (`#c0392b`→3.55:1 and `#8a7d5c`→4.38:1 against the dark card, both below or
+marginal against the 4.5:1 AA threshold for the small badge text they're used for) to `#ff6b6b` (6.97:1) and
+`#d4b483` (9.02:1). **A real bug caught while building this, not assumed away**: `NAVY` doubles as heading text
+everywhere else, and in light mode a primary button's fill happened to reuse the same navy — but in dark mode
+`--portal-heading` resolves to a near-white color (correct for headings on a dark page), which would make a
+`background: NAVY` button's white text unreadable. Fixed with a dedicated `--portal-button-bg` token
+(`#1e3a5f` light, `#2e5987` dark — 11.5:1 / 7.25:1 white-text contrast, computed) used by `publicBtnPrimary` and
+`CommentThread.jsx`'s own primary send button, never `NAVY` again for a fill. Modal/lightbox backdrop overlays
+(`rgba(0,0,0,.6)`/`.75`) were deliberately left as literals in both themes — a translucent dark scrim reads
+correctly regardless of the underlying page theme, and Section 10's own palette table never defined an overlay
+value to begin with.
+
+**What was built — C: the floating pill mobile nav (2.C).** Replaces the old flush, full-width bottom bar.
+Outer wrapper is `position: fixed` with real edge margin (`padding: 0 16px calc(16px + safe-area-inset-bottom)`)
+and `pointer-events: none` so it never blocks page content beside it; the pill itself
+(`border-radius: 999px`, `background: var(--portal-card-bg)`, `box-shadow: var(--portal-menu-shadow)`) sets
+`pointer-events: auto` back. The active tab renders its own 44×44 circular badge, accent-filled, positioned
+`top: -20px` — outside the pill's own box but never clipped, since the pill deliberately sets no `overflow`
+(the CSS default, `visible`); a 3px `var(--portal-card-bg)` ring around the badge creates a clean cutout against
+the pill behind it. Every tab, active or not, keeps a real 44×44 tap target regardless of which one currently
+shows the raised badge — only the visual treatment changes, not the hit area (this pass's own mobile-audit
+minimum, see D below). Icon color on the accent badge uses a new `TEXT_ON_ACCENT` constant (`#00291f`,
+7.26:1 against the teal, computed) rather than white (2.16:1 — confirmed poor, matching `PaymentDetails.jsx`'s
+own already-documented reasoning for the identical teal-background case) — deliberately theme-invariant, since
+the accent color itself doesn't change between light/dark.
+
+**What was built — D: general mobile audit (2.D), real findings.** Went through all three pages at real narrow
+viewports (375px and a stress-test 320px) via Playwright, not assumed clean. Concrete issues found and fixed:
+(1) `MessagesModal` (`ClientPortal.jsx`) used a fixed `height: 520` with no viewport-relative cap or scroll
+fallback — on a short viewport this would overflow the screen with nothing scrollable to recover it; changed to
+`height: 'min(520px, 85vh)'`, matching `ClaimModal`'s own already-correct `maxHeight: '85vh'` convention.
+(2) All 3 modals' close buttons (`padding: 6`, ~28px effective target) and the 3 per-invoice row action buttons
+(ack/claim/messages, `padding: '8px 12px'`, borderline) bumped to real ~40px touch targets
+(`minWidth/minHeight: 36–40`), plus `CommentThread.jsx`'s own attach/send buttons inside the portal path.
+(3) `AcknowledgeModal` had no `maxHeight`/scroll safety at all (the other two modals did) — added the same
+`85vh`/`overflowY: auto` pattern for consistency, defensive even though its own content is short enough to
+rarely need it. (4) The invoice-list row (`ClientPortal.jsx`) had no `flexWrap` and its amount text had no
+`flexShrink: 0` — added both so a long invoice number can't squeeze the amount/action buttons into an awkward
+single-line collision; verified at 320px with zero horizontal overflow
+(`document.documentElement.scrollWidth === clientWidth` on all 3 pages, real Playwright measurement, not
+assumed). (5) `PortalOverview.jsx`'s `NeedsAttentionRow` had NO truncation handling on its invoice-number text at
+all — a real, confirmed inconsistency with `RecentInvoiceRow` just below it in the same file, which already had
+the correct `minWidth: 0` + `flexShrink: 0` pattern; fixed to match. `PaymentRow`/`ClaimRow` (`PortalPayments.jsx`)
+were already correctly built this way from Phase 3 and needed no change.
+
+**What was built — A: the backend fix (2.A).** A new `PortalPaymentClaimSerializer`
+(`apps/invoices/serializers_portal.py`) — every field `PaymentClaimSerializer` already exposes, plus
+`invoice_number`/`portal_view_url` sourced from the related invoice, the identical shape
+`PortalPaymentSerializer` already established for the sibling `payments` field. `PaymentClaimSerializer` itself
+(`serializers_claims.py`) is completely untouched — confirmed by running the two other real consumers
+(`invoice_claims`, the freelancer list; `portal_invoice_claims`, the per-invoice portal GET) unaffected, 91
+tests, all passing unchanged. `portal_payments` (`views_portal.py`) now serializes its own `claims` field with
+the new serializer — same already-`select_related('invoice')`'d queryset `PortalPaymentSerializer` already
+reads from for `payments`, so no new query. `PortalPayments.jsx`'s `ClaimRow` now links to the real invoice via
+`claim.portal_view_url`, closing the gap Phase 3 reported precisely as instructed (a dedicated backend addition,
+not a frontend workaround).
+
+**What was built — E: hide the claim button when nothing is owed (2.E).** A real, deliberate REVERSAL of the 16
+August 2026 second verification pass's own "always shown, doubles as check-status" decision (kept in
+DECISIONS.md as historical context — not silently overwritten). `ClientPortal.jsx`'s per-invoice claim trigger
+button is now wrapped in `{inv.outstanding_amount > 0 && (...)}` — genuinely absent, not disabled, reusing the
+exact field `ClaimModal`'s own `canSubmitNew` already checked, no new computed value. The "check my claim status
+once paid" need this button used to double for is now covered by the Payments tab (Phase 3), which lists every
+claim across every invoice regardless of that invoice's current balance — confirmed nothing is actually lost by
+hiding the per-invoice trigger.
+
+**What was built — F: real wordmark (2.F).** `PortalShell.jsx`'s footer replaced with `WordmarkSVG` (item 3
+above), `fill={WORDMARK_COLOR}` (a new portal token, `#0e0e1a` light / `#ffffff` dark — the dark value matches
+theme.css's own dark `--wordmark` exactly, a deliberate exception to "inspiration only" since the wordmark is
+the literal brand asset), sized small (84×13) at 55% opacity under a muted "Powered by" caption — confirmed
+visually subordinate to the freelancer's own logo/business name in the header above it.
+
+**What was built — G: single logout button (2.G).** The account menu's separate single-session "Log Out" action
+is gone; the one remaining "Log Out" button calls `handleLogout()` with no `everywhere` parameter, which always
+`POST`s `/clients/portal/logout-everywhere/` — the exact same endpoint call the old, removed "Log Out Everywhere"
+button made, reused verbatim, not reimplemented. No "everywhere"/"all devices" wording anywhere in the visible
+label — verified by a real test asserting the button's own text content doesn't match that pattern.
+
+**Verification, with real evidence — live, against the real running dev servers.**
+1. **Resize bug**: `page.setViewportSize({width:375}) → confirm mobile pill nav → setViewportSize({width:1280})
+   with NO reload → confirm desktop nav (Overview/Invoices/Payments text links), mobile pill gone.` Real output:
+   `pillNavPresent: true` at 375px → `desktopNavText: ["Overview","Invoices","Payments"], mobilePillGone: true`
+   after the resize — the exact before/after this task asked for.
+2. Real screenshots of Overview/Invoices/Payments in both light and dark, at 375px and 1280px (client:
+   Nomad Ventures, real seeded data: mixed needs-attention reasons, mixed claim statuses) — dark mode confirmed
+   fully legible: cards visibly distinct from the page background via border (not a stark background jump, the
+   same low-contrast-background-plus-visible-border pattern theme.css's own dark mode already establishes),
+   badges readable, wordmark renders in white.
+3. Real close-up screenshot of the pill nav's raised active badge — confirmed visually un-clipped, poking above
+   the pill's own top edge exactly as specified.
+4. Real confirmation via two separate seeded clients: Acme Studios (both of its 2 portal-visible invoices are
+   `status=paid`, `outstanding_amount=0`) shows ZERO claim buttons (screenshot + DOM query, `claimButtonsVisible:
+   []`); Nomad Ventures (2 active, unpaid invoices) shows exactly 2, one per unpaid invoice
+   (`claim buttons present for: ["Payment claims for INV-2026-0003","Payment claims for INV-2026-0005"]`).
+5. Real confirmation the Payments claims list now links correctly: `claimLinks` returned the real
+   `portal_view_url` for each of Nomad's 3 seeded claims, correctly grouped by their real owning invoice
+   (2 claims on `INV-2026-0003`, 1 on `INV-2026-0005` — matching how they were actually seeded).
+6. Wordmark confirmed present (`wordmarkPresent: true`, a real `<svg aria-label="LanceraOS">` query). Single
+   logout button exercised end-to-end exactly like this codebase's own established logout-everywhere test
+   pattern (open the account menu → click the one "Log Out" button → confirm the real
+   `POST /clients/portal/logout-everywhere/` call fired, `POST /clients/portal/logout/` did NOT → confirm the
+   session-ended screen appears) — both live in the browser and as an automated `PortalShell.test.jsx` test.
+7. Backend: `python manage.py test apps.invoices apps.clients apps.users --keepdb` — the real, full, combined run
+   (not a subset) — **1209 tests, OK, 0 failures** (546s). Includes the new
+   `test_claims_carry_their_own_invoice_number_and_portal_view_url` test (confirmed passing on its own first,
+   13/13 in `test_portal_payments.py`) and the two other real claim consumers (`test_portal.py`, `test_claims.py`
+   — 91 tests, confirmed unaffected on their own first) — the combined run's 0-failures result folds both of
+   those in along with everything else in all three apps. Frontend: `npx vitest run` — **370 passing, 1 failing**
+   (the same pre-existing,
+   unrelated `SecuritySection.test.jsx` failure carried since Phase 2, not re-investigated per standing
+   instruction). `npx vite build` — clean, no new warnings. New/updated tests:
+   `PortalShell.test.jsx` gained 4 (single-logout-invokes-everywhere, no-separate-everywhere-button-exists,
+   dark-mode-toggle-present, pill-nav-renders-on-mobile-query-match — a locally-overridden `matchMedia` per test,
+   restored after, since the global test-setup stub always reports desktop); `ClientPortal.test.jsx`'s claim-
+   button test rewritten for the new hidden-when-paid behavior and 2 now-unreachable tests removed (their own
+   `ClaimModal`-internals coverage is untouched, just no longer reachable via this page's own button — the
+   scenario moved to `PortalPayments.test.jsx`); `PortalPayments.test.jsx` gained 1 (claim-links-to-invoice).
+8. `grep -rn "var(--" frontend/src/pages/portal/ --include="*.jsx"` — still the same comment-only matches,
+   confirming no theme.css token was accidentally reintroduced anywhere.
+
+**Out of scope, honored.** Messages/My Details: not built, not added as nav items. `PaymentClaimSerializer`'s
+own fields: unchanged (additive wrapper only). Invoice document renderer/PDF/email templates: untouched.
+`logout-everywhere`'s own server-side behavior: unchanged — this pass only removed the frontend's second path to
+it. No server-side theme-preference storage anywhere — `localStorage` only, confirmed no `Client` model/migration
+touched this pass (see DATABASE.md note below).
+
+**DATABASE.md**: confirmed not needed — 2.A is a response-shape addition (a new serializer over an existing
+model, zero new fields/migrations) and 2.B is `localStorage`-only per this task's own explicit constraint;
+neither touches the schema.

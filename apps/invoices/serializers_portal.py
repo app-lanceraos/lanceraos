@@ -11,7 +11,7 @@ serializers.py's own docstring establishes.
 """
 from rest_framework import serializers
 
-from .models import Invoice, InvoicePartialPayment
+from .models import Invoice, InvoicePartialPayment, PaymentClaim
 from .serializers import InvoiceItemSerializer
 
 
@@ -82,6 +82,40 @@ class PortalPaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = InvoicePartialPayment
         fields = ['id', 'amount', 'currency', 'payment_date', 'source', 'invoice_number', 'portal_view_url']
+
+
+class PortalPaymentClaimSerializer(serializers.ModelSerializer):
+    """
+    GET /api/invoices/portal/payments/'s own `claims` field — Client
+    Portal Redesign, Phase 3.5. A dedicated wrapper, NOT a change to
+    PaymentClaimSerializer itself (serializers_claims.py): Phase 3's own
+    investigation confirmed that serializer is reused verbatim by two
+    OTHER real endpoints already scoped to one invoice via the URL path
+    (the freelancer-facing invoice_claims list, and the portal's own
+    per-invoice portal_invoice_claims GET) — adding invoice-identifying
+    fields there would be redundant for both of those callers and risks
+    a real behavior change to something Phase 3 confirmed they depend on
+    unchanged. portal_payments is the one endpoint that aggregates claims
+    ACROSS every invoice, where that context is actually missing (the
+    real, reported Phase 3 gap — a claims[] entry previously carried no
+    invoice_number/portal_view_url/id at all) — so it gets its own
+    serializer instead, same `invoice_number`/`portal_view_url` shape
+    PortalPaymentSerializer above already established for the sibling
+    `payments` field, for consistency. Every field PaymentClaimSerializer
+    already exposes stays exactly as it was; this only adds two more.
+    """
+    invoice_number = serializers.CharField(source='invoice.invoice_number', read_only=True)
+    portal_view_url = serializers.CharField(source='invoice.portal_view_url', read_only=True)
+
+    class Meta:
+        model = PaymentClaim
+        fields = [
+            'id', 'client_name', 'client_email', 'amount_claimed', 'currency',
+            'payment_source', 'payment_date', 'client_note', 'status',
+            'submitted_at', 'reviewed_at', 'review_note',
+            'invoice_number', 'portal_view_url',
+        ]
+        read_only_fields = fields
 
 
 class PortalInvoiceDetailSerializer(serializers.ModelSerializer):

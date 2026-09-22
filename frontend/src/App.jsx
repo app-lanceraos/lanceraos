@@ -32,6 +32,7 @@ import PortalEnter from '@/pages/portal/PortalEnter'
 import PortalShell from '@/pages/portal/PortalShell'
 import PortalOverview from '@/pages/portal/PortalOverview'
 import PortalPayments from '@/pages/portal/PortalPayments'
+import PortalThemeRoot from '@/pages/portal/PortalThemeRoot'
 import InvoiceView from '@/pages/InvoiceView'
 import PaymentDetails from '@/pages/PaymentDetails'
 import InvoicePreviewPdf from '@/pages/InvoicePreviewPdf'
@@ -88,13 +89,26 @@ export default function App() {
             Phase 3 adds PortalPayments (Payments) as a third child —
             it fetches its own GET /api/invoices/portal/payments/
             endpoint directly (a genuinely different response than the
-            shell's own Overview fetch), not sourced from the shell. */}
-        <Route path="/portal" element={<PortalShell />}>
-          <Route index element={<PortalOverview />} />
-          <Route path="invoices" element={<ClientPortal />} />
-          <Route path="payments" element={<PortalPayments />} />
+            shell's own Overview fetch), not sourced from the shell.
+            Phase 3.5 wraps BOTH /portal and /portal/enter/:token in a
+            shared PortalThemeRoot layout route — the portal's own
+            dark/light theme scope (data-portal-theme + portalTheme.css's
+            --portal-* custom properties), deliberately isolated from
+            theme.css/[data-theme] so it can never couple to the
+            freelancer's own app-wide theme toggle. Nested under one
+            react-router layout route (not two independent providers) so
+            both top-level portal routes share the exact same live theme
+            state/context, the same nested-route/<Outlet/> composition
+            PortalShell.jsx already established for the identical reason
+            in Phase 2. */}
+        <Route element={<PortalThemeRoot />}>
+          <Route path="/portal" element={<PortalShell />}>
+            <Route index element={<PortalOverview />} />
+            <Route path="invoices" element={<ClientPortal />} />
+            <Route path="payments" element={<PortalPayments />} />
+          </Route>
+          <Route path="/portal/enter/:token" element={<PortalEnter />} />
         </Route>
-        <Route path="/portal/enter/:token" element={<PortalEnter />} />
 
         {/* The individual invoice VIEW — REWORKED (real frontend-domain
             invoice view page, see DECISIONS.md): now a real React route

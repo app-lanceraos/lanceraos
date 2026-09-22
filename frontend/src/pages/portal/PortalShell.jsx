@@ -1,48 +1,68 @@
 // src/pages/portal/PortalShell.jsx
 //
 // Client Portal Redesign, Phase 2 — the real portal app shell: header
-// (freelancer branding + account menu), nav (Overview/Invoices), footer,
-// and the frame every nested portal page renders inside via
-// react-router's <Outlet/>. Registered in App.jsx as a layout route
-// (`<Route path="/portal" element={<PortalShell />}>` with `index` =
-// PortalOverview and `invoices` = ClientPortal as children) — the first
-// use of react-router's nested-route/<Outlet/> composition in this
-// codebase (AppShell.jsx, the freelancer-side equivalent, instead wraps
-// each authenticated route's own page as a `children` prop from App.jsx
-// directly — see CLAUDE.md's frontend rule 5). That's a deliberate,
-// narrow departure here, not an unexplained new pattern: AppShell is
-// re-mounted fresh on every route change (each authenticated route is
-// its own top-level <Route>), which is fine for chrome that owns no
-// fetched data of its own. This shell's own job is different — its
-// Overview fetch (freelancer identity, balances, needs-attention) must
-// happen exactly ONCE and stay available to every nested page without
-// being re-fetched on every nav click between Overview and Invoices;
-// nested routes + <Outlet/> is the idiomatic way to keep a layout
-// component mounted across sibling route changes, which a per-route
-// `children` wrapper (remounting on every navigation) cannot do.
+// (freelancer branding + account menu), nav (Overview/Invoices/
+// Payments), footer, and the frame every nested portal page renders
+// inside via react-router's <Outlet/>. Registered in App.jsx as a
+// layout route (`<Route path="/portal" element={<PortalShell />}>` with
+// `index` = PortalOverview and children = ClientPortal/PortalPayments) —
+// the first use of react-router's nested-route/<Outlet/> composition in
+// this codebase (AppShell.jsx, the freelancer-side equivalent, instead
+// wraps each authenticated route's own page as a `children` prop from
+// App.jsx directly — see CLAUDE.md's frontend rule 5). That's a
+// deliberate, narrow departure here, not an unexplained new pattern:
+// AppShell is re-mounted fresh on every route change (each authenticated
+// route is its own top-level <Route>), which is fine for chrome that
+// owns no fetched data of its own. This shell's own job is different —
+// its Overview fetch (freelancer identity, balances, needs-attention)
+// must happen exactly ONCE and stay available to every nested page
+// without being re-fetched on every nav click; nested routes + <Outlet/>
+// is the idiomatic way to keep a layout component mounted across
+// sibling route changes, which a per-route `children` wrapper cannot do.
 //
-// PortalLayout.jsx (the pre-existing narrow centered-card component)
-// is NOT replaced by this file — it's reused here for the loading/
+// PortalLayout.jsx (the pre-existing narrow centered-card component) is
+// NOT replaced by this file — it's reused here for the loading/
 // needs-link/error states below, which have no freelancer identity to
-// show yet and are closer in shape to the auth-adjacent screens
-// PortalLayout already serves (PortalEnter.jsx etc.) than to the real
-// app shell. Once the Overview fetch succeeds, this component renders
+// show yet. Once the Overview fetch succeeds, this component renders
 // its own wider frame instead.
 //
-// Session validity is resolved HERE, once, via the Overview fetch —
-// not per nested page. A 401 here means no nested page is reachable at
-// all (there's no freelancer identity/balances to show), so this shell
-// renders the request-a-fresh-link flow directly rather than mounting
-// <Outlet/> onto a broken session.
+// Session validity is resolved HERE, once, via the Overview fetch — not
+// per nested page. A 401 here means no nested page is reachable at all,
+// so this shell renders the request-a-fresh-link flow directly rather
+// than mounting <Outlet/> onto a broken session.
+//
+// Phase 3.5 — 3 real, concrete changes to this file:
+// 1. Mobile detection: the old `window.addEventListener('resize', ...)`
+//    listener is replaced with `matchMedia('(max-width: 768px)')` +
+//    `addEventListener('change', ...)`. Direct testing (a real Playwright
+//    viewport resize, simulating the same CDP-level viewport change
+//    DevTools' own device toolbar performs) showed the OLD resize
+//    listener already updated `isMobile` correctly in this environment —
+//    the reported "stuck after toggling the DevTools device toolbar"
+//    bug did not reproduce here. Switched anyway: `matchMedia`'s
+//    `change` event is tied directly to the browser's own live media-
+//    query re-evaluation, which is the documented, more robust primitive
+//    for exactly this class of report across browsers/DevTools versions
+//    (a plain `resize` event is, in some documented cases, not
+//    dispatched by every device-emulation transition) — see
+//    DECISIONS.md's Phase 3.5 entry for the full investigation.
+// 2. The mobile bottom nav is now a floating pill (PillNav, below),
+//    replacing the old flush full-width bar.
+// 3. The account menu is now a single "Log Out" action (always
+//    logout-everywhere — Step 2.G) plus a real dark/light theme toggle
+//    (Step 2.B, via usePortalThemeContext — see PortalThemeRoot.jsx).
 import { createContext, useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { Home, LogOut, Receipt, UserCircle2, Wallet } from 'lucide-react'
+import { Home, LogOut, Moon, Receipt, Sun, UserCircle2, Wallet } from 'lucide-react'
 
 import api from '@/lib/api'
+import { WordmarkSVG } from '@/components/Brand'
 import PortalLayout from './PortalLayout'
 import PortalRequestLinkForm from './PortalRequestLinkForm'
+import { usePortalThemeContext } from './PortalThemeRoot'
 import {
-  ACCENT, BODY_TEXT, CARD_BORDER, ERROR, MUTED_TEXT, NAVY, PAGE_BG,
+  ACCENT, BODY_TEXT, CARD_BG, CARD_BORDER, ERROR, HOVER_BG, MENU_SHADOW, MUTED_TEXT, NAVY, PAGE_BG,
+  SKELETON_BG, TEXT_ON_ACCENT, WORDMARK_COLOR,
   disabledStyle, publicBtnPrimary,
 } from './portalShared'
 
@@ -55,11 +75,10 @@ import {
 // an invoice) without duplicating the fetch logic itself.
 export const PortalOverviewContext = createContext({ overview: null, reload: () => {} })
 
-// A single, centralized nav list (per this phase's own spec) — a later
-// phase adds Payments/Messages/My Details entries here without
-// restructuring the shell itself. `end: true` on Overview so its
-// NavLink isn't left "active" while viewing /portal/invoices (both
-// paths start with /portal).
+// A single, centralized nav list — a later phase adds Payments/Messages/
+// My Details entries here without restructuring the shell itself.
+// `end: true` on Overview so its NavLink isn't left "active" while
+// viewing /portal/invoices (both paths start with /portal).
 const NAV_ITEMS = [
   { label: 'Overview', path: '/portal', icon: Home, end: true },
   { label: 'Invoices', path: '/portal/invoices', icon: Receipt, end: false },
@@ -68,20 +87,14 @@ const NAV_ITEMS = [
 
 // Matches AppShell.jsx's own established breakpoint exactly (DESIGN.md
 // Section 11: "768px primary app breakpoint").
-const MOBILE_BREAKPOINT = 768
+const MOBILE_QUERY = '(max-width: 768px)'
 
-function navLinkStyle({ isActive }, isMobile) {
-  return isMobile
-    ? {
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
-        flex: 1, padding: '8px 4px 6px', textDecoration: 'none',
-        color: isActive ? NAVY : MUTED_TEXT, fontSize: '0.68rem', fontWeight: isActive ? 700 : 500,
-      }
-    : {
-        display: 'inline-flex', alignItems: 'center', gap: 7, padding: '12px 4px',
-        textDecoration: 'none', fontSize: '0.85rem', fontWeight: isActive ? 700 : 500,
-        color: isActive ? NAVY : MUTED_TEXT, borderBottom: isActive ? `2px solid ${ACCENT}` : '2px solid transparent',
-      }
+function navLinkStyle({ isActive }) {
+  return {
+    display: 'inline-flex', alignItems: 'center', gap: 7, padding: '12px 4px',
+    textDecoration: 'none', fontSize: '0.85rem', fontWeight: isActive ? 700 : 500,
+    color: isActive ? NAVY : MUTED_TEXT, borderBottom: isActive ? `2px solid ${ACCENT}` : '2px solid transparent',
+  }
 }
 
 // Exported — PortalPayments.jsx (Phase 3) reuses this exact loading
@@ -95,7 +108,7 @@ export function Skeleton() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {[0, 1, 2].map((i) => (
           <div key={i} style={{
-            height: i === 0 ? 18 : 42, borderRadius: 8, background: 'rgba(30,58,95,.08)',
+            height: i === 0 ? 18 : 42, borderRadius: 8, background: SKELETON_BG,
             animation: 'portalPulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.12}s`,
           }} />
         ))}
@@ -104,8 +117,62 @@ export function Skeleton() {
   )
 }
 
+// Mobile floating pill nav (Step 2.C) — fully rounded container, real
+// margin from every screen edge (never flush/full-width), soft shadow.
+// The active tab gets its own larger circular badge, accent-filled,
+// positioned to poke up above the pill's own top edge — a negative
+// `top` offset on an element inside a container with no `overflow`
+// set (the default, `visible`) renders fully un-clipped; the pill
+// itself deliberately never sets `overflow: hidden` for exactly this
+// reason. Every tab (active or not) is a real 44×44 touch target,
+// matching this pass's own mobile-audit minimum (Step 2.D) — only the
+// VISUAL badge grows for the active tab, the tap target doesn't shrink
+// for the inactive ones.
+function PillNav() {
+  return (
+    <div style={{
+      position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50,
+      display: 'flex', justifyContent: 'center', pointerEvents: 'none',
+      padding: '0 16px calc(16px + env(safe-area-inset-bottom, 0px))',
+    }}>
+      <div style={{
+        pointerEvents: 'auto', position: 'relative',
+        display: 'flex', alignItems: 'center', width: '100%', maxWidth: 340,
+        background: CARD_BG, borderRadius: 999, boxShadow: MENU_SHADOW,
+        border: `1px solid ${CARD_BORDER}`, padding: '4px 8px',
+      }}>
+        {NAV_ITEMS.map((item) => (
+          <NavLink
+            key={item.path} to={item.path} end={item.end} aria-label={item.label}
+            style={{
+              position: 'relative', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              height: 44, textDecoration: 'none',
+            }}
+          >
+            {({ isActive }) => (
+              isActive ? (
+                <span style={{
+                  position: 'absolute', top: -20, left: '50%', transform: 'translateX(-50%)',
+                  width: 44, height: 44, borderRadius: '50%', background: ACCENT,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: '0 6px 16px rgba(0,200,150,.45)', border: `3px solid ${CARD_BG}`,
+                }}>
+                  <item.icon size={19} color={TEXT_ON_ACCENT} />
+                </span>
+              ) : (
+                <item.icon size={20} color={MUTED_TEXT} />
+              )
+            )}
+          </NavLink>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function AccountMenu({ onLogout, loggingOut }) {
   const [open, setOpen] = useState(false)
+  const { theme, toggleTheme } = usePortalThemeContext()
 
   // Escape-to-close — matches DropdownMenu.jsx's own established
   // convention exactly (a window keydown listener, not reused directly
@@ -126,11 +193,11 @@ function AccountMenu({ onLogout, loggingOut }) {
         aria-label="Account menu"
         aria-expanded={open}
         style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36,
-          borderRadius: '50%', border: `1px solid ${CARD_BORDER}`, background: '#ffffff', cursor: 'pointer', color: NAVY,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40,
+          borderRadius: '50%', border: `1px solid ${CARD_BORDER}`, background: CARD_BG, cursor: 'pointer', color: NAVY,
         }}
       >
-        <UserCircle2 size={19} />
+        <UserCircle2 size={20} />
       </button>
       {open && (
         <>
@@ -139,15 +206,20 @@ function AccountMenu({ onLogout, loggingOut }) {
               no dark background, since this isn't a modal. */}
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
           <div style={{
-            position: 'absolute', top: 44, right: 0, zIndex: 61, minWidth: 190,
-            background: '#ffffff', border: `1px solid ${CARD_BORDER}`, borderRadius: 10,
-            boxShadow: '0 8px 28px rgba(0,0,0,.14)', padding: 6,
+            position: 'absolute', top: 48, right: 0, zIndex: 61, minWidth: 200,
+            background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 10,
+            boxShadow: MENU_SHADOW, padding: 6,
           }}>
-            <MenuButton disabled={loggingOut} onClick={() => { setOpen(false); onLogout(false) }}>
-              <LogOut size={14} /> Log Out
+            <MenuButton onClick={toggleTheme}>
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+              {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
             </MenuButton>
-            <MenuButton disabled={loggingOut} onClick={() => { setOpen(false); onLogout(true) }}>
-              <LogOut size={14} /> Log Out Everywhere
+            <div style={{ height: 1, background: CARD_BORDER, margin: '4px 2px' }} />
+            {/* Step 2.G — one "Log Out" action, no "logout-everywhere"
+                wording anywhere; it invokes the exact same endpoint the
+                old, now-removed "Log Out Everywhere" button called. */}
+            <MenuButton disabled={loggingOut} onClick={() => { setOpen(false); onLogout() }}>
+              <LogOut size={16} /> Log Out
             </MenuButton>
           </div>
         </>
@@ -163,11 +235,11 @@ function MenuButton({ children, disabled, onClick }) {
       disabled={disabled}
       style={disabledStyle({
         display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
-        padding: '9px 10px', borderRadius: 7, border: 'none', background: 'transparent',
-        fontSize: '0.82rem', fontWeight: 500, color: BODY_TEXT, cursor: 'pointer',
+        minHeight: 40, padding: '9px 10px', borderRadius: 7, border: 'none', background: 'transparent',
+        fontSize: '0.85rem', fontWeight: 500, color: BODY_TEXT, cursor: 'pointer',
         fontFamily: "'DM Sans', sans-serif",
       }, disabled)}
-      onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = '#f1f5f9' }}
+      onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = HOVER_BG }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
     >
       {children}
@@ -175,11 +247,27 @@ function MenuButton({ children, disabled, onClick }) {
   )
 }
 
+// Real LanceraOS wordmark asset (Step 2.F) — replaces the old plain-text
+// "Powered by LanceraOS" footer. Sized and muted-opacity so it never
+// visually competes with the freelancer's own logo/business name above
+// it in the header (a much larger, full-opacity, primary-weight
+// treatment there).
+function WordmarkFooter() {
+  return (
+    <footer style={{ textAlign: 'center', padding: '14px 24px 22px' }}>
+      <p style={{ margin: '0 0 4px', fontSize: '0.68rem', color: MUTED_TEXT }}>Powered by</p>
+      <div style={{ opacity: 0.55, display: 'inline-flex' }}>
+        <WordmarkSVG width={84} height={13} fill={WORDMARK_COLOR} />
+      </div>
+    </footer>
+  )
+}
+
 export default function PortalShell() {
   // 'loading' | 'ready' | 'needs_link' | 'error'
   const [state, setState] = useState('loading')
   const [overview, setOverview] = useState(null)
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= MOBILE_BREAKPOINT)
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_QUERY).matches)
   const [loggingOut, setLoggingOut] = useState(false)
 
   function load() {
@@ -191,16 +279,27 @@ export default function PortalShell() {
 
   useEffect(() => { load() }, [])
 
+  // matchMedia's `change` event fires only when the (max-width: 768px)
+  // query's own result actually flips — the browser's live layout
+  // engine drives it directly, not a raw pixel-resize dispatch some
+  // device-emulation transitions are documented to skip. Always
+  // addEventListener/removeEventListener, never the deprecated
+  // addListener/removeListener pair.
   useEffect(() => {
-    function onResize() { setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT) }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    const mq = window.matchMedia(MOBILE_QUERY)
+    const handler = (e) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
   }, [])
 
-  async function handleLogout(everywhere) {
+  // Step 2.G — always logout-everywhere now; the single-session-only
+  // path is gone from the UI entirely (the backend endpoint it called,
+  // POST /clients/portal/logout/, is untouched and still exists — this
+  // is a frontend consolidation only, per this task's own scope).
+  async function handleLogout() {
     setLoggingOut(true)
     try {
-      await api.post(`/clients/portal/${everywhere ? 'logout-everywhere' : 'logout'}/`)
+      await api.post('/clients/portal/logout-everywhere/')
     } catch {
       // Same discipline as this page's own pre-existing handler before
       // this relocation: logging out locally doesn't depend on the
@@ -240,67 +339,53 @@ export default function PortalShell() {
 
   return (
     <PortalOverviewContext.Provider value={{ overview, reload: load }}>
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: PAGE_BG, fontFamily: "'DM Sans', sans-serif" }}>
-        <header style={{ background: '#ffffff', borderBottom: `1px solid ${CARD_BORDER}` }}>
-          <div style={{
-            maxWidth: 760, margin: '0 auto', padding: isMobile ? '14px 16px' : '18px 24px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-              {freelancer.logo && (
-                <img
-                  src={freelancer.logo}
-                  alt={freelancer.business_name || 'Logo'}
-                  style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', flexShrink: 0, border: `1px solid ${CARD_BORDER}` }}
-                />
-              )}
-              <div style={{ minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: NAVY, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {freelancer.business_name || 'Your Freelancer'}
-                </p>
-                <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 500, color: MUTED_TEXT, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
-                  Client Portal
-                </p>
-              </div>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: PAGE_BG, fontFamily: "'DM Sans', sans-serif" }}>
+      <header style={{ background: CARD_BG, borderBottom: `1px solid ${CARD_BORDER}` }}>
+        <div style={{
+          maxWidth: 760, margin: '0 auto', padding: isMobile ? '14px 16px' : '18px 24px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            {freelancer.logo && (
+              <img
+                src={freelancer.logo}
+                alt={freelancer.business_name || 'Logo'}
+                style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', flexShrink: 0, border: `1px solid ${CARD_BORDER}` }}
+              />
+            )}
+            <div style={{ minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: NAVY, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {freelancer.business_name || 'Your Freelancer'}
+              </p>
+              <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 500, color: MUTED_TEXT, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
+                Client Portal
+              </p>
             </div>
-            <AccountMenu onLogout={handleLogout} loggingOut={loggingOut} />
           </div>
-
-          {!isMobile && (
-            <nav style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px', display: 'flex', gap: 22 }}>
-              {NAV_ITEMS.map((item) => (
-                <NavLink key={item.path} to={item.path} end={item.end} style={(p) => navLinkStyle(p, false)}>
-                  <item.icon size={15} /> {item.label}
-                </NavLink>
-              ))}
-            </nav>
-          )}
-        </header>
-
-        <main style={{ flex: 1, width: '100%', maxWidth: 760, margin: '0 auto', boxSizing: 'border-box', padding: isMobile ? '16px 16px 84px' : '28px 24px 40px' }}>
-          <Outlet />
-        </main>
+          <AccountMenu onLogout={handleLogout} loggingOut={loggingOut} />
+        </div>
 
         {!isMobile && (
-          <footer style={{ textAlign: 'center', padding: '14px 24px 22px' }}>
-            <p style={{ margin: 0, fontSize: '0.72rem', color: MUTED_TEXT }}>Powered by LanceraOS</p>
-          </footer>
-        )}
-
-        {isMobile && (
-          <nav style={{
-            position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
-            background: '#ffffff', borderTop: `1px solid ${CARD_BORDER}`,
-            display: 'flex', paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-          }}>
+          <nav style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px', display: 'flex', gap: 22 }}>
             {NAV_ITEMS.map((item) => (
-              <NavLink key={item.path} to={item.path} end={item.end} style={(p) => navLinkStyle(p, true)}>
-                <item.icon size={19} /> {item.label}
+              <NavLink key={item.path} to={item.path} end={item.end} style={navLinkStyle}>
+                <item.icon size={15} /> {item.label}
               </NavLink>
             ))}
           </nav>
         )}
-      </div>
+      </header>
+
+      <main style={{
+        flex: 1, width: '100%', maxWidth: 760, margin: '0 auto', boxSizing: 'border-box',
+        padding: isMobile ? '16px 16px 108px' : '28px 24px 40px',
+      }}>
+        <Outlet />
+      </main>
+
+      {!isMobile && <WordmarkFooter />}
+      {isMobile && <PillNav />}
+    </div>
     </PortalOverviewContext.Provider>
   )
 }

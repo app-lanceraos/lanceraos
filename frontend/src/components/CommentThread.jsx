@@ -18,6 +18,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, CheckCheck, File, Paperclip, Send, X } from 'lucide-react'
 
 import api from '@/lib/api'
+import {
+  BODY_TEXT as PORTAL_TEXT, BUBBLE_OTHER, BUTTON_BG, CARD_BG as PORTAL_CARD_BG, CARD_BORDER as PORTAL_CARD_BORDER,
+  ERROR as PORTAL_ERROR, INPUT_BORDER as PORTAL_INPUT_BORDER, MUTED_TEXT as PORTAL_MUTED_TEXT,
+  ACCENT as PORTAL_ACCENT,
+} from '@/pages/portal/portalShared'
 import useWebSocket from '@/hooks/useWebSocket'
 
 // Images render an inline thumbnail; PDFs render a document icon — both
@@ -54,28 +59,34 @@ const THEME_COLORS = {
   attachmentBg: 'var(--bg-surface)',
   errorText: 'var(--error-text)',
 }
+// Phase 3.5: every value below now resolves to a var(--portal-*) CSS
+// custom property (portalShared.js/portalTheme.css) instead of a
+// literal hex — this component gets a real light/dark portal theme
+// automatically, with zero further changes to its own JSX.
 const PUBLIC_COLORS = {
-  textTertiary: '#64748b',
-  textPrimary: '#334155',
-  accent: '#00c896',
-  bubbleOther: '#f8fafc',
+  textTertiary: PORTAL_MUTED_TEXT,
+  textPrimary: PORTAL_TEXT,
+  accent: PORTAL_ACCENT,
+  bubbleOther: BUBBLE_OTHER,
   bubbleRadius: '10px',
   attachmentRadius: '6px',
-  attachmentBorder: 'rgba(0,0,0,.08)',
-  attachmentBg: '#ffffff',
-  errorText: '#c0392b',
+  attachmentBorder: PORTAL_CARD_BORDER,
+  attachmentBg: PORTAL_CARD_BG,
+  errorText: PORTAL_ERROR,
 }
 const PUBLIC_INPUT_STYLE = {
-  width: '100%', boxSizing: 'border-box', background: '#ffffff', border: '1.5px solid rgba(0,0,0,.15)',
+  width: '100%', boxSizing: 'border-box', background: PORTAL_CARD_BG, border: `1.5px solid ${PORTAL_INPUT_BORDER}`,
   borderRadius: 8, padding: '10px 14px', fontFamily: "'DM Sans', sans-serif", fontSize: '0.9rem',
-  color: '#334155', outline: 'none', resize: 'none',
+  color: PORTAL_TEXT, outline: 'none', resize: 'none',
 }
 const PUBLIC_BTN_STYLE = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
   fontFamily: "'DM Sans', sans-serif", fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer',
 }
-const PUBLIC_BTN_GHOST_STYLE = { ...PUBLIC_BTN_STYLE, border: '1.5px solid rgba(0,0,0,.15)', background: 'transparent', color: '#334155' }
-const PUBLIC_BTN_PRIMARY_STYLE = { ...PUBLIC_BTN_STYLE, border: 'none', background: '#1e3a5f', color: '#ffffff' }
+const PUBLIC_BTN_GHOST_STYLE = { ...PUBLIC_BTN_STYLE, border: `1.5px solid ${PORTAL_INPUT_BORDER}`, background: 'transparent', color: PORTAL_TEXT }
+// BUTTON_BG, not NAVY — see portalShared.js's own comment on why a
+// primary button's fill needs a token separate from heading text.
+const PUBLIC_BTN_PRIMARY_STYLE = { ...PUBLIC_BTN_STYLE, border: 'none', background: BUTTON_BG, color: '#ffffff' }
 
 function isImageUrl(url) {
   const lower = url.toLowerCase().split('?')[0]
@@ -262,7 +273,7 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType, pale
         />
         <label
           className={isPublic ? undefined : 'fos-btn fos-btn-ghost'}
-          style={isPublic ? { ...PUBLIC_BTN_GHOST_STYLE, padding: 8 } : { cursor: 'pointer', padding: 8 }}
+          style={isPublic ? { ...PUBLIC_BTN_GHOST_STYLE, padding: 8, minWidth: 40, minHeight: 40 } : { cursor: 'pointer', padding: 8 }}
           title="Attach an image or PDF"
         >
           <Paperclip size={14} />
@@ -271,7 +282,7 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType, pale
         <button
           type="submit" disabled={sending || (!text.trim() && !attachment)}
           className={isPublic ? undefined : 'fos-btn fos-btn-primary'}
-          style={isPublic ? { ...PUBLIC_BTN_PRIMARY_STYLE, padding: 8, opacity: (sending || (!text.trim() && !attachment)) ? 0.5 : 1 } : { padding: 8 }}
+          style={isPublic ? { ...PUBLIC_BTN_PRIMARY_STYLE, padding: 8, minWidth: 40, minHeight: 40, opacity: (sending || (!text.trim() && !attachment)) ? 0.5 : 1 } : { padding: 8 }}
           aria-label="Send message"
         >
           {sending ? <span className="fos-spinner" /> : <Send size={14} />}

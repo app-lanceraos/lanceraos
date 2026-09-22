@@ -23,21 +23,18 @@
 //                  invoice_number, portal_view_url}],
 //     claims: [{id, client_name, client_email, amount_claimed, currency,
 //                payment_source, payment_date, client_note, status,
-//                submitted_at, reviewed_at, review_note}] }
+//                submitted_at, reviewed_at, review_note,
+//                invoice_number, portal_view_url}] }
 //
-// KNOWN, REPORTED GAP (see DECISIONS.md's Phase 3 entry): unlike
-// `payments[]`, a `claims[]` entry carries NO invoice-identifying field
-// at all (no invoice_number/portal_view_url/id) — PaymentClaimSerializer
-// (apps/invoices/serializers_claims.py), the exact serializer this
-// endpoint reuses verbatim for `claims`, was built for endpoints already
-// scoped to one invoice via the URL path (the freelancer-facing
-// invoice_claims list, and the portal's own per-invoice
-// portal_invoice_claims), so it never needed to carry that context
-// itself — but portal_payments aggregates claims ACROSS every invoice,
-// where that context is exactly what's missing. Per this task's own
-// explicit instruction not to extend the endpoint or add a second API
-// call to work around a gap, each claim row below renders with no link
-// back to its invoice — a real, reported limitation, not an oversight.
+// GAP CLOSED, Phase 3.5 (was reported, not worked around, in Phase 3):
+// `claims[]` used to carry no invoice-identifying field at all — the
+// freelancer-facing/per-invoice claims endpoints reuse
+// PaymentClaimSerializer verbatim (which never needed that context,
+// already being scoped to one invoice by the URL), but portal_payments
+// aggregates claims ACROSS every invoice, where it's actually needed.
+// apps/invoices/serializers_portal.py's new PortalPaymentClaimSerializer
+// is a dedicated wrapper adding invoice_number/portal_view_url — those
+// two callers' own PaymentClaimSerializer usage is completely untouched.
 import { useEffect, useState } from 'react'
 import { AlertCircle, Inbox } from 'lucide-react'
 
@@ -85,33 +82,36 @@ function PaymentRow({ payment }) {
   )
 }
 
-// Tint backgrounds keyed by the same CLAIM_STATUS_META colors — a
-// literal rgba() per status (matching PortalOverview.jsx's own
-// ReasonBadge convention exactly, including reusing its identical
-// rgba(192,57,43,.08) tint for ERROR/rejected) rather than a computed
-// hex+alpha string.
-const CLAIM_STATUS_BADGE_BG = {
-  pending: 'rgba(138,125,92,.14)',
-  confirmed: 'rgba(0,200,150,.14)',
-  rejected: 'rgba(192,57,43,.08)',
-}
-
+// Phase 3.5: CLAIM_STATUS_META itself now carries a theme-aware `tint`
+// per status (portalShared.js) — the separate literal rgba() map this
+// used to keep locally is gone; one source for both the badge's text
+// color and its background now, not two independently-maintained ones.
 function ClaimStatusBadge({ status }) {
   const meta = CLAIM_STATUS_META[status] || CLAIM_STATUS_META.pending
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', fontSize: '0.68rem', fontWeight: 600,
-      padding: '3px 8px', borderRadius: 999, background: CLAIM_STATUS_BADGE_BG[status] || CLAIM_STATUS_BADGE_BG.pending,
-      color: meta.color,
+      padding: '3px 8px', borderRadius: 999, background: meta.tint, color: meta.color,
     }}>
       {meta.label}
     </span>
   )
 }
 
+// Phase 3.5 — apps/invoices/serializers_portal.py's new
+// PortalPaymentClaimSerializer closes the real gap Phase 3 reported:
+// claims[] now carries invoice_number/portal_view_url, so each row can
+// finally link back to its own invoice (previously impossible — see
+// this file's own header comment, kept as historical context).
 function ClaimRow({ claim }) {
   return (
-    <div style={{ padding: '12px 14px', borderRadius: 10, border: `1px solid ${DIVIDER}` }}>
+    <a
+      href={claim.portal_view_url}
+      style={{
+        display: 'block', padding: '12px 14px', borderRadius: 10, border: `1px solid ${DIVIDER}`,
+        textDecoration: 'none', color: 'inherit',
+      }}
+    >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
         <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: NAVY }}>
           {formatMoney(claim.amount_claimed, claim.currency)}
@@ -119,12 +119,12 @@ function ClaimRow({ claim }) {
         <ClaimStatusBadge status={claim.status} />
       </div>
       <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: MUTED_TEXT }}>
-        via {claim.payment_source} · {claim.payment_date}
+        via {claim.payment_source} · {claim.payment_date} · {claim.invoice_number || '(unnumbered)'}
       </p>
       {claim.review_note && (
         <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: BODY_TEXT }}>Note: {claim.review_note}</p>
       )}
-    </div>
+    </a>
   )
 }
 

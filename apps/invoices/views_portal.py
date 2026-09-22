@@ -63,7 +63,7 @@ from .serializers_claims import PaymentClaimSerializer, PortalClaimCreateSeriali
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
 from .serializers_portal import (
     PortalInvoiceDetailSerializer, PortalInvoiceListSerializer, PortalOverviewNeedsAttentionSerializer,
-    PortalPaymentSerializer,
+    PortalPaymentClaimSerializer, PortalPaymentSerializer,
 )
 from .views import ACTIVE_STATUSES
 
@@ -452,7 +452,12 @@ def portal_payments(request):
     return Response({
         'balances': balances,
         'payments': PortalPaymentSerializer(payments, many=True).data,
-        'claims': PaymentClaimSerializer(claims, many=True).data,
+        # PortalPaymentClaimSerializer, not PaymentClaimSerializer — Phase
+        # 3.5 (see that serializer's own docstring): this is the one
+        # endpoint that aggregates claims across every invoice, so it
+        # needs the invoice_number/portal_view_url PaymentClaimSerializer
+        # itself deliberately doesn't carry.
+        'claims': PortalPaymentClaimSerializer(claims, many=True).data,
     })
 
 
