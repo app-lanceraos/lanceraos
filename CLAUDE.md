@@ -1345,7 +1345,9 @@ the real `/send/` action alone (Step 10) and only gates automated reminders, con
 own field documentation.
 
 Partial payments (InvoicePartialPayment): multiple partial payments per invoice, each tracked with
-amount, currency, an anchor-currency rate_to_usd, source, and date. Status updates automatically via
+amount, currency, an anchor-currency rate_to_usd, source, and date (the date must fall between the invoice's
+issue_date and today, both inclusive, PKT — one shared rule, `serializers.validate_payment_date_for_invoice`,
+also applied to client payment claims; see the 21 September 2026 entry below). Status updates automatically via
 update_paid_status() as payments are recorded or removed. "Mark paid" pre-fills the full outstanding
 balance as a real payment record (never a bare status edit) via the same flow. Undo removes exactly
 the most-recently-recorded payment and restores the exact pre-payment status — repeatable, walking
@@ -1591,7 +1593,9 @@ see DECISIONS.md):
   saved client, OR reachable for a one-time client via that exact invoice's own view_token supplied
   in the request body, matching Step 12's own precedent since a one-time client has no
   ClientPortalSession possible at all; rate limited 5/hour, tighter than comments; rejects the
-  freelancer-preview-mode case with a real 403; amount_claimed capped at the invoice's real current
+  freelancer-preview-mode case with a real 403; payment_date must be between the invoice's issue_date and today,
+  both inclusive (21 September 2026, the same shared validator freelancer payment recording uses — rejected at
+  submission, never accepted as pending); amount_claimed capped at the invoice's real current
   outstanding_amount at submission time, 16 August 2026 second verification-pass fix — see DECISIONS.md.
   18 August 2026, second pass: rejects outright with a specific message when a real pending claim
   already exists for this invoice, or when outstanding_amount is already 0 — and every OTHER
@@ -2203,6 +2207,29 @@ built). No claim/"I've paid" form on this page (out of scope; suggested in DECIS
 passing (27 new, `test_payment_details.py`); frontend 328 passing (15 new, `PaymentDetails.test.jsx`);
 `vite build` clean; live-verified in real Chromium at 375px/1280px. Note the test files are gitignored in this
 repo. See DECISIONS.md's 21 September 2026 "Public payment-details page" entry.
+
+**21 September 2026 (Two small fixes: settled invoices' due-date line, and payment-date validation).**
+(1) `InvoiceDetailPanel.jsx`'s header "Due <date> · <countdown>" line is now hidden for `paid`/`refunded`/
+`bad_debt` (new `DUE_DATE_HIDDEN_STATUSES` in `invoiceHelpers.js` — a deliberate standalone constant, since neither
+`NO_PAYMENT_STATUSES` nor `REMINDERS_HIDDEN_STATUSES` is that set). Root cause, more precisely than first
+described: the backend's `days_overdue` is already 0 for settled statuses, so `dueDateCountdown` fell through to its
+date-diff branch and a settled invoice read "Due <date> · Due today" (past date) or "N days remaining" (future date),
+never "N days overdue". `cancelled` is intentionally NOT included — an open product question, not decided here.
+(2) A recorded payment's / claimed payment's `payment_date` is now validated: not before the invoice's `issue_date`,
+not after today (`_today()`, PKT), both bounds inclusive. One shared function,
+`serializers.validate_payment_date_for_invoice`, called from `InvoicePartialPaymentSerializer`
+(`invoice_add_payment`/`invoice_mark_paid`/`invoice_claim_confirm`) and from `PortalClaimCreateSerializer`
+(`serializers_claims.py`, the client-facing claim — so a bad date is rejected at submission, never stored as a
+`pending` claim that only fails later at confirm); same plain-function-called-per-serializer sharing shape as
+`validate_currency_code`. `invoice_mark_paid`'s default date now uses `_today()` (a nominal fix only — `_today()`
+IS `timezone.now().date()` and the process runs on Asia/Karachi, verified live, so no real discrepancy existed).
+All three payment-date inputs (`InvoiceDetailPanel.jsx` x2, `ClientPortal.jsx`'s claim modal) now default to a new
+`todayInPlatformTimezone()` (PKT date) instead of the UTC date, which lags PKT by a day from 00:00-05:00 and would
+have made the default fail the new before-issue-date rule on a same-day invoice. A legacy pending claim whose date
+predates its invoice now fails to confirm with a clean 400 (claim stays pending, can still be rejected). Backend
+1161 tests passing (20 new, `test_payment_date_validation.py`; 16 existing fixtures re-dated to be consistent with
+their own invoices); frontend 345 passing (17 new); `vite build` clean. See DECISIONS.md's 21 September 2026 "Two
+small fixes" entry.
 
 ---
 

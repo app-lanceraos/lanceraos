@@ -16,6 +16,7 @@ from rest_framework import serializers
 from apps.clients.serializers import validate_currency_code
 
 from .models import PaymentClaim
+from .serializers import validate_payment_date_for_invoice
 
 
 class PortalClaimCreateSerializer(serializers.ModelSerializer):
@@ -25,6 +26,18 @@ class PortalClaimCreateSerializer(serializers.ModelSerializer):
 
     def validate_currency(self, value):
         return validate_currency_code(value)
+
+    def validate_payment_date(self, value):
+        """
+        Rejected AT SUBMISSION, with the same rule the freelancer's own
+        payment recording uses (validate_payment_date_for_invoice, shared
+        with InvoicePartialPaymentSerializer) — not accepted as a
+        'pending' claim that only fails, confusingly, when the freelancer
+        later tries to confirm it through that shared path. `invoice` is
+        only in context when portal_invoice_claims supplies it, same as
+        validate_amount_claimed below.
+        """
+        return validate_payment_date_for_invoice(value, self.context.get('invoice'))
 
     def validate_amount_claimed(self, value):
         """

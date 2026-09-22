@@ -8,6 +8,20 @@
 export { formatMoney, STATUS_BADGE_STYLE, STATUS_BADGE_OUTLINE_STYLE, statusBadgeStyle, badgeBaseStyle, CURRENCY_OPTIONS } from './clientHelpers'
 import { formatMoney } from './clientHelpers'
 
+// Today's date as the SERVER counts it: the platform runs on Pakistan
+// Standard Time only (CLAUDE.md backend rule 2; USE_TZ=False), and the
+// payment-date rule (serializers.validate_payment_date_for_invoice) bounds
+// a payment between the invoice's issue_date and PKT-today. A payment-date
+// input must therefore DEFAULT to this, not to `new Date().toISOString()`
+// (the UTC date, a day behind PKT from 00:00 to 05:00 — which would put the
+// default before the issue_date of an invoice issued that same PKT day) and
+// not to the browser's local date (a day ahead of PKT for someone east of
+// it, which the server would reject as the future). Same date the backend's
+// _today() returns, by construction.
+export function todayInPlatformTimezone() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
+}
+
 // Invoice.STATUS_CHOICES (apps/invoices/models.py) mapped to DESIGN.md's
 // real 5-color status token set (Section 2.5/7) — no new hex values
 // invented. Overdue is deliberately NOT a key here — it is never a status
@@ -311,6 +325,18 @@ export function formToPayload(form) {
 // off — turn them on below" pointing at a control that wasn't even on
 // screen).
 export const REMINDERS_HIDDEN_STATUSES = ['paid', 'bad_debt', 'refunded', 'cancelled']
+
+// Statuses where InvoiceDetailPanel.jsx's header "Due <date> · <countdown>"
+// line is hidden: the invoice is settled, so there is nothing left to be
+// due or overdue. Deliberately its own constant — neither existing list
+// is this set (NO_PAYMENT_STATUSES has no 'paid' and includes 'draft';
+// REMINDERS_HIDDEN_STATUSES adds 'cancelled') — and NOT derived from
+// either by subtraction, so a status added to one of those later can't
+// silently change what this line does. 'cancelled' is intentionally
+// absent: it wasn't part of the request that added this, and whether a
+// cancelled invoice's due date is still worth showing is an open product
+// question (see DECISIONS.md, 21 September 2026).
+export const DUE_DATE_HIDDEN_STATUSES = ['paid', 'refunded', 'bad_debt']
 
 // Simplified further this round (InvoiceDetailPanel redesign — see
 // DECISIONS.md): this now ONLY covers the 'created' case — "hasn't been

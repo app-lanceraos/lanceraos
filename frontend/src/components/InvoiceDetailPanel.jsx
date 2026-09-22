@@ -77,10 +77,10 @@ import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
   PAYMENT_SOURCE_OPTIONS, RECURRING_INTERVAL_OPTIONS, REMINDERS_HIDDEN_STATUSES, UNDO_CONFIRMATION_AGE_DAYS,
-  ACTIVE_STATUSES, NO_PAYMENT_STATUSES,
+  ACTIVE_STATUSES, DUE_DATE_HIDDEN_STATUSES, NO_PAYMENT_STATUSES,
   canCancelInvoice, canDeleteInvoice, canMarkInvoiceBadDebt, canPauseResumeRecurring,
   canRefundInvoice, canResendInvoice, canUndoInvoicePayment, findLastPaymentEvent,
-  daysSince, dueDateCountdown, getSendBannerCopy, invoiceToForm, timelineDotColor, timelineLabel,
+  daysSince, dueDateCountdown, getSendBannerCopy, invoiceToForm, timelineDotColor, timelineLabel, todayInPlatformTimezone,
 } from '@/pages/invoiceHelpers'
 
 // ACTIVE_STATUSES/NO_PAYMENT_STATUSES/REMINDERS_HIDDEN_STATUSES and the
@@ -521,7 +521,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
                 <InvoiceStatusBadge meta={meta} />
                 {isOverdue && <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[OVERDUE_BADGE.statusKey] }}>{OVERDUE_BADGE.label}</span>}
               </div>
-              {!isDraft && (
+              {!isDraft && !DUE_DATE_HIDDEN_STATUSES.includes(invoice.status) && (
                 <p className="idp-due-line" style={{
                   margin: 0, fontSize: '0.82rem',
                   color: countdown?.overdue ? 'var(--status-red-text)' : 'var(--text-tertiary)',
@@ -1291,7 +1291,7 @@ function AddPaymentModal({ invoice, busy, busyKey, onMarkPaid, onAddPayment, onC
 
 function MarkPaidForm({ invoice, busy, onBack, onConfirm, onClose }) {
   const [source, setSource] = useState('other')
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  const [paymentDate, setPaymentDate] = useState(todayInPlatformTimezone())
   const [notes, setNotes] = useState('')
   return (
     <ModalShell title="Mark Fully Paid" onClose={onClose}>
@@ -1317,7 +1317,7 @@ function PartialPaymentForm({ invoice, busy, onBack, onConfirm, onClose }) {
   const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState(invoice.currency)
   const [source, setSource] = useState('other')
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  const [paymentDate, setPaymentDate] = useState(todayInPlatformTimezone())
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
 

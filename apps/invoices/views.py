@@ -52,7 +52,7 @@ from .email_service import (
 )
 from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceItem,
-    InvoicePartialPayment, InvoicePreset, InvoiceReminder, PaymentClaim,
+    InvoicePartialPayment, InvoicePreset, InvoiceReminder, PaymentClaim, _today,
 )
 from .pdf_generator import render_invoice_pdf
 from .tasks import REMINDER_SCHEDULE, _advance_recurring_date, _send_reminder, render_and_store_invoice_pdf
@@ -1013,7 +1013,7 @@ def invoice_mark_paid(request, pk):
             'amount': str(outstanding),
             'currency': invoice.currency,
             'source': request.data.get('source', 'other'),
-            'payment_date': request.data.get('payment_date') or timezone.now().date().isoformat(),
+            'payment_date': request.data.get('payment_date') or _today().isoformat(),
             'notes': request.data.get('notes', ''),
         }
         serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request, 'invoice': invoice})

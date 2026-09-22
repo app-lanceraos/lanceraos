@@ -23,6 +23,37 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'total']  # total is computed on save(), never client-supplied
 
 
+def validate_payment_date_for_invoice(value, invoice):
+    """
+    The ONE rule for "is this a possible date for a payment (or a payment
+    claim) on this invoice" — called by both InvoicePartialPaymentSerializer
+    (invoice_add_payment/invoice_mark_paid/invoice_claim_confirm) and
+    serializers_claims.PortalClaimCreateSerializer (the client-facing claim
+    submission), so the two entry points can't drift apart. Same sharing
+    shape as validate_currency_code above: a plain function each
+    serializer's own validate_payment_date() calls, not a mixin.
+
+    A payment is something that already happened, so its date can be
+    neither before the invoice existed (`issue_date`, inclusive — paying
+    the same day it was issued is fine) nor after today (`_today()`,
+    inclusive — this app runs USE_TZ=False on PKT, so a bare date.today()
+    or a browser's date is not the reference). issue_date is immutable
+    past draft, so a date valid when a claim is submitted is still valid
+    when the freelancer confirms it later.
+
+    `invoice` is None when a caller supplies no context; the future bound
+    needs no invoice and always applies, the issue_date bound is skipped —
+    the same defensive `is not None` shape validate_amount uses.
+    """
+    if invoice is not None and invoice.issue_date and value < invoice.issue_date:
+        raise serializers.ValidationError(
+            f"Payment date cannot be before the invoice's issue date ({invoice.issue_date.isoformat()})."
+        )
+    if value > _today():
+        raise serializers.ValidationError('Payment date cannot be in the future.')
+    return value
+
+
 class InvoicePartialPaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = InvoicePartialPayment
@@ -32,6 +63,9 @@ class InvoicePartialPaymentSerializer(serializers.ModelSerializer):
 
     def validate_currency(self, value):
         return validate_currency_code(value)
+
+    def validate_payment_date(self, value):
+        return validate_payment_date_for_invoice(value, self.context.get('invoice'))
 
     def validate_amount(self, value):
         if value <= 0:

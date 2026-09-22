@@ -19,7 +19,7 @@ import CommentThread from '@/components/CommentThread'
 import FormField from '@/components/FormField'
 import FormSelect from '@/components/FormSelect'
 import FosAlert from '@/components/FosAlert'
-import { PAYMENT_SOURCE_OPTIONS, formatMoney } from '@/pages/invoiceHelpers'
+import { PAYMENT_SOURCE_OPTIONS, formatMoney, todayInPlatformTimezone } from '@/pages/invoiceHelpers'
 import PortalLayout from './PortalLayout'
 import PortalRequestLinkForm from './PortalRequestLinkForm'
 
@@ -257,7 +257,7 @@ function MessagesModal({ invoice, onClose }) {
 function ClaimModal({ invoice, onClose }) {
   const [source, setSource] = useState('other')
   const [amount, setAmount] = useState(invoice.outstanding_amount)
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  const [paymentDate, setPaymentDate] = useState(todayInPlatformTimezone())
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)

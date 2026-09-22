@@ -12144,3 +12144,132 @@ generation is asserted by the existing `test_qr_encodes_the_real_payment_page_ur
 new PDF was rendered end-to-end and scanned). **Note:** the test files are gitignored in this repository
 (`.gitignore` lines 73/78: `apps/*/tests/`, `frontend/**/*.test.jsx`), so they exist locally but are not part of a
 commit.
+
+
+---
+
+Date: 21 September 2026 (Two small fixes: settled invoices' due-date line, and payment-date validation)
+Decision/Reason:
+
+Two unrelated items, one session.
+
+## Item 1 — the detail panel's due-date line on settled invoices
+
+**Root cause (confirmed by reproducing it first, more precisely than the request described it).** The header line
+`Due {due_date} · {countdown}` in `InvoiceDetailPanel.jsx` rendered for every non-draft invoice with no status
+check. But the reported symptom, "3 days overdue" on a paid invoice, is not what actually happens: the backend's
+`Invoice.days_overdue` is already 0 for `paid`/`cancelled`/`refunded`/`draft`/`created`/`bad_debt`
+(`NON_OVERDUE_STATUSES`), so `dueDateCountdown()` skipped its overdue branch and fell through to the plain
+date-difference branch. A settled invoice with a past due date therefore read "Due 2026-09-18 · **Due today**", and
+one with a future date read "N days remaining". Equally meaningless once nothing is owed, just different text. Three
+new tests (paid/refunded/bad_debt) failed against the unmodified code before the fix.
+
+**Fix.** The whole line is hidden for `paid`, `refunded` and `bad_debt` — exactly the three named, nothing more. New
+`DUE_DATE_HIDDEN_STATUSES` in `invoiceHelpers.js`, read by the panel. **Why a new constant rather than reusing an
+existing list:** checked both candidates. `NO_PAYMENT_STATUSES` = cancelled/bad_debt/refunded/draft (no `paid`,
+plus `draft`); `REMINDERS_HIDDEN_STATUSES` = paid/bad_debt/refunded/cancelled (the requested set plus `cancelled`).
+Neither is the requested set, so reusing either would silently expand scope to `cancelled` (or wrongly include
+`draft`). Deriving the new list by subtracting from one of them was also rejected — a status later added to that
+list would then change this line's behavior without anyone touching this code, which is the drift class this file
+has already had. It is a standalone, commented constant, following `REMINDERS_HIDDEN_STATUSES`'s own precedent.
+
+**Open question for the product owner (flagged, not decided): `cancelled`.** A cancelled invoice's due date is
+also no longer meaningful, and today it still shows "Due <date> · N days remaining" (or "Due today" for a past date,
+via the same fall-through). It was not named in the request, so it is left as is, and one test deliberately pins
+that current behavior with a comment saying so, so whoever decides will see it fail and know why. If the answer is
+"hide it too", the change is adding `'cancelled'` to `DUE_DATE_HIDDEN_STATUSES` and flipping that one test. Two
+related things noticed, not touched: the Details tab still shows the plain due date (no countdown) on settled
+invoices, which is harmless information rather than a misleading label; and `created` (finalised, unsent) invoices
+with a past due date read "Due today" for the same fall-through reason.
+
+**Verification.** 12 new tests in `InvoiceDetailPanel.test.jsx`: the line is absent for paid/refunded/bad_debt with
+both a past and a future due date; still present with the correct text for an overdue `sent` invoice ("3 days
+overdue") and for `created`/`sent`/`viewed`/`partially_paid` with a future date ("5 days remaining"); `cancelled`
+still shows it (pinned, see above).
+
+## Item 2 — a payment's date was never validated
+
+**The gap.** `payment_date` was a required `DateField` on both `InvoicePartialPayment` and `PaymentClaim` with no
+validation beyond "is a date", so a payment (or a client's claim) could be dated before the invoice existed or in the
+future. Note for whoever reads the brief against the code: `PortalClaimCreateSerializer` lives in
+`serializers_claims.py`, not `serializers_portal.py`.
+
+**Fix — one shared rule, not two.** `serializers.validate_payment_date_for_invoice(value, invoice)`: rejects a date
+before `invoice.issue_date` or after `_today()`, both bounds inclusive (paying on the day of issue, and paying today,
+are fine). The precedent followed is `validate_currency_code`, which `InvoicePartialPaymentSerializer` and
+`PortalClaimCreateSerializer` already share: a plain module-level function each serializer's own
+`validate_payment_date()` calls, imported across modules (`serializers_claims` imports it from `serializers`, no
+cycle). The other candidate precedent, the due-date-vs-issue-date check, is not actually shared — `InvoiceSerializer`
+and `DueDateOnlySerializer` each re-derive the `>=` comparison independently — so it is the pattern to avoid, not
+follow. A mixin was rejected as heavier than a single check needs. The `invoice` argument comes from
+`context['invoice']`, confirmed present on all four call sites (`invoice_add_payment`, `invoice_mark_paid`,
+`invoice_claim_confirm`, `portal_invoice_claims`); with no invoice in context the future bound still applies and only
+the issue-date bound is skipped, mirroring `validate_amount`'s defensive `is not None` shape.
+
+**Rejected at submission, not later.** The client-facing path matters most: `PortalClaimCreateSerializer` calls the
+shared function itself, so a bad claim date is a 400 at `portal_invoice_claims` with no `PaymentClaim` row created.
+The view already flattens the first serializer error into a top-level `error` key (the 18 August fix), which is what
+`ClientPortal.jsx`'s claim modal reads, so the client sees the actual reason ("Payment date cannot be before the
+invoice's issue date (2026-06-01).") rather than a generic failure. Fixing only `InvoicePartialPaymentSerializer`
+would have left exactly the confusing accepted-as-pending-then-fails-at-confirm behavior; a test asserts zero claim
+rows after a rejected submission.
+
+**Consequence for existing pending claims.** A claim submitted before this rule can hold a date the shared payment
+path now refuses. Confirming it returns a clean 400 (`payment_date` error), the claim stays `pending`, no payment is
+created, and the freelancer can still reject it (tested end to end). Not migrated or auto-rejected — silently
+resolving someone's pending financial claim is not this change's call. Because `issue_date` is immutable past draft
+and "today" only moves forward, a claim that is valid at submission stays valid at confirm.
+
+**`invoice_mark_paid`'s default date — checked live, no real discrepancy.** The brief asked whether
+`timezone.now().date()` versus `_today()` differs in this environment. Verified in the running project: `_today()`
+is literally `return timezone.now().date()` (a thin named wrapper — its own docstring is about being a callable
+model-field default, not about time zones), `settings.TIME_ZONE='Asia/Karachi'`, `USE_TZ=False`, and Django exports
+`TZ=Asia/Karachi` to the process, so both returned the same date and `datetime.now()` was in PKT. The concern would
+be real only if `USE_TZ` were ever turned on. Changed to `_today()` anyway since it is a one-token edit that puts the
+default and the validator's upper bound on the same named clock, and tested by moving only that helper. The six other
+`timezone.now().date()` call sites in `views.py` (exchange-rate lookups, the overdue filter, analytics windows, preset
+due dates) are untouched — same nominal-only situation, out of scope.
+
+**A real interaction this fix created, and closed: the UTC default.** All three payment-date inputs
+(`InvoiceDetailPanel.jsx`'s Mark Fully Paid and Partial Payment forms, `ClientPortal.jsx`'s claim modal) defaulted to
+`new Date().toISOString().slice(0, 10)` — the UTC date. From 00:00 to 05:00 PKT that is the previous day, so on an
+invoice issued that same PKT day (created and paid in the same early-morning hours) the untouched default would sit
+before `issue_date` and be rejected by the new rule — a spurious failure on a valid action. Fixed with
+`todayInPlatformTimezone()` in `invoiceHelpers.js` (`toLocaleDateString('en-CA', {timeZone: 'Asia/Karachi'})`), the
+same date `_today()` returns, used by all three inputs. It deliberately is not the browser's local date either: for
+someone east of PKT that is a day ahead of the server's today and would be rejected as the future. The two helpers
+were tested with a faked clock across the PKT-midnight boundary, and the panel's two forms with the UTC date pinned to
+the previous day.
+Residual, accepted: a person who *manually picks* their own local "today" while east of PKT in the hours where their
+date is ahead of PKT's gets "Payment date cannot be in the future" and must pick the earlier date. The platform is
+PKT-only by design (CLAUDE.md backend rule 2), and the message says what is wrong.
+
+**Fixtures.** 16 existing tests failed after the change — all one cause: they posted `payment_date: '2026-01-15'`
+against invoices whose `issue_date` defaults to today, a combination that is now correctly rejected. Reviewed each
+rather than blanket-replacing dates: the invoices in those fixtures were already "sent" on 2026-01-01, so the
+consistent fix is giving them `issue_date=date(2026, 1, 1)` (`test_claims.py`, six `make_invoice` calls;
+`test_portal.py`, two fixtures; `test_analytics.py`, two). No assertion was loosened and no production behavior was
+special-cased for tests. This is also the strongest evidence the rule is live on both the freelancer and claim paths.
+
+**Out of scope, honored.** `update_paid_status()` and everything about how status is computed from payments is
+untouched; `InvoiceReminder`, escalation and every other date-bearing model are untouched.
+
+**Verification.** New `apps/invoices/tests/test_payment_date_validation.py` (20 tests): one boundary table (a day
+before issue_date, well before, exactly issue_date, in between, exactly today, a day in the future, far future) driven
+through `InvoicePartialPaymentSerializer` and, separately, `PortalClaimCreateSerializer`; message content; the future
+bound without an invoice in context; **shared-ness proven three ways** — the two modules hold the identical function
+object, replacing that function in each module is observed being called by the matching serializer with
+`(date, invoice)`, and identical bad input yields identical error text from both entry points; the four view paths
+end to end (add-payment rejects both bad sides and records nothing and accepts both inclusive boundaries; mark-paid
+rejects an explicit bad date and defaults to `_today()`; portal claim submission rejects both bad sides with a
+readable flat `error`, creates no row, accepts both boundaries, and applies the same rule on the one-time-client
+`view_token` path; confirming a legacy pre-issue-date claim is a clean 400 and the claim can still be rejected).
+**Mutation check:** with the validator body disabled all 20 fail; with only the claim serializer's call removed, 12
+fail (the claim-serializer, submission-endpoint, shared-ness and drift tests), so the tests do detect each half
+independently. Both mutations were reverted and the suite is green again. Full backend suite `python manage.py test
+--keepdb`: **1161 tests, OK, 0 failures** (up from 1141). Full frontend suite `npx vitest run`: **24 files, 345
+tests, all passed** (up from 328: 12 for Item 1, 3 helper tests and 2 default-date tests for Item 2); `npx vite
+build` clean. Not verified live against the running dev servers this pass — the endpoints are covered end to end by
+the request-level tests above, but I did not drive the two modals in a real browser.
+Note: the test files are gitignored in this repository (`.gitignore`: `apps/*/tests/`, `frontend/**/*.test.jsx`), so
+the new tests, and the 16 re-dated fixtures, exist locally but are not part of a commit.
