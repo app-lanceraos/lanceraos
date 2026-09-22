@@ -31,6 +31,7 @@ import ClientPortal from '@/pages/portal/ClientPortal'
 import PortalEnter from '@/pages/portal/PortalEnter'
 import PortalShell from '@/pages/portal/PortalShell'
 import PortalOverview from '@/pages/portal/PortalOverview'
+import PortalPayments from '@/pages/portal/PortalPayments'
 import InvoiceView from '@/pages/InvoiceView'
 import PaymentDetails from '@/pages/PaymentDetails'
 import InvoicePreviewPdf from '@/pages/InvoicePreviewPdf'
@@ -83,10 +84,15 @@ export default function App() {
             relocated from being the top-level /portal page itself)
             rendering inside it via <Outlet/>. /portal/enter/:token
             stays a sibling, outside the shell — it has no session yet
-            to fetch an Overview with. */}
+            to fetch an Overview with.
+            Phase 3 adds PortalPayments (Payments) as a third child —
+            it fetches its own GET /api/invoices/portal/payments/
+            endpoint directly (a genuinely different response than the
+            shell's own Overview fetch), not sourced from the shell. */}
         <Route path="/portal" element={<PortalShell />}>
           <Route index element={<PortalOverview />} />
           <Route path="invoices" element={<ClientPortal />} />
+          <Route path="payments" element={<PortalPayments />} />
         </Route>
         <Route path="/portal/enter/:token" element={<PortalEnter />} />
 

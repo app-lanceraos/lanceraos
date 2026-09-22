@@ -23,44 +23,13 @@ import {
   ACCENT, BODY_TEXT, CARD_BORDER, DIVIDER, ERROR, MUTED_TEXT, NAVY,
   NEEDS_ATTENTION_REASON_LABELS, STATUS_LABELS,
 } from './portalShared'
-
-const cardStyle = {
-  background: '#ffffff', border: `1px solid ${CARD_BORDER}`, borderRadius: 12,
-  padding: '16px 18px', boxSizing: 'border-box',
-}
-
-const sectionTitleStyle = {
-  margin: '0 0 12px', fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.04em',
-  textTransform: 'uppercase', color: MUTED_TEXT,
-}
+import BalancesSection, { cardStyle, sectionTitleStyle } from './PortalBalances'
 
 function EmptyNotice({ icon: Icon, iconColor = MUTED_TEXT, children }) {
   return (
     <div style={{ ...cardStyle, textAlign: 'center', padding: '28px 18px' }}>
       <Icon size={24} style={{ color: iconColor, marginBottom: 8 }} />
       <p style={{ margin: 0, fontSize: '0.85rem', color: BODY_TEXT }}>{children}</p>
-    </div>
-  )
-}
-
-function BalanceCard({ balance }) {
-  const hasOutstanding = Number(balance.outstanding) > 0
-  return (
-    <div style={{ ...cardStyle, minWidth: 160, flex: '1 1 200px' }}>
-      <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 600, color: MUTED_TEXT, letterSpacing: '0.03em' }}>
-        {balance.currency}
-      </p>
-      <p style={{ margin: '4px 0 0', fontSize: '1.4rem', fontWeight: 700, color: hasOutstanding ? NAVY : ACCENT }}>
-        {formatMoney(balance.outstanding, balance.currency)}
-      </p>
-      <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: MUTED_TEXT }}>
-        {hasOutstanding ? 'outstanding' : 'nothing outstanding'}
-      </p>
-      {Number(balance.paid) > 0 && (
-        <p style={{ margin: '8px 0 0', fontSize: '0.75rem', color: MUTED_TEXT, borderTop: `1px solid ${DIVIDER}`, paddingTop: 8 }}>
-          {formatMoney(balance.paid, balance.currency)} paid to date
-        </p>
-      )}
     </div>
   )
 }
@@ -150,14 +119,7 @@ export default function PortalOverview() {
         </EmptyNotice>
       ) : (
         <>
-          {balances.length > 0 && (
-            <section>
-              <h2 style={sectionTitleStyle}>Balance</h2>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                {balances.map((balance) => <BalanceCard key={balance.currency} balance={balance} />)}
-              </div>
-            </section>
-          )}
+          <BalancesSection balances={balances} />
 
           <section>
             <h2 style={sectionTitleStyle}>Needs Your Attention</h2>

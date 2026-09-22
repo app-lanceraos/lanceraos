@@ -66,6 +66,18 @@ export const NEEDS_ATTENTION_REASON_LABELS = {
   unread_message: 'Unread message',
 }
 
+// PaymentClaim.STATUS_CHOICES (apps/invoices/models.py) — the real
+// visual treatment already established for this exact status set on
+// this exact public portal (ClientPortal.jsx's own ClaimHistory,
+// confirmed unchanged since Phase 2), factored out here in Phase 3
+// so PortalPayments.jsx's own claims list reuses these same colors
+// instead of inventing a second, independently-chosen set.
+export const CLAIM_STATUS_META = {
+  pending: { label: 'Pending review', color: WARNING },
+  confirmed: { label: 'Confirmed', color: ACCENT },
+  rejected: { label: 'Rejected', color: ERROR },
+}
+
 // PortalInvoiceListSerializer/PortalOverviewNeedsAttentionSerializer
 // deliberately never expose the raw view_token as its own field (Step
 // 12 — only pre-built URLs are exposed to the client side, never the

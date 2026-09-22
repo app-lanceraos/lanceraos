@@ -36,7 +36,7 @@
 // <Outlet/> onto a broken session.
 import { createContext, useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { Home, LogOut, Receipt, UserCircle2 } from 'lucide-react'
+import { Home, LogOut, Receipt, UserCircle2, Wallet } from 'lucide-react'
 
 import api from '@/lib/api'
 import PortalLayout from './PortalLayout'
@@ -63,6 +63,7 @@ export const PortalOverviewContext = createContext({ overview: null, reload: () 
 const NAV_ITEMS = [
   { label: 'Overview', path: '/portal', icon: Home, end: true },
   { label: 'Invoices', path: '/portal/invoices', icon: Receipt, end: false },
+  { label: 'Payments', path: '/portal/payments', icon: Wallet, end: false },
 ]
 
 // Matches AppShell.jsx's own established breakpoint exactly (DESIGN.md
@@ -83,7 +84,11 @@ function navLinkStyle({ isActive }, isMobile) {
       }
 }
 
-function Skeleton() {
+// Exported — PortalPayments.jsx (Phase 3) reuses this exact loading
+// treatment for its own fetch (a separate endpoint from this shell's own
+// Overview fetch, so it needs its own loading state at the page level)
+// rather than a second, independently-built skeleton.
+export function Skeleton() {
   return (
     <>
       <style>{`@keyframes portalPulse { 0%, 100% { opacity: .45 } 50% { opacity: 1 } }`}</style>

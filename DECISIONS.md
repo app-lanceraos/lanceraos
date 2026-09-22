@@ -12904,3 +12904,95 @@ changes were removing its now-redundant header row and un-wrapping its 3 fallbac
 `PortalLayout`. `/invoice/:token` and `/invoice/:token/pay` were not touched. No backend file was touched.
 `ClientPortalSession`/CSRF handling is unchanged — the shell's Overview fetch and `ClientPortal.jsx`'s own list
 fetch both use the exact same `api` instance/cookie behavior as before.
+
+**22 September 2026 (Client Portal Redesign, Phase 3 — Payments Page).** Frontend-only; no backend file touched.
+Consumes `GET /api/invoices/portal/payments/` (Phase 1b) exactly as it already exists — not extended.
+
+**Investigation findings.** (1) The real, current response shape, confirmed directly against
+`apps/invoices/views_portal.py`'s `portal_payments` and `apps/invoices/serializers_portal.py`/
+`apps/invoices/serializers_claims.py` (not assumed — verified live via `curl` against the real running dev server
+with real seeded data): `{ balances: [{currency, outstanding, paid}], payments: [{id, amount, currency,
+payment_date, source, invoice_number, portal_view_url}], claims: [{id, client_name, client_email, amount_claimed,
+currency, payment_source, payment_date, client_note, status, submitted_at, reviewed_at, review_note}] }`.
+`payments[]` (`PortalPaymentSerializer`) genuinely has no `notes`/memo field at all — not merely hidden by the
+frontend, confirmed by inspecting the raw JSON key set directly (`sorted(p.keys())` on a live response), so no
+freelancer note text can reach this page by construction. **A real, confirmed gap, reported rather than worked
+around per this task's own explicit instruction**: `claims[]` (`PaymentClaimSerializer`, actually defined in
+`apps/invoices/serializers_claims.py` — not `serializers.py` as this task's own prompt assumed, a real, minor
+correction) carries **no invoice-identifying field whatsoever** — no `invoice_number`, no `portal_view_url`, not
+even a bare invoice id. That serializer was built for two endpoints already scoped to one invoice via the URL path
+(the freelancer-facing `invoice_claims` list, and the portal's own per-invoice `portal_invoice_claims`), so it
+never needed to carry that context itself — but `portal_payments` aggregates claims ACROSS every invoice, exactly
+where that context is missing. Per the task's own instruction not to extend the endpoint or add a second API call
+to work around a gap, each claim row on this new page renders with no link back to its invoice; a client can see
+that a claim exists, its amount/date/source/status/review_note, but not which invoice it belongs to from this page
+alone (they can still find it via the existing per-invoice "Report a Payment" modal's own claim history on
+`ClientPortal.jsx`, unaffected by this gap). (2) `PortalShell.jsx`'s `NAV_ITEMS` is confirmed to be exactly the
+single, extendable array Phase 2 intended — adding `Payments` was a 1-line change, no restructuring needed. (3)
+`PortalOverview.jsx`'s `BalanceCard`/its wrapping "Balance" section render the exact same `{currency, outstanding,
+paid}` shape this page needs, computed by the identical backend helper (`_client_balances_by_currency`) both
+`portal_overview` and `portal_payments` call — a clean, real extraction, not a forced one: no divergent
+presentation need was found between the two pages, so a single shared component serves both with zero behavior
+change to Overview (verified with a real before/after screenshot, see below). (4) `PaymentClaim.STATUS_CHOICES`
+confirmed exactly `pending`/`confirmed`/`rejected`, matching this task's own assumption. (5)
+`ClientPortal.jsx`'s own pre-existing `CLAIM_STATUS_META` (`{pending: WARNING, confirmed: ACCENT, rejected:
+ERROR}`) is the real, already-established visual convention for this exact status set on this exact public
+surface — reused via `portalShared.js`, not reinvented, and `ClientPortal.jsx`'s own `ClaimHistory` rendering is
+byte-identical before/after (only the constant's *location* moved, confirmed by the full pre-existing
+`ClientPortal.test.jsx` claims suite passing unchanged). (6) `ClientPortal.jsx`'s existing "Report a Payment"
+modal (claim submission) was read, not touched — confirmed understanding only, per the task's own scope.
+
+**What was built.** `PortalBalances.jsx` — the extracted `BalanceCard`/`cardStyle`/`sectionTitleStyle`/a new
+`BalancesSection` wrapper (heading + the flex-wrap card row), now the one shared source both `PortalOverview.jsx`
+and `PortalPayments.jsx` render from. `portalShared.js` gained `CLAIM_STATUS_META`, moved out of `ClientPortal.jsx`
+verbatim. `PortalShell.jsx` gained a third `NAV_ITEMS` entry (`Payments`, `Wallet` icon) and now exports its own
+`Skeleton` component (previously local-only) so the new page's loading state reuses it rather than a second
+pulse-skeleton implementation. `PortalPayments.jsx` (new, `/portal/payments`) — its own `loading`/`needs_link`
+(401)/`error` 3-state fetch (it calls a genuinely different endpoint than the shell's own Overview fetch, so it
+can't rely on the shell's already-resolved state, mirroring `ClientPortal.jsx`'s own established 3-state shape
+exactly for consistency); the shared `BalancesSection`; a Payment History list (amount/currency/date/source, each
+linked to its real invoice via `portal_view_url`); a Payment Claims list (amount/currency/date/source, a real
+distinct badge per status via the shared `CLAIM_STATUS_META` + a literal rgba-tint map matching
+`PortalOverview.jsx`'s own `ReasonBadge` tint convention, and `review_note` shown when present) with no invoice
+link, per the reported gap above; two independent empty states ("No payments recorded yet." / "No payment claims
+yet.") that can each appear regardless of the other's state. `App.jsx` gained the `payments` child route under the
+existing `/portal` layout route.
+
+**Verification, with real evidence — live, against the real running dev servers.** A real 429 (DRF's blanket
+`AnonRateThrottle`, `config/settings.py`'s `'anon': '100/hour'` — a genuine safety net, not a bug) was hit
+mid-verification from the cumulative volume of this and the prior Phase 2 session's own Playwright traffic against
+the same dev-machine IP; resolved by clearing the local dev Redis cache (`cache.clear()`, a safe, reversible,
+cache-only operation — confirmed it does not affect `ClientPortalSession` rows, which are a real DB model, not
+cache-backed) rather than waiting out the window. Real seeded data added to the existing
+`screenshot-demo@example.com` demo account (Postgres/Redis already running): a second, EUR-currency, `paid`
+invoice + a real `InvoicePartialPayment` added to Acme Studios (which already had one USD payment) for the
+"confirmed payments across ≥2 currencies, zero claims" state; two more real `PaymentClaim` rows added to Nomad
+Ventures (one `confirmed`, one `rejected` with a real `review_note`, alongside its pre-existing `pending` one from
+Phase 2) for the "mix of claim statuses" state; Berlin Digital (untouched, already zero payments/claims from
+Phase 2) for the "nothing at all" state. Real Playwright + Chromium screenshots at 375px/1280px for all three
+states, confirming: correct multi-currency payment linking (`INV-2026-0099`/`INV-2026-0004`), all 3 real, visually
+distinct claim-status badges with the rejected one's real `review_note` text, and both independent empty states
+rendering correctly (including together, for the zero-everything client). Directly confirmed via the raw JSON key
+set (not just the rendered DOM) that a payment-history entry carries no note/memo field at all. The same forced
+`data-theme="dark"` check used in Phases 0/2, refined to target the actual header/balance-card elements
+specifically (an initial pass checking `document.body`'s own background was a false alarm — `body` is never
+visible in practice, since `PortalShell.jsx`'s own root wrapper is `minHeight: 100vh` and fully covers it, the
+same as `PortalLayout.jsx` already does; not a regression, just an imprecise first check, corrected before relying
+on it) — header/balance-card backgrounds and text colors read identically before and after. `grep -rn "var(--"
+frontend/src/pages/portal/ --include="*.jsx"` — unchanged, still the same 3 comment-only matches from Phase 2. A
+real before/after screenshot of Overview's own Balance section (Nomad Ventures, same client Phase 2's own
+screenshot used) confirmed pixel-identical rendering after the `BalancesSection` extraction — a genuine pure
+refactor, zero behavior change to Overview. Browser console checked clean (no errors/warnings) navigating
+Payments ↔ Overview ↔ Payments repeatedly. Full frontend suite: `npx vitest run` — **369 passing, 1 failing**
+(the same pre-existing, unrelated `SecuritySection.test.jsx` failure known from Phase 2 — not re-investigated,
+per this task's own instruction). `npx vite build` — clean, no new warnings. New tests: `PortalPayments.test.jsx`
+(10 tests: loading/session/error, per-currency balances, payment linking, the no-notes-field proof, both
+independent empty states, all 3 claim-status badges, the `review_note` display) and one new test appended to
+`PortalShell.test.jsx` (the Payments nav item navigates without re-triggering the Overview fetch) — 11 new tests
+total (358 → 369).
+
+**Out of scope, honored.** No new claim-submission entry point was added — `ClaimModal`/`ClientPortal.jsx` are
+byte-for-byte untouched apart from the `CLAIM_STATUS_META` import-location change (verified: its own test suite
+passes unchanged). No backend file was touched — `portal_invoice_claims` and `portal_payments`'s response shape
+are both exactly as they were. Messages/My Details were not added as nav items. The `BalancesSection` extraction
+changed zero rendered output for Overview, confirmed by direct screenshot comparison, not assumed.

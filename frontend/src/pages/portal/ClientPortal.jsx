@@ -48,7 +48,7 @@ import useTitle from '@/hooks/useTitle'
 import CommentThread from '@/components/CommentThread'
 import { PAYMENT_SOURCE_OPTIONS, formatMoney, todayInPlatformTimezone } from '@/pages/invoiceHelpers'
 import {
-  ACCENT, BODY_TEXT, CARD_SHADOW, DIVIDER, ERROR, MUTED_TEXT, NAVY, STATUS_LABELS, WARNING,
+  ACCENT, BODY_TEXT, CARD_SHADOW, CLAIM_STATUS_META, DIVIDER, ERROR, MUTED_TEXT, NAVY, STATUS_LABELS,
   disabledStyle, publicBtnGhost, publicBtnPrimary, publicInputStyle, publicLabelStyle,
   viewTokenFromPortalUrl,
 } from './portalShared'
@@ -370,12 +370,6 @@ function ClaimModal({ invoice, onClose }) {
       </div>
     </div>
   )
-}
-
-const CLAIM_STATUS_META = {
-  pending: { label: 'Pending review', color: WARNING },
-  confirmed: { label: 'Confirmed', color: ACCENT },
-  rejected: { label: 'Rejected', color: ERROR },
 }
 
 function ClaimHistory({ claims, currency }) {

@@ -2352,6 +2352,30 @@ suite: 357 passing (1 pre-existing, unrelated `SecuritySection.test.jsx` failure
 the unmodified branch); `vite build` clean. See DECISIONS.md's 22 September 2026 Phase 2 entry for the full
 investigation findings, the Escape-key bug's before/after, and every screenshot's real evidence.
 
+**22 September 2026 (Client Portal Redesign, Phase 3 — Payments Page).** Frontend-only, consuming
+`GET /api/invoices/portal/payments/` (Phase 1b) exactly as it exists — not extended. A new `PortalPayments.jsx`
+(`/portal/payments`, the shell's real third nav tab, `Wallet` icon) shows per-currency balances (via a newly
+extracted, shared `PortalBalances.jsx` — `BalanceCard`/`BalancesSection`, now used by both this page and
+`PortalOverview.jsx`, a real pure refactor verified with a before/after screenshot showing zero change to
+Overview's own rendering), a Payment History list (amount/currency/date/source, each linked to its real invoice),
+and a Payment Claims list (amount/currency/date/source, a real distinct badge per `pending`/`confirmed`/`rejected`
+status reusing `ClientPortal.jsx`'s own pre-existing `CLAIM_STATUS_META` — factored into `portalShared.js` rather
+than duplicated — plus `review_note` when present), with two independent empty states. **A real, confirmed gap,
+reported rather than worked around**: `PaymentClaimSerializer` (`apps/invoices/serializers_claims.py`) — the exact
+serializer `portal_payments`'s own `claims[]` field reuses — carries no invoice-identifying field at all (built for
+two endpoints already scoped to one invoice via the URL path; `portal_payments` is the first consumer that
+aggregates claims ACROSS invoices, where that context is missing), so each claim row on this new page cannot link
+back to its invoice — a real, named limitation, not an oversight, left for a future backend decision rather than
+worked around with a second API call per this task's own explicit instruction. Verified live against the real dev
+servers with real seeded data (multi-currency confirmed payments; a real mix of all 3 claim statuses including a
+real rejection reason; a client with payment history but no claims; a client with neither), real Playwright
+screenshots at 375/1280px for every state, a direct check of the raw payment JSON confirming no notes/memo field
+exists at all (so none can render), and the same forced-dark-theme palette check as prior phases. Full frontend
+suite: 369 passing (up from 357 — 11 new tests, 1 pre-existing unrelated `SecuritySection.test.jsx` failure
+unchanged); `vite build` clean. See DECISIONS.md's 22 September 2026 Phase 3 entry for the full investigation
+findings (including the real `AnonRateThrottle` 429 hit mid-verification and how it was resolved), the gap's full
+reasoning, and every screenshot's real evidence.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L
