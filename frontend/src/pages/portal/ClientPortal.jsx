@@ -1,9 +1,12 @@
 // src/pages/portal/ClientPortal.jsx
 //
-// /portal — the client's own invoice LIST. Real React, same as the
-// individual invoice VIEW itself now is (InvoiceView.jsx, /invoice/:token
-// — see DECISIONS.md for why that page changed from a plain backend
-// <a href> to a real frontend route).
+// /portal/invoices — the client's own invoice LIST, living inside
+// PortalShell.jsx as of Client Portal Redesign, Phase 2 (previously the
+// top-level /portal route/page itself — relocated, not rewritten; see
+// PortalShell.jsx's own header comment for the routing restructure).
+// Its own internals (list row design, filters, modals) are unchanged —
+// a real redesign of this page's own content is a separate, later task
+// (DESIGN.md Section 6).
 //
 // Portal-session-authenticated via the httpOnly lanceraos_portal_session
 // cookie (apps.clients.cookies) — GET /api/invoices/portal/me/ 401s with
@@ -23,58 +26,33 @@
 // project's own precedent on every other public page) rather than
 // changing those shared components themselves — they're used pervasively
 // across the entire authenticated Settings/invoices/clients UI, so
-// changing their own styling to accommodate one public page would be a
-// materially higher-risk change for no benefit anywhere else. See
-// DECISIONS.md's 22 September 2026 entry.
+// changing those shared components' own styling to accommodate one
+// public page would be a materially higher-risk change for no benefit
+// anywhere else. See DECISIONS.md's 22 September 2026 entry.
+//
+// Phase 2: its own header row (title + Log Out / Log Out Everywhere)
+// is gone — PortalShell.jsx now owns both branding chrome and the
+// logout actions (relocated into a header account menu, per this
+// phase's own spec: "keep both existing actions, but relocate them out
+// of the main nav into a small account menu/icon in the header"). The
+// palette constants below are now imported from the shared
+// portalShared.js module rather than defined here a second time
+// (confirmed duplicated verbatim across this file, PortalEnter.jsx, and
+// PortalRequestLinkForm.jsx before this pass — factored out once,
+// shared by all of them plus the new PortalShell.jsx/PortalOverview.jsx).
 import { useEffect, useState } from 'react'
-import { CheckCircle2, LogOut, MessageCircle, Receipt, UserCheck, X } from 'lucide-react'
+import { CheckCircle2, MessageCircle, Receipt, UserCheck, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import CommentThread from '@/components/CommentThread'
 import { PAYMENT_SOURCE_OPTIONS, formatMoney, todayInPlatformTimezone } from '@/pages/invoiceHelpers'
-import PortalLayout from './PortalLayout'
+import {
+  ACCENT, BODY_TEXT, CARD_SHADOW, DIVIDER, ERROR, MUTED_TEXT, NAVY, STATUS_LABELS, WARNING,
+  disabledStyle, publicBtnGhost, publicBtnPrimary, publicInputStyle, publicLabelStyle,
+  viewTokenFromPortalUrl,
+} from './portalShared'
 import PortalRequestLinkForm from './PortalRequestLinkForm'
-
-const STATUS_LABELS = {
-  draft: 'Draft', created: 'Finalised', sent: 'Sent', viewed: 'Viewed',
-  partially_paid: 'Partially Paid', paid: 'Paid',
-  cancelled: 'Cancelled', refunded: 'Refunded', bad_debt: 'Bad Debt',
-}
-
-// DESIGN.md Section 10's fixed light palette — self-contained hardcoded
-// values, never theme.css var(--*) tokens. Matches InvoiceView.jsx/
-// PaymentDetails.jsx exactly (including the #c0392b/#8a7d5c/#00c896
-// error/warning/success precedent those two files already established,
-// since Section 10 itself defines no separate status-color set).
-const NAVY = '#1e3a5f'
-const ACCENT = '#00c896'
-const BODY_TEXT = '#334155'
-const MUTED_TEXT = '#64748b'
-const DIVIDER = 'rgba(0,0,0,.07)'
-const CARD_SHADOW = '0 8px 40px rgba(0,0,0,0.25)'
-const ERROR = '#c0392b'
-const WARNING = '#8a7d5c'
-
-const publicInputStyle = {
-  width: '100%', boxSizing: 'border-box', background: '#ffffff', border: '1.5px solid rgba(0,0,0,.15)',
-  borderRadius: 8, padding: '10px 14px', fontFamily: "'DM Sans', sans-serif", fontSize: '0.9rem',
-  color: BODY_TEXT, outline: 'none',
-}
-const publicLabelStyle = {
-  display: 'block', fontSize: '0.78rem', fontWeight: 500, color: MUTED_TEXT, marginBottom: 6, letterSpacing: '0.01em',
-}
-const publicBtnBase = {
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-  padding: '10px 20px', borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: '0.88rem',
-  fontWeight: 600, cursor: 'pointer',
-}
-const publicBtnPrimary = { ...publicBtnBase, border: 'none', background: NAVY, color: '#ffffff' }
-const publicBtnGhost = { ...publicBtnBase, border: '1.5px solid rgba(0,0,0,.15)', background: 'transparent', color: BODY_TEXT }
-
-function disabledStyle(style, disabled) {
-  return disabled ? { ...style, opacity: 0.5, cursor: 'not-allowed' } : style
-}
 
 // A minimal, inline-styled stand-in for FosAlert (theme-dependent, see
 // this file's own header comment) — same visual shape, hardcoded colors.
@@ -113,25 +91,11 @@ function PublicSelect({ label, value, onChange, options }) {
   )
 }
 
-// PortalInvoiceListSerializer deliberately never exposes the raw
-// view_token as its own field (Step 12 — only pre-built URLs are
-// exposed to the client side, never the credential itself). The
-// comment thread's WebSocket route needs that token, so it's parsed
-// back out of the one URL that already legitimately contains it
-// (.../portal/view/<token>/) rather than adding a second field whose
-// only purpose would be handing the token to JS directly.
-function viewTokenFromPortalUrl(url) {
-  if (!url) return null
-  const segments = url.split('/').filter(Boolean)
-  return segments[segments.length - 1] || null
-}
-
 export default function ClientPortal() {
   useTitle('Your Invoices — LanceraOS')
   const [invoices, setInvoices] = useState(null)
   const [needsLink, setNeedsLink] = useState(false)
   const [loadError, setLoadError] = useState(false)
-  const [loggingOut, setLoggingOut] = useState(false)
   const [messagesInvoice, setMessagesInvoice] = useState(null)
   const [claimInvoice, setClaimInvoice] = useState(null)
   const [ackInvoice, setAckInvoice] = useState(null)
@@ -155,57 +119,43 @@ export default function ClientPortal() {
       })
   }
 
-  async function handleLogout(everywhere) {
-    setLoggingOut(true)
-    try {
-      await api.post(`/clients/portal/${everywhere ? 'logout-everywhere' : 'logout'}/`)
-    } catch {
-      // Already logged out (or the request itself failed) either way —
-      // the local view below doesn't depend on this call having
-      // succeeded, it just re-checks the session next.
-    } finally {
-      setLoggingOut(false)
-      setInvoices(null)
-      setNeedsLink(true)
-    }
-  }
-
+  // Phase 2: no PortalLayout wrapper on any of these 3 states any more
+  // (that's the narrow, full-viewport centered-card treatment for
+  // auth-adjacent screens) — this content now renders inside
+  // PortalShell's <Outlet/>, which already provides the page frame, so
+  // a second full-screen overlay here would nest awkwardly inside it.
+  // needsLink is a real, if rare, race (session expiring between the
+  // shell's own overview fetch and this page's own invoice-list fetch)
+  // rather than the primary path it used to be when this was the
+  // top-level /portal route — PortalShell's own overview fetch is what
+  // normally catches an invalid session before this component ever
+  // mounts.
   if (needsLink) {
     return (
-      <PortalLayout>
+      <div>
         <h1 style={{ margin: '0 0 8px', fontSize: '1.1rem', fontWeight: 700, color: NAVY }}>Your session has ended</h1>
         <p style={{ margin: 0, fontSize: '0.85rem', color: MUTED_TEXT }}>Enter your email and we'll send you a fresh link.</p>
         <PortalRequestLinkForm />
-      </PortalLayout>
+      </div>
     )
   }
 
   if (loadError) {
     return (
-      <PortalLayout>
+      <div>
         <p style={{ margin: '0 0 12px', fontSize: '0.9rem', color: ERROR }}>Something went wrong loading your invoices.</p>
         <button onClick={load} style={publicBtnPrimary}>Try again</button>
-      </PortalLayout>
+      </div>
     )
   }
 
   if (invoices === null) {
-    return <PortalLayout><p style={{ margin: 0, color: BODY_TEXT, textAlign: 'center' }}>Loading…</p></PortalLayout>
+    return <p style={{ margin: 0, color: BODY_TEXT, textAlign: 'center' }}>Loading…</p>
   }
 
   return (
-    <PortalLayout maxWidth={720}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: NAVY }}>Your Invoices</h1>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={() => handleLogout(false)} disabled={loggingOut} style={disabledStyle({ ...publicBtnGhost, fontSize: '0.78rem' }, loggingOut)}>
-            <LogOut size={13} /> Log Out
-          </button>
-          <button onClick={() => handleLogout(true)} disabled={loggingOut} style={disabledStyle({ ...publicBtnGhost, fontSize: '0.78rem' }, loggingOut)}>
-            Log Out Everywhere
-          </button>
-        </div>
-      </div>
+    <div>
+      <h1 style={{ margin: '0 0 20px', fontSize: '1.2rem', fontWeight: 700, color: NAVY }}>Your Invoices</h1>
 
       {invoices.length === 0 ? (
         <p style={{ margin: 0, fontSize: '0.85rem', color: MUTED_TEXT }}>No invoices yet.</p>
@@ -293,7 +243,7 @@ export default function ClientPortal() {
       {ackInvoice && (
         <AcknowledgeModal invoice={ackInvoice} onAcknowledged={handleAcknowledged} onClose={() => setAckInvoice(null)} />
       )}
-    </PortalLayout>
+    </div>
   )
 }
 

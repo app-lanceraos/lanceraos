@@ -12781,3 +12781,126 @@ Details' request-change) that needed it, matching established precedent exactly.
 pass adds zero new model fields and zero new migrations; confirmed directly (My Details deliberately has no
 persistent model, per the brief's own explicit requirement) before concluding `DATABASE.md` needed no update this
 pass, rather than assumed.
+
+**22 September 2026 (Client Portal Redesign, Phase 2 — Portal Shell + Overview Page).** The first frontend-facing
+task in this redesign, built entirely on top of Phase 0's palette-compliance fix and Phase 1's
+`GET /api/invoices/portal/overview/` — Phase 1b's Payments/Timeline/My Details endpoints are NOT consumed here,
+by this task's own explicit scope. Frontend-only; no backend file touched.
+
+**Investigation findings, before writing any code.** (1) The real Overview response shape, confirmed directly
+against `apps/invoices/views_portal.py`'s `portal_overview` and `apps/invoices/serializers_portal.py` (not
+assumed from CLAUDE.md's own prose): `{ freelancer: {business_name, logo}, client_name, balances:
+[{currency, outstanding, paid}], needs_attention: [{id, invoice_number, portal_view_url, currency, total,
+due_date, reasons: [...]}], recent_invoices: [...PortalInvoiceListSerializer fields] }` — `reasons` can hold more
+than one of `unacknowledged`/`overdue`/`payment_claim_pending`/`unread_message` per invoice, confirmed live
+against real seeded data carrying all 4 at once. (2) `ClientPortal.jsx`/`PortalEnter.jsx`/
+`PortalRequestLinkForm.jsx` each independently hardcoded the identical DESIGN.md Section 10 hex values — genuine
+duplication, not shared — factored into one new `frontend/src/pages/portal/portalShared.js` module (palette
+constants, shared button/input styles, `STATUS_LABELS`, the needs-attention reason-label map, and
+`viewTokenFromPortalUrl`), imported by all three plus the two new files below. `PortalLayout.jsx` itself was kept,
+not replaced — it's reused as-is for the shell's own loading/needs-link/error states (auth-adjacent screens with
+no freelancer identity to show yet), while the real app frame is a new, wider layout in `PortalShell.jsx`. (3)
+`App.jsx`'s routing is flat `<Route>` entries, each independently wrapping its page as a `children` prop (the same
+pattern `AppShell.jsx` uses for the authenticated app, per CLAUDE.md's frontend rule 5) — remounting fully on every
+navigation between sibling routes. That pattern cannot satisfy this task's own "fetch the Overview once, not once
+per page" requirement, since navigating between Overview and Invoices would remount the shell and refetch every
+time. Used react-router's nested-route + `<Outlet/>` composition instead — the first use of that composition
+in this codebase — explicitly because AppShell's "wrap as children" convention structurally cannot keep a
+component mounted across sibling route changes, not as an arbitrary new pattern. Data flows down via React
+Context (`PortalOverviewContext`, defined in `PortalShell.jsx`, consumed via a new `usePortalOverview.js` hook in
+`src/hooks/`) — the exact same context-provider-in-the-shell/hook-in-`src/hooks/`-importing-it shape
+`PageHeaderActionsContext`/`usePageHeaderActions.js` already established for AppShell, mirrored rather than
+invented. (4) `FreelancerProfile.logo` is a plain `CharField(blank=True)` — `''` when unset, never null — so the
+header's "no logo" case is a plain falsy check, no broken-image risk. (5) `CommentThread.jsx`'s own `palette`
+prop precedent (added in Phase 0) confirmed the "small local inline-styled stand-in, not the theme-dependent
+shared component" convention for anything public-page-facing; the same reasoning ruled out reusing
+`DropdownMenu.jsx` for the new account menu (it resolves theme tokens internally) — the account menu is a small
+local component instead, though see the real bug this caused, below.
+
+**What was built.** `portalShared.js` (shared palette/constants, described above). `PortalShell.jsx` — the real
+shell: fetches `GET /api/invoices/portal/overview/` once on mount, renders `PortalLayout`'s narrow card for
+`loading`/`needs_link` (401)/`error` states (no freelancer identity exists yet to show real chrome), and once
+`ready`, a full-width frame with: a header (freelancer `logo`, if set, next to `business_name` — falling back to
+`display_name` only in the backend response already, so the frontend needed no fallback logic of its own — with
+"Client Portal" as a small subordinate label beneath, and a small circular account-menu button, top right);
+responsive nav — a top tab bar at ≥768px, a fixed bottom tab bar at <768px, matching `AppShell.jsx`'s own
+`window.innerWidth <= 768` breakpoint check exactly (a resize listener, not a CSS media query, for parity with
+that established pattern) — built from one centralized `NAV_ITEMS` array (`Overview`, `Invoices` today; a later
+phase adds Payments/Messages/My Details here without touching the shell's own JSX); a footer ("Powered by
+LanceraOS", small and muted, hidden on mobile since the bottom nav already occupies that space). Logout/logout-
+everywhere moved out of `ClientPortal.jsx`'s own former header row into this new account menu — same two
+`POST /api/clients/portal/logout(-everywhere)/` calls, unchanged, just relocated per this task's own explicit
+instruction. `PortalOverview.jsx` — the index route: "Hello, {client_name}" greeting; balances rendered one card
+per currency, NEVER summed (verified by a dedicated test asserting no combined total string appears anywhere on
+the page); a Needs Your Attention section rendering every entry's full `reasons` list as badges (not just the
+first) with a real link into `portal_view_url`; a Recent Invoices list, same link convention. Three real, fully
+designed empty/edge states, not placeholders: zero invoices at all (`Inbox` icon + real copy); invoices exist but
+nothing needs attention (a green `CheckCircle2` + "You're all caught up" line, shown in place of an empty list
+rather than hiding the section); no logo (the header's existing falsy check, covered above). `ClientPortal.jsx`
+relocated (not rewritten) to live under the shell at `/portal/invoices`: its own header row (title + the two
+logout buttons) removed; its 3 fallback states (`needsLink`/`loadError`/loading) stopped wrapping themselves in a
+second, full-viewport `PortalLayout` (which would have nested awkwardly inside the shell's own `<Outlet/>` frame)
+and now render as plain content sized for the shell's content area instead — everything else (list rendering,
+the Messages/Claims/Acknowledge modals, all three API calls) is untouched. `App.jsx`'s `/portal` route is now a
+layout route (`<Route path="/portal" element={<PortalShell />}>` with `index` = `PortalOverview` and `invoices` =
+`ClientPortal` as children); `/portal/enter/:token` stays a sibling outside the shell, unchanged, since it has no
+session yet to fetch an Overview with.
+
+**A real bug found and fixed during Playwright verification, not assumed away.** The new account menu's
+click-outside overlay (a full-viewport transparent `position: fixed` catcher, the same pattern this codebase's own
+modals already use) has no `Escape`-to-close handling by default — `DropdownMenu.jsx` (this codebase's own
+established dropdown component, deliberately not reused here since it's theme-dependent) DOES support this, via a
+plain `window.addEventListener('keydown', ...)` check for `'Escape'`. The account menu was missing this entirely
+until live browser testing caught it (Escape did nothing; the overlay kept intercepting the next click, making the
+menu impossible to reopen without a page reload) — fixed by adding the identical `Escape`-closes-via-`window`-
+keydown-listener pattern, matching `DropdownMenu.jsx`'s own convention exactly rather than inventing a different
+mechanism, with a dedicated regression test (`PortalShell.test.jsx`'s "closes on Escape" case).
+
+**Verification, with real evidence — live, against the real running dev servers, not simulated.** Backend
+(`runserver`) and frontend (`vite`, port 5174 — 5173 was occupied by an unrelated stale process from an earlier
+session) both started against the real local Postgres/Redis. Real seeded data on the existing
+`screenshot-demo@example.com` demo account (Redis/Postgres already running, no fixtures needed): a new zero-invoice
+client ("Fresh Client Co") for the empty-portal state; Nomad Ventures' `INV-2026-0005` given all 4 real
+needs-attention conditions at once (unacknowledged + a past `due_date` + a real pending `PaymentClaim` + a real
+unread freelancer `InvoiceComment`) to prove multi-reason rendering against genuine backend-computed `reasons`,
+not a fabricated frontend fixture; Berlin Digital's `INV-2026-0002` pushed to a future `due_date` and marked
+acknowledged, with its `cancelled` sibling invoice already excluded by `ACTIVE_STATUSES`, to produce a real
+"all caught up" response with zero `needs_attention` entries. The freelancer's own `logo` field was temporarily
+set to a real Cloudinary-style URL for one screenshot pass, then reverted to `''` immediately after — confirmed
+by a direct DB read matching its original value, so the demo account's documented no-logo state is unchanged
+afterward. Real Playwright + Chromium screenshots at 375px and 1280px for: the Overview page in all 3 empty/data
+states above, the account menu open, the header with and without a logo, and the Invoices route rendering inside
+the new shell (row actions, active nav tab, no duplicate logout controls) — all visually correct, no broken
+layout, no truncated content. `document.documentElement.setAttribute('data-theme', 'dark')` forced live against
+an already-rendered Overview page, the same technique Phase 0 used — the header's computed `background-color`
+read back as `rgb(255, 255, 255)` both before and after, confirming no `var(--*)` token leaked in anywhere new.
+`grep -rn "var(--" frontend/src/pages/portal/ --include="*.jsx"` — real output below; every match is a comment
+referencing a past fix (an unchanged, pre-existing state — the identical 3 comment-only matches already existed
+on this same grep before this task's changes, confirmed via `git show` against the prior commit), never a live
+`style={{...}}` value:
+```
+src/pages/portal/PortalRequestLinkForm.jsx:9:// FIXED 22 September 2026: previously used var(--status-green-text) plus
+src/pages/portal/ClientPortal.jsx:17:// FIXED 22 September 2026: this page previously used var(--*) theme
+src/pages/portal/PortalLayout.jsx:8:// theme-responsive var(--*) tokens (var(--bg-surface) etc.), which
+```
+Logout and logout-everywhere were both exercised live from their new header location — a real
+`POST /clients/portal/logout-everywhere/` call was observed, followed by a real transition back to the
+"Your session has ended" request-link screen. Automated: `ClientPortal.test.jsx`'s own "ClientPortal — logout"
+describe block (2 tests) was removed (that behavior no longer lives in that component) and its coverage rebuilt
+in a new `PortalShell.test.jsx` (14 tests: loading/needs-link/error states, header logo/no-logo rendering, the
+account menu's logout/logout-everywhere/Escape-close behavior, and a dedicated test proving navigating between
+Overview and Invoices does NOT re-issue a second Overview fetch); a new `PortalOverview.test.jsx` (9 tests)
+covers the greeting, per-currency balance rendering, multi-reason badges, the "all caught up" and zero-invoice
+empty states, and recent-invoice linking, each rendered directly against a stubbed `PortalOverviewContext` value
+rather than a full shell fetch, so each response-shape/empty-state combination is isolated. Full frontend suite:
+`npx vitest run` — **357 passing, 1 failing** (`src/pages/settings/SecuritySection.test.jsx`, confirmed via
+`git stash` to be a pre-existing failure unrelated to this task — it fails identically on the unmodified branch).
+`npx vite build` — clean, no new warnings (the one existing chunk-size warning is pre-existing and unrelated).
+
+**Out of scope, honored.** No Payments/Messages/My Details nav items or routes were added — Phase 1b's endpoints
+stay unconsumed, per this task's own explicit instruction, reachable by direct URL only if a later phase adds
+them. `ClientPortal.jsx`'s own internals (row design, filters, the 3 modals) are otherwise untouched — the only
+changes were removing its now-redundant header row and un-wrapping its 3 fallback states from a second
+`PortalLayout`. `/invoice/:token` and `/invoice/:token/pay` were not touched. No backend file was touched.
+`ClientPortalSession`/CSRF handling is unchanged — the shell's Overview fetch and `ClientPortal.jsx`'s own list
+fetch both use the exact same `api` instance/cookie behavior as before.

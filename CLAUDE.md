@@ -2323,6 +2323,35 @@ email config, since a real `RESEND_API_KEY` is configured in this environment. 5
 change — zero new model fields or migrations this pass. See DECISIONS.md's 22 September 2026 Phase 1b entry for
 the full investigation findings and every test's real evidence.
 
+**22 September 2026 (Client Portal Redesign, Phase 2 — Portal Shell + Overview Page).** The first frontend-facing
+task in this redesign, built on Phase 0's palette fix and Phase 1's `GET /api/invoices/portal/overview/` (Phase 1b's
+Payments/Timeline/My Details endpoints stay unconsumed, per this task's own scope). Frontend-only. A new
+`PortalShell.jsx` (`frontend/src/pages/portal/`) is the real app shell: fetches the Overview endpoint exactly once
+via a new react-router nested-route + `<Outlet/>` composition (this codebase's first use of that pattern — the
+existing "wrap each route as an AppShell `children` prop" convention remounts on every navigation and can't satisfy
+a fetch-once requirement across sibling routes), and provides it down via a `PortalOverviewContext` +
+`usePortalOverview()` hook mirroring `AppShell`'s own `PageHeaderActionsContext`/`usePageHeaderActions.js` shape.
+Renders a header (freelancer logo/business name + a "Client Portal" label + an account menu holding the relocated
+Logout/Logout Everywhere actions), a responsive nav (top tabs ≥768px, a fixed bottom tab bar <768px, matching
+`AppShell.jsx`'s own breakpoint check) built from one centralized nav-items list (`Overview`/`Invoices` today, ready
+for Payments/Messages/My Details later), and a small "Powered by LanceraOS" footer. A new `PortalOverview.jsx` is
+the index route: "Hello, {client}" greeting, per-currency balance cards (never summed), a Needs Your Attention list
+rendering every reason an invoice carries (not just the first), a Recent Invoices list, and 3 real designed empty
+states (zero invoices; invoices but nothing needs attention; no logo set). `ClientPortal.jsx` (the existing invoice
+list) was relocated, not rewritten, to `/portal/invoices` under the new shell — its own header row (title + the two
+logout buttons, now owned by the shell) removed, its fallback states un-wrapped from a second, now-redundant
+`PortalLayout` card. The three duplicated palette/constant blocks across `ClientPortal.jsx`/`PortalEnter.jsx`/
+`PortalRequestLinkForm.jsx` were factored into one new `portalShared.js` module, imported by all five portal files.
+A real bug was found and fixed during live Playwright verification: the new account menu had no `Escape`-to-close
+handling, unlike this codebase's own established `DropdownMenu.jsx` convention — fixed to match it exactly. Verified
+live against the real dev servers with real seeded data on `screenshot-demo@example.com` (a zero-invoice client, an
+invoice carrying all 4 real needs-attention reasons at once, and a client with real invoices but nothing needing
+attention), real Playwright screenshots at 375/1280px for every state plus the account menu and the with/without-logo
+header, and a live forced-dark-theme check confirming no `var(--*)` token leaked into any new file. Full frontend
+suite: 357 passing (1 pre-existing, unrelated `SecuritySection.test.jsx` failure, confirmed via `git stash` against
+the unmodified branch); `vite build` clean. See DECISIONS.md's 22 September 2026 Phase 2 entry for the full
+investigation findings, the Escape-key bug's before/after, and every screenshot's real evidence.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

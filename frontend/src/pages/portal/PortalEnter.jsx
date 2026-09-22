@@ -16,6 +16,7 @@ import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import PortalLayout from './PortalLayout'
 import PortalRequestLinkForm from './PortalRequestLinkForm'
+import { MUTED_TEXT, NAVY } from './portalShared'
 
 export default function PortalEnter() {
   useTitle('Signing in — LanceraOS')
@@ -39,15 +40,15 @@ export default function PortalEnter() {
   if (!error) {
     return (
       <PortalLayout>
-        <p style={{ margin: 0, fontSize: '0.9rem', color: '#64748b', textAlign: 'center' }}>Signing you in…</p>
+        <p style={{ margin: 0, fontSize: '0.9rem', color: MUTED_TEXT, textAlign: 'center' }}>Signing you in…</p>
       </PortalLayout>
     )
   }
 
   return (
     <PortalLayout>
-      <h1 style={{ margin: '0 0 8px', fontSize: '1.1rem', fontWeight: 700, color: '#1e3a5f' }}>{error}</h1>
-      <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748b' }}>Enter your email and we'll send you a fresh link.</p>
+      <h1 style={{ margin: '0 0 8px', fontSize: '1.1rem', fontWeight: 700, color: NAVY }}>{error}</h1>
+      <p style={{ margin: 0, fontSize: '0.85rem', color: MUTED_TEXT }}>Enter your email and we'll send you a fresh link.</p>
       <PortalRequestLinkForm />
     </PortalLayout>
   )

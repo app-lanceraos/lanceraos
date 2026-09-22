@@ -29,6 +29,8 @@ import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
 import ClientPortal from '@/pages/portal/ClientPortal'
 import PortalEnter from '@/pages/portal/PortalEnter'
+import PortalShell from '@/pages/portal/PortalShell'
+import PortalOverview from '@/pages/portal/PortalOverview'
 import InvoiceView from '@/pages/InvoiceView'
 import PaymentDetails from '@/pages/PaymentDetails'
 import InvoicePreviewPdf from '@/pages/InvoicePreviewPdf'
@@ -72,9 +74,20 @@ export default function App() {
 
         {/* Client Portal (Step 12) — its own auth entirely (a portal-
             session cookie, apps.clients.cookies), unrelated to
-            useAuthStore/PrivateRoute, so neither route is wrapped in
-            either. */}
-        <Route path="/portal" element={<ClientPortal />} />
+            useAuthStore/PrivateRoute, so none of these routes are
+            wrapped in either.
+            Client Portal Redesign, Phase 2: /portal is now a real
+            layout route — PortalShell.jsx owns the header/nav/footer
+            frame and fetches GET /api/invoices/portal/overview/ once,
+            with PortalOverview (index) and ClientPortal (Invoices,
+            relocated from being the top-level /portal page itself)
+            rendering inside it via <Outlet/>. /portal/enter/:token
+            stays a sibling, outside the shell — it has no session yet
+            to fetch an Overview with. */}
+        <Route path="/portal" element={<PortalShell />}>
+          <Route index element={<PortalOverview />} />
+          <Route path="invoices" element={<ClientPortal />} />
+        </Route>
         <Route path="/portal/enter/:token" element={<PortalEnter />} />
 
         {/* The individual invoice VIEW — REWORKED (real frontend-domain

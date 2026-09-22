@@ -13,14 +13,16 @@
 // a public page that must use ONE fixed light palette instead — the
 // same one InvoiceView.jsx/PaymentDetails.jsx already use. See
 // DECISIONS.md's 22 September 2026 entry.
+import { CARD_BG, CARD_BORDER, PAGE_BG } from './portalShared'
+
 export default function PortalLayout({ children, maxWidth = 480 }) {
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: 24, background: '#f8fafc',
+      padding: 24, background: PAGE_BG,
     }}>
       <div style={{
-        width: '100%', maxWidth, background: '#ffffff', border: '1px solid rgba(0,0,0,.08)',
+        width: '100%', maxWidth, background: CARD_BG, border: `1px solid ${CARD_BORDER}`,
         borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,.07)', padding: '28px 32px',
       }}>
         {children}
