@@ -159,7 +159,7 @@ export default function BusinessSection({ profile, loading, onProfileUpdate }) {
           <div>
             <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)' }}>Allow sending Formal Notice emails</p>
             <p style={{ margin: '2px 0 0', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
-              A firmer, manual-only email for severely overdue invoices. Turning this off hides the action and blocks it on the backend too.
+              A firmer, manual only email for severely overdue invoices. Turning this off hides the action button.
             </p>
           </div>
         </label>

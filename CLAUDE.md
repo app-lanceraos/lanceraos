@@ -2231,6 +2231,22 @@ predates its invoice now fails to confirm with a clean 400 (claim stays pending,
 their own invoices); frontend 345 passing (17 new); `vite build` clean. See DECISIONS.md's 21 September 2026 "Two
 small fixes" entry.
 
+**22 September 2026 (Client Portal Redesign, Phase 0 — public-page palette fix).** Frontend-only. Every file under
+`frontend/src/pages/portal/` (`ClientPortal.jsx`, `PortalLayout.jsx`, `PortalEnter.jsx`,
+`PortalRequestLinkForm.jsx`) was found genuinely using `theme.css`'s `var(--*)` tokens and theme-dependent shared
+classes/components (`.fos-btn`/`.fos-input`/`.fos-error`, `FormField`/`FormSelect`/`FosAlert`) — a real, confirmed
+violation of `DESIGN.md` Section 10's existing "public pages use ONE fixed light palette" rule (not a new rule),
+which already named the Client Portal explicitly and which `InvoiceView.jsx`/`PaymentDetails.jsx` already complied
+with. Fixed by replacing every token/class with the literal Section 10 palette, matching those two files'
+established inline-style convention; `FormField`/`FormSelect`/`FosAlert` were replaced with local inline-styled
+stand-ins rather than changing the shared components themselves (lower risk — those are used pervasively across the
+authenticated app). `CommentThread.jsx` (shared between this portal and `InvoiceDetailPanel.jsx`) gained a
+`palette="public"` prop, default unchanged, since it had no public/authenticated variant before. Verified live: a
+`data-theme="dark"` attribute forced onto `<html>` on an already-rendered `/portal` page (the exact mutation the
+freelancer's own theme toggle performs) produced zero change in any computed color, proving the fix rather than
+assuming it. Backend unaffected (1126 tests, OK); frontend 345 passing (unchanged); `vite build` clean. See
+DECISIONS.md's 22 September 2026 entry for the full before/after evidence.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

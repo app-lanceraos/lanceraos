@@ -28,6 +28,55 @@ import useWebSocket from '@/hooks/useWebSocket'
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff']
 const ALLOWED_ATTACHMENT_EXTENSIONS = [...IMAGE_EXTENSIONS, '.pdf']
 
+// This component is shared between InvoiceDetailPanel.jsx (the
+// freelancer-authenticated app, inside AppShell, theme-responsive by
+// design) and ClientPortal.jsx (the public client portal, which
+// DESIGN.md Section 10 requires to use ONE fixed light palette,
+// never theme.css's var(--*) tokens). Added 22 September 2026, closing
+// a real, confirmed Section 10 violation: this component previously had
+// no palette variant at all and rendered with theme tokens unconditionally,
+// so a client viewing their portal saw colors that silently followed the
+// FREELANCER's own light/dark dashboard preference (and broke outright in
+// dark mode — near-white message text on a white bubble). See
+// DECISIONS.md's 22 September 2026 entry.
+//
+// `palette` prop: omitted/anything else = unchanged prior behavior
+// (var(--*) tokens, for the authenticated app). `palette="public"` = the
+// fixed Section 10 palette, matching InvoiceView.jsx/PaymentDetails.jsx.
+const THEME_COLORS = {
+  textTertiary: 'var(--text-tertiary)',
+  textPrimary: 'var(--text-primary)',
+  accent: 'var(--accent)',
+  bubbleOther: 'var(--bg-surface-2)',
+  bubbleRadius: 'var(--radius-md)',
+  attachmentRadius: 'var(--radius-sm)',
+  attachmentBorder: 'var(--border-subtle)',
+  attachmentBg: 'var(--bg-surface)',
+  errorText: 'var(--error-text)',
+}
+const PUBLIC_COLORS = {
+  textTertiary: '#64748b',
+  textPrimary: '#334155',
+  accent: '#00c896',
+  bubbleOther: '#f8fafc',
+  bubbleRadius: '10px',
+  attachmentRadius: '6px',
+  attachmentBorder: 'rgba(0,0,0,.08)',
+  attachmentBg: '#ffffff',
+  errorText: '#c0392b',
+}
+const PUBLIC_INPUT_STYLE = {
+  width: '100%', boxSizing: 'border-box', background: '#ffffff', border: '1.5px solid rgba(0,0,0,.15)',
+  borderRadius: 8, padding: '10px 14px', fontFamily: "'DM Sans', sans-serif", fontSize: '0.9rem',
+  color: '#334155', outline: 'none', resize: 'none',
+}
+const PUBLIC_BTN_STYLE = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+  fontFamily: "'DM Sans', sans-serif", fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer',
+}
+const PUBLIC_BTN_GHOST_STYLE = { ...PUBLIC_BTN_STYLE, border: '1.5px solid rgba(0,0,0,.15)', background: 'transparent', color: '#334155' }
+const PUBLIC_BTN_PRIMARY_STYLE = { ...PUBLIC_BTN_STYLE, border: 'none', background: '#1e3a5f', color: '#ffffff' }
+
 function isImageUrl(url) {
   const lower = url.toLowerCase().split('?')[0]
   return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext))
@@ -55,7 +104,11 @@ function applyReadState(prev, update) {
 //   (see DECISIONS.md for why the route uses this, not the invoice pk).
 // viewerType: 'freelancer' | 'client' — decides which author_type
 //   renders right-aligned as "me".
-export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
+// palette: 'public' for the client portal's fixed Section 10 palette;
+//   omitted for the authenticated app's theme.css tokens (unchanged).
+export default function CommentThread({ commentsUrl, viewToken, viewerType, palette }) {
+  const c = palette === 'public' ? PUBLIC_COLORS : THEME_COLORS
+  const isPublic = palette === 'public'
   const [comments, setComments] = useState(null)
   const [error, setError] = useState('')
   const [text, setText] = useState('')
@@ -149,39 +202,41 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
   }
 
   if (comments === null) {
-    return <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>Loading messages…</p>
+    return <p style={{ fontSize: '0.82rem', color: c.textTertiary }}>Loading messages…</p>
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 2px', minHeight: 120 }}>
-        {comments.length === 0 && <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>No messages yet.</p>}
-        {comments.map((c) => {
-          const isMe = c.author_type === viewerType
+        {comments.length === 0 && <p style={{ fontSize: '0.82rem', color: c.textTertiary }}>No messages yet.</p>}
+        {comments.map((comment) => {
+          const isMe = comment.author_type === viewerType
           // Seen indicator (item 9 of the verification pass) — only shown
           // on MY OWN messages, same convention as any real chat app: you
           // don't see read-receipts on the other person's messages, only
           // whether THEY saw yours. Whichever side didn't author this
           // comment is the one whose read timestamp matters.
-          const seenAt = isMe ? (viewerType === 'freelancer' ? c.read_by_client_at : c.read_by_freelancer_at) : null
+          const seenAt = isMe ? (viewerType === 'freelancer' ? comment.read_by_client_at : comment.read_by_freelancer_at) : null
           return (
-            <div key={c.id} style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '80%' }}>
-              <p style={{ margin: '0 0 2px', fontSize: '0.7rem', color: 'var(--text-tertiary)', textAlign: isMe ? 'right' : 'left' }}>
-                {c.author_name} · {new Date(c.created_at).toLocaleString()}
-                {c.source === 'email_reply' && ' · via email'}
+            <div key={comment.id} style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '80%' }}>
+              <p style={{ margin: '0 0 2px', fontSize: '0.7rem', color: c.textTertiary, textAlign: isMe ? 'right' : 'left' }}>
+                {comment.author_name} · {new Date(comment.created_at).toLocaleString()}
+                {comment.source === 'email_reply' && ' · via email'}
               </p>
               <div style={{
-                padding: '8px 12px', borderRadius: 'var(--radius-md)',
-                background: isMe ? 'var(--accent)' : 'var(--bg-surface-2)',
-                color: isMe ? '#fff' : 'var(--text-primary)', fontSize: '0.85rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                padding: '8px 12px', borderRadius: c.bubbleRadius,
+                background: isMe ? c.accent : c.bubbleOther,
+                color: isMe ? '#fff' : c.textPrimary, fontSize: '0.85rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               }}>
-                {c.body_text}
-                {c.attachment_url && <AttachmentPreview url={c.attachment_url} isMe={isMe} onOpen={() => setPreviewUrl(c.attachment_url)} />}
+                {comment.body_text}
+                {comment.attachment_url && (
+                  <AttachmentPreview url={comment.attachment_url} isMe={isMe} onOpen={() => setPreviewUrl(comment.attachment_url)} colors={c} />
+                )}
               </div>
               {isMe && (
-                <p style={{ margin: '2px 2px 0', fontSize: '0.68rem', color: 'var(--text-tertiary)', textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3 }}>
+                <p style={{ margin: '2px 2px 0', fontSize: '0.68rem', color: c.textTertiary, textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3 }}>
                   {seenAt ? (
-                    <><CheckCheck size={12} style={{ color: 'var(--accent)' }} /> Seen</>
+                    <><CheckCheck size={12} style={{ color: c.accent }} /> Seen</>
                   ) : (
                     <><Check size={12} /> Sent</>
                   )}
@@ -193,27 +248,44 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
         <div ref={listEndRef} />
       </div>
 
-      {previewUrl && <AttachmentModal url={previewUrl} onClose={() => setPreviewUrl(null)} />}
+      {previewUrl && <AttachmentModal url={previewUrl} onClose={() => setPreviewUrl(null)} colors={c} />}
 
-      {error && <p className="fos-error" style={{ margin: '6px 0 0' }}>{error}</p>}
-      {attachmentError && <p className="fos-error" style={{ margin: '6px 0 0' }}>{attachmentError}</p>}
+      {error && <p style={{ margin: '6px 0 0', display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.78rem', color: c.errorText }}>{error}</p>}
+      {attachmentError && <p style={{ margin: '6px 0 0', display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.78rem', color: c.errorText }}>{attachmentError}</p>}
 
       <form onSubmit={handleSend} style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'flex-end' }}>
         <textarea
           value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a message…"
-          rows={2} className="fos-input" style={{ flex: 1, resize: 'none' }}
+          rows={2}
+          className={isPublic ? undefined : 'fos-input'}
+          style={isPublic ? { ...PUBLIC_INPUT_STYLE, flex: 1 } : { flex: 1, resize: 'none' }}
         />
-        <label className="fos-btn fos-btn-ghost" style={{ cursor: 'pointer', padding: 8 }} title="Attach an image or PDF">
+        <label
+          className={isPublic ? undefined : 'fos-btn fos-btn-ghost'}
+          style={isPublic ? { ...PUBLIC_BTN_GHOST_STYLE, padding: 8 } : { cursor: 'pointer', padding: 8 }}
+          title="Attach an image or PDF"
+        >
           <Paperclip size={14} />
           <input type="file" accept="image/*,application/pdf" hidden onChange={handleAttachmentChange} />
         </label>
-        <button type="submit" disabled={sending || (!text.trim() && !attachment)} className="fos-btn fos-btn-primary" style={{ padding: 8 }} aria-label="Send message">
+        <button
+          type="submit" disabled={sending || (!text.trim() && !attachment)}
+          className={isPublic ? undefined : 'fos-btn fos-btn-primary'}
+          style={isPublic ? { ...PUBLIC_BTN_PRIMARY_STYLE, padding: 8, opacity: (sending || (!text.trim() && !attachment)) ? 0.5 : 1 } : { padding: 8 }}
+          aria-label="Send message"
+        >
           {sending ? <span className="fos-spinner" /> : <Send size={14} />}
         </button>
       </form>
       {attachment && (
-        <p style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
-          Attached: {attachment.name} <button type="button" onClick={() => setAttachment(null)} className="fos-btn fos-btn-ghost" style={{ padding: '0 4px', fontSize: '0.72rem' }}>Remove</button>
+        <p style={{ fontSize: '0.72rem', color: c.textTertiary, margin: '4px 0 0' }}>
+          Attached: {attachment.name} <button
+            type="button" onClick={() => setAttachment(null)}
+            className={isPublic ? undefined : 'fos-btn fos-btn-ghost'}
+            style={isPublic ? { ...PUBLIC_BTN_GHOST_STYLE, padding: '0 4px', fontSize: '0.72rem' } : { padding: '0 4px', fontSize: '0.72rem' }}
+          >
+            Remove
+          </button>
         </p>
       )}
     </div>
@@ -223,8 +295,9 @@ export default function CommentThread({ commentsUrl, viewToken, viewerType }) {
 // ── AttachmentPreview — inline in the thread ────────────────────────
 // An image gets a real thumbnail; a PDF gets a document icon + filename.
 // Both are click-to-view (onOpen), never a plain navigating link to the
-// raw Cloudinary URL.
-function AttachmentPreview({ url, isMe, onOpen }) {
+// raw Cloudinary URL. `colors` is the caller's resolved THEME_COLORS/
+// PUBLIC_COLORS map (see CommentThread's own palette prop).
+function AttachmentPreview({ url, isMe, onOpen, colors }) {
   const filename = decodeURIComponent(url.split('/').pop() || 'attachment')
   if (isImageUrl(url)) {
     return (
@@ -234,7 +307,7 @@ function AttachmentPreview({ url, isMe, onOpen }) {
           style={{ display: 'block', padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
           aria-label="View image attachment"
         >
-          <img src={url} alt="" style={{ maxWidth: 160, maxHeight: 160, borderRadius: 'var(--radius-sm)', display: 'block' }} />
+          <img src={url} alt="" style={{ maxWidth: 160, maxHeight: 160, borderRadius: colors.attachmentRadius, display: 'block' }} />
         </button>
       </div>
     )
@@ -244,9 +317,9 @@ function AttachmentPreview({ url, isMe, onOpen }) {
       <button
         type="button" onClick={onOpen}
         style={{
-          display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 'var(--radius-sm)',
-          border: `1px solid ${isMe ? 'rgba(255,255,255,0.35)' : 'var(--border-subtle)'}`,
-          background: isMe ? 'rgba(255,255,255,0.12)' : 'var(--bg-surface)',
+          display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: colors.attachmentRadius,
+          border: `1px solid ${isMe ? 'rgba(255,255,255,0.35)' : colors.attachmentBorder}`,
+          background: isMe ? 'rgba(255,255,255,0.12)' : colors.attachmentBg,
           color: 'inherit', cursor: 'pointer', fontSize: '0.76rem', maxWidth: '100%',
         }}
       >
@@ -258,7 +331,7 @@ function AttachmentPreview({ url, isMe, onOpen }) {
 }
 
 // ── AttachmentModal — click-to-view ─────────────────────────────────
-function AttachmentModal({ url, onClose }) {
+function AttachmentModal({ url, onClose, colors }) {
   const isImage = isImageUrl(url)
   return (
     <div
@@ -273,9 +346,9 @@ function AttachmentModal({ url, onClose }) {
           <X size={20} />
         </button>
         {isImage ? (
-          <img src={url} alt="" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 'var(--radius-md)', objectFit: 'contain' }} />
+          <img src={url} alt="" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: colors.bubbleRadius, objectFit: 'contain' }} />
         ) : (
-          <iframe src={url} title="Attachment preview" style={{ width: '80vw', height: '80vh', border: 'none', borderRadius: 'var(--radius-md)', background: '#fff' }} />
+          <iframe src={url} title="Attachment preview" style={{ width: '80vw', height: '80vh', border: 'none', borderRadius: colors.bubbleRadius, background: '#fff' }} />
         )}
       </div>
     </div>

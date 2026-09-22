@@ -12273,3 +12273,140 @@ build` clean. Not verified live against the running dev servers this pass — th
 the request-level tests above, but I did not drive the two modals in a real browser.
 Note: the test files are gitignored in this repository (`.gitignore`: `apps/*/tests/`, `frontend/**/*.test.jsx`), so
 the new tests, and the 16 re-dated fixtures, exist locally but are not part of a commit.
+
+---
+
+Date: 22 September 2026 (Client Portal Redesign, Phase 0 — public-page palette fix)
+Decision/Reason:
+
+Frontend-only. This closes a real, confirmed violation of an EXISTING rule (`DESIGN.md` Section 10, "Public /
+Unauthenticated Pages") — not a new rule being introduced. Section 10 has named the Client Portal explicitly, since
+before this pass, as one of the pages that must use ONE fixed light palette, self-contained hardcoded values, never
+`theme.css`'s `var(--*)` tokens (those are scoped to the freelancer's own authenticated-app light/dark preference,
+via `src/hooks/useTheme.js`, which sets `data-theme` on `<html>` — document-wide, since there is one `<html>` for the
+whole single-page app). `InvoiceView.jsx` and `PaymentDetails.jsx` already complied. The client portal did not.
+
+**Root cause, confirmed by reading the actual files (not assumed from the task brief).** Every file under
+`frontend/src/pages/portal/` used `var(--*)` tokens: `ClientPortal.jsx` (30 occurrences — headings, body text, list-
+item borders, the "Acknowledged" indicator, all 3 modals), `PortalLayout.jsx` (4 — page background, card background,
+card border, card radius), `PortalEnter.jsx` (3 — heading and body text), `PortalRequestLinkForm.jsx` (1 direct
+occurrence plus the theme-dependent `.fos-input`/`.fos-error`/`.fos-btn` classes). On top of the direct `var(--*)`
+usage, three of this codebase's own shared "authenticated app" primitives were also in use on this public surface and
+are themselves theme-dependent, confirmed directly against `theme.css`: `.fos-btn`/`.fos-btn-primary`/`.fos-btn-
+ghost`/`.fos-input`/`.fos-label`/`.fos-error`/`.fos-alert-*` all resolve against `var(--*)` custom properties
+(`theme.css` lines 412-583); `FormField.jsx`/`FormSelect.jsx` wrap `.fos-label`/`.fos-input`; `FosAlert.jsx` wraps
+`.fos-alert-{type}`. `.fos-spinner` is the one exception — its CSS uses only `currentColor` and a keyframe, no
+tokens — so it was kept as-is everywhere it already appeared. `CommentThread.jsx` (the two-way message thread) is
+shared between `InvoiceDetailPanel.jsx` (freelancer, authenticated, correctly theme-aware) and `ClientPortal.jsx`
+(public, must not be) and had no palette variant at all — every color in it was a hardcoded `var(--*)` reference,
+unconditionally, regardless of which side rendered it.
+
+**Concretely demonstrated, not just theoretical.** `theme.css` line 40: `--text-primary: #0e0e1a` (light mode);
+line 283: `--text-primary: #f0f0f8` (dark mode) — near-white. `ClientPortal.jsx`'s own invoice-number/heading text
+used `color: var(--text-primary)` on a `var(--bg-surface)` card that is `#ffffff` in light mode but `#111118` in
+dark mode. A client viewing their own portal at a moment `data-theme="dark"` happened to be set on `<html>` (a real,
+reachable state — see below) would have seen near-invisible light text on a near-black card, not merely "the wrong
+color."
+
+**Is `data-theme="dark"` actually reachable on `/portal`?** Investigated rather than assumed. `useTheme()` is only
+invoked inside `AppShell.jsx`, which the portal routes never mount (they are shell-less, matching `InvoiceView.jsx`/
+`DeletionReview.jsx`'s own convention). So a cold, direct page load of `/portal` never sets the attribute itself —
+but the attribute, once set by `AppShell`, lives on `<html>`, shared by the entire origin for the lifetime of that
+tab. `App.jsx` registers both the AppShell-wrapped authenticated routes and the shell-less public routes (`/portal`,
+`/invoice/:token`, `/invoice/:token/pay`) in the SAME React Router config, inside ONE single-page app — so a
+freelancer who toggles dark mode in their own dashboard and then reaches `/portal` via any client-side navigation in
+the same tab (no full reload) carries the attribute straight into the portal's own render. This is a real path (a
+freelancer previewing/testing their own client's portal from their own browser), not a hypothetical one.
+
+**Fix.** Every `var(--*)` occurrence in the four `pages/portal/*.jsx` files was replaced with the literal Section 10
+palette value (`#1e3a5f` navy, `#2e5987` secondary navy — unused here, no sub-heading tier was needed — `#00c896`
+accent, `#334155` body text, `#64748b` muted text, `rgba(0,0,0,.07)` divider, `rgba(0,0,0,.08)` card border, `#f8fafc`
+page background, `#ffffff` card background), matching `InvoiceView.jsx`/`PaymentDetails.jsx`'s exact inline
+`style={{}}`-object convention (this repo has no Tailwind, no per-component CSS files — `DESIGN.md` Section 0/12).
+Section 10 defines no separate error/warning/success set, so the `#c0392b` (error) / `#8a7d5c` (warning) / `#00c896`
+(success, reused from the accent) precedent those same two reference files already established was reused rather
+than inventing a fifth ad hoc color.
+
+**`FormField`/`FormSelect`/`FosAlert` usage in `ClientPortal.jsx`'s `ClaimModal`/`AcknowledgeModal`: replaced with
+inline-styled stand-ins (`PublicField`/`PublicSelect`/`PublicAlert`, defined locally in `ClientPortal.jsx`), not
+fixed at the shared-component level.** Both options were real — either change `FormField.jsx`/`FormSelect.jsx`/
+`FosAlert.jsx` themselves, or stop using them here. Changing the shared components was rejected: they're used
+pervasively across the entire authenticated Settings/invoices/clients UI (dozens of call sites), so any change to
+their own styling risks a regression everywhere else in the app for a benefit needed by exactly one public page.
+Inline replacements, matching this project's own established precedent (every other public page builds its own
+local style objects rather than reusing an authenticated-app shared component), were the lower-risk, narrower change
+— stated explicitly rather than picked silently, per the task's own instruction on this exact fork.
+
+**`CommentThread.jsx` — one component, two callers, one new prop.** Confirmed via `grep -rln` that this component
+has exactly two real call sites: `InvoiceDetailPanel.jsx` (freelancer) and `ClientPortal.jsx`'s `MessagesModal`
+(client). It needed a variant it didn't have. Added a `palette` prop, default (omitted) unchanged — resolves to a
+`THEME_COLORS` map that is byte-identical to the component's prior hardcoded `var(--*)` strings, so
+`InvoiceDetailPanel.jsx` required zero changes and its existing test suite needed no updates. `palette="public"`
+(the only value `ClientPortal.jsx` passes) resolves to a `PUBLIC_COLORS` map of literal Section 10 values instead. A
+small number of theme-dependent `.fos-*` classNames inside the message-composer form (textarea, attach button, send
+button, remove-attachment button) are swapped for inline-styled equivalents only when `palette==='public'`; the
+authenticated path keeps using the shared classes exactly as before. This was the narrowest change that closes the
+gap — a prop, not a fork of the component — matching the task's own explicit preference for that shape.
+
+**Verification, with real evidence, not just a code read.**
+
+1. `grep -rn "var(--" frontend/src/pages/portal/ --include="*.jsx" | grep -v '\.test\.jsx'` — every remaining match is
+   inside a `//` comment describing the fix itself; zero matches in any actual JSX attribute or `style={{}}` value:
+   ```
+   pages/portal/PortalRequestLinkForm.jsx:9:// FIXED 22 September 2026: previously used var(--status-green-text) plus
+   pages/portal/PortalLayout.jsx:8:// theme-responsive var(--*) tokens (var(--bg-surface) etc.), which
+   pages/portal/ClientPortal.jsx:14:// FIXED 22 September 2026: this page previously used var(--*) theme
+   pages/portal/ClientPortal.jsx:46:// values, never theme.css var(--*) tokens. Matches InvoiceView.jsx/
+   ```
+2. Live, against the real running dev servers (`localhost:5173`/`:8000`), using the real seeded
+   `screenshot-demo@example.com` account's existing clients/invoices (`Acme Studios`, `Nomad Ventures`) and the real
+   magic-link entry flow (`Client.portal_token` → `GET /api/clients/portal/{token}/`, minting a genuine
+   `ClientPortalSession` cookie) — no fabricated data. Real Chromium via Playwright screenshots of `/portal` (the
+   invoice list), the Messages modal, and the Payment Claims modal (both the "nothing outstanding" and the real
+   "report a new payment" form with `PublicField`/`PublicSelect`), at both 375px and 1280px.
+3. **The decisive test**, run live rather than assumed: rendered `/portal` once, read real `getComputedStyle()`
+   values for the card background, the `<h1>` color, and the claim form's input background/text color, then forced
+   `document.documentElement.setAttribute('data-theme', 'dark')` on the SAME already-rendered page (the exact
+   mutation `useTheme.js`'s own effect performs) with zero navigation and zero React re-render in between, and
+   re-read the same computed values. `var(--*)` tokens re-resolve live through the CSS cascade the instant the
+   attribute changes — no reload needed — so this is a direct proof, not an inference: `h1Color`, `cardBg`,
+   `inputBg`, and `inputColor` were bit-for-bit IDENTICAL before and after (`rgb(30, 58, 95)` / `rgb(248, 250, 252)`
+   / `rgb(255, 255, 255)` / `rgb(51, 65, 85)` in both readings). The two full-page screenshots taken immediately
+   before and after are pixel-identical. The one value that DID change, `document.body`'s own background
+   (`rgb(228, 228, 255)` → `rgb(49, 49, 61)`), is `theme.css`'s own global `body { background: var(--bg-page) }`
+   reset rule, present and unchanged on every page in this codebase including `InvoiceView.jsx`/`PaymentDetails.jsx`
+   — out of scope to touch (a global rule, not part of the portal's own component tree) and never visible in
+   practice, since `PortalLayout.jsx`'s own `minHeight: '100vh'` wrapper (zero margin, from the existing `*, *::before,
+   *::after { margin: 0 }` reset) fully covers it; confirmed by the pixel-identical screenshots above.
+4. The same live-toggle test repeated specifically for `CommentThread.jsx`'s `palette="public"` path: sent a real
+   message through the actual portal-session-authenticated `POST` endpoint, read the message bubble's real
+   `background-color` (`rgb(0, 200, 150)` — `#00c896`) and text color, forced `data-theme="dark"` live, and
+   confirmed both values unchanged. (The test comment itself was deleted from the database afterward — it was only
+   ever there to have a real "isMe" bubble to inspect.)
+5. Visual comparison: the fixed portal's navy (`#1e3a5f`), teal accent (`#00c896`), and `#f8fafc`/`#ffffff`/
+   `rgba(0,0,0,.07-.08)` background/card/divider values are now literally the same constants `PaymentDetails.jsx`/
+   `InvoiceView.jsx` already hardcode — not just visually similar, the same source values.
+6. Full backend suite (unaffected by this frontend-only change, run anyway per this project's convention):
+   `python manage.py test apps.invoices apps.clients apps.users --keepdb` — **1126 tests, OK, 0 failures.** Full
+   frontend suite: `npx vitest run` — **24 files, 345 tests, all passed** (unchanged from before this pass — no test
+   asserted on the old `var(--*)`/`.fos-*` styling, so nothing needed rewriting). `npx vite build` — clean (only the
+   pre-existing, unrelated chunk-size-over-500kB warning).
+
+**Out of scope, honored.** No business-logic, data-fetching, session, CSRF, or routing change anywhere — confirmed by
+diff: every edit is a `style={{...}}` value, a `className`, or a new locally-scoped presentational helper
+(`PublicField`/`PublicSelect`/`PublicAlert` in `ClientPortal.jsx`; the `palette` prop and its two color maps in
+`CommentThread.jsx`). No freelancer branding/logo was added to the portal header (that needs new backend serializer
+fields and is separate, later work, per the task's own explicit exclusion). `apps/clients/portal.py`, session
+cookies, CSRF enforcement, and the invoice document/PDF renderer were not touched.
+
+**Noted, not fixed, pre-existing and out of scope:** at 375px, the header's "Log Out" / "Log Out Everywhere" buttons
+and the invoice row's status/amount line wrap somewhat awkwardly (a `justify-content: space-between` flex row with no
+narrow-width adjustment). This is a layout issue, not a palette one, predates this pass, and the task explicitly
+scoped this pass to tokens only ("do not redesign the layout itself") — flagged here rather than silently fixed or
+silently ignored.
+
+**A separate, unrelated observation, not a decision:** `git status` at the start of this pass showed the working
+tree clean, but by the end `frontend/src/pages/settings/SecuritySection.jsx` appeared modified (several explanatory
+paragraphs removed, one sentence's punctuation changed) — none of it touched by this pass (confirmed: no `Edit`/
+`Write` call was made against that file in this session). Left exactly as found; flagged here so it isn't mistaken
+for part of this change if the working tree is reviewed or committed as a whole.

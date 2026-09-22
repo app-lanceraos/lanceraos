@@ -379,10 +379,6 @@ export default function SecuritySection() {
           <p style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
             Don't know your current password?
           </p>
-          <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.55 }}>
-            We'll email you a link to set a new one. Using the link signs you out of every device,
-            including this one — you'll sign back in with your new password.
-          </p>
           {resetLinkMsg.message && (
             <div style={{ marginBottom: 14 }}>
               <FosAlert type={resetLinkMsg.message.type} onDismiss={resetLinkMsg.clear}>{resetLinkMsg.message.text}</FosAlert>
@@ -400,11 +396,6 @@ export default function SecuritySection() {
             <FosAlert type={twoFaMsg.message.type} onDismiss={twoFaMsg.clear}>{twoFaMsg.message.text}</FosAlert>
           </div>
         )}
-        <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.55 }}>
-          {user?.two_fa_enabled
-            ? 'A 6-digit code will be emailed to you each time you sign in from a new device.'
-            : 'Add an extra layer of security — a 6-digit code will be emailed to you at sign-in.'}
-        </p>
 
         {!user?.two_fa_enabled && (
           <div style={{ display: 'flex', gap: 10, maxWidth: 400, alignItems: 'flex-end' }}>
@@ -422,10 +413,6 @@ export default function SecuritySection() {
 
         {user?.two_fa_enabled && tfdStep === 0 && (
           <div style={{ maxWidth: 400 }}>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: 10 }}>
-              Disabling 2FA requires your password and a verification code, since it removes your
-              account's own protection.
-            </p>
             <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
               <div style={{ flex: 1 }}>
                 <FormField
@@ -476,7 +463,7 @@ export default function SecuritySection() {
           </div>
           <div style={{ padding: 16 }}>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.6 }}>
-              Your account will be scheduled for permanent deletion after 30 days — you can cancel any time
+              Your account will be scheduled for permanent deletion after 30 days, you can cancel any time
               before then by logging in.
             </p>
             {delStep === 0 && (
