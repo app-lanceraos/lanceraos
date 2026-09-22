@@ -84,6 +84,19 @@ class Client(models.Model):
     # against this same table.
     portal_token = models.CharField(max_length=32, unique=True, db_index=True, blank=True)
 
+    # Set once, the first time a saved client's invoice is actually sent
+    # THROUGH LANCERAOS ITSELF (apps.invoices.views._send_invoice_now,
+    # the one function shared by the real /send/ action, the combined
+    # finalise-and-send action, and recurring auto-send) — never on a
+    # manual mark-sent, which reports a delivery that happened somewhere
+    # else. Never cleared, never blocks the client from requesting a
+    # fresh link at any time via the existing on-request
+    # portal_request_link flow — this only gates the ONE proactive,
+    # unprompted send. Same one-shot-timestamp pattern as
+    # apps.invoices.models.Invoice.formal_notice_sent_at (Client Portal
+    # Redesign, Phase 1 — see DECISIONS.md).
+    initial_portal_link_sent_at = models.DateTimeField(null=True, blank=True)
+
     tags = models.ManyToManyField('ClientTag', blank=True, related_name='clients')
 
     created_at = models.DateTimeField(auto_now_add=True)

@@ -40,7 +40,7 @@ function CompletionBar({ pct }) {
   const message = pct < 50
     ? 'Complete your profile to look professional on invoices'
     : pct < 80
-      ? 'Almost there — fill in the remaining details'
+      ? 'Almost there, fill in the remaining details'
       : 'Just a few more fields to complete your profile'
 
   return (
@@ -286,13 +286,13 @@ export default function Profile() {
             value={draft.display_name}
             onChange={(e) => handleChange('display_name', e.target.value)}
             error={fieldErrors.display_name}
-            hint="Shown on invoices and throughout the app."
+            hint=""
           />
           <FormField
             label="Business Name"
             value={draft.business_name}
             onChange={(e) => handleChange('business_name', e.target.value)}
-            hint="Optional — appears on invoices if set."
+            hint="Optional, but recommended for invoices"
           />
           <FormField
             label="Phone"

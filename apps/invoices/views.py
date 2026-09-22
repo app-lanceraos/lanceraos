@@ -41,6 +41,7 @@ from core.events import emit
 from core.money import Money
 from apps.clients.scoring import EXCLUDED_STATUSES as CLIENT_SCORING_EXCLUDED_STATUSES
 from apps.clients.serializers import validate_currency_code
+from apps.clients.views_portal import _send_portal_link_email
 from apps.payments.models import ExchangeRateSnapshot
 from apps.users.models import FreelancerProfile, User
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
@@ -893,7 +894,71 @@ def _send_invoice_now(invoice, request):
         invoice.invoice_number, invoice.client_email, result['sent_via'],
         ' (fallback from custom SMTP)' if result['fallback_used'] else '',
     )
+
+    _maybe_send_initial_portal_link_email(invoice)
+
     return Response(InvoiceListSerializer(invoice).data)
+
+
+def _maybe_send_initial_portal_link_email(invoice):
+    """
+    Client Portal Redesign, Phase 1 — the one-time, proactive "here's your
+    Client Portal" email. Fires exactly once per saved client, the first
+    time ANY of their invoices is actually sent THROUGH LANCERAOS ITSELF
+    — called only from this one place, _send_invoice_now, the single
+    function shared by invoice_send (the real /send/ action),
+    invoice_finalise_and_send (the combined wizard action), AND
+    generate_recurring_invoices' own auto-send path (tasks.py) — every
+    genuine platform-send route funnels through here, so this needs no
+    second call site anywhere. Deliberately NOT called from
+    invoice_mark_sent — that endpoint reports a delivery that happened by
+    some OTHER means, so a LanceraOS-branded portal-link email arriving
+    unprompted for it would be a disconnected touchpoint for the client,
+    not a helpful one (a deliberate scope decision, not an oversight —
+    see DECISIONS.md).
+
+    Skipped entirely for a one-time client (invoice.client_id is None) —
+    there is no Client row, so no portal to link to and nowhere to
+    persist "already sent" against.
+
+    invoice.client is fetched fresh here (a real query — _send_invoice_now
+    is never called with the client preloaded) rather than via a
+    select_related the caller would have to remember to add; this runs
+    once per send, not once per invoice in a list, so the extra query is
+    the right trade against making every caller responsible for it.
+
+    Deliberately does NOT gate on the send's own success/failure result —
+    unlike Invoice.formal_notice_sent_at (which is only set once
+    send_invoice_related_email itself reports success, since a failed
+    formal notice should remain re-triggerable), this field's own
+    contract is unconditional: "must never fire a second time... even if
+    they later get a second, third, tenth invoice" is an absolute
+    guarantee, not a "retry until it works" one. Gating on success would
+    mean a single transient failure leaves the field null forever,
+    silently re-attempting this send on every subsequent invoice to the
+    same client — worse than the rare case this trades away (a genuine
+    total send failure, already covered by send_client_facing_email's own
+    CustomSmtpFailed fallback/notification machinery, which this reuses
+    for free since it's the identical routing chain _send_portal_link_email
+    already calls).
+    """
+    if not invoice.client_id:
+        return
+    if invoice.client.initial_portal_link_sent_at is not None:
+        return
+
+    _send_portal_link_email(invoice.client)
+
+    invoice.client.initial_portal_link_sent_at = timezone.now()
+    # 'updated_at' explicitly included — an auto_now field is only
+    # refreshed by save() when it's named in update_fields, matching the
+    # same precedent invoice_send_formal_notice's own save() call follows
+    # for Invoice.updated_at.
+    invoice.client.save(update_fields=['initial_portal_link_sent_at', 'updated_at'])
+    logger.info(
+        '[INVOICES] Sent the initial client-portal-link email to %s (first platform send for this client).',
+        invoice.client.email,
+    )
 
 
 @api_view(['POST'])

@@ -128,7 +128,7 @@ export default function NotificationsSection() {
 
         <div style={{ marginTop: 14 }}>
           <FosAlert type="info" style={{ fontSize: '0.8rem' }}>
-            Security alerts can't be turned off — they protect your account even if everything else is muted.
+            Security alerts can't be turned off, they protect your account even if everything else is muted.
           </FosAlert>
         </div>
       </Card>

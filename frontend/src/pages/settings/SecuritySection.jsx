@@ -475,7 +475,7 @@ export default function SecuritySection() {
                   error={delPwErr}
                 />
                 <button onClick={handleDelInitiate} disabled={!delPassword || delSaving} className="fos-btn fos-btn-danger fos-btn-full" style={{ marginTop: 10 }}>
-                  {delSaving ? <><span className="fos-spinner" /> Sending code…</> : 'Continue — Send Verification Code'}
+                  {delSaving ? <><span className="fos-spinner" /> Sending code…</> : 'Send Verification Code'}
                 </button>
               </div>
             )}

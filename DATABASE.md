@@ -645,6 +645,8 @@ is_active                   BooleanField, default=True — archive flag
 is_flagged / flag_reason / flag_type / flagged_at   — manual flagging only
 auto_flagged                BooleanField, default=False — reserved, no logic fires yet
 portal_token                CharField(32), unique, db_index=True — persistent magic-link credential
+initial_portal_link_sent_at DateTimeField, null=True — one-shot marker, Client Portal Redesign Phase 1
+                              (see its own entry below)
 tags                        ManyToManyField(ClientTag, blank=True)
 created_at / updated_at
 ```
@@ -684,6 +686,28 @@ model-agnostic pure function rather than a fake Invoice stand-in.
 original flag-type choice set wasn't available in this session (see `DECISIONS.md`). Kept
 deliberately small; extend via migration if a real business need for finer-grained categories
 emerges.
+
+**`initial_portal_link_sent_at`** — added Client Portal Redesign, Phase 1 (`DECISIONS.md`, 22
+September 2026). Set once, the first time a saved client's invoice is actually sent THROUGH
+LANCERAOS ITSELF (`apps.invoices.views._send_invoice_now`, the one function shared by the real
+`/send/` action, the combined finalise-and-send action, and recurring auto-send — see that
+function's own `_maybe_send_initial_portal_link_email` for the real call site). Never set for a
+one-time client (`invoice.client_id` is `None` — no `Client` row exists to persist this against).
+Applying the table's own 6-question framework to this one field specifically, since it's genuinely
+different in shape from every other field on this model:
+1. **Mutable?** Written exactly once, from `None` to a real timestamp — never cleared, never
+   updated again after that (an at-most-once guarantee, not a "retry until success" one — see
+   `DECISIONS.md` for why this deliberately does NOT mirror
+   `apps.invoices.models.Invoice.formal_notice_sent_at`'s own success-gated precedent).
+2. **Soft deleted?** N/A — not a row, a single nullable column.
+3. **Audit trail?** No `core.AuditLog` entry and no notification-bell entry — see `EMAILS.md`'s own
+   row for this email, which has neither either (matching that document's own honest "None
+   currently" precedent for `send_account_deleted_email`, not a gap unique to this field).
+4. **Indexed?** No — never queried by its own value (no "find all clients who have/haven't received
+   this yet" screen exists), only ever read/written per-client inside one request.
+5. **Encrypted?** No — a plain timestamp, no PII/credential content.
+6. **Cascade behavior?** N/A — lives on `Client` itself, inherits that row's own `CASCADE` from
+   `User`.
 
 ---
 

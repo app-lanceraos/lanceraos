@@ -2247,6 +2247,40 @@ freelancer's own theme toggle performs) produced zero change in any computed col
 assuming it. Backend unaffected (1126 tests, OK); frontend 345 passing (unchanged); `vite build` clean. See
 DECISIONS.md's 22 September 2026 entry for the full before/after evidence.
 
+**22 September 2026 (Client Portal Redesign, Phase 1 — Overview endpoint, freelancer branding on portal responses,
+one-time portal-link email).** Backend-only, no frontend consumption built (a separate, later task). A new
+`GET /api/invoices/portal/overview/` (registered next to `portal/me/`) gives the redesigned portal's Overview/home
+page everything it needs in one request: freelancer identity (`business_name` falling back to `display_name`, plus
+`logo`, matching `payment_details.py`/`_partials/brand_lockup.html`'s own existing convention exactly), this
+client's balances grouped by currency and NEVER summed across currencies (`outstanding` scoped to
+`ACTIVE_STATUSES`, `paid` netted against `refunded_amount` — both reusing `invoice_summary`'s own already-
+established computations, not new ones), a needs-attention list (`unacknowledged`/`overdue`/
+`payment_claim_pending`/`unread_message` — an invoice can carry several reasons at once and appears exactly once,
+with every terminal status excluded from all four regardless of other field values — the brief's own named test
+case, a `paid` invoice with a stale unread comment, confirmed correctly absent), and a short recent-invoices list
+(`PortalInvoiceListSerializer`, reused verbatim, limit 5). A new, purpose-built `PortalOverviewNeedsAttentionSerializer`
+(plain `serializers.Serializer`, not a `ModelSerializer`) carries the `reasons` field — never
+`InvoiceListSerializer`/`InvoiceDetailSerializer`, matching `serializers_portal.py`'s own established discipline.
+Flat query budget, measured directly (not assumed): **7 queries total, identical at 3, 20, and 50 invoices for the
+same client** — the two relational needs-attention reasons are correlated `Exists()` subqueries inside one query,
+never a per-invoice lookup. Separately: `Client.initial_portal_link_sent_at` (new nullable field,
+`clients/0003_client_initial_portal_link_sent_at.py`) now gates a real, one-shot, PROACTIVE send of the existing
+portal-link email (`apps.clients.views_portal._send_portal_link_email`, reused verbatim, never reimplemented) — it
+fires exactly once, the first time ANY of a saved client's invoices is actually sent through LanceraOS itself,
+hooked into the one function (`apps.invoices.views._send_invoice_now`) shared by the real `/send/` action, the
+combined finalise-and-send action, AND recurring auto-send (a third real call site found during investigation, not
+named in the original brief) — never the manual mark-sent path, a deliberate scope decision. Deliberately does NOT
+gate on the send's own success/failure, unlike `Invoice.formal_notice_sent_at`'s own precedent — a real, stated
+judgment call, since the field's own contract is an absolute at-most-once guarantee, not a retry-until-success one
+(see DECISIONS.md for the full reasoning). `EMAILS.md` gained its first-ever row for this email (both trigger
+paths, one function) and a correction to its own stale "Invoices module doesn't exist yet" closing note.
+`DATABASE.md`'s `clients` entry gained the new field's own 6-question breakdown. Verified live against the real dev
+server with real ORM-created data (7 invoices, two currencies, every needs-attention reason represented, hand-
+checked against the real JSON response) and with 31 new automated tests (`test_portal_overview.py`,
+`test_initial_portal_link_email.py`) — full backend suite: **1192 tests, OK, 0 failures** (up from 1161). See
+DECISIONS.md's second 22 September 2026 entry for the full investigation findings, the query-budget numbers, and
+every test's real evidence.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

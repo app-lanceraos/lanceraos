@@ -29,6 +29,7 @@ timing-oracle finding, not just a performance nicety).
 | Your account is scheduled for deletion | `send_account_deletion_confirmed_email` | OTP verified, deletion confirmed | No | `deletion_confirmed` | **Yes** |
 | Your account has been deleted | `send_account_deleted_email` | The daily `anonymize_expired_accounts` Celery Beat task — sent to the *original* email, captured before `anonymize()` overwrites it | Runs inside an already-async Celery task, but the send call itself is a plain synchronous call within that task | **None currently** — only a `logger.info()` call, not `log_event()`/`AuditLog` | No (correctly — the account no longer has a working login by this point) |
 | New sign-in to your account | `send_new_device_login_email` | Any login (regular, 2FA-verified, or OAuth) where the device isn't already recognized via `TrustedDevice` | No | `new_device_login` | **Yes** |
+| Your LanceraOS client portal link | `_send_portal_link_email` (`apps/clients/views_portal.py`) | **Two trigger paths, same function.** (1) On-request: `POST /api/clients/portal/request-link/`, the client's own self-serve resend (rate-limited 5/email/hr + 20/IP/hr). (2) Proactive, one-shot: `apps/invoices/views.py`'s `_maybe_send_initial_portal_link_email`, called only from `_send_invoice_now` (the one function shared by the real `/send/` action, the combined finalise-and-send action, and recurring auto-send) — fires the first time ANY of a saved client's invoices is actually sent through LanceraOS itself, gated by `Client.initial_portal_link_sent_at` (null → send once, then set; never fires again for that client). Deliberately NOT wired into the manual mark-sent path — an unprompted LanceraOS-branded email for an invoice delivered some other way would be a disconnected touchpoint, not a helpful one (Client Portal Redesign, Phase 1 — see `DECISIONS.md`) | No — sent inline via `core.email.send_client_facing_email` on both paths, same as every other client-facing email in this table | **None** — no `log_event()`/`AuditLog` call anywhere in either trigger path | No — no audit event exists to be on the allowlist in the first place |
 
 ## Two real gaps this table surfaces, worth a decision rather than silently leaving as-is
 
@@ -46,5 +47,9 @@ timing-oracle finding, not just a performance nicety).
 
 ## Not yet built
 
-Every email for Invoices, Payments, Proposals, Contracts, Subscriptions — none of those modules
-exist yet. This registry only covers what's real today.
+Payments, Proposals, Contracts, Subscriptions — none of those modules exist yet. Invoices (`apps.invoices`)
+is a real, mostly-built module with several real emails of its own (invoice send, reminders, formal notice,
+comment-thread notifications, and — added 22 September 2026 — the proactive client-portal-link trigger
+above); this table doesn't itemize them individually yet (a real, pre-existing gap in this document, not
+touched by this pass beyond the one row above), so treat "Invoices" as *not yet documented here*, not "not
+yet built" — see `CLAUDE.md`'s own Module 2 narrative for what actually exists.

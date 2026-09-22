@@ -341,7 +341,7 @@ export default function SignatureCard({ initialSignatureUrl }) {
   return (
     <Card
       title="Digital Signature"
-      subtitle="Upload a photo of your signature, or draw one — appears on invoices and PDFs when you place it in a template."
+      subtitle="Upload a photo of your signature, or draw one. It will appear on your invoices."
     >
       {message && (
         <div style={{ marginBottom: 14 }}>
@@ -412,8 +412,7 @@ export default function SignatureCard({ initialSignatureUrl }) {
             <Upload size={15} /> Choose an image
           </button>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: 8 }}>
-            JPG, PNG, WEBP, GIF, BMP, or TIFF. Max 10MB. A photo on a plain background works best —
-            we'll remove the background automatically.
+            JPG, PNG, WEBP, GIF, BMP, or TIFF. Max 10MB. A photo on a plain background works best.
           </p>
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} style={{ display: 'none' }} />
         </div>

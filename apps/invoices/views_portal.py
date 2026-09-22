@@ -33,8 +33,11 @@ the PDF layout) still holds for that one remaining consumer.
 """
 import logging
 import time
+from collections import defaultdict
+from decimal import Decimal
 
 from django.core.cache import cache
+from django.db.models import Exists, OuterRef, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -49,15 +52,19 @@ from core.observability import get_client_ip, get_user_agent
 
 from apps.clients.portal import is_freelancer_previewing_portal, issue_or_renew_session, resolve_session_from_request
 from apps.users.authentication import enforce_csrf_standalone
+from apps.users.models import FreelancerProfile
 
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
 from .email_service import fetch_invoice_pdf_bytes
-from .models import Invoice, InvoiceComment, InvoiceViewEvent
+from .models import Invoice, InvoiceComment, InvoiceViewEvent, PaymentClaim
 from .payment_details import build_payment_details
 from .pdf_generator import render_invoice_portal_html
 from .serializers_claims import PaymentClaimSerializer, PortalClaimCreateSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
-from .serializers_portal import PortalInvoiceDetailSerializer, PortalInvoiceListSerializer
+from .serializers_portal import (
+    PortalInvoiceDetailSerializer, PortalInvoiceListSerializer, PortalOverviewNeedsAttentionSerializer,
+)
+from .views import ACTIVE_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +219,180 @@ def portal_invoice_list(request):
         .order_by('-issue_date', '-created_at')
     )
     return Response(PortalInvoiceListSerializer(invoices, many=True).data)
+
+
+# A home-page summary, not the full list (that's still GET .../portal/me/
+# above) — 5 is a deliberate, small choice; there is no product spec
+# pinning an exact number.
+PORTAL_OVERVIEW_RECENT_INVOICES_LIMIT = 5
+
+
+def _client_balances_by_currency(base_qs):
+    """
+    Outstanding/paid, grouped by currency — NEVER summed across
+    currencies (this app supports multiple invoice currencies per
+    client). Reuses the exact computations invoice_summary (the
+    freelancer-facing KPI strip, views.py) already established for the
+    identical concepts, rather than a second, independently-derived
+    version:
+      - outstanding: Invoice.outstanding_amount, the real model property
+        (max(0, total - amount_paid)), summed only across ACTIVE_STATUSES
+        invoices — the same scope invoice_summary's own
+        `outstanding_qs = qs.filter(status__in=ACTIVE_STATUSES)` uses,
+        since a settled invoice has nothing left outstanding by
+        definition.
+      - paid: amount_paid minus refunded_amount, summed across every
+        non-draft/created invoice with amount_paid > 0 — the exact
+        `inv.amount_paid - inv.refunded_amount` netting invoice_summary's
+        own all_time "Collected" KPI relies on (views.py). Needed because
+        a refund leaves amount_paid UNCHANGED (only status and
+        refunded_amount change, see invoice_refund) — a raw
+        sum('amount_paid') would keep counting refunded money as if the
+        client still had it credited toward this freelancer.
+
+    ONE query (`base_qs` itself — already scoped to this client, non-
+    draft/created, by the caller), iterated once in Python to fill BOTH
+    buckets in the same pass. Never a second query per currency or per
+    invoice — the underlying set is small (one client's own invoices),
+    the same reasoning invoice_summary's own equivalent loop relies on.
+    """
+    outstanding_by_currency = defaultdict(lambda: Decimal('0'))
+    paid_by_currency = defaultdict(lambda: Decimal('0'))
+    for invoice in base_qs.only('id', 'currency', 'status', 'total', 'amount_paid', 'refunded_amount'):
+        if invoice.status in ACTIVE_STATUSES:
+            outstanding_by_currency[invoice.currency] += invoice.outstanding_amount
+        if invoice.amount_paid > 0:
+            paid_by_currency[invoice.currency] += (invoice.amount_paid - invoice.refunded_amount)
+
+    currencies = sorted(set(outstanding_by_currency) | set(paid_by_currency))
+    return [
+        {
+            'currency': currency,
+            'outstanding': str(outstanding_by_currency.get(currency, Decimal('0'))),
+            'paid': str(paid_by_currency.get(currency, Decimal('0'))),
+        }
+        for currency in currencies
+    ]
+
+
+def _needs_attention_reasons(invoice):
+    """
+    Mirrors, condition-for-condition, the same Q filter
+    portal_overview's own needs_attention_qs uses below to DECIDE which
+    invoices reach here at all — kept as an explicit, named function
+    (rather than inlined) so the two can be read side by side and can
+    never silently drift apart. `invoice.days_overdue` is the real model
+    property (Invoice.days_overdue) — never reimplemented here.
+    `has_pending_claim`/`has_unread_message` are the Exists() annotations
+    the caller's queryset already attached (no extra query to read them).
+
+    Every invoice this is called on is guaranteed non-empty here, by
+    construction: needs_attention_qs only ever returns rows matching at
+    least one of these same four conditions.
+    """
+    reasons = []
+    if invoice.status in ('sent', 'viewed') and not invoice.client_acknowledged:
+        reasons.append('unacknowledged')
+    if invoice.days_overdue > 0:
+        reasons.append('overdue')
+    if invoice.has_pending_claim:
+        reasons.append('payment_claim_pending')
+    if invoice.has_unread_message:
+        reasons.append('unread_message')
+    return reasons
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def portal_overview(request):
+    """
+    Client Portal Redesign, Phase 1 — the real Overview/home-page data in
+    one request: the freelancer's own branding (so the portal can show
+    THEIR identity, not generic LanceraOS chrome), this client's
+    currency-grouped balances, a "needs attention" list, and a short
+    recent-invoices list. Same session-resolution/401 discipline as
+    portal_invoice_list above — a client with no valid session gets a
+    real 401, never a default/empty payload standing in for "not logged
+    in."
+
+    Deliberately NOT InvoiceListSerializer/InvoiceDetailSerializer (see
+    serializers_portal.py's own module docstring — those carry
+    freelancer-only internals that must never reach a client).
+    recent_invoices reuses PortalInvoiceListSerializer directly (the
+    existing, already-client-safe portal-list shape, Step 12);
+    needs_attention uses a new, purpose-built allowlist
+    (PortalOverviewNeedsAttentionSerializer) since `reasons` has no
+    equivalent anywhere else and is not a real Invoice field.
+
+    QUERY BUDGET — flat regardless of how many invoices this client has,
+    never one query per invoice (verified via CaptureQueriesContext, see
+    test_portal_overview.py):
+      1. Session lookup (resolve_session_from_request's own internal read)
+      2. Session renewal (its own internal write)
+      3. FreelancerProfile fetch — one row, by user_id (client.user_id is
+         already a plain FK column in memory, so this needs no
+         select_related/extra hop through client.user first)
+      4. Balances — ONE queryset (see _client_balances_by_currency)
+      5. Needs-attention — ONE queryset; the two relational checks (a
+         pending PaymentClaim, an unread freelancer comment) are
+         correlated Exists() subqueries baked into this same query, never
+         a per-invoice lookup — the actual N+1 risk this endpoint exists
+         to avoid
+      6. Recent invoices — ONE queryset, sliced to the limit above
+    """
+    client = resolve_session_from_request(request)
+    if client is None:
+        return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # client.user_id is a plain FK column already in memory (no query) —
+    # matches payment_details.py's established `invoice.user.profile`
+    # business_name-or-display_name pattern, just reached from the client
+    # side rather than an invoice.
+    try:
+        profile = FreelancerProfile.objects.get(user_id=client.user_id)
+        freelancer = {
+            'business_name': profile.business_name or profile.display_name,
+            'logo': profile.logo or None,
+        }
+    except FreelancerProfile.DoesNotExist:
+        # No real path reaches this today (every User gets a profile at
+        # registration) — a defensive fallback only, never silently
+        # 500ing a client's own portal home page over freelancer-side data.
+        freelancer = {'business_name': '', 'logo': None}
+
+    today = timezone.now().date()
+    base_qs = Invoice.objects.filter(client=client).exclude(status__in=('draft', 'created'))
+
+    balances = _client_balances_by_currency(base_qs)
+
+    needs_attention_qs = (
+        base_qs.filter(status__in=ACTIVE_STATUSES)
+        .annotate(
+            has_pending_claim=Exists(PaymentClaim.objects.filter(invoice=OuterRef('pk'), status='pending')),
+            has_unread_message=Exists(
+                InvoiceComment.objects.filter(invoice=OuterRef('pk'), author_type='freelancer', read_by_client_at__isnull=True)
+            ),
+        )
+        .filter(
+            Q(status__in=('sent', 'viewed'), client_acknowledged=False)
+            | Q(due_date__isnull=False, due_date__lt=today)
+            | Q(has_pending_claim=True)
+            | Q(has_unread_message=True)
+        )
+        .order_by('-issue_date', '-created_at')
+    )
+    for invoice in needs_attention_qs:
+        invoice.reasons = _needs_attention_reasons(invoice)
+
+    recent_invoices_qs = base_qs.order_by('-issue_date', '-created_at')[:PORTAL_OVERVIEW_RECENT_INVOICES_LIMIT]
+
+    return Response({
+        'freelancer': freelancer,
+        'client_name': client.name,
+        'balances': balances,
+        'needs_attention': PortalOverviewNeedsAttentionSerializer(needs_attention_qs, many=True).data,
+        'recent_invoices': PortalInvoiceListSerializer(recent_invoices_qs, many=True).data,
+    })
 
 
 @api_view(['GET'])

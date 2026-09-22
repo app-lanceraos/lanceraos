@@ -348,7 +348,7 @@ export const DUE_DATE_HIDDEN_STATUSES = ['paid', 'refunded', 'bad_debt']
 // button, and the new design needs one.
 export function getSendBannerCopy(invoice) {
   if (invoice.status !== 'created') return null
-  return "This invoice hasn't been sent through LanceraOS — reminders, view tracking, and payment tracking won't activate until you send it.";
+  return "This invoice hasn't been sent through LanceraOS; reminders, view tracking, and payment tracking won't activate until you send it.";
 }
 
 // Header subtitle countdown (InvoiceDetailPanel redesign) — "X days

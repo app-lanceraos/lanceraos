@@ -71,7 +71,7 @@ export default function SessionsSection() {
   }
 
   return (
-    <Card title="Active Sessions" subtitle="Devices currently signed in to your account — up to 3 at a time">
+    <Card title="Active Sessions" subtitle="Devices currently signed in to your account; up to 3 at a time">
       {message && (
         <div style={{ marginBottom: 16 }}>
           <FosAlert type={message.type} onDismiss={clear}>{message.text}</FosAlert>

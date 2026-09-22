@@ -38,6 +38,29 @@ class PortalInvoiceListSerializer(serializers.ModelSerializer):
         ]
 
 
+class PortalOverviewNeedsAttentionSerializer(serializers.Serializer):
+    """
+    One row in the Overview's "needs attention" list — Client Portal
+    Redesign, Phase 1. NOT a ModelSerializer: `reasons` is not a real
+    Invoice field, it's computed in the view (views_portal.py's
+    _needs_attention_reasons) and attached to each Invoice instance as a
+    plain Python attribute before serialization, the same "attach a
+    computed value, then serialize it like any other attribute" pattern
+    DRF's own plain Serializer supports natively. Deliberately a small,
+    explicit allowlist — id/invoice_number/portal_view_url/currency/
+    total/due_date/reasons only, per this module's own docstring
+    discipline — never InvoiceListSerializer/InvoiceDetailSerializer,
+    which carry freelancer-only internals.
+    """
+    id = serializers.UUIDField()
+    invoice_number = serializers.CharField()
+    portal_view_url = serializers.CharField()
+    currency = serializers.CharField()
+    total = serializers.DecimalField(max_digits=12, decimal_places=2)
+    due_date = serializers.DateField()
+    reasons = serializers.ListField(child=serializers.CharField())
+
+
 class PortalInvoiceDetailSerializer(serializers.ModelSerializer):
     """GET /api/invoices/portal/<pk>/ — one invoice's full client-visible detail, including line items and the notes/terms that already render on the invoice document itself (never private freelancer data)."""
     items = InvoiceItemSerializer(many=True, read_only=True)

@@ -26,6 +26,10 @@ urlpatterns = [
     # literal-prefixed routes are still listed first for consistency
     # with this file's other route groups.
     path('portal/me/', views_portal.portal_invoice_list, name='portal_invoice_list'),
+    # Client Portal Redesign, Phase 1 — the Overview/home-page data
+    # endpoint. Listed here, not down with portal/<uuid:pk>/, since it's
+    # a sibling of portal/me/ (client-wide, not scoped to one invoice).
+    path('portal/overview/', views_portal.portal_overview, name='portal_overview'),
     path('portal/view/<str:view_token>/', views_portal.portal_invoice_view_html, name='portal_invoice_view_html'),
     path('portal/view/<str:view_token>/pdf/', views_portal.portal_invoice_pdf_download, name='portal_invoice_pdf_download'),
     path('portal/view/<str:view_token>/payment-details/', views_portal.portal_invoice_payment_details, name='portal_invoice_payment_details'),

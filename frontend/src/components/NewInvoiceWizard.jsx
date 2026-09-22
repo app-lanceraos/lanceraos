@@ -316,7 +316,7 @@ export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFina
               {editInvoiceId ? 'Edit Draft' : 'New Invoice'}
             </h2>
             <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
-              {!invoiceId ? 'Not saved yet — add a client to start.' : saveState === 'saving' ? 'Saving…' : 'Draft saved'}
+              {!invoiceId ? 'Not saved yet' : saveState === 'saving' ? 'Saving…' : 'Draft saved'}
             </p>
           </div>
           <button onClick={handleClose} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 8 }}><X size={16} /></button>

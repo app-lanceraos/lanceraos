@@ -12410,3 +12410,186 @@ tree clean, but by the end `frontend/src/pages/settings/SecuritySection.jsx` app
 paragraphs removed, one sentence's punctuation changed) — none of it touched by this pass (confirmed: no `Edit`/
 `Write` call was made against that file in this session). Left exactly as found; flagged here so it isn't mistaken
 for part of this change if the working tree is reviewed or committed as a whole.
+
+---
+
+Date: 22 September 2026 (Client Portal Redesign, Phase 1 — Overview endpoint, freelancer branding on portal
+responses, one-time portal-link email)
+Decision/Reason:
+
+Backend-only. Builds the real data surface the Client Portal's redesigned Overview/home page needs in one request
+(freelancer branding, currency-grouped balances, a needs-attention list, recent invoices), plus a durable,
+one-shot proactive trigger for the existing portal-link email. No frontend consumption built here — a separate,
+later task, per the brief's own explicit scope.
+
+**Step 1 findings — confirmed directly, not assumed.** `apps/invoices/serializers_portal.py`
+(`PortalInvoiceListSerializer`/`PortalInvoiceDetailSerializer`) exposed invoice fields only, no freelancer identity,
+matching the brief. `Invoice.outstanding_amount`/`days_overdue` are real model properties (`max(0, total -
+amount_paid)`; `days_overdue` returns 0 for any status in `NON_OVERDUE_STATUSES`, which excludes `sent`/`viewed`/
+`partially_paid` — i.e. the complement is exactly `apps.invoices.views.ACTIVE_STATUSES`, already a real, named
+constant: `('sent', 'viewed', 'partially_paid')`, "the shared eligibility set for 'Outstanding'/'Past-Due' dashboard
+KPIs" per its own comment). `PaymentClaim.status` choices include `'pending'`; `InvoiceComment.author_type` choices
+include `'freelancer'`, `read_by_client_at` is a nullable `DateTimeField`. `FreelancerProfile.business_name`/
+`display_name`/`logo` (a plain `CharField` URL, not a `FileField`) confirmed directly against the model, not the
+brief's own guessed names (which happened to be exactly right). `apps/invoices/payment_details.py`'s
+`build_payment_details` is the real, most-recent precedent for exposing freelancer identity on a public endpoint —
+`profile.business_name or profile.display_name`, matching `_partials/brand_lockup.html`'s own
+`{{ business_name|default:display_name }}` exactly; followed verbatim rather than inventing a second convention.
+`apps.clients.views_portal._send_portal_link_email(client)` is real, private-by-convention, synchronous (no
+`.delay()`), takes one `Client` argument, returns nothing today. `apps.invoices.views._send_invoice_now` is
+confirmed as the ONE function shared by `invoice_send` (the real `/send/`), `invoice_finalise_and_send` (the
+combined wizard action), AND — a third real call site the brief didn't name —
+`apps.invoices.tasks.generate_recurring_invoices`'s own auto-send path (via a duck-typed `_TaskRequest` standing in
+for the HTTP request, since there's no real request inside a Celery task). All three are genuine platform sends;
+the hook was placed once, inside `_send_invoice_now` itself, so it covers all three for free rather than needing
+three call sites. `EMAILS.md` had no existing portal-link-email row to match the shape of — confirmed by grep before
+writing one from scratch. No circular-import risk in either import direction added (`apps.invoices.views_portal`
+importing `ACTIVE_STATUSES`/`FreelancerProfile`; `apps.invoices.views` importing
+`apps.clients.views_portal._send_portal_link_email`) — checked directly against both modules' own import lists, not
+assumed from the established one-directional `apps.invoices → apps.clients` convention alone.
+
+**A materially better-fitting computation found during investigation, used instead of the brief's own sketch.** The
+brief suggested "the sum of confirmed payments" for the paid bucket and pointed at checking `amount_paid` vs.
+summing `InvoicePartialPayment` directly. Neither is quite right on its own: `invoice_refund` (views.py) leaves
+`amount_paid` UNCHANGED on refund — only `status` and a separate `refunded_amount` field change — so a raw
+`sum(amount_paid)` overstates a client's "paid" total by whatever's since been refunded. The actual established
+convention already exists, in `invoice_summary`'s own `all_time` "Collected" KPI: `sum(inv.amount_paid -
+inv.refunded_amount for inv in paid_qs)`. The Overview's `paid` bucket reuses this exact netting, not a third,
+independently-derived version. `outstanding` reuses `invoice_summary`'s own `outstanding_qs = qs.filter(status__in=
+ACTIVE_STATUSES)` scope (settled invoices have nothing left outstanding by definition) with `Invoice.outstanding_amount`
+summed as-is. Both scoped from a base queryset matching `portal_invoice_list`'s own existing `.exclude(status__in=
+('draft', 'created'))` — a client only ever sees what's actually reached them by some real means, the same boundary
+this app already draws everywhere else (see that view's own docstring).
+
+**Query budget — real numbers, not a plausibility argument.** `GET /api/invoices/portal/overview/` costs **7
+queries total, flat regardless of invoice count** — measured directly (`CaptureQueriesContext`, a throwaway
+transaction rolled back afterward) against the same client at 3, 20, and 50 invoices: `n=3 → 7`, `n=20 → 7`, `n=50 →
+7`. Breakdown: (1) session lookup, (2) session renewal — both inside the unmodified
+`resolve_session_from_request`; (3) one `FreelancerProfile.objects.get(user_id=client.user_id)` (no `select_related`
+hop through `client.user` needed — `client.user_id` is already a plain FK column in memory); (4) balances — ONE
+queryset (`_client_balances_by_currency`), iterated once in Python to fill both the outstanding-by-currency and
+paid-by-currency dicts in the same pass; (5) needs-attention — ONE queryset, with the two relational reasons
+(pending claim, unread message) as correlated `Exists()` subqueries baked into that single query via `.annotate()`
+— the actual N+1 risk the brief called out, closed by construction rather than by discipline; (6) recent invoices —
+ONE queryset, sliced to 5. The needs-attention reasons themselves are computed in Python
+(`_needs_attention_reasons`), reading the already-annotated `has_pending_claim`/`has_unread_message` booleans and
+the real `Invoice.days_overdue` model property — zero additional queries, and the property is reused rather than
+reimplemented, per the brief's own explicit instruction.
+
+**Needs-attention: the SQL filter and the Python reason list are two views of the identical four conditions, kept
+side by side on purpose.** `needs_attention_qs` filters to
+`Q(status__in=('sent','viewed'), client_acknowledged=False) | Q(due_date__isnull=False, due_date__lt=today) |
+Q(has_pending_claim=True) | Q(has_unread_message=True)`, itself further scoped to `status__in=ACTIVE_STATUSES` —
+this is what makes "exclude terminal statuses from every reason, regardless of other field values" true by
+construction, not by a separate check: `ACTIVE_STATUSES` (`sent`/`viewed`/`partially_paid`) is exactly "not
+draft/created and not paid/cancelled/refunded/bad_debt," so a terminal invoice never reaches the OR-filter at all,
+regardless of how many of the four conditions it would otherwise satisfy. `_needs_attention_reasons` re-derives the
+same four conditions in Python purely to build the per-invoice `reasons` list for the response — a comment on each
+function names the other, so they can't silently drift apart without a reader noticing. The "unacknowledged" reason
+is deliberately scoped to `status in (sent, viewed)` only, per the brief's own literal wording — NOT
+`partially_paid`, even though `partially_paid` is itself an active status that could independently qualify via a
+different reason. Every invoice returned is guaranteed non-empty `reasons` by this exact parity, verified directly
+by test rather than assumed.
+
+**Response shape (final, precise — a later frontend task will build directly against this):**
+```json
+{
+  "freelancer": { "business_name": "...", "logo": "..." | null },
+  "client_name": "...",
+  "balances": [{ "currency": "USD", "outstanding": "800.00", "paid": "1300.00" }, ...],
+  "needs_attention": [
+    { "id": "...", "invoice_number": "...", "portal_view_url": "...", "currency": "USD",
+      "total": "500.00", "due_date": "2026-09-12", "reasons": ["unacknowledged", "overdue"] }
+  ],
+  "recent_invoices": [ /* PortalInvoiceListSerializer's existing shape, unchanged, limit 5 */ ]
+}
+```
+`freelancer`/`balances` are plain dicts (no model instance backs either — the brief's own "or plain dict
+construction" allowance); `needs_attention` uses a new `PortalOverviewNeedsAttentionSerializer` (a plain
+`serializers.Serializer`, not a `ModelSerializer` — `reasons` is attached to each `Invoice` instance as an ad-hoc
+Python attribute before serialization, DRF's own supported pattern for a computed, non-model value); `recent_invoices`
+reuses `PortalInvoiceListSerializer` verbatim, per the brief's own explicit instruction — never
+`InvoiceListSerializer`/`InvoiceDetailSerializer` (the freelancer-facing ones), matching `serializers_portal.py`'s own
+module-docstring discipline. `PORTAL_OVERVIEW_RECENT_INVOICES_LIMIT = 5` — a deliberate, undocumented-elsewhere
+choice, stated plainly rather than silently picked. Route: `GET /api/invoices/portal/overview/`, registered right
+after `portal/me/` (a sibling — both client-wide, neither scoped to one invoice); no collision with
+`portal/<uuid:pk>/` (Django's `uuid` path converter never matches the literal string `overview`), confirmed rather
+than assumed.
+
+**Step 3 — the one-time portal-link email.** `Client.initial_portal_link_sent_at` (nullable `DateTimeField`, new
+migration `clients/0003_client_initial_portal_link_sent_at.py`) — set exactly once, the first time
+`_maybe_send_initial_portal_link_email` (new, called only from the tail of `_send_invoice_now`, after the real send
+has already committed) finds `invoice.client_id` set and the field still `None`. Calls the existing
+`_send_portal_link_email(invoice.client)` verbatim — imported, not reimplemented — then sets the field and saves
+with `update_fields=['initial_portal_link_sent_at', 'updated_at']` (the `updated_at` inclusion matches
+`invoice_send_formal_notice`'s own established precedent: an `auto_now` field is only refreshed by `save()` when
+named in `update_fields`). Skipped entirely for a one-time client (`invoice.client_id` is `None` — no `Client` row
+exists). Never called from `invoice_mark_sent` (confirmed directly: that view never calls `_send_invoice_now` at
+all — a structurally separate code path, not merely an unwired one) — a deliberate scope decision matching the
+brief's own explicit instruction, not an oversight.
+
+**A real, deliberate judgment call: this does NOT gate on the send's own success/failure, unlike
+`formal_notice_sent_at`'s own precedent.** `invoice_send_formal_notice` only sets its own one-shot timestamp after
+confirming `result['sent']` is `True` — reasonable there because a failed formal notice should stay retriable on a
+deliberate second click. This field's contract is different: the brief's own wording — "must never fire a second
+time... even if they later get a second, third, tenth invoice" — reads as an absolute at-most-once guarantee, not a
+retry-until-it-works one. Gating on success would mean a single transient send failure leaves the field `None`
+forever, silently re-attempting the send on literally every subsequent invoice to that client — worse than the rare
+failure case it would guard against, especially since `send_client_facing_email`'s own routing chain already has
+its own failure observability (the `CustomSmtpFailed` event/notification machinery), reused here for free since
+`_send_portal_link_email` already calls through that exact chain. Stated explicitly here rather than picked
+silently, since the brief itself didn't specify success-gating either way.
+
+**Verification, with real evidence.**
+1. Live, against the real running dev server, using real ORM-created data (a real user, a real saved `Client`, 7
+   real invoices spanning two currencies, one overdue, one with a real pending `PaymentClaim`, one with a real
+   unread freelancer comment, one `paid` with a deliberately STALE unread comment, one `refunded`, one `draft`) and
+   a real minted `ClientPortalSession` cookie. The real, complete JSON response was inspected by hand against each
+   invoice's own known field values — every number checked out exactly (USD outstanding 800.00 = 500 + 200 + 100;
+   USD paid 1300.00 = 50 + 1000 + (400 − 150) refund-netted; GBP kept entirely separate at 300.00/0, never summed
+   into the USD figures; the `paid` invoice with the stale unread comment correctly absent from `needs_attention`;
+   the `draft` invoice absent from every section). Test data cleaned up from the dev database afterward.
+2. `apps/invoices/tests/test_portal_overview.py` — 22 new tests: session-required 401; both branding cases
+   (real name+logo, and the blank-business_name-falls-back-to-display_name case); currency-never-summed, the
+   `ACTIVE_STATUSES`-only outstanding scope, the refund-netting math, and draft/created exclusion for balances; all
+   four needs-attention reasons individually, the `unacknowledged`-excludes-`partially_paid` scoping, confirmed
+   claims/already-read comments/client-authored comments correctly NOT triggering a reason, one invoice with three
+   simultaneous reasons appearing exactly once, and **the exact case named in the brief** — a `paid` invoice with a
+   stale unread comment, plus `cancelled`/`refunded`/`bad_debt` invoices each artificially given a pending claim,
+   all four confirmed absent from `needs_attention`; recent-invoices shape/limit/exclusion; and the query-budget
+   test itself (3 vs. 20 invoices, asserted EQUAL, not just "reasonably close").
+3. `apps/invoices/tests/test_initial_portal_link_email.py` — 9 new tests (8 initially + a dedicated recurring-auto-send
+   one): first real send fires the email and sets the field; a second invoice for the same client does not re-fire
+   it and the original timestamp is left untouched (not re-stamped); a tenth invoice still doesn't (the brief's own
+   literal wording, tested literally); a one-time client never triggers it; manual mark-sent never triggers it
+   (asserted alongside confirming `sent_via_platform` stayed `False`, proving this really was the manual path); one
+   test deliberately does NOT mock `_send_portal_link_email` at all, letting the real
+   `core.email.send_client_facing_email` chain run end to end (real log line captured: `[CLIENT EMAIL] ...
+   recipient=... subject=Your LanceraOS client portal link ... status=sent`) — proof this reuses the real function,
+   not a mock standing in for untested wiring; `invoice_finalise_and_send` (the second real call site) fires it too;
+   a genuinely failed send (PDF render + fetch both fail, 502 returned) leaves the field untouched and never calls
+   the email function at all; and `generate_recurring_invoices`'s own real auto-send path (the third real call
+   site, not named in the brief) fires it exactly the same as the two view-layer callers, confirmed with a real
+   generated child invoice and a real `sent_via_platform=True`.
+4. Full backend suite: `python manage.py test --keepdb` — **1192 tests, OK, 0 failures** (up from 1161 — exactly the
+   31 new tests above, confirming nothing else regressed).
+
+**Out of scope, honored.** No Payment History, client-safe activity timeline, or My Details endpoint built. No
+frontend component touched — the endpoint was verified via direct API calls (`curl`, the Django test client) only,
+never a browser session. The invoice document renderer, PDF generation, and everything under
+`apps/invoices/templates/` untouched. `ClientPortalSession`/cookie/CSRF mechanics untouched —
+`resolve_session_from_request` reused exactly as it existed. The on-request `portal_request_link` flow's own
+behavior is unchanged (confirmed: not one line inside `apps/clients/views_portal.py` was edited this pass). The
+automatic email was not added to `invoice_mark_sent`, even though it would have been a one-line addition while
+already inside `views.py` — a deliberate scope decision per the brief, not an oversight. No second implementation
+of "amount paid," "outstanding balance," or "is overdue" was introduced anywhere — every one reuses the existing
+model property or the existing `invoice_summary` computation.
+
+**A separate, unrelated observation, not a decision — same as the entry above's own note.** `git status` at the
+start of this pass was already carrying the prior entry's own flagged `frontend/src/pages/settings/SecuritySection.jsx`
+diff (now folded into commit `3546543`, so that specific one is resolved) — but by the end of THIS pass, a new,
+larger set of uncommitted frontend files appeared (`NewInvoiceWizard.jsx`, `InvoiceAnalytics.jsx`, `Profile.jsx`,
+`SignatureCard.jsx`, `TemplateGallery.jsx`, `invoiceHelpers.js`, `NotificationsSection.jsx`, `SessionsSection.jsx`),
+none touched by this pass (this task was backend-only — confirmed no `Edit`/`Write` call was made against any
+frontend file in this session). Left exactly as found; flagged here for the same reason as before, so this
+pre-existing local work isn't mistaken for part of this backend-only change if the tree is committed as a whole.

@@ -107,7 +107,7 @@ export default function InvoiceAnalytics() {
         <Card title="Top Clients" subtitle="By revenue collected, unified to USD">
           {loading ? <ListSkeleton /> : <TopClientsList clients={data?.top_clients || []} />}
         </Card>
-        <Card title="Currency Breakdown" subtitle="Real invoices only — drafts excluded">
+        <Card title="Currency Breakdown" subtitle="Real invoices only">
           {loading ? <ListSkeleton /> : <CurrencyBreakdown breakdown={data?.currency_breakdown} />}
         </Card>
       </div>
