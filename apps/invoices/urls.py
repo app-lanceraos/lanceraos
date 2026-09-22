@@ -30,6 +30,11 @@ urlpatterns = [
     # endpoint. Listed here, not down with portal/<uuid:pk>/, since it's
     # a sibling of portal/me/ (client-wide, not scoped to one invoice).
     path('portal/overview/', views_portal.portal_overview, name='portal_overview'),
+    # Client Portal Redesign, Phase 1b — Payments (balances + payment
+    # history + claims, across ALL of this client's own invoices; saved-
+    # client-session only, same sibling-of-portal/me/ reasoning as
+    # portal/overview/ above).
+    path('portal/payments/', views_portal.portal_payments, name='portal_payments'),
     path('portal/view/<str:view_token>/', views_portal.portal_invoice_view_html, name='portal_invoice_view_html'),
     path('portal/view/<str:view_token>/pdf/', views_portal.portal_invoice_pdf_download, name='portal_invoice_pdf_download'),
     path('portal/view/<str:view_token>/payment-details/', views_portal.portal_invoice_payment_details, name='portal_invoice_payment_details'),
@@ -37,6 +42,8 @@ urlpatterns = [
     path('portal/<uuid:pk>/comments/', views_portal.portal_invoice_comments, name='portal_invoice_comments'),
     path('portal/<uuid:pk>/claims/', views_portal.portal_invoice_claims, name='portal_invoice_claims'),
     path('portal/<uuid:pk>/acknowledge/', views_portal.portal_invoice_acknowledge, name='portal_invoice_acknowledge'),
+    # Client Portal Redesign, Phase 1b — the client-safe invoice timeline.
+    path('portal/<uuid:pk>/timeline/', views_portal.portal_invoice_timeline, name='portal_invoice_timeline'),
 
     path('presets/', views.preset_list, name='preset_list'),
     path('presets/<uuid:pk>/', views.preset_detail, name='preset_detail'),

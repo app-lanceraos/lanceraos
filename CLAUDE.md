@@ -2281,6 +2281,48 @@ checked against the real JSON response) and with 31 new automated tests (`test_p
 DECISIONS.md's second 22 September 2026 entry for the full investigation findings, the query-budget numbers, and
 every test's real evidence.
 
+**22 September 2026 (Client Portal Redesign, Phase 1b — Payments, client-safe Timeline, My Details, and a
+success-gating fix to Phase 1's own portal-link email).** Backend-only, no frontend consumption built. Three new
+read endpoints plus one reversal. `GET /api/invoices/portal/payments/` (saved-client-session only, no one-time-
+client path — a one-time client has no ongoing `Client` relationship to aggregate payments across): balances via
+`_client_balances_by_currency`, the exact function `portal_overview` already calls (proven identical by comparing
+the two real responses directly, not re-derived independently); payment history via a new `PortalPaymentSerializer`
+(amount/currency/payment_date/source/invoice_number/portal_view_url — deliberately excludes `notes`, the real
+freelancer-private field, per a confirmed product decision); claims via `PaymentClaimSerializer` reused verbatim,
+including `review_note` (already client-safe precedent — confirmed directly at `portal_invoice_claims`'s own GET
+branch, which already does this). `GET /api/invoices/portal/<pk>/timeline/` (reuses `_resolve_portal_write_access`
+verbatim — saved-client session OR one-time-client `?view_token=`, the exact dual-access shape
+`portal_invoice_claims`'s GET already established): a client-safe subset of the freelancer-facing `invoice_timeline`
+— kept `sent`/`payment` (no notes)/`claim`/`acknowledged`/`formal_notice`; excluded `created`/`finalised`
+(freelancer-private drafting stage), `view` (would need `ip_address`, forbidden), `reminder` (every field is
+"reminder internals," forbidden), `comment` (Messages already shows the full thread), `escalation` (the type IS
+escalation state, forbidden) — full reasoning recorded in the view module itself, next to the code. `GET/POST
+/api/clients/portal/details/(request-change/)` (My Details) — placed in `apps.clients`, not `apps.invoices`, since
+it's genuinely, entirely `Client`-scoped: GET returns a new, minimal `PortalClientDetailSerializer`
+(name/email/company/phone/address/country only — never `ClientSerializer`/`ClientListSerializer`, which carry
+`notes`/flags/`payment_stats`/`portal_token`); POST validates a proposed-changes/message payload and emits
+`ClientDetailsChangeRequested` — **no persistent model** (confirmed: the `Client` row is byte-for-byte untouched
+after a real request) — a new handler in `apps/clients/notifications.py` (this app's first-ever `@on(...)`
+handler, registered via a new `ClientsConfig.ready()`) writes a real `AuditLog`/bell entry and sends the freelancer
+a real email, mirroring `_notify_payment_claim_submitted`'s exact established pattern, gated on
+`notif_client_messages` (a judgment call — this is a client communication, not a payment event). Closed a real,
+previously-hardcoded constraint found along the way: `core.notifications._action_url` only ever read
+`metadata['invoice_id']` — generalized to fall back to `metadata['client_id']` for this new, invoice-less event,
+with a dedicated backward-compatibility test proving every existing invoice-based event still resolves identically.
+Separately: `_maybe_send_initial_portal_link_email` (Phase 1) now gates on real send success — a deliberate
+REVERSAL of Phase 1's own "fire and mark regardless" decision, per this task's own explicit instruction — matching
+`Invoice.formal_notice_sent_at`'s established pattern; `_send_portal_link_email` now returns
+`send_client_facing_email`'s own result dict instead of discarding it. Verified live against the real dev server
+(real Payments/Timeline/My-Details responses hand-checked against known seeded data, a real My-Details change
+request submitted through the real magic-link + CSRF flow with the `Client` row confirmed untouched afterward, and
+the real notification bell checked via a real authenticated freelancer login showing the correct title/message/
+`action_url`); the success-gating fix was verified via automated tests only, not by breaking the real dev server's
+email config, since a real `RESEND_API_KEY` is configured in this environment. 51 new tests across four files
+(`test_portal_payments.py`, `test_portal_timeline.py`, `test_portal_my_details.py`, plus 3 appended to
+`test_initial_portal_link_email.py`) — full backend suite: **1243 tests, OK, 0 failures** (up from 1192). No schema
+change — zero new model fields or migrations this pass. See DECISIONS.md's 22 September 2026 Phase 1b entry for
+the full investigation findings and every test's real evidence.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

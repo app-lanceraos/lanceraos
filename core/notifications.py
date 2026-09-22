@@ -56,6 +56,11 @@ NOTIFICATION_EVENTS = {
     # invoice_sent above.
     # apps/invoices, Step 18 — the weekly stale-draft nudge.
     'stale_drafts_digest',
+    # apps/clients, Client Portal Redesign Phase 1b — a client proposed a
+    # change to their own on-file details (name/email/company/phone/
+    # address/country) via the portal's My Details screen. This app's
+    # first-ever entry in this allowlist — see apps/clients/notifications.py.
+    'client_details_change_requested',
 }
 
 EVENT_TITLES = {
@@ -76,6 +81,7 @@ EVENT_TITLES = {
     'recurring_generation_failed': 'Recurring invoice generation failed',
     'recurring_generation_paused': 'Recurring invoices paused',
     'stale_drafts_digest': 'Unsent drafts waiting',
+    'client_details_change_requested': 'Client details change requested',
 }
 
 # Where clicking each notification type navigates. Compulsory — every
@@ -122,6 +128,16 @@ EVENT_ACTION_URLS = {
     'recurring_generation_failed': '/invoices/?filter=recurring',
     'recurring_generation_paused': '/invoices/?filter=recurring',
     'stale_drafts_digest': '/invoices/?status=draft',
+    # {id} here is a CLIENT id, not an invoice id — see _action_url's own
+    # updated fallback below. '/clients?client={id}' matches
+    # '/invoices?invoice={id}''s established query-param convention
+    # (Clients.jsx is presumed to be the same kind of state-driven-panel
+    # page Invoices.jsx already is, per CLAUDE.md's own frontend section)
+    # but is UNVERIFIED against the real frontend route — this task was
+    # backend-only and did not read frontend/src/App.jsx/Clients.jsx to
+    # confirm. Flagged directly rather than assumed silently; correct
+    # this string, not the mechanism, if the real route differs.
+    'client_details_change_requested': '/clients?client={id}',
 }
 
 
@@ -131,15 +147,24 @@ def _action_url(log):
     is the first event (comment_posted, Step 13) whose real destination
     needs the specific invoice's id, so this is the first real use of the
     {id} placeholder. Falls back to the raw (unsubstituted) template if
-    metadata['invoice_id'] is somehow missing, rather than raising —
+    the relevant metadata key is somehow missing, rather than raising —
     a slightly wrong link is far better than a 500 on the notification
     bell for every user.
+
+    GENERALIZED, Client Portal Redesign Phase 1b: {id} used to be
+    hardcoded to metadata['invoice_id'] only. client_details_change_requested
+    (apps/clients/notifications.py) is about a CLIENT, not an invoice, so
+    it writes metadata['client_id'] instead — this now checks invoice_id
+    first (unchanged behavior for every pre-existing event, all of which
+    always set it) and falls back to client_id only when invoice_id is
+    absent, so no existing event's resolution can change.
     """
     template = EVENT_ACTION_URLS.get(log.event)
     if template and '{id}' in template:
-        invoice_id = (log.metadata or {}).get('invoice_id')
-        if invoice_id:
-            return template.replace('{id}', invoice_id)
+        metadata = log.metadata or {}
+        entity_id = metadata.get('invoice_id') or metadata.get('client_id')
+        if entity_id:
+            return template.replace('{id}', entity_id)
     return template
 
 
@@ -186,6 +211,9 @@ def _describe(log):
         count = log.metadata.get('draft_count') or 0
         plural = 's' if count != 1 else ''
         return f'You have {count} unsent draft invoice{plural} sitting for over a week.'
+    if log.event == 'client_details_change_requested':
+        client = log.metadata.get('client_name') or 'A client'
+        return f'{client} would like to update their details on file with you.'
     return ''
 
 

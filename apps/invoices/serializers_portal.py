@@ -11,7 +11,7 @@ serializers.py's own docstring establishes.
 """
 from rest_framework import serializers
 
-from .models import Invoice
+from .models import Invoice, InvoicePartialPayment
 from .serializers import InvoiceItemSerializer
 
 
@@ -59,6 +59,29 @@ class PortalOverviewNeedsAttentionSerializer(serializers.Serializer):
     total = serializers.DecimalField(max_digits=12, decimal_places=2)
     due_date = serializers.DateField()
     reasons = serializers.ListField(child=serializers.CharField())
+
+
+class PortalPaymentSerializer(serializers.ModelSerializer):
+    """
+    GET /api/invoices/portal/payments/ — one row per confirmed
+    InvoicePartialPayment across ALL of this client's own invoices.
+    Client Portal Redesign, Phase 1b. Deliberately excludes `notes`
+    (InvoicePartialPaymentSerializer's own field, serializers.py) — a
+    real, confirmed product decision: the client sees amount/date/source
+    only, never the freelancer's private note text on a manually-
+    recorded payment. Also excludes `rate_to_usd` (an internal anchor-
+    currency bookkeeping value, not client-facing) and `recorded_at`
+    (payment_date is the client-meaningful date; recorded_at is when the
+    freelancer happened to type it in). `invoice_number`/`portal_view_url`
+    come from the related Invoice via `source=` — the view's own
+    `.select_related('invoice')` means reading these costs no extra query.
+    """
+    invoice_number = serializers.CharField(source='invoice.invoice_number', read_only=True)
+    portal_view_url = serializers.CharField(source='invoice.portal_view_url', read_only=True)
+
+    class Meta:
+        model = InvoicePartialPayment
+        fields = ['id', 'amount', 'currency', 'payment_date', 'source', 'invoice_number', 'portal_view_url']
 
 
 class PortalInvoiceDetailSerializer(serializers.ModelSerializer):

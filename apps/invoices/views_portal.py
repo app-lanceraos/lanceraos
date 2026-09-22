@@ -56,13 +56,14 @@ from apps.users.models import FreelancerProfile
 
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
 from .email_service import fetch_invoice_pdf_bytes
-from .models import Invoice, InvoiceComment, InvoiceViewEvent, PaymentClaim
+from .models import Invoice, InvoiceComment, InvoicePartialPayment, InvoiceViewEvent, PaymentClaim
 from .payment_details import build_payment_details
 from .pdf_generator import render_invoice_portal_html
 from .serializers_claims import PaymentClaimSerializer, PortalClaimCreateSerializer
 from .serializers_comments import CommentCreateSerializer, InvoiceCommentSerializer
 from .serializers_portal import (
     PortalInvoiceDetailSerializer, PortalInvoiceListSerializer, PortalOverviewNeedsAttentionSerializer,
+    PortalPaymentSerializer,
 )
 from .views import ACTIVE_STATUSES
 
@@ -392,6 +393,66 @@ def portal_overview(request):
         'balances': balances,
         'needs_attention': PortalOverviewNeedsAttentionSerializer(needs_attention_qs, many=True).data,
         'recent_invoices': PortalInvoiceListSerializer(recent_invoices_qs, many=True).data,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def portal_payments(request):
+    """
+    Client Portal Redesign, Phase 1b — Payments. Same session-required
+    401 discipline as portal_overview/portal_invoice_list above; a
+    saved-client-session-only endpoint (unlike the Timeline endpoint
+    below, there is no one-time-client path here — a one-time client has
+    no ongoing Client relationship to aggregate payments ACROSS, only
+    the one invoice they were sent, whose own payment history is already
+    visible in that invoice's own view/download).
+
+    Balances reuse _client_balances_by_currency verbatim (the exact
+    function portal_overview already calls) — never a second,
+    independently-derived computation of the same outstanding/paid
+    concepts.
+
+    Payment history and claims are both scoped with the same
+    `.exclude(status__in=('draft', 'created'))` boundary this app draws
+    everywhere else a client's visibility is concerned (portal_invoice_list's
+    own docstring) — belt-and-suspenders, since a draft/created invoice
+    realistically never has a payment or claim against it, but the
+    boundary should hold even in a scenario this app's own data model
+    doesn't currently prevent.
+
+    QUERY BUDGET — flat, verified via CaptureQueriesContext (see
+    test_portal_payments.py): (1) session lookup, (2) session renewal,
+    (3) balances (one queryset, iterated once — see
+    _client_balances_by_currency), (4) payment history (one queryset,
+    select_related('invoice') so invoice_number/portal_view_url cost no
+    extra query per row), (5) claims (one queryset, select_related
+    likewise) — 5 total, never one per payment/claim.
+    """
+    client = resolve_session_from_request(request)
+    if client is None:
+        return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    base_qs = Invoice.objects.filter(client=client).exclude(status__in=('draft', 'created'))
+    balances = _client_balances_by_currency(base_qs)
+
+    payments = (
+        InvoicePartialPayment.objects.filter(invoice__client=client)
+        .exclude(invoice__status__in=('draft', 'created'))
+        .select_related('invoice')
+        .order_by('-recorded_at')
+    )
+    claims = (
+        PaymentClaim.objects.filter(invoice__client=client)
+        .exclude(invoice__status__in=('draft', 'created'))
+        .select_related('invoice')
+        .order_by('-submitted_at')
+    )
+
+    return Response({
+        'balances': balances,
+        'payments': PortalPaymentSerializer(payments, many=True).data,
+        'claims': PaymentClaimSerializer(claims, many=True).data,
     })
 
 
@@ -984,3 +1045,92 @@ def portal_invoice_acknowledge(request, pk):
         {'client_acknowledged': True, 'client_acknowledged_at': invoice.client_acknowledged_at},
         status=status.HTTP_201_CREATED,
     )
+
+
+# Event types intentionally excluded from the client-safe timeline below,
+# and why — kept here rather than only in the view's own docstring so the
+# exclusion list is easy to find on its own:
+#   created/finalised — pre-delivery drafting-stage events on the
+#     freelancer's own side; a client's own history of an invoice starts
+#     when it was actually delivered to them (sent), not when the
+#     freelancer privately drafted it in their own system.
+#   view — the one client-relevant field (when did I look at this) would
+#     require also carrying ip_address, which the brief explicitly
+#     forbids; a client already knows when they visited, so this entry
+#     type would be self-referential noise once ip_address is stripped.
+#   reminder — every field (reminder_number, template_used, delivered) is
+#     exactly the "reminder-count/last-reminder-sent internals" the brief
+#     explicitly forbids; the whole entry TYPE is internal, not just one
+#     field of it.
+#   comment — the Messages tab (portal_invoice_comments) already shows
+#     the full thread with real content; a timeline entry carrying only
+#     author_type/source, with no message body, would be pure noise that
+#     just points the client back to a tab they can already open directly.
+#   escalation — the entry type IS escalation state, explicitly forbidden.
+def _client_safe_timeline_entries(invoice):
+    """
+    A client-safe subset of invoice_timeline's own event set (views.py) —
+    see the exclusion list immediately above for what's deliberately left
+    out and why. Kept ones: sent (when it was delivered), payment
+    (amount/currency/source only — no notes, the same rule Payment
+    History above follows), claim (status/amount/currency — a
+    chronological narrative entry, distinct from the Payments endpoint's
+    own claims-focused table above), acknowledged (the client's own past
+    action), and formal_notice (a real email the client already
+    received, not an internal-only marker — its existence isn't secret
+    from the person it was sent to).
+    """
+    entries = []
+    if invoice.sent_at:
+        entries.append({'type': 'sent', 'timestamp': invoice.sent_at.isoformat()})
+    for payment in invoice.partial_payments.all():
+        entries.append({
+            'type': 'payment', 'timestamp': payment.recorded_at.isoformat(),
+            'amount': str(payment.amount), 'currency': payment.currency, 'source': payment.source,
+        })
+    for claim in invoice.payment_claims.all():
+        entries.append({
+            'type': 'claim', 'timestamp': claim.submitted_at.isoformat(),
+            'status': claim.status, 'amount': str(claim.amount_claimed), 'currency': claim.currency,
+        })
+    if invoice.client_acknowledged_at:
+        entries.append({'type': 'acknowledged', 'timestamp': invoice.client_acknowledged_at.isoformat()})
+    if invoice.formal_notice_sent_at:
+        entries.append({'type': 'formal_notice', 'timestamp': invoice.formal_notice_sent_at.isoformat()})
+
+    entries.sort(key=lambda e: e['timestamp'])
+    return entries
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def portal_invoice_timeline(request, pk):
+    """
+    Client Portal Redesign, Phase 1b — a client-safe subset of the
+    freelancer-facing invoice_timeline (views.py). Access resolution
+    reuses _resolve_portal_write_access verbatim (a saved client's
+    portal session, OR a one-time client proving ownership via its own
+    view_token in the query string — the exact same access shape
+    portal_invoice_claims' own GET branch already established; despite
+    its "write" name, the helper's actual job — resolve which invoice
+    this caller may act on/read — is identical for a read, and reusing
+    it here means this endpoint can never independently drift from that
+    established access pattern).
+
+    No rate limit — matches portal_invoice_detail's own precedent
+    (an ordinary, session-or-token-authenticated read, not an anonymous-
+    abuse surface like portal_invoice_payment_details, which has no
+    identity check at all beyond the token itself).
+
+    See _client_safe_timeline_entries' own docstring/comment for exactly
+    which event types are included and why every excluded one is
+    excluded — no IP addresses, no user agents, no reminder-count/
+    last-reminder-sent internals, no escalation state, and payment
+    entries carry no `notes`, per the brief's own hard requirements.
+    """
+    result = _resolve_portal_write_access(request, pk)
+    if isinstance(result, Response):
+        return result
+    invoice, _client_name, _client_email, _rate_limit_key = result
+
+    return Response({'results': _client_safe_timeline_entries(invoice)})

@@ -137,3 +137,60 @@ class ClientListSerializer(serializers.ModelSerializer):
 
     def get_payment_stats(self, obj):
         return obj.payment_stats
+
+
+class PortalClientDetailSerializer(serializers.ModelSerializer):
+    """
+    GET /api/clients/portal/details/ — Client Portal Redesign, Phase 1b,
+    My Details. A genuinely new, minimal, explicit allowlist — never
+    ClientSerializer (the freelancer's own create/update representation)
+    or ClientListSerializer (which carries `notes` — the freelancer's
+    PRIVATE notes about this client, `is_flagged`/`flag_reason`/
+    `flag_type` — the freelancer's private risk assessment of this same
+    client, `auto_flagged`, `payment_stats` — the freelancer's own
+    reliability scoring of this client, and `portal_token` — the raw
+    magic-link credential). None of those five have any business
+    reaching the client they're ABOUT. Read-only by construction — no
+    `update()`; the client never writes to their own Client row directly
+    (see ClientDetailsChangeRequestSerializer below for the only write
+    path, which never touches this model at all).
+    """
+    class Meta:
+        model = Client
+        fields = ['name', 'email', 'company', 'phone', 'address', 'country']
+        read_only_fields = fields
+
+
+class ClientDetailsChangeRequestSerializer(serializers.Serializer):
+    """
+    POST /api/clients/portal/details/request-change/ — Client Portal
+    Redesign, Phase 1b. NOT a ModelSerializer and never saved to the
+    Client row: this is a proposal the freelancer reviews and applies
+    themselves (or doesn't) through their own already-secure Client edit
+    path (PUT /api/clients/<pk>/, ClientSerializer above) — this
+    serializer's only job is validating the client's submitted payload
+    before it's handed to core.events.emit for the notification handler
+    (apps/clients/notifications.py) to read.
+
+    Every proposed_* field is optional and freeform text (not validated
+    against ClientSerializer's own field-level rules, e.g.
+    validate_email's duplicate check) — deliberately: this is a raw
+    proposal for a human (the freelancer) to read and judge, not a write
+    that will itself ever reach the Client model, so ClientSerializer's
+    write-path validation doesn't apply here at all.
+    """
+    proposed_name = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    proposed_email = serializers.CharField(required=False, allow_blank=True, max_length=254)
+    proposed_company = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    proposed_phone = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    proposed_address = serializers.CharField(required=False, allow_blank=True)
+    proposed_country = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    message = serializers.CharField(required=False, allow_blank=True)
+
+    PROPOSED_FIELDS = ('proposed_name', 'proposed_email', 'proposed_company', 'proposed_phone', 'proposed_address', 'proposed_country')
+
+    def validate(self, data):
+        has_content = any((data.get(f) or '').strip() for f in self.PROPOSED_FIELDS) or (data.get('message') or '').strip()
+        if not has_content:
+            raise serializers.ValidationError('Provide at least one proposed change or a message.')
+        return data

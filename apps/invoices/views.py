@@ -927,27 +927,57 @@ def _maybe_send_initial_portal_link_email(invoice):
     once per send, not once per invoice in a list, so the extra query is
     the right trade against making every caller responsible for it.
 
-    Deliberately does NOT gate on the send's own success/failure result —
-    unlike Invoice.formal_notice_sent_at (which is only set once
-    send_invoice_related_email itself reports success, since a failed
-    formal notice should remain re-triggerable), this field's own
-    contract is unconditional: "must never fire a second time... even if
-    they later get a second, third, tenth invoice" is an absolute
-    guarantee, not a "retry until it works" one. Gating on success would
-    mean a single transient failure leaves the field null forever,
-    silently re-attempting this send on every subsequent invoice to the
-    same client — worse than the rare case this trades away (a genuine
-    total send failure, already covered by send_client_facing_email's own
-    CustomSmtpFailed fallback/notification machinery, which this reuses
-    for free since it's the identical routing chain _send_portal_link_email
-    already calls).
+    REVERSED, Client Portal Redesign Phase 1b (see DECISIONS.md — this
+    directly contradicts Phase 1's own original reasoning below, kept
+    struck through in spirit rather than silently deleted, since it
+    explains what changed and why): this NOW gates on the send's own
+    success/failure result, matching Invoice.formal_notice_sent_at's own
+    established pattern exactly (`_send_portal_link_email` was changed
+    to return send_client_facing_email's own result dict for this reason
+    — see that function's own updated docstring). Phase 1's original
+    argument — that gating on success risks a permanent retry-every-send
+    storm on a persistently-failing address — is real, but Phase 1b's own
+    brief explicitly instructs this exact reversal and explicitly caps
+    the retry shape at "try again on the client's next invoice" (a
+    natural consequence of simply leaving the field null on failure, not
+    new retry machinery): a transient failure is retried once per future
+    invoice, which for a real, still-active client relationship is rare
+    and self-limiting, not a storm — and "fire and mark regardless" has
+    its own real cost this reversal fixes: a client whose FIRST attempt
+    genuinely failed (bad email typo, a dead custom-SMTP config) would
+    otherwise NEVER receive this email at all, forever, with
+    initial_portal_link_sent_at falsely claiming they did.
+
+    Skipped entirely for a one-time client (invoice.client_id is None) —
+    there is no Client row, so no portal to link to and nowhere to
+    persist "already sent" against.
+
+    invoice.client is fetched fresh here (a real query — _send_invoice_now
+    is never called with the client preloaded) rather than via a
+    select_related the caller would have to remember to add; this runs
+    once per send, not once per invoice in a list, so the extra query is
+    the right trade against making every caller responsible for it.
+
+    A failed attempt is logged as a warning (not an error — this is a
+    best-effort SECONDARY action; the real invoice send this function is
+    called after has already succeeded and committed by this point, so a
+    failure here must never fail or roll back the caller's own response)
+    and leaves initial_portal_link_sent_at untouched, so the very next
+    real platform send to this same client tries again.
     """
     if not invoice.client_id:
         return
     if invoice.client.initial_portal_link_sent_at is not None:
         return
 
-    _send_portal_link_email(invoice.client)
+    result = _send_portal_link_email(invoice.client)
+    if not result['sent']:
+        logger.warning(
+            '[INVOICES] Initial client-portal-link email to %s did not send (error=%s) — '
+            'initial_portal_link_sent_at left null, will retry on the next platform send.',
+            invoice.client.email, result.get('error'),
+        )
+        return
 
     invoice.client.initial_portal_link_sent_at = timezone.now()
     # 'updated_at' explicitly included — an auto_now field is only

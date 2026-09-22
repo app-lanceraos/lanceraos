@@ -16,6 +16,11 @@ urlpatterns = [
     path('portal/request-link/', views_portal.portal_request_link, name='portal_request_link'),
     path('portal/logout-everywhere/', views_portal.portal_logout_everywhere, name='portal_logout_everywhere'),
     path('portal/logout/', views_portal.portal_logout, name='portal_logout'),
+    # Client Portal Redesign, Phase 1b — My Details. Literal-prefixed,
+    # so both must stay ahead of portal/<str:token>/ below (same
+    # greedy-str-converter reason the comment above already explains).
+    path('portal/details/request-change/', views_portal.portal_my_details_request_change, name='portal_my_details_request_change'),
+    path('portal/details/', views_portal.portal_my_details, name='portal_my_details'),
     path('portal/<str:token>/', views_portal.portal_enter, name='portal_enter'),
     path('<uuid:pk>/', views.client_detail, name='client_detail'),
     path('<uuid:pk>/archive/', views.client_archive, name='client_archive'),

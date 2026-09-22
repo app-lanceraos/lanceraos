@@ -12593,3 +12593,191 @@ larger set of uncommitted frontend files appeared (`NewInvoiceWizard.jsx`, `Invo
 none touched by this pass (this task was backend-only — confirmed no `Edit`/`Write` call was made against any
 frontend file in this session). Left exactly as found; flagged here for the same reason as before, so this
 pre-existing local work isn't mistaken for part of this backend-only change if the tree is committed as a whole.
+
+---
+
+Date: 22 September 2026 (Client Portal Redesign, Phase 1b — Payments, client-safe Timeline, My Details, and a
+success-gating fix to Phase 1's one-time portal-link email)
+Decision/Reason:
+
+Backend-only, same discipline as Phase 1: no frontend consumption built here. Four independent pieces, one shared
+computation reused (not duplicated) across two of them.
+
+**Step 1 findings — confirmed directly against the real, current, already-merged code, not this task's own brief.**
+`_client_balances_by_currency(base_qs)` (`apps/invoices/views_portal.py`) is already a standalone, module-level
+function — `portal_overview` calls it, not an inlined computation — so Payments (2A) needed only to build the same
+`base_qs` shape and call it, zero refactor required. `InvoicePartialPaymentSerializer` (`serializers.py`) carries
+`notes`; `PaymentClaimSerializer` (`serializers_claims.py`) carries `review_note` and IS ALREADY reused verbatim for
+a client-facing read — confirmed directly at `portal_invoice_claims`'s own GET branch
+(`return Response(PaymentClaimSerializer(invoice.payment_claims.all(), many=True).data)`), the real, live precedent
+the brief pointed at. The real freelancer-facing timeline is `invoice_timeline` (`views.py`) — confirmed exact name
+and event shape by reading it directly, not assumed from the brief's own guessed field list (which was accurate).
+`_resolve_portal_write_access` (`views_portal.py`) already supports BOTH a saved client's session AND a one-time
+client's `?view_token=` query-string credential — confirmed by reading `portal_invoice_claims`'s own GET branch,
+which already uses it for exactly this dual-access shape despite the helper's "write" name; reused verbatim for
+Timeline (2B) rather than inventing a third access pattern. `Client`'s real current fields, and which serializers
+already leak freelancer-only data (`ClientListSerializer` carries `notes`, `is_flagged`/`flag_reason`/`flag_type`/
+`auto_flagged`, `payment_stats`, `portal_token`), were confirmed directly against `apps/clients/serializers.py`
+before deciding My Details (2C) needed a genuinely new, minimal serializer — it does.
+`apps.invoices.notifications._notify_payment_claim_submitted` is the real, confirmed precedent for "a client did
+something, notify the freelancer via both an AuditLog/bell entry and a real, immediate email, no new persistent
+model" — its exact shape (gate on a `notif_*` preference, `log_event()`, then `send_email()`) was mirrored for My
+Details' request-change notification. `Client.initial_portal_link_sent_at`'s real current call site
+(`apps/invoices/views.py`'s `_maybe_send_initial_portal_link_email`, called only from `_send_invoice_now`) and
+`_send_portal_link_email`'s real current return contract (nothing — discarded by both existing callers) were
+confirmed directly before Step 2D's fix. `send_client_facing_email`'s own existing result-dict contract
+(`{'sent': bool, 'sent_via', 'smtp_host', 'provider_message_id', 'fallback_used', 'error'}`) is ALREADY the exact
+shape `invoice_send_formal_notice` gates `formal_notice_sent_at` on — confirmed this is sufficient on its own;
+`core.email.send_email_detailed`'s own separate pattern (built for a different call site) was investigated and
+correctly NOT needed here.
+
+**A real, previously-undetected constraint found during investigation: `core.notifications._action_url` was
+hardcoded to `metadata['invoice_id']`.** Every existing bell-notification event is about an invoice; My Details'
+new `client_details_change_requested` event is about a `Client`, with no invoice involved at all. Generalized
+`_action_url` to check `invoice_id` first (unchanged behavior for every pre-existing event — all of which always
+set it) and fall back to `client_id` only when `invoice_id` is absent. A real, dedicated backward-compatibility
+test (`test_existing_invoice_id_based_events_are_unaffected`) proves an existing `payment_claim_submitted`-style
+log still resolves identically to before. The new event's own action URL, `/clients?client={id}`, mirrors
+`/invoices?invoice={id}`'s established convention but is **UNVERIFIED against the real frontend route** — this
+task never read `frontend/src/App.jsx`/`Clients.jsx` (backend-only, per the brief's own scope) — flagged directly
+in `core/notifications.py`'s own comment rather than silently assumed correct.
+
+**2A — Payments (`GET /api/invoices/portal/payments/`).** Saved-client-session only, deliberately no one-time-
+client path (unlike 2B) — a one-time client has no ongoing `Client` relationship to aggregate payments ACROSS,
+only the one invoice they were sent, whose own payment history is already visible via that invoice's own document.
+Balances: `_client_balances_by_currency(base_qs)`, called verbatim — proven identical to `portal_overview`'s own
+output by a real test comparing the two live responses against each other
+(`test_balances_match_overview_computation_exactly`), not just re-checking the math independently. Payment history:
+a new `PortalPaymentSerializer` (`serializers_portal.py`) — `id`/`amount`/`currency`/`payment_date`/`source`/
+`invoice_number`/`portal_view_url` only, deliberately excluding `notes` (the confirmed product decision),
+`rate_to_usd` (internal bookkeeping), and `recorded_at` (payment_date is the client-meaningful date). Claims:
+`PaymentClaimSerializer` reused verbatim, including `review_note`, per the confirmed precedent above. Both
+querysets add `.exclude(invoice__status__in=('draft', 'created'))` on top of the client scope — belt-and-suspenders
+consistency with the visibility boundary this app draws everywhere else, even though a draft/created invoice
+realistically never has a payment or claim against it in this data model today. Query budget: 5 total (session
+lookup, session renewal, balances, payments, claims), verified flat at 3 vs. 20 payment/claim-bearing invoices for
+the same client (`CaptureQueriesContext`, asserted equal).
+
+**2B — Client-safe Timeline (`GET /api/invoices/portal/<pk>/timeline/`).** Reuses `_resolve_portal_write_access`
+verbatim for access (saved-client session OR one-time-client `?view_token=`) — the exact dual shape
+`portal_invoice_claims`'s own GET branch already established, so this endpoint can never independently drift from
+it. Included event types: `sent`, `payment` (no `notes`, same rule as 2A), `claim`, `acknowledged`,
+`formal_notice`. Excluded, with reasoning recorded directly in the view module (not just this entry, so it stays
+readable next to the code it governs): `created`/`finalised` (pre-delivery, freelancer-private drafting-stage
+events — a client's own history of an invoice starts at delivery, not at private drafting); `view` (the one
+client-relevant fact, "did I look at this," would require also carrying `ip_address`, which the brief explicitly
+forbids — self-referential noise once that's stripped, since the client already knows when they visited);
+`reminder` (every field — `reminder_number`/`template_used`/`delivered` — is exactly the "reminder-count/
+last-reminder-sent internals" the brief names; the whole entry TYPE is internal, not just one field of it);
+`comment` (the Messages tab, `portal_invoice_comments`, already shows the full thread with real content — a
+timeline entry carrying only `author_type`/`source` with no body text would be pure noise pointing back at a tab
+the client can already open); `escalation` (the entry type IS escalation state, explicitly forbidden). `claim`
+entries are kept even though 2A's own Payments endpoint also lists claims — not truly redundant: the timeline's
+job is one linear chronological narrative across every event type, Payments' job is a claims-focused table; the
+two serve different reading tasks. A real, confirmed cross-client-access test
+(`test_a_saved_clients_session_cannot_read_another_clients_invoice`) found the correct expected status is 404, not
+401 — `_resolve_portal_write_access`'s own `get_object_or_404(Invoice, pk=pk, client=client)` scoping genuinely
+returns 404 for another client's invoice (the same "don't confirm this invoice exists to an unauthorized viewer"
+reasoning `portal_invoice_detail`'s own docstring already establishes elsewhere in this app) — the test's own
+first-draft expectation of 401 was wrong and was corrected to match the real, deliberate behavior, not the other
+way around.
+
+**2C — My Details (`apps/clients/`, not `apps/invoices/`).** Placed in `apps.clients` — not `apps.invoices` like
+2A/2B — because it is genuinely, entirely `Client`-scoped with zero `Invoice` data involved, matching this app's
+own established convention that pure client-identity portal concerns (session/magic-link, already in
+`apps/clients/views_portal.py`) belong here, not in `apps.invoices`. `GET .../portal/details/`: a new, minimal,
+read-only `PortalClientDetailSerializer` — `name`/`email`/`company`/`phone`/`address`/`country` only, confirmed by
+a real test to omit every freelancer-only field (`notes`, `is_flagged`/`flag_reason`/`flag_type`/`flagged_at`/
+`auto_flagged`, `payment_stats`, `portal_token`) — never `ClientSerializer`/`ClientListSerializer`. Saved-client-
+session only (no one-time-client path at all — a one-time client has no `Client` row in the first place, so there
+is nothing to read). `POST .../portal/details/request-change/`: a new, non-model `ClientDetailsChangeRequestSerializer`
+validates the payload (at least one proposed field or a message, required) and hands it to
+`core.events.emit('ClientDetailsChangeRequested', ...)` — **no persistent model anywhere**, confirmed by a real
+test that the `Client` row is byte-for-byte untouched after a real request. The handler
+(`apps/clients/notifications.py` — this app's first-ever `@on(...)` handler, registered via a new
+`ClientsConfig.ready()`, mirroring `InvoicesConfig.ready()`'s exact pattern) writes a real `AuditLog` row and sends
+a real, immediate email via plain `core.email.send_email` (never `send_client_facing_email` — this is a
+notification ABOUT the freelancer's own account activity, TO the freelancer, the same reasoning
+`build_payment_claim_submitted_email`'s own docstring already establishes), gated on `notif_client_messages` — a
+judgment call, not specified by the brief: this is a client-initiated COMMUNICATION (closest existing category),
+not a payment event, so it does not reuse `notif_payments`. CSRF-enforced (`enforce_csrf_standalone`) — a
+real, if narrow, forgeable side effect (an email to a third party) even though the endpoint itself writes no model
+row. Rate-limited 5/hour per client (`_check_portal_details_change_rate_limit`, this app's own cache-key-prefixed
+convention, mirroring `_check_portal_link_rate_limit` beside it). New URLs (`portal/details/`,
+`portal/details/request-change/`) registered ahead of the existing `portal/<str:token>/` in `apps/clients/urls.py`,
+matching that file's own documented ordering constraint (a bare `<str:token>` converter would otherwise greedily
+match either literal path as if it were a magic-link token). Confirmed via the AST-based
+`test_apps_clients_has_zero_apps_invoices_imports` (already existed, walks every `.py` file under this app) that
+the new `apps/clients/notifications.py` introduces no `apps.invoices` import — `core.events`/`core.email`/
+`core.observability` are all app-agnostic by design, so none was needed.
+
+**2D — the one-time portal-link email now gates on real success, REVERSING Phase 1's own original decision.**
+Phase 1's `_maybe_send_initial_portal_link_email` deliberately did NOT check `_send_portal_link_email`'s outcome —
+that function discarded `send_client_facing_email`'s own result entirely. This task's own brief explicitly
+instructs the reversal, so `_send_portal_link_email` (`apps/clients/views_portal.py`) now `return`s that result
+dict (its other, pre-existing caller, `portal_request_link`, still discards it, unchanged — matching that
+endpoint's own enumeration-safety contract, which was never gated on success either), and
+`_maybe_send_initial_portal_link_email` only sets `Client.initial_portal_link_sent_at` when `result['sent']` is
+`True` — the exact pattern `invoice_send_formal_notice` already established for `Invoice.formal_notice_sent_at`.
+Phase 1's own original concern (gating on success risks a retry-every-send storm on a persistently-failing
+address) is real but explicitly bounded by the brief itself: the only retry behavior added is "try again on the
+client's next invoice" — a natural consequence of simply leaving the field `null` on failure, not new retry
+machinery (no backoff, no attempt counter) — flagged as the boundary rather than built past it, per the brief's own
+explicit instruction not to build anything beyond that unasked. The real cost this reversal fixes: under Phase 1's
+"fire and mark regardless" behavior, a client whose FIRST attempt genuinely failed (a typo'd email, a dead
+custom-SMTP config) would never receive this email at all, forever, while `initial_portal_link_sent_at` falsely
+claimed they had. A failed attempt is logged as a `logger.warning` (not an error — this is a best-effort SECONDARY
+action; the real invoice send it's called after has already committed by this point, so its own failure must never
+roll back or fail the caller's response) and is never surfaced to the client or the freelancer beyond that log
+line — `send_client_facing_email`'s own `CustomSmtpFailed` fallback/notification machinery already covers genuine
+custom-SMTP failures for free, since `_send_portal_link_email` routes through that exact chain.
+
+**Verification, with real evidence.**
+1. Live, against the real running dev server, using real ORM-created data (a real user, a real saved `Client`, 4
+   real invoices — one `partially_paid` with a real payment carrying a private `notes` value, one `paid` in a
+   second currency, one with a real pending `PaymentClaim`, one with a real rejected claim carrying a real
+   `review_note`) and a real minted `ClientPortalSession` cookie (via the actual magic-link flow,
+   `GET /api/clients/portal/<token>/`, not fabricated). Real, complete JSON responses for Payments, Timeline (two
+   different invoices), and My Details GET were inspected by hand against each known field value — every number
+   checked out exactly (USD outstanding 530.00 = 500-200 + 150 + 80; USD paid 200.00; GBP outstanding 0/paid
+   300.00 since that invoice is `paid`, not `ACTIVE_STATUSES`; the private payment `notes` text confirmed absent
+   from both the Payments and Timeline responses; the real `review_note` present on the rejected claim).
+2. A real My-Details change-request was submitted live (`POST .../request-change/`, real CSRF token from a real
+   `portal_enter` response, real cookie jar) — the response was a real 201, the `Client` row's `phone`/`address`
+   were confirmed byte-for-byte unchanged afterward via a direct DB read, a real `AuditLog` row was found with the
+   exact submitted `proposed_changes`/`message`, and — logging in as the real freelancer account live —
+   `GET /api/notifications/` showed the real bell entry with the correct title, message ("Nomad Ventures would
+   like to update their details on file with you."), and a correctly-substituted `action_url`
+   (`/clients?client=<the real client's uuid>`), proving the `_action_url` client_id-fallback generalization live,
+   not just in a unit test. All test data (the user, client, invoices, and the one `AuditLog` row left orphaned by
+   `SET_NULL` after the user was deleted) was cleaned from the dev database afterward.
+3. The success/failure gating fix (2D) was verified via automated tests only, not by breaking the real dev
+   server's email configuration — a real `RESEND_API_KEY` is configured in this environment, so live-triggering
+   `/send/` against the running server would have attempted a genuine outbound Resend call; deliberately avoided
+   rather than risking a real send or a real API-key rate-limit hit. Tests patch
+   `apps.clients.views_portal.send_client_facing_email` directly (the module-local name `_send_portal_link_email`
+   actually calls, per the same "local name bound at import time" lesson `core/test_runner.py`'s own docstring
+   already documents) to return the real `{'sent': False, ...}`/`{'sent': True, ...}` result-dict shapes —
+   genuinely exercising the real gating logic, real DB writes, real `_send_invoice_now` code path, with only the
+   external network boundary controlled, matching this project's own established `SafeTestRunner` convention
+   (which mocks `requests.post` suite-wide for exactly this reason).
+4. New tests: `apps/invoices/tests/test_portal_payments.py` (12), `apps/invoices/tests/test_portal_timeline.py`
+   (16), `apps/clients/tests/test_portal_my_details.py` (20, including the `_action_url` backward-compatibility
+   proof and a real end-to-end bell-list check via a real authenticated freelancer login), and 3 new tests appended
+   to `apps/invoices/tests/test_initial_portal_link_email.py` (a failed send leaves the field null and doesn't
+   affect the real invoice send; a successful send still sets it; a failure followed by a later success on a
+   second invoice retries and then sets it, with the mock's own call count asserted to prove it was genuinely
+   retried, not skipped) — 51 new tests total.
+5. Full backend suite: `python manage.py test --keepdb` — **1243 tests, OK, 0 failures** (up from 1192 — exactly
+   the 51 new tests above, confirming nothing else regressed).
+
+**Out of scope, honored.** No frontend work anywhere. The client never writes to their own `Client` row directly —
+confirmed by a real test, not just by the absence of an `update()` method. No `InvoiceComment`/"General messaging"
+model was reused or introduced for My Details' request-change action — `core.events.emit` plus one notification
+handler, per the brief's own explicit instruction. `PaymentClaimSerializer`'s own fields were not touched anywhere
+in this pass. The invoice document renderer, `ClientPortalSession`/cookie mechanics, and CSRF handling were not
+touched beyond correctly reusing `enforce_csrf_standalone` on the one new state-adjacent write endpoint (My
+Details' request-change) that needed it, matching established precedent exactly. **No schema change** — this
+pass adds zero new model fields and zero new migrations; confirmed directly (My Details deliberately has no
+persistent model, per the brief's own explicit requirement) before concluding `DATABASE.md` needed no update this
+pass, rather than assumed.
