@@ -58,24 +58,33 @@ function EmptyNotice({ icon: Icon, children }) {
   )
 }
 
+// Mobile Polish (Phase 3.5b): unlike ClientPortal.jsx's own invoice-row
+// info column (measured at ~93px wide, genuinely too narrow), this row
+// uses the card's FULL width — a real 375px measurement found "via
+// {source} · {date}" rendering on one line with room to spare. Still
+// wrapped in nowrap spans defensively (never a truncation), so a
+// narrower device or a longer payment source string can never break the
+// date in the middle, matching the same token-safe pattern used for the
+// invoice list's own status line.
 function PaymentRow({ payment }) {
   return (
     <a
       href={payment.portal_view_url}
       style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
-        padding: '12px 14px', borderRadius: 10, border: `1px solid ${DIVIDER}`, textDecoration: 'none', color: 'inherit',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+        padding: '10px 12px', borderRadius: 10, border: `1px solid ${DIVIDER}`, textDecoration: 'none', color: 'inherit',
       }}
     >
       <div style={{ minWidth: 0 }}>
-        <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: NAVY }}>
+        <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 700, color: NAVY }}>
           {formatMoney(payment.amount, payment.currency)}
         </p>
-        <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: MUTED_TEXT }}>
-          via {payment.source} · {payment.payment_date}
+        <p style={{ margin: '2px 0 0', display: 'flex', flexWrap: 'wrap', gap: '2px 5px', fontSize: '0.7rem', color: MUTED_TEXT }}>
+          <span style={{ whiteSpace: 'nowrap' }}>via {payment.source}</span>
+          <span style={{ whiteSpace: 'nowrap' }}>· {payment.payment_date}</span>
         </p>
       </div>
-      <p style={{ margin: 0, fontSize: '0.78rem', fontWeight: 600, color: MUTED_TEXT, flexShrink: 0 }}>
+      <p style={{ margin: 0, fontSize: '0.76rem', fontWeight: 600, color: MUTED_TEXT, flexShrink: 0, whiteSpace: 'nowrap' }}>
         {payment.invoice_number || '(unnumbered)'}
       </p>
     </a>
@@ -108,21 +117,26 @@ function ClaimRow({ claim }) {
     <a
       href={claim.portal_view_url}
       style={{
-        display: 'block', padding: '12px 14px', borderRadius: 10, border: `1px solid ${DIVIDER}`,
+        display: 'block', padding: '10px 12px', borderRadius: 10, border: `1px solid ${DIVIDER}`,
         textDecoration: 'none', color: 'inherit',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-        <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: NAVY }}>
+        <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 700, color: NAVY }}>
           {formatMoney(claim.amount_claimed, claim.currency)}
         </p>
         <ClaimStatusBadge status={claim.status} />
       </div>
-      <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: MUTED_TEXT }}>
-        via {claim.payment_source} · {claim.payment_date} · {claim.invoice_number || '(unnumbered)'}
+      {/* Same token-safe wrap as PaymentRow above — never breaks the
+          date or invoice number mid-token, even though this string is
+          longer (3 segments) than PaymentRow's own 2. */}
+      <p style={{ margin: '4px 0 0', display: 'flex', flexWrap: 'wrap', gap: '2px 5px', fontSize: '0.7rem', color: MUTED_TEXT }}>
+        <span style={{ whiteSpace: 'nowrap' }}>via {claim.payment_source}</span>
+        <span style={{ whiteSpace: 'nowrap' }}>· {claim.payment_date}</span>
+        <span style={{ whiteSpace: 'nowrap' }}>· {claim.invoice_number || '(unnumbered)'}</span>
       </p>
       {claim.review_note && (
-        <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: BODY_TEXT }}>Note: {claim.review_note}</p>
+        <p style={{ margin: '6px 0 0', fontSize: '0.76rem', color: BODY_TEXT }}>Note: {claim.review_note}</p>
       )}
     </a>
   )
@@ -171,7 +185,7 @@ export default function PortalPayments() {
   const { balances, payments, claims } = data
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       <div>
         <h1 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 700, color: NAVY }}>Payments</h1>
       </div>
@@ -183,7 +197,7 @@ export default function PortalPayments() {
         {payments.length === 0 ? (
           <EmptyNotice icon={Inbox}>No payments recorded yet.</EmptyNotice>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {payments.map((payment) => <PaymentRow key={payment.id} payment={payment} />)}
           </div>
         )}
@@ -194,7 +208,7 @@ export default function PortalPayments() {
         {claims.length === 0 ? (
           <EmptyNotice icon={AlertCircle}>No payment claims yet.</EmptyNotice>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {claims.map((claim) => <ClaimRow key={claim.id} claim={claim} />)}
           </div>
         )}

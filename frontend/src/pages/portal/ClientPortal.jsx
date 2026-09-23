@@ -48,12 +48,33 @@ import useTitle from '@/hooks/useTitle'
 import CommentThread from '@/components/CommentThread'
 import { PAYMENT_SOURCE_OPTIONS, formatMoney, todayInPlatformTimezone } from '@/pages/invoiceHelpers'
 import {
-  ACCENT, ACCENT_BORDER_TINT, ACCENT_TINT, BODY_TEXT, CARD_BG, CARD_SHADOW, CLAIM_STATUS_META, DIVIDER,
-  ERROR, ERROR_BORDER_TINT, ERROR_TINT, MUTED_TEXT, NAVY, PAGE_BG, STATUS_LABELS,
+  ACCENT, ACCENT_BORDER_TINT, ACCENT_TINT, BODY_TEXT, CARD_BG, CARD_BORDER, CARD_SHADOW, CLAIM_STATUS_META,
+  DIVIDER, ERROR, ERROR_BORDER_TINT, ERROR_TINT, MUTED_TEXT, NAVY, PAGE_BG, STATUS_LABELS,
   disabledStyle, publicBtnGhost, publicBtnPrimary, publicInputStyle, publicLabelStyle,
   viewTokenFromPortalUrl,
 } from './portalShared'
 import PortalRequestLinkForm from './PortalRequestLinkForm'
+
+// Mobile Polish (Phase 3.5b): the per-row action buttons used to be
+// 40×40 with a 1.5px, 15%-opacity square border (publicBtnGhost's own
+// base, just resized) — a real measurement found the 3-button cluster
+// this produces (up to 132px wide) was the single biggest reason the
+// invoice-number/status column next to it had almost no room left (see
+// this file's own comment above the invoice row for the real numbers).
+// This is deliberately NOT publicBtnGhost — that component's square,
+// visibly-bordered shape is right for a labeled action button elsewhere
+// on this page (Cancel/Close/Submit), but three of them in a row read as
+// a heavy, dominant block. This matches the portal's own established
+// LIGHT icon-button convention instead — PortalShell.jsx's account-menu
+// trigger: circular, a subtle 1px CARD_BORDER ring, no fill — just
+// smaller (34px, still comfortably above WCAG's 24px AA minimum for a
+// secondary/occasional action, as opposed to the 44px reserved for the
+// PillNav's own high-frequency primary navigation).
+const rowIconBtnStyle = {
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
+  border: `1px solid ${CARD_BORDER}`, background: 'transparent', color: BODY_TEXT, cursor: 'pointer',
+}
 
 // A minimal, inline-styled stand-in for FosAlert (theme-dependent, see
 // this file's own header comment) — same visual shape, theme-aware
@@ -167,8 +188,8 @@ export default function ClientPortal() {
             <div
               key={inv.id}
               style={{
-                display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '8px 12px',
-                padding: '14px 16px', borderRadius: 10, border: `1px solid ${DIVIDER}`,
+                display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '6px 10px',
+                padding: '12px 14px', borderRadius: 10, border: `1px solid ${DIVIDER}`,
               }}
             >
               {/* portal_view_url now points at InvoiceView.jsx's own
@@ -182,32 +203,61 @@ export default function ClientPortal() {
                   Django template), never a second reimplementation of
                   the invoice layout. Messages, below, are genuinely
                   interactive UI with no such artifact to stay in sync
-                  with, so that part IS real React, unchanged. */}
+                  with, so that part IS real React, unchanged.
+
+                  Mobile Polish (Phase 3.5b): a real 375px measurement
+                  found this column squeezed to ~93px wide (the 3-button
+                  action cluster to its right was eating ~132px on its
+                  own) — narrow enough that a 13-character invoice number
+                  like "INV-2026-0100" wrapped after its own trailing
+                  hyphen ("INV-2026-" / "0100"), and the status line wrapped
+                  onto 3 lines. Shrinking the action buttons (below) frees
+                  real width; the invoice number ALSO now gets a real
+                  single-line-with-ellipsis truncation as a hard guarantee
+                  regardless of how narrow the column gets — it's a short
+                  identifier, the full value is always one tap away on the
+                  invoice itself, so truncation costs nothing. The status/
+                  due-date/overdue line is NOT truncated (that content —
+                  especially "overdue" — actually matters at a glance), so
+                  instead each atomic token (status word, "Due <date>",
+                  "<n>d overdue") is its own non-breaking span inside a
+                  wrapping flex row: the line can still wrap across lines
+                  when narrow, but only BETWEEN tokens, never in the middle
+                  of a date or a word. */}
               <a href={inv.portal_view_url} style={{ textDecoration: 'none', color: 'inherit', flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700, color: NAVY }}>
+                <p style={{
+                  margin: 0, fontSize: '0.8rem', fontWeight: 700, color: NAVY,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
                   {inv.invoice_number || '(unnumbered)'}
                 </p>
-                <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: MUTED_TEXT }}>
-                  {STATUS_LABELS[inv.status] || inv.status} · Due {inv.due_date || '—'}
-                  {inv.days_overdue > 0 ? ` · ${inv.days_overdue}d overdue` : ''}
+                <p style={{
+                  margin: '3px 0 0', display: 'flex', flexWrap: 'wrap', gap: '2px 5px',
+                  fontSize: '0.7rem', color: MUTED_TEXT, lineHeight: 1.4,
+                }}>
+                  <span style={{ whiteSpace: 'nowrap' }}>{STATUS_LABELS[inv.status] || inv.status}</span>
+                  <span style={{ whiteSpace: 'nowrap' }}>· Due {inv.due_date || '—'}</span>
+                  {inv.days_overdue > 0 && (
+                    <span style={{ whiteSpace: 'nowrap' }}>· {inv.days_overdue}d overdue</span>
+                  )}
                 </p>
                 {inv.client_acknowledged && (
-                  <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: ACCENT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <p style={{ margin: '3px 0 0', fontSize: '0.7rem', color: ACCENT, display: 'flex', alignItems: 'center', gap: 4 }}>
                     <UserCheck size={11} /> Acknowledged {new Date(inv.client_acknowledged_at).toLocaleDateString()}
                   </p>
                 )}
               </a>
-              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: NAVY, flexShrink: 0 }}>
+              <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: NAVY, flexShrink: 0 }}>
                 {formatMoney(inv.total, inv.currency)}
               </p>
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                 {!inv.client_acknowledged && (
                   <button
                     onClick={() => setAckInvoice(inv)}
-                    style={{ ...publicBtnGhost, fontSize: '0.78rem', padding: '10px 12px', minWidth: 40, minHeight: 40 }}
+                    style={rowIconBtnStyle}
                     aria-label={`Acknowledge ${inv.invoice_number || 'this invoice'}`}
                   >
-                    <UserCheck size={14} />
+                    <UserCheck size={15} />
                   </button>
                 )}
                 {/* Phase 3.5 — REVERSAL of the 16 August 2026 second
@@ -227,18 +277,18 @@ export default function ClientPortal() {
                 {inv.outstanding_amount > 0 && (
                   <button
                     onClick={() => setClaimInvoice(inv)}
-                    style={{ ...publicBtnGhost, fontSize: '0.78rem', padding: '10px 12px', minWidth: 40, minHeight: 40 }}
+                    style={rowIconBtnStyle}
                     aria-label={`Payment claims for ${inv.invoice_number || 'this invoice'}`}
                   >
-                    <Receipt size={14} />
+                    <Receipt size={15} />
                   </button>
                 )}
                 <button
                   onClick={() => setMessagesInvoice(inv)}
-                  style={{ ...publicBtnGhost, fontSize: '0.78rem', padding: '10px 12px', minWidth: 40, minHeight: 40 }}
+                  style={rowIconBtnStyle}
                   aria-label={`Messages for ${inv.invoice_number || 'this invoice'}`}
                 >
-                  <MessageCircle size={14} />
+                  <MessageCircle size={15} />
                 </button>
               </div>
             </div>

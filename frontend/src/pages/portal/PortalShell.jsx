@@ -128,6 +128,17 @@ export function Skeleton() {
 // matching this pass's own mobile-audit minimum (Step 2.D) — only the
 // VISUAL badge grows for the active tab, the tap target doesn't shrink
 // for the inactive ones.
+//
+// Mobile Polish (Phase 3.5b): the badge's own box-shadow — real
+// computed value was `0 6px 16px rgba(0,200,150,.45)` — rendered as a
+// pronounced accent-colored halo/glow around the active tab (confirmed
+// visually in both themes with a real screenshot crop, not assumed from
+// the numbers alone). `top: -20` is also reduced to `-14`: real
+// scroll-to-bottom testing (a 22-invoice seeded list, 3 real device
+// heights) found no actual content collision either before or after —
+// this is a deliberate toning-down of how aggressively the badge pokes
+// above the pill, not a fix for a reproduced overlap. See DECISIONS.md
+// for the full before/after evidence on both.
 function PillNav() {
   return (
     <div style={{
@@ -152,10 +163,10 @@ function PillNav() {
             {({ isActive }) => (
               isActive ? (
                 <span style={{
-                  position: 'absolute', top: -20, left: '50%', transform: 'translateX(-50%)',
+                  position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)',
                   width: 44, height: 44, borderRadius: '50%', background: ACCENT,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: '0 6px 16px rgba(0,200,150,.45)', border: `3px solid ${CARD_BG}`,
+                  boxShadow: '0 2px 8px rgba(0,200,150,.3)', border: `3px solid ${CARD_BG}`,
                 }}>
                   <item.icon size={19} color={TEXT_ON_ACCENT} />
                 </span>
@@ -252,12 +263,37 @@ function MenuButton({ children, disabled, onClick }) {
 // visually competes with the freelancer's own logo/business name above
 // it in the header (a much larger, full-opacity, primary-weight
 // treatment there).
-function WordmarkFooter() {
+//
+// Mobile Polish (Phase 3.5b): this component was previously rendered
+// desktop-only (`{!isMobile && <WordmarkFooter/>}`) — confirmed directly
+// by DOM inspection at 375px (`document.querySelectorAll('footer')`
+// returned an empty array), so mobile had no footer at all, not a
+// wrapping one. Now rendered on mobile too, as the last item inside
+// `<main>`'s own scrollable content (see the shell below) — never
+// outside it, which would place it inside the space reserved for the
+// fixed PillNav and risk exactly the collision this pass is fixing
+// elsewhere. "Powered by" + the wordmark were also joined onto one
+// literal row via `display:flex` (matching AuthLayout.jsx's own
+// `.orbit-form__brand` icon+wordmark lockup convention: `flex,
+// alignItems:center, gap` — flex's own default `nowrap` guarantees a
+// single line regardless of width, so there's no max-width/font-size
+// combination left that can ever wrap it). A combined LogoSVG+Wordmark
+// lockup (that convention's other half) was considered and deliberately
+// NOT used here: LogoSVG has no `fill` override the way WordmarkSVG got
+// for this exact isolated-theme scenario (see WordmarkSVG's own prop
+// comment in Brand.jsx) — it resolves theme.css's `--logo-body`/
+// `--logo-mark`, which don't exist inside this portal's separate
+// `data-portal-theme` scope. Adding that override means editing a
+// component shared by AppShell/AuthLayout/NotFound, a materially larger
+// change than this pass's own scope for a cosmetic addition — the exact
+// same call this codebase already made for FormField/FormSelect/FosAlert
+// on this same page (see ClientPortal.jsx's own header comment).
+function WordmarkFooter({ style }) {
   return (
-    <footer style={{ textAlign: 'center', padding: '14px 24px 22px' }}>
-      <p style={{ margin: '0 0 4px', fontSize: '0.68rem', color: MUTED_TEXT }}>Powered by</p>
-      <div style={{ opacity: 0.55, display: 'inline-flex' }}>
-        <WordmarkSVG width={84} height={13} fill={WORDMARK_COLOR} />
+    <footer style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '14px 24px 22px', ...style }}>
+      <p style={{ margin: 0, fontSize: '0.68rem', color: MUTED_TEXT, whiteSpace: 'nowrap' }}>Powered by</p>
+      <div style={{ opacity: 0.55, display: 'inline-flex', flexShrink: 0 }}>
+        <WordmarkSVG width={78} height={12} fill={WORDMARK_COLOR} />
       </div>
     </footer>
   )
@@ -378,9 +414,16 @@ export default function PortalShell() {
 
       <main style={{
         flex: 1, width: '100%', maxWidth: 760, margin: '0 auto', boxSizing: 'border-box',
-        padding: isMobile ? '16px 16px 108px' : '28px 24px 40px',
+        padding: isMobile ? '16px 16px 96px' : '28px 24px 40px',
       }}>
         <Outlet />
+        {/* Mobile Polish (Phase 3.5b): rendered HERE, as the last item of
+            main's own scrollable content, specifically so it sits ABOVE
+            the fixed-position PillNav's reserved clearance (main's own
+            padding-bottom, just above) rather than inside it — see this
+            component's own header comment for why it was moved onto
+            mobile at all. */}
+        {isMobile && <WordmarkFooter style={{ padding: '24px 4px 4px' }} />}
       </main>
 
       {!isMobile && <WordmarkFooter />}

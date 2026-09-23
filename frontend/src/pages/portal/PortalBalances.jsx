@@ -14,29 +14,37 @@ import { formatMoney } from '@/pages/invoiceHelpers'
 
 export const cardStyle = {
   background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 12,
-  padding: '16px 18px', boxSizing: 'border-box',
+  padding: '14px 16px', boxSizing: 'border-box',
 }
 
 export const sectionTitleStyle = {
-  margin: '0 0 12px', fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.04em',
+  margin: '0 0 10px', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.04em',
   textTransform: 'uppercase', color: MUTED_TEXT,
 }
 
+// Mobile Polish (Phase 3.5b): the figure here used to render at 1.4rem
+// (22.4px, bold) — measured, on a real device, LARGER than either page
+// heading that sits above it ("Payments" 1.3rem/20.8px, "Your Invoices"
+// 1.2rem/19.2px). A balance figure should read as a prominent number,
+// never a bigger, heavier one than the page's own <h1> — 1.05rem
+// (16.8px) keeps it clearly the loudest thing ON THE CARD while staying
+// under both real heading sizes. See DECISIONS.md for the real
+// before/after computed-style evidence.
 export function BalanceCard({ balance }) {
   const hasOutstanding = Number(balance.outstanding) > 0
   return (
-    <div style={{ ...cardStyle, minWidth: 160, flex: '1 1 200px' }}>
-      <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 600, color: MUTED_TEXT, letterSpacing: '0.03em' }}>
+    <div style={{ ...cardStyle, minWidth: 150, flex: '1 1 180px' }}>
+      <p style={{ margin: 0, fontSize: '0.68rem', fontWeight: 600, color: MUTED_TEXT, letterSpacing: '0.03em' }}>
         {balance.currency}
       </p>
-      <p style={{ margin: '4px 0 0', fontSize: '1.4rem', fontWeight: 700, color: hasOutstanding ? NAVY : ACCENT }}>
+      <p style={{ margin: '3px 0 0', fontSize: '1.05rem', fontWeight: 700, color: hasOutstanding ? NAVY : ACCENT }}>
         {formatMoney(balance.outstanding, balance.currency)}
       </p>
-      <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: MUTED_TEXT }}>
+      <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: MUTED_TEXT }}>
         {hasOutstanding ? 'outstanding' : 'nothing outstanding'}
       </p>
       {Number(balance.paid) > 0 && (
-        <p style={{ margin: '8px 0 0', fontSize: '0.75rem', color: MUTED_TEXT, borderTop: `1px solid ${DIVIDER}`, paddingTop: 8 }}>
+        <p style={{ margin: '6px 0 0', fontSize: '0.72rem', color: MUTED_TEXT, borderTop: `1px solid ${DIVIDER}`, paddingTop: 6 }}>
           {formatMoney(balance.paid, balance.currency)} paid to date
         </p>
       )}

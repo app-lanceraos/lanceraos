@@ -2416,6 +2416,39 @@ Frontend: 370 passing (1 pre-existing, unrelated `SecuritySection.test.jsx` fail
 clean. See DECISIONS.md's 22 September 2026 Phase 3.5 entry for the full investigation findings (including the
 real contrast-ratio evidence behind every dark-mode color choice) and every screenshot's real evidence.
 
+**23 September 2026 (Client Portal Redesign, Phase 3.5b — Mobile Polish From Real Review).** Frontend-only
+fix pass on the mobile Invoices/Payments pages, driven by real post-Phase-3.5 screenshots. Real 375px
+measurement found the `BalanceCard` figure (22.4px) rendering LARGER than both real page headings (19.2/
+20.8px) — reduced to 1.05rem/16.8px; every other prominent number checked was already smaller than the
+headings, so this was the one real offender. `ClientPortal.jsx`'s invoice-row info column measured only
+92.98px wide (the 3-button action cluster beside it ate up to 132px on its own) — narrow enough that
+"INV-2026-0100" wrapped after its own trailing hyphen; fixed with a real single-line
+`nowrap`/`ellipsis` truncation on the invoice number (a short identifier, cost-free to truncate) and a
+token-safe `flex-wrap` of individually-`nowrap` spans for the status/due-date/overdue line (wraps between
+tokens, never inside a date). The 3 action buttons shrunk from 40×40px/1.5px-opaque-square-border to
+34×34px/1px-subtle-circular-border, matching the account-menu button's own established convention — this
+alone freed the column from 92.98px to 126.31px. Two items named in the originating review did NOT
+reproduce on live investigation, reported honestly rather than fixed anyway: the badge's active-tab color
+was already the real `ACCENT` token (not a stray literal) in both themes, and real scroll-to-bottom testing
+(3 device heights, a stress-tested 22-invoice list) found no actual overlap with the fixed pill nav — the
+real bug there was a `fullPage: true` Playwright screenshot artifact (a `position: fixed` element rendered
+at the wrong place mid-capture), not a real app bug. The badge's own box-shadow WAS a real, confirmed
+pronounced glow (`0 6px 16px rgba(0,200,150,.45)`, a hardcoded literal) — softened to `0 2px 8px
+rgba(0,200,150,.3)`. `PortalShell.jsx`'s `WordmarkFooter` was found rendering on desktop only
+(`{!isMobile && ...}` — confirmed via a real DOM query returning zero `<footer>` elements at 375px) — not a
+wrapping footer, an ABSENT one; now rendered on mobile too, as the last item inside `<main>`'s own
+scrollable content (never outside it, which would place it inside the space reserved for the fixed
+`PillNav`), laid out as one real `display:flex` row instead of two stacked lines. `LogoSVG` was
+deliberately NOT added alongside the wordmark despite an icon+wordmark convention existing elsewhere
+(`AuthLayout.jsx`) — it has no `fill` override for this portal's isolated theme scope, and adding one means
+editing a component shared by `AppShell`/`AuthLayout`/`NotFound` for a cosmetic addition. Verified live in
+both themes: real before/after computed-style numbers for every change, a real scroll-to-bottom proof with
+the footer as the trailing element (17.16px clearance, identical in light and dark), and a real dark-mode
+badge check via the actual theme-toggle UI. `npx vitest run`: 370 passing, 1 pre-existing unrelated
+`SecuritySection.test.jsx` failure (re-confirmed via `git stash` against the unmodified branch); `vite
+build` clean. See DECISIONS.md's 23 September 2026 entry for the full real numbers, the false-positive
+screenshot investigation, and every fix's before/after.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

@@ -13186,3 +13186,172 @@ touched this pass (see DATABASE.md note below).
 **DATABASE.md**: confirmed not needed — 2.A is a response-shape addition (a new serializer over an existing
 model, zero new fields/migrations) and 2.B is `localStorage`-only per this task's own explicit constraint;
 neither touches the schema.
+
+---
+
+Date: 23 September 2026 (Client Portal Redesign, Phase 3.5b — Mobile Polish From Real Review)
+Decision: a frontend-only fix pass on the mobile Invoices/Payments pages, driven by real screenshots taken
+after Phase 3.5 rather than a fresh design pass — investigate first with real computed-style numbers and
+screenshots (a real Chromium session, Playwright, driven against the actual dev servers at 375px, light and
+dark, with real seeded data), then fix only what that investigation actually found. Touched
+`PortalBalances.jsx`, `ClientPortal.jsx`, `PortalPayments.jsx`, `PortalShell.jsx`. No backend file touched.
+
+**Investigation setup.** Playwright + Chromium were already cached on this machine (`~/Library/Caches/
+ms-playwright`) but not installed as a project dependency; installed the `playwright` npm package into the
+session's own scratchpad only (`npm install playwright@1.63.0 --no-save`), never into `frontend/package.json`.
+Logged into the real Client Portal via a real magic link (`Client.portal_token` for the seeded "Nomad Ventures"
+client under `screenshot-demo@example.com`, fetched directly via `manage.py shell`) — no fixtures, the actual
+running dev servers. Nomad Ventures originally had only 2 real invoices and 3 real payment claims; to genuinely
+stress-test scroll-to-bottom overlap (this task's own Step 1.5/3.3 requirement), 20 more real `sent`-status
+invoices were created via the ORM (`INV-2026-0100`–`0119`, `£250` each, ordinary `Invoice.objects.create()` +
+`InvoiceItem`) — left in the dev database afterward as real, reusable test data, matching this project's own
+established precedent (e.g. the 19 August 2026 audit's own intentionally-corrupted invoices, kept as
+"historical before-evidence" rather than cleaned up). One measurement pass was thrown out and redone: an
+early `document.querySelectorAll('p')` query ran before `document.fonts.ready`, and a fallback system font
+produced inflated wrapped-text heights that didn't match the real, fonts-loaded rendering — every number
+quoted below is from a pass that explicitly awaited `document.fonts.ready` first.
+
+**Real numbers found (before any fix).**
+- Page headings, real computed `fontSize`: "Your Invoices" 19.2px/700, "Payments" 20.8px/700.
+- `BalanceCard`'s own outstanding-amount figure: **22.4px/700 — larger than both real headings.** This is the
+  literal, measured version of the task's own "prominent, not dominant" concern; every other prominent number
+  checked (an invoice-card total, 14.4px; a claim-row amount, 13.6px) was already smaller than both headings,
+  so this was the one real offender, not a pattern across every number on the page.
+- `ClientPortal.jsx`'s own invoice-row info column (the flex-1 block holding the invoice number and status
+  line): real measured width **92.98px** — narrow because the sibling action-button cluster to its right was
+  consuming up to 132px on its own (3 buttons × 40px + 2×6px gaps) plus the amount column (~60px) plus row
+  gaps. At that width, "INV-2026-0100" (14.08px font, no `white-space`/`overflow-wrap` override — CSS's
+  default Unicode line-breaking treats a hyphen as a break opportunity even under `word-break: normal`)
+  measured `height: 45.03px` — exactly 2 line-heights (`22.528px` each) — and a real cropped screenshot
+  confirmed it broke as "INV-2026-\n0100", after the identifier's own trailing hyphen. The status line
+  ("Sent · Due 2026-09-13 · 10d overdue", 12px font) measured `height: 57.5625px`, exactly 3 line-heights,
+  wrapping at spaces in this particular case rather than mid-date — but with no floor on how narrow the column
+  could get, a mid-date break was one longer status label away, not a theoretical risk.
+- The 3 action buttons themselves: real measured `40×40px`, `border: 1px solid rgba(0,0,0,0.15)`,
+  `border-radius: 8px` — thicker (1.5px in source, 1px reported by `getComputedStyle`'s own rounding) and more
+  opaque than this portal's own established subtle-icon-button precedent, `PortalShell.jsx`'s account-menu
+  trigger (`40×40px` circular, `1px solid CARD_BORDER` at ~8-10% opacity). The touch-target SIZE (40px) was
+  actually already smaller than the PillNav's own 44px minimum; the "oversized" read came from the heavier
+  border + square shape + 3-in-a-row visual weight, not the box dimensions alone.
+- The mobile active-tab badge (`PillNav`): background resolved to `rgb(0, 200, 150)` in BOTH light and dark
+  mode — this IS `var(--portal-accent)`, the real token, not a hardcoded literal carried over from anywhere;
+  no color-token bug existed here, confirmed by directly reading `PortalShell.jsx`'s own JSX (`background:
+  ACCENT`) and by live `getComputedStyle` in both themes. What real screenshots DID show, in both themes, was
+  a pronounced light-green halo bleeding outward from the badge — traced to its own `box-shadow: 0 6px 16px
+  rgba(0,200,150,.45)`, a hardcoded literal (not sourced from any card-shadow token), 45% opacity with a 16px
+  blur radius. This is what the task's own Step 1.6 "visible white/light outline" and "pronounced glow" both
+  turned out to be describing — one real artifact, not two.
+- Scroll-to-bottom overlap (Step 1.5): tested at 3 real device sizes (375×812, 375×667, 360×640) with the
+  stress-tested 22-invoice list, scrolling the real `window` to `document.documentElement.scrollHeight` and
+  measuring the last real invoice row's bottom edge against the active badge's own top edge. Result, consistent
+  across all 3 heights: **NOT obscured**, ~37.5px of real clearance in every case — `main`'s existing 108px
+  mobile bottom-padding already over-reserved space for the pill+badge's actual footprint. A first look at this
+  used Playwright's `fullPage: true` screenshot mode, which appeared to show the last claim row overlapping the
+  pill on the Payments page — re-tested with a real scroll + a normal (non-fullPage) viewport screenshot, and
+  the overlap did not reproduce; `fullPage` screenshots stitch a resized-viewport capture and can render a
+  `position: fixed` element at the wrong place, which is what happened here. Recorded so the same false
+  positive isn't rediscovered later. This is stated plainly rather than silently converted into a bigger fix
+  than the evidence supported: **the badge-overlap concern named in the task did not reproduce in the current
+  merged code**, at least not for the content shapes tested.
+- The mobile footer (Step 1.7): `PortalShell.jsx`'s `WordmarkFooter` was rendered `{!isMobile && ...}` — real
+  `document.querySelectorAll('footer')` at 375px returned `[]`. Mobile had **no footer at all**, not a wrapping
+  one — the component's own markup (a fixed-width SVG, a short caption, no width constraint) cannot wrap
+  regardless of viewport. An icon+wordmark lockup convention DOES exist elsewhere (`AuthLayout.jsx`'s
+  `.orbit-form__brand`, `AppShell.jsx`'s header) — but `LogoSVG` (`Brand.jsx`) has no `fill` override the way
+  `WordmarkSVG` was deliberately given one "for the Client Portal (Phase 3.5), which is deliberately isolated
+  from theme.css" (that exact comment already in `Brand.jsx`, predating this pass) — `LogoSVG` resolves
+  `var(--logo-body)`/`var(--logo-mark)`, undefined inside this portal's separate `data-portal-theme` scope.
+  Adding that override means editing a component shared by `AppShell`/`AuthLayout`/`NotFound` for a cosmetic
+  footer addition — the same class of call this codebase already made once for `FormField`/`FormSelect`/
+  `FosAlert` on this exact page (22 September 2026 entry: "a materially higher-risk change for no benefit
+  anywhere else").
+
+**What was fixed, and why.**
+1. **Balance figure size** (`PortalBalances.jsx`): `1.4rem` (22.4px) → `1.05rem` (16.8px) — the smallest change
+   that puts it clearly under both real headings while staying the loudest element on its own card. Card
+   padding `16px 18px` → `14px 16px`, other card text trimmed proportionally (currency label 0.7rem→0.68rem,
+   "paid to date" 0.75rem→0.72rem) for a generally tighter card, matching Step 2.A's "reduce padding/spacing
+   generally" instruction. This component is shared by `PortalOverview.jsx` too, so its own balance cards
+   inherit the fix with no direct edit to that file (in scope per the task's own "shared components this task
+   already touches" carve-out).
+2. **Invoice-row wrapping and button weight** (`ClientPortal.jsx`): the invoice number now gets a real,
+   permanent `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` (font also trimmed 0.88rem→
+   0.8rem) — a short identifier, truncation costs nothing, the full value is one tap away on the invoice
+   itself; the task's own Step 2.A explicitly names this as an acceptable strategy. The status/due-date/
+   overdue line is NOT truncated (the "overdue" fact matters at a glance) — instead rebuilt as a
+   `display:flex; flexWrap:wrap` row of individually `white-space:nowrap` spans (status word / "Due <date>" /
+   "<n>d overdue"), so the line can still wrap across multiple lines on a narrow column, but only BETWEEN
+   tokens, never inside a date or a word — a structural guarantee, not a font-size gamble against today's
+   content. The 3 action buttons were rebuilt as a new shared `rowIconBtnStyle` (34×34px, `border-radius: 50%`,
+   `1px solid CARD_BORDER`, transparent fill) — matching the account-menu button's own established light,
+   circular, subtle-border convention instead of `publicBtnGhost`'s heavier square/opaque-border shape (still
+   well above WCAG 2.5.5's 24px AA minimum for a secondary, occasional action, as distinct from the PillNav's
+   own 44px reserved for high-frequency primary navigation). Freeing that width was real and measured: the
+   info column grew from 92.98px to **126.31px** post-fix, and "INV-2026-0100" now renders as a genuine single
+   line (`height: 20.47px`, exactly one line-height) with `white-space: nowrap`/`text-overflow: ellipsis`
+   confirmed via `getComputedStyle`, not just visually.
+3. **Payments/Claims rows** (`PortalPayments.jsx`): `PaymentRow`/`ClaimRow` were NOT reproducing the wrapping
+   bug at 375px (they use the card's full width, not a squeezed flex column — real measurement showed a single
+   18.42px-tall line for "via easypaisa · 2026-09-05 · INV-2026-0003"), but the same token-safe nowrap-span
+   treatment was applied anyway, defensively, so a narrower device or a longer payment-source string can never
+   break a date mid-token later — matching the task's explicit "across both the Invoices and Payments pages"
+   scope for this principle. Minor compactness pass to match: card padding 12px 14px→10px 12px, list gaps
+   8px→6px, section gap 28px→22px, amount fonts trimmed slightly (0.85rem→0.82rem).
+4. **Badge color, glow, and offset** (`PortalShell.jsx`): confirmed (see above) the badge color needed no fix —
+   left `background: ACCENT` untouched. The glow was reduced from `0 6px 16px rgba(0,200,150,.45)` to
+   `0 2px 8px rgba(0,200,150,.3)` — a soft accent-tinted elevation shadow rather than a halo, re-verified by
+   real `getComputedStyle` after the change in both themes. The raise offset (`top: -20` → `-14`) was reduced
+   as a deliberate toning-down per Step 2.C's own instruction, NOT as a fix for a reproduced collision (none
+   was found, see above) — real post-fix measurement: `offsetAbovePill` 15px → 9px.
+5. **Mobile footer** (`PortalShell.jsx`): given no wrapping bug to fix and a real, documented reason not to add
+   `LogoSVG` (see above), `WordmarkFooter` is now rendered on mobile too — as the LAST item inside `<main>`'s
+   own scrollable content (never as a sibling outside `<main>`, which would place it inside the space `main`'s
+   own bottom padding reserves for the fixed `PillNav` and risk exactly the collision this pass is otherwise
+   fixing). Its internal layout was also changed from two stacked lines ("Powered by" caption above a wordmark
+   row) to one real `display:flex` row (`alignItems:center, gap:6`) — matching `AuthLayout.jsx`'s own
+   `.orbit-form__brand` icon+wordmark row pattern structurally (flex's default `nowrap` guarantees a single
+   line at any width), even without the icon half of that convention. `main`'s mobile bottom padding was
+   reduced 108px→96px to match the smaller badge offset, then re-verified (not assumed) with the same
+   scroll-to-bottom methodology as the original investigation.
+
+**Verification, with real evidence.**
+1. Real 375px screenshots, light AND dark, of both Invoices (top and scrolled-to-bottom, 22-invoice list) and
+   Payments — confirmed: invoice numbers render on one line ("INV-2026-0100" etc., no more mid-hyphen break);
+   action buttons visibly smaller/lighter, circular; cards noticeably more compact; "Powered by LanceraOS"
+   renders on one line above the pill nav at the true bottom of the scrolled list, in both themes; balance
+   figure ("GBP 7,750") visibly smaller than the "Payments" heading above it, both themes.
+2. Real before/after computed-style numbers: balance figure `22.4px` → `16.8px` (heading stays `20.8px`,
+   confirming the figure is now smaller); badge `offsetAbovePill` `15px` → `9px`; badge `box-shadow`
+   `rgba(0,200,150,.45) 0 6px 16px` → `rgba(0,200,150,.3) 0 2px 8px`; invoice-number column `92.98px` →
+   `126.31px`, font `14.08px` → `12.8px`, height `45.03px` (2 lines) → `20.47px` (1 line); action buttons
+   `40×40px, 1px solid rgba(0,0,0,.15), radius 8px` → `34×34px, 1px solid rgba(0,0,0,.08), radius 50%`.
+3. Real post-fix scroll-to-bottom proof, both themes, with the footer now as the last real scrollable element:
+   light — `footerBottom: 715.84px`, `badgeTop: 733px`, **clearance 17.16px, not obscured**; dark — identical
+   numbers (`footerBottom: 715.84px`, `badgeTop: 733px`, clearance `17.16px`) — confirming the fix behaves
+   identically in both themes, not just visually similar.
+4. Real dark-mode badge check via the actual UI theme toggle (not a forced DOM attribute): `background:
+   rgb(0,200,150)` (unchanged, correct), `boxShadow: rgba(0,200,150,.3) 0 2px 8px` (the new, softened value) —
+   confirmed by a real click on the account menu's own "Dark Mode" button. One real script bug found and fixed
+   along the way: the theme-toggle menu item doesn't close its own dropdown (only "Log Out" does,
+   `PortalShell.jsx`'s own existing behavior, unchanged by this pass) — a subsequent client-side nav click was
+   silently intercepted by the still-open menu's invisible click-outside overlay until the script explicitly
+   pressed Escape first, matching `AccountMenu`'s own documented Escape-to-close convention.
+5. `npx vitest run src/pages/portal` — 48/48 passing (no test asserted the exact combined status-line string
+   via `getByText`, so splitting it into `nowrap` spans didn't break anything; claim-row invoice-number
+   assertions already used `.textContent.toContain(...)` via `.closest('a')`, not an exact match on the now-
+   prefixed span, so those were unaffected too).
+6. `npx vitest run` (full suite) — **370 passing, 1 failing** — the failure is
+   `SecuritySection.test.jsx`'s pre-existing, unrelated case; re-confirmed via `git stash` against the
+   unmodified branch (fails identically, 6/7, before this pass's changes existed) rather than assumed from this
+   document's own prior notes.
+7. `npx vite build` — clean; only the 2 pre-existing warnings already present on the unmodified branch
+   (`authStore.js` dynamic-vs-static import, the >500kB main chunk) — no new warning introduced.
+
+**Out of scope, honored.** No backend file touched. Overview's own unique layout (greeting, needs-attention
+list) untouched beyond its use of the shared `BalancesSection`. Messages/My Details: not built. The PillNav's
+overall shape/concept (rounded floating bar, raised active badge) unchanged — only its execution (offset,
+glow) was toned down.
+
+**Left as-is, deliberately.** The 20 real invoices created for the scroll-overlap stress test remain in the
+dev database (`Nomad Ventures`, `INV-2026-0100`–`0119`) as reusable real test data, matching this project's own
+established precedent for keeping real verification artifacts rather than cleaning them up after every pass.
