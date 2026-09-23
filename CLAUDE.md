@@ -2449,6 +2449,37 @@ badge check via the actual theme-toggle UI. `npx vitest run`: 370 passing, 1 pre
 build` clean. See DECISIONS.md's 23 September 2026 entry for the full real numbers, the false-positive
 screenshot investigation, and every fix's before/after.
 
+**23 September 2026 (Client Portal Redesign, Phase 4 — My Details + Nav Badge Fixes).** Two unrelated fixes.
+(A) The mobile nav's active badge still had a visible ring and a glow after Phase 3.5b's own "softened"
+pass — traced to the real root cause this time: `border: 3px solid CARD_BG` is an opaque same-color ring
+(a border paints on top of an element's own background by CSS default, so it was never a true cutout), and
+the box-shadow had only been reduced, not removed. Fixed with `border: 3px solid transparent` +
+`backgroundClip: 'padding-box'` (the second property is what actually makes the border area show whatever's
+really behind the badge, rather than the badge's own accent fill bleeding through a transparent border) and
+`boxShadow: 'none'` outright — confirmed via real `getComputedStyle` (`borderColor: rgba(0,0,0,0)`,
+`boxShadow: none`) and close-up screenshots in both themes: a clean solid circle, no ring artifact, no glow.
+(B) **My Details** — a new `PortalMyDetails.jsx`, the real 4th nav item (`IdCard` icon), consuming Phase 1b's
+already-built `GET`/`POST /api/clients/portal/details/(request-change/)` endpoints for the first time (zero
+frontend consumer existed before this pass). Read view: Name/Email/Company/Phone/Address/Country, blank
+optional fields render a real "Not provided," never a blank gap. Request-change form matches the real backend
+shape exactly — a `proposed_*` text input per field (empty by default, current value only as a placeholder,
+so an untouched field is never submitted as a "proposed change") plus a freeform message, client-side-blocked
+from submitting with neither, matching the backend's own validation rule. Success state makes explicit that
+nothing changed yet and the freelancer reviews it themselves. Rate-limit handling needed zero special-casing —
+the existing portal-wide `e.response?.data?.error` fallback already surfaces the backend's real 429 message.
+Verified live end to end against the real running dev servers: a real submission through the actual UI wrote
+a real `AuditLog` row and left the `Client` row **byte-for-byte unchanged** (including `updated_at` to the
+microsecond) after 5 real submissions; the freelancer's real bell notification was confirmed via an
+authenticated request against the live `GET /api/notifications/` (a minted JWT cookie, not a full UI login,
+since this account's real login password isn't known to this session and changing it would disrupt Ali's own
+access) — 5 real matching entries, correct title/message/`action_url`; a real 6th submission hit the actual
+5/hour rate limit and the UI displayed the exact backend message, confirmed by screenshot; the rate-limit
+cache was cleared afterward so Ali isn't left locked out by this session's own testing. A real grammar bug
+("Add a address") was caught by a screenshot and fixed. `npx vitest run`: 378 passing (up from 370 — 8 new
+in `PortalMyDetails.test.jsx`), the same 1 pre-existing unrelated `SecuritySection.test.jsx` failure; `vite
+build` clean. See DECISIONS.md's second 23 September 2026 entry for the full real numbers, the real POST-
+shape investigation, and every verification step's evidence.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

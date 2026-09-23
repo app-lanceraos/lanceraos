@@ -53,7 +53,7 @@
 //    (Step 2.B, via usePortalThemeContext — see PortalThemeRoot.jsx).
 import { createContext, useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { Home, LogOut, Moon, Receipt, Sun, UserCircle2, Wallet } from 'lucide-react'
+import { Home, IdCard, LogOut, Moon, Receipt, Sun, UserCircle2, Wallet } from 'lucide-react'
 
 import api from '@/lib/api'
 import { WordmarkSVG } from '@/components/Brand'
@@ -75,14 +75,16 @@ import {
 // an invoice) without duplicating the fetch logic itself.
 export const PortalOverviewContext = createContext({ overview: null, reload: () => {} })
 
-// A single, centralized nav list — a later phase adds Payments/Messages/
-// My Details entries here without restructuring the shell itself.
+// A single, centralized nav list — a later phase adds Messages here
+// without restructuring the shell itself (My Details is now the 4th
+// real entry, Phase 4).
 // `end: true` on Overview so its NavLink isn't left "active" while
 // viewing /portal/invoices (both paths start with /portal).
 const NAV_ITEMS = [
   { label: 'Overview', path: '/portal', icon: Home, end: true },
   { label: 'Invoices', path: '/portal/invoices', icon: Receipt, end: false },
   { label: 'Payments', path: '/portal/payments', icon: Wallet, end: false },
+  { label: 'My Details', path: '/portal/details', icon: IdCard, end: false },
 ]
 
 // Matches AppShell.jsx's own established breakpoint exactly (DESIGN.md
@@ -139,6 +141,32 @@ export function Skeleton() {
 // this is a deliberate toning-down of how aggressively the badge pokes
 // above the pill, not a fix for a reproduced overlap. See DECISIONS.md
 // for the full before/after evidence on both.
+//
+// Phase 4: the 3.5b softening pass left two things behind, both real
+// (confirmed by direct visual review, re-verified here in both themes
+// rather than re-litigated) — the `3px solid ${CARD_BG}` ring and the
+// `boxShadow` glow were both only ever turned DOWN, not removed. The
+// ring's own root cause: `CARD_BG` is an OPAQUE color (white in light
+// mode, `#17171f` in dark) — by default a CSS border paints on top of
+// the element's own background (`background-clip: border-box`), so a
+// "transparent" gap painted in a solid color is not actually
+// transparent, it's a same-color cutout that only coincidentally
+// blends where the badge overlaps the pill's own identical background,
+// and visibly does NOT blend in the ~10px of the badge that pokes
+// above the pill into the page background behind it (a different real
+// color/content). Fixed at the root: `border: 3px solid transparent`
+// with `backgroundClip: 'padding-box'` — the latter is what actually
+// makes this work, since without it the accent `background` paints
+// straight through a transparent border by default (border-box
+// clipping), which would make the "ring" invisible for the wrong
+// reason (accent bleeding into it) rather than genuinely see-through.
+// `backgroundClip: 'padding-box'` keeps the badge's own accent fill
+// inside the padding box, leaving the 3px border area genuinely
+// transparent — whatever is actually behind the badge (the pill, or
+// the page/scrolled content above it) shows through for real, in both
+// themes, with no theme-dependent color to get wrong. `boxShadow` is
+// now `'none'` outright, not a softer value — this task's own
+// instruction is "actually gone," not "softer again."
 function PillNav() {
   return (
     <div style={{
@@ -165,8 +193,9 @@ function PillNav() {
                 <span style={{
                   position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)',
                   width: 44, height: 44, borderRadius: '50%', background: ACCENT,
+                  backgroundClip: 'padding-box',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: '0 2px 8px rgba(0,200,150,.3)', border: `3px solid ${CARD_BG}`,
+                  boxShadow: 'none', border: '3px solid transparent',
                 }}>
                   <item.icon size={19} color={TEXT_ON_ACCENT} />
                 </span>

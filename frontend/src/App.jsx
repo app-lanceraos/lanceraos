@@ -28,6 +28,7 @@ import Onboarding from '@/pages/Onboarding'
 import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
 import ClientPortal from '@/pages/portal/ClientPortal'
+import PortalMyDetails from '@/pages/portal/PortalMyDetails'
 import PortalEnter from '@/pages/portal/PortalEnter'
 import PortalShell from '@/pages/portal/PortalShell'
 import PortalOverview from '@/pages/portal/PortalOverview'
@@ -100,12 +101,17 @@ export default function App() {
             both top-level portal routes share the exact same live theme
             state/context, the same nested-route/<Outlet/> composition
             PortalShell.jsx already established for the identical reason
-            in Phase 2. */}
+            in Phase 2. Phase 4 adds PortalMyDetails (My Details) as a
+            fourth child, fetching its own GET /api/clients/portal/details/
+            endpoint directly, the same "own fetch, own loading/error
+            state" shape PortalPayments already established. */}
         <Route element={<PortalThemeRoot />}>
           <Route path="/portal" element={<PortalShell />}>
             <Route index element={<PortalOverview />} />
             <Route path="invoices" element={<ClientPortal />} />
             <Route path="payments" element={<PortalPayments />} />
+            {/* Phase 4 — My Details, the 4th real nav item */}
+            <Route path="details" element={<PortalMyDetails />} />
           </Route>
           <Route path="/portal/enter/:token" element={<PortalEnter />} />
         </Route>

@@ -13355,3 +13355,131 @@ glow) was toned down.
 **Left as-is, deliberately.** The 20 real invoices created for the scroll-overlap stress test remain in the
 dev database (`Nomad Ventures`, `INV-2026-0100`–`0119`) as reusable real test data, matching this project's own
 established precedent for keeping real verification artifacts rather than cleaning them up after every pass.
+
+---
+
+Date: 23 September 2026 (Client Portal Redesign, Phase 4 — My Details + Nav Badge Fixes)
+Decision: two unrelated fixes in one pass — (A) the nav badge's remaining ring/glow, genuinely fixed at the
+root this time, not softened again; (B) a new My Details page (the 4th real nav item) consuming Phase 1b's
+already-built `GET`/`POST /api/clients/portal/details/(request-change/)` endpoints, which had zero frontend
+consumer before this pass. Touched `PortalShell.jsx`, `App.jsx`, and added `PortalMyDetails.jsx` +
+`PortalMyDetails.test.jsx`. No backend file touched, per this task's own explicit constraint.
+
+**Investigation — the badge's real remaining ring/glow (Step 1.1).** Re-read `PortalShell.jsx`'s own
+`PillNav` directly rather than trusting the 3.5b entry's own "softened" claim. Found: `border: 3px solid
+${CARD_BG}` — `CARD_BG` is an OPAQUE color (`#ffffff` light, `#17171f` dark), and by CSS's own default
+(`background-clip: border-box`), a border sits ON TOP of the element's own painted background, not
+underneath it — so this was never a real "cutout," it was a same-color ring that happens to blend where the
+badge overlaps the pill's own identical background, and visibly does NOT blend across the ~10px arc of the
+badge that pokes above the pill into the real page background behind it (a genuinely different color/content
+there). The `boxShadow` was `0 2px 8px rgba(0,200,150,.3)` — the 3.5b pass's own "softened" value, still a
+real, visible glow, just a smaller one. Both confirmed by direct code read before any screenshot — this
+task's own Step 1.1 explicitly said not to re-diagnose whether the problem is real, only to find the exact
+declarations, which is what this was.
+
+**Investigation — the real POST shape (Step 1.2).** `apps/clients/serializers.py`'s
+`ClientDetailsChangeRequestSerializer` (Phase 1b, unchanged): **both** structured proposed values AND a
+freeform message are accepted, every field optional individually, but `validate()` rejects a submission with
+neither ("Provide at least one proposed change or a message") — confirmed directly, not assumed from this
+task's own prompt wording (which left it genuinely ambiguous which shape it was). `PortalClientDetailSerializer`
+(the GET shape): `name, email, company, phone, address, country` — a real, explicit allowlist, `read_only_fields
+= fields`, deliberately never `ClientSerializer`/`ClientListSerializer` (see that serializer's own docstring:
+those carry the freelancer's private notes/flags/scoring/portal_token, none of which the client themselves
+should ever see). `Client.name`/`Client.email` have no `blank=True` (always real values); `company`/`phone`/
+`address`/`country` do (can be blank) — this is what the read view's "Not provided" logic is keyed to, not a
+guess.
+
+**Investigation — rate limiting (Step 1.5).** `_check_portal_details_change_rate_limit` (Phase 1b, unchanged):
+5/hour per `client.pk`, cache-based, returns a real `429 {"error": "Too many requests. Please try again
+later."}` — the exact same response shape every other portal write endpoint's own rate limit already returns
+(`ClaimModal`'s existing `e.response?.data?.error` fallback pattern in `ClientPortal.jsx` handles this with
+zero special-casing, confirmed by grep across the portal's existing 429-handling tests before writing any new
+code).
+
+**Investigation — notification shape (for Step 3.3's own verification, not build scope).** `core/
+notifications.py`: title `"Client details change requested"` (static), message
+`"{client_name} would like to update their details on file with you."`, `action_url:
+"/clients?client={id}"` — all confirmed by reading the real dispatch table, not assumed.
+
+**What was built — A: badge fixed at the root.** `border: 3px solid transparent` + `backgroundClip:
+'padding-box'` — the fix is the SECOND property, not the first alone: without `backgroundClip:
+'padding-box'`, the badge's own `background: ACCENT` paints straight through a transparent border by
+default (`border-box` clipping still applies), which would hide the ring for the WRONG reason (the accent
+fill bleeding into it) rather than making it genuinely see-through. With `padding-box`, the accent fill
+stays inside the padding box and the 3px border area shows whatever is actually behind the whole badge
+element — correct in both themes by construction, since there's no color value involved at all any more.
+`boxShadow: 'none'` outright, matching this task's own explicit "actually gone, not reduced" instruction.
+
+**What was built — B: My Details.** A new `PortalMyDetails.jsx`, added as `NAV_ITEMS`'s 4th real entry
+(`IdCard` icon, matching this task's own confirmation that the array is still Phase 2/3's same clean
+extension point — no restructuring needed) and registered at `/portal/details` inside `PortalShell`'s
+existing nested-route group (`App.jsx`). Fetches its own `GET /api/clients/portal/details/` directly — the
+same "own fetch, own loading/error/session state" shape `PortalPayments.jsx` already established (Step 1.4),
+reusing `PortalShell.jsx`'s own `Skeleton` for loading and `PortalBalances.jsx`'s `cardStyle`/
+`sectionTitleStyle` for visual consistency rather than inventing a fourth card style. Read view: 6 rows
+(Name/Email/Company/Phone/Address/Country), blank optional fields render a real, intentional italic "Not
+provided" — never a blank gap. Request-change form matches the REAL POST shape exactly: one text input per
+`proposed_*` field (pre-filled as EMPTY, with the current value only as a `placeholder` — a deliberate choice:
+pre-filling with the current value would mean an untouched field still submits as a "proposed change" to the
+freelancer, which is not what happened) plus a freeform message textarea, client-side-blocked from submitting
+with neither (mirroring the backend's own `validate()` rule, so a client isn't round-tripped to the server
+just to learn that). Success state: real confirmation copy — "Your request has been sent" + "Nothing on your
+record has changed yet — they'll review what you sent and update your details themselves if they'd like to
+accept it" — matching this task's own explicit requirement that the copy never imply an immediate change.
+Rate-limit handling: zero special-casing needed — the existing `e.response?.data?.error` fallback pattern
+already surfaces the backend's real message. Theme-aware throughout via `portalShared.js`'s `--portal-*`
+tokens, same as every other portal page; no `theme.css` import anywhere in the new file (confirmed by grep).
+
+**Verification, with real evidence — live, against the real running dev servers.**
+1. Real close-up screenshots of the active badge, both themes: a clean, solid teal circle with no visible
+   ring artifact and no glow in either light or dark mode — confirmed by direct visual comparison, not
+   inferred from the CSS alone. Real `getComputedStyle` in both themes: `borderColor: 'rgba(0, 0, 0, 0)'`
+   (genuinely transparent, not a color choice), `boxShadow: 'none'`, `backgroundClip: 'padding-box'` —
+   identical in both themes, since the fix has no theme-dependent color left to diverge.
+2. Real screenshots of My Details — read view, the request-change form, and the post-submission success
+   state — at both 375px and 1280px, in both light and dark mode. The 1280px desktop nav correctly shows "My
+   Details" as the real 4th tab with its own active-underline state.
+3. A REAL, LIVE end-to-end request-change submission through the actual running UI (not a mocked test):
+   `AuditLog` row confirmed written with `event='client_details_change_requested'`,
+   `metadata={'proposed_changes': {'proposed_phone': '+44 20 9999 0000'}, 'message': 'Please update my phone
+   number...'}` — read directly from Postgres, not assumed from the 201 response alone. The `Client` row
+   itself (`Nomad Ventures`) was re-read from the database after 5 real submissions and found **byte-for-byte
+   identical** to a snapshot taken before any of them, including `updated_at` down to the microsecond
+   (`2026-08-17 18:42:43.904009`, unchanged) — proving the endpoint genuinely never writes to it, not just
+   trusting the docstring's own claim.
+4. The real freelancer-side bell check used a minted JWT set as the real `lanceraos_access` cookie
+   (`CookieJWTAuthentication` reads strictly from that cookie, never an `Authorization` header — confirmed by
+   reading `apps/users/authentication.py` directly after an initial attempt with a Bearer header returned a
+   real 401) against the actual running `GET /api/notifications/` endpoint — deliberately NOT a full UI login,
+   since this account's real login password isn't known to this session and resetting it would disrupt Ali's
+   own access to it; a minted-JWT request against the real endpoint is functionally equivalent evidence for
+   what this step needs (the real, live notification payload) without that side effect. Real response: 5
+   matching `client_details_change_requested` entries (one per live submission), each with
+   `title: 'Client details change requested'`, `message: 'Nomad Ventures would like to update their details
+   on file with you.'`, `action_url: '/clients?client=ab7dba87-9244-46e6-8cc2-802b3c8d5812'`,
+   `is_read: false` — every field matching `core/notifications.py`'s own real dispatch logic exactly.
+5. Real end-to-end rate-limit hit: submissions 4 and 5 (of the real 5/hour ceiling) succeeded through the
+   actual live UI; submission 6 returned a real 429, and the UI displayed the exact backend message — "Too
+   many requests. Please try again later." — in red, inline in the form, confirmed by a real screenshot (not
+   assumed from the network response). The rate-limit cache key was cleared afterward
+   (`django.core.cache.cache.clear()`) so Ali isn't left rate-limited by this session's own testing.
+6. A real grammar bug caught by the 1280px screenshot itself, not by re-reading the code: "Add a address"
+   (should be "Add an address") — the placeholder generator originally prefixed every field with a flat "a";
+   fixed with a per-field `article` ('a'/'an') on each `PROPOSED_FIELDS` entry (`address`/`email` get "an",
+   the rest get "a"), re-verified by a fresh screenshot showing "Add an address" rendering correctly. The
+   `MINIMAL_DETAILS` client (blank company/phone/address/country) is what the frontend test suite's own
+   placeholder assertions exercise, since this seeded client's own address/phone already have real values.
+7. `npx vitest run` — **378 passing, 1 failing** (up from 370 — 8 new tests in the new
+   `PortalMyDetails.test.jsx`: loading/error/session states, full-details rendering, 4-blank-fields "Not
+   provided" rendering, blocked-empty-submission, real-fields-only-submitted-never-untouched-ones, real
+   backend-error-message-on-429, and Cancel-returns-to-view-without-submitting). The 1 failure is
+   `SecuritySection.test.jsx`'s pre-existing, unrelated case, re-confirmed identical on the unmodified branch
+   in the immediately prior Phase 3.5b pass — not re-investigated here per that same standing precedent.
+8. `npx vite build` — clean; the same 2 pre-existing warnings as every prior pass (`authStore.js` dynamic-vs-
+   static import, the >500kB main chunk) — no new warning introduced.
+
+**Out of scope, honored.** No backend file touched. Messages: not built, not added to `NAV_ITEMS`. The
+request-change form never optimistically updates the read-only view — a successful submission returns to a
+genuinely separate `mode: 'success'` screen, never back to `mode: 'view'` with locally-mutated field values;
+the read view only ever re-renders what the real GET response last returned. The PillNav's own shape/pattern
+(rounded floating bar, raised active badge) is unchanged — only the ring/glow execution was fixed.
