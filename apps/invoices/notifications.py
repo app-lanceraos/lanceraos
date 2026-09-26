@@ -551,6 +551,202 @@ def _record_formal_notice_sent(invoice_id, user_id, **_extra):
     log_event('formal_notice_sent', user=user, metadata={'invoice_id': invoice_id})
 
 
+def _client_notification_business_name(invoice):
+    """
+    Shared by every client-facing handler below — the exact
+    business_name-or-display_name fallback apps.invoices.views_portal's
+    portal_overview and apps.invoices.payment_details already established
+    for "how a client sees this freelancer's identity." Never raises: a
+    missing/broken profile just means an empty string, matching this
+    file's own established defensive-fallback convention throughout.
+    """
+    try:
+        profile = invoice.user.profile
+        return profile.business_name or profile.display_name
+    except Exception:
+        return ''
+
+
+# ══════════════════════════════════════════════════════════════════
+# Client Notification Bell (Client Portal Redesign, Phase 5)
+#
+# A parallel, additive extension of the notification system above, NOT a
+# retrofit of it — every handler below writes a CLIENT-scoped AuditLog
+# row (log_event(..., client=invoice.client), user left unset) for a
+# brand-new, distinct set of event-name strings (the 'client_*' prefix),
+# read by apps.clients.views_portal_notifications, never by the
+# freelancer's own core/notifications.py (whose queries always filter on
+# `user=request.user`, so a client-scoped row with user_id=None can never
+# match, regardless of any overlap in event-name spelling — there is
+# none here anyway, since every string below is new).
+#
+# Each handler is registered as a SECOND @on(...) for an event this file
+# already has a freelancer-facing handler for (core/events.py supports
+# multiple independent handlers per event, each wrapped in its own
+# try/except by emit() itself) — the one exception is PaymentClaimRejected,
+# a brand-new event this same investigation found was never emitted at
+# all (apps/invoices/views.py's invoice_claim_reject had zero emit() call
+# before this pass).
+#
+# Every handler below is skipped outright for a ONE-TIME client
+# (invoice.client_id is None) — there is no Client row to attach the
+# notification to, and a one-time client has no ClientPortalSession/
+# portal-notifications surface to ever read it from.
+# ══════════════════════════════════════════════════════════════════
+
+@on('InvoiceSent')
+def _notify_client_invoice_sent(invoice_id, user_id, via, **_extra):
+    """
+    Client-facing counterpart to _record_invoice_sent above.
+    Deliberately via='platform' ONLY — mirrors the exact same "genuinely
+    sent through LanceraOS itself" scope decision
+    apps.invoices.views._maybe_send_initial_portal_link_email already
+    established (Client Portal Redesign, Phase 1): a manual mark-sent
+    flip means the freelancer delivered the invoice through their OWN
+    channel outside LanceraOS, so there's no real "LanceraOS notified
+    you" story to tell the client, even though the freelancer-facing
+    invoice_sent audit row (_record_invoice_sent, above) still fires for
+    both vias.
+    """
+    if via != 'platform':
+        return
+
+    from .models import Invoice
+
+    invoice = Invoice.objects.filter(pk=invoice_id).select_related('client', 'user__profile').first()
+    if invoice is None or invoice.client_id is None:
+        return
+
+    log_event('client_invoice_sent', client=invoice.client, metadata={
+        'invoice_id': invoice_id,
+        'invoice_number': invoice.invoice_number,
+        'portal_view_url': invoice.portal_view_url,
+        'business_name': _client_notification_business_name(invoice),
+    })
+
+
+@on('CommentPosted')
+def _notify_client_comment_posted(invoice_id, user_id, comment_id, author_type, **_extra):
+    """
+    Mirror image of _record_comment_posted above (the freelancer's own
+    handler, which fires only for author_type == 'client') — this one
+    fires only for author_type == 'freelancer', the message a client
+    actually needs telling about. A freelancer replying to their own
+    client's message is real, bell-worthy information for that client,
+    the same reasoning invoice_acknowledged is bell-worthy for the
+    freelancer even though it's the mirror-image self-trigger case.
+    """
+    if author_type != 'freelancer':
+        return
+
+    from .models import Invoice
+
+    invoice = Invoice.objects.filter(pk=invoice_id).select_related('client', 'user__profile').first()
+    if invoice is None or invoice.client_id is None:
+        return
+
+    log_event('client_comment_posted', client=invoice.client, metadata={
+        'invoice_id': invoice_id,
+        'comment_id': comment_id,
+        'invoice_number': invoice.invoice_number,
+        'portal_view_url': invoice.portal_view_url,
+        'business_name': _client_notification_business_name(invoice),
+    })
+
+
+@on('PaymentClaimConfirmed')
+def _notify_client_payment_claim_confirmed(invoice_id, claim_id, **_extra):
+    """
+    Bell entry for the client whose claim was confirmed — a SECOND,
+    independent handler for this event alongside
+    _notify_payment_claim_confirmed above (which already emails the
+    client but writes no AuditLog row anywhere, since there was no
+    client-scoped bell to write one into before this pass).
+    """
+    from .models import Invoice, PaymentClaim
+
+    invoice = Invoice.objects.filter(pk=invoice_id).select_related('client', 'user__profile').first()
+    if invoice is None or invoice.client_id is None:
+        return
+    claim = PaymentClaim.objects.filter(pk=claim_id).first()
+    if claim is None:
+        return
+
+    log_event('client_payment_claim_confirmed', client=invoice.client, metadata={
+        'invoice_id': invoice_id,
+        'claim_id': claim_id,
+        'invoice_number': invoice.invoice_number,
+        'portal_view_url': invoice.portal_view_url,
+        'business_name': _client_notification_business_name(invoice),
+        'amount_claimed': str(claim.amount_claimed),
+        'currency': claim.currency,
+    })
+
+
+@on('PaymentClaimRejected')
+def _notify_client_payment_claim_rejected(invoice_id, claim_id, **_extra):
+    """
+    New event (this pass's own investigation confirmed
+    invoice_claim_reject, apps/invoices/views.py, emitted NOTHING at all
+    before this handler — the one genuinely new emit() call this task
+    adds, at the existing call site, not a new event system). Bell-only,
+    no email — there is no existing client-facing "your claim was
+    rejected" email template anywhere in this codebase (confirmed
+    directly: apps/invoices/email_service.py has
+    build_payment_claim_submitted_email/build_payment_claim_confirmed_email
+    and nothing named ..._rejected_email); building one is a real,
+    separate product decision, out of this task's own scope (Client
+    Notification Bell backend only) — flagged in DECISIONS.md rather
+    than added unasked. The client can already see a rejected claim's
+    review_note via GET .../portal/{id}/claims/ or the Payments page's
+    own claims list (Client Portal Redesign, Phase 3) either way.
+    """
+    from .models import Invoice, PaymentClaim
+
+    invoice = Invoice.objects.filter(pk=invoice_id).select_related('client', 'user__profile').first()
+    if invoice is None or invoice.client_id is None:
+        return
+    claim = PaymentClaim.objects.filter(pk=claim_id).first()
+    if claim is None:
+        return
+
+    log_event('client_payment_claim_rejected', client=invoice.client, metadata={
+        'invoice_id': invoice_id,
+        'claim_id': claim_id,
+        'invoice_number': invoice.invoice_number,
+        'portal_view_url': invoice.portal_view_url,
+        'business_name': _client_notification_business_name(invoice),
+        'amount_claimed': str(claim.amount_claimed),
+        'currency': claim.currency,
+        'review_note': claim.review_note,
+    })
+
+
+@on('FormalNoticeSent')
+def _notify_client_formal_notice_sent(invoice_id, user_id, **_extra):
+    """
+    Bell entry for the client who received a formal notice — a SECOND,
+    independent handler alongside _record_formal_notice_sent above
+    (which is freelancer-facing AuditLog only, per its own self-trigger-
+    exclusion docstring). The client already receives a real, distinct
+    formal-notice EMAIL from invoice_send_formal_notice itself
+    (send_invoice_related_email, apps/invoices/views.py) — this only adds
+    the bell entry that email had no equivalent for.
+    """
+    from .models import Invoice
+
+    invoice = Invoice.objects.filter(pk=invoice_id).select_related('client', 'user__profile').first()
+    if invoice is None or invoice.client_id is None:
+        return
+
+    log_event('client_formal_notice_sent', client=invoice.client, metadata={
+        'invoice_id': invoice_id,
+        'invoice_number': invoice.invoice_number,
+        'portal_view_url': invoice.portal_view_url,
+        'business_name': _client_notification_business_name(invoice),
+    })
+
+
 @on('StaleDraftsDigest')
 def _notify_stale_drafts_digest(user_id, draft_count, breakdown, **_extra):
     """

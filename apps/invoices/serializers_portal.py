@@ -27,6 +27,13 @@ class PortalInvoiceListSerializer(serializers.ModelSerializer):
     days_overdue = serializers.IntegerField(read_only=True)
     outstanding_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     portal_view_url = serializers.CharField(read_only=True)
+    # Client Notification Bell (Client Portal Redesign, Phase 5) — a real
+    # unread-freelancer-message flag per invoice, not just visible on the
+    # Overview aggregation. Always present on both real call sites
+    # (portal_invoice_list, portal_overview's recent_invoices) since both
+    # now build their queryset from views_portal._annotate_unread_message
+    # — never a bare boolean default standing in for a missing annotation.
+    has_unread_message = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Invoice
@@ -34,7 +41,7 @@ class PortalInvoiceListSerializer(serializers.ModelSerializer):
             'id', 'invoice_number', 'status', 'currency',
             'total', 'amount_paid', 'outstanding_amount',
             'issue_date', 'due_date', 'days_overdue', 'portal_view_url',
-            'client_acknowledged', 'client_acknowledged_at',
+            'client_acknowledged', 'client_acknowledged_at', 'has_unread_message',
         ]
 
 

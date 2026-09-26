@@ -1,7 +1,7 @@
 # apps/clients/urls.py
 from django.urls import path
 
-from . import views, views_portal
+from . import views, views_portal, views_portal_notifications
 
 app_name = 'clients'
 
@@ -21,6 +21,19 @@ urlpatterns = [
     # greedy-str-converter reason the comment above already explains).
     path('portal/details/request-change/', views_portal.portal_my_details_request_change, name='portal_my_details_request_change'),
     path('portal/details/', views_portal.portal_my_details, name='portal_my_details'),
+    # Client Notification Bell (Client Portal Redesign, Phase 5) — same
+    # literal-prefixed-before-portal/<str:token>/ requirement as every
+    # other fixed segment above.
+    path('portal/notifications/', views_portal_notifications.portal_notifications_list, name='portal_notifications_list'),
+    path(
+        'portal/notifications/mark-all-read/', views_portal_notifications.portal_notifications_mark_all_read,
+        name='portal_notifications_mark_all_read',
+    ),
+    path('portal/notifications/dismiss/', views_portal_notifications.portal_notifications_dismiss, name='portal_notifications_dismiss'),
+    path(
+        'portal/notifications/<uuid:notification_id>/mark-read/', views_portal_notifications.portal_notification_mark_read,
+        name='portal_notification_mark_read',
+    ),
     path('portal/<str:token>/', views_portal.portal_enter, name='portal_enter'),
     path('<uuid:pk>/', views.client_detail, name='client_detail'),
     path('<uuid:pk>/archive/', views.client_archive, name='client_archive'),

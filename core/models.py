@@ -43,6 +43,23 @@ class AuditLog(models.Model):
                    'for every self-service event, where the actor and the subject '
                    'are already the same person captured in `user`.',
     )
+    client = models.ForeignKey(
+        'clients.Client',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='audit_logs',
+        help_text='Client Portal Redesign, Phase 5 (the Client Notification Bell). Set '
+                   'instead of `user` for an event that concerns a CLIENT-facing '
+                   'notification (e.g. their invoice was sent, a freelancer replied) '
+                   'rather than a freelancer-facing one. A row has exactly one of '
+                   'user/client set, never both — this table has no concept of one '
+                   'event belonging to both a freelancer and a client at once, and '
+                   'every writer (core.observability.log_event) picks one or the '
+                   'other. A string reference (not a direct import of '
+                   'apps.clients.models.Client) deliberately keeps core/ itself free '
+                   'of any import from an app — the same "core is app-agnostic" '
+                   'discipline core/events.py already documents for itself.',
+    )
     event = models.CharField(max_length=60)
     request_id = models.CharField(
         max_length=36, blank=True, null=True,
@@ -59,13 +76,14 @@ class AuditLog(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['user', 'created_at']),
+            models.Index(fields=['client', 'created_at']),
             models.Index(fields=['event', 'created_at']),
             models.Index(fields=['ip_address', 'created_at']),
             models.Index(fields=['request_id']),
         ]
 
     def __str__(self):
-        return f'[{self.event}] {self.user or "anonymous"} @ {self.ip_address}'
+        return f'[{self.event}] {self.user or self.client or "anonymous"} @ {self.ip_address}'
 
 
 class ApiRequestLog(models.Model):
@@ -114,10 +132,20 @@ class NotificationRead(models.Model):
     here, deliberately kept off AuditLog itself (immutable and
     append-only by design). "Dismissed" hides a notification from the
     bell; it never deletes the underlying audit record.
+
+    Client Portal Redesign, Phase 5: `user` is now nullable and a
+    parallel `client` FK was added, mirroring AuditLog's own user/client
+    split above — a row has exactly one of the two set, never both.
+    `unique_together` covers both pairings so a client's own mark-read/
+    dismiss stays idempotent under a race the same way a freelancer's
+    already was.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_reads',
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name='notification_reads',
+    )
+    client = models.ForeignKey(
+        'clients.Client', null=True, blank=True, on_delete=models.CASCADE, related_name='notification_reads',
     )
     audit_log = models.ForeignKey(AuditLog, on_delete=models.CASCADE, related_name='read_by')
     read_at = models.DateTimeField(auto_now_add=True)
@@ -125,4 +153,4 @@ class NotificationRead(models.Model):
 
     class Meta:
         db_table = 'notification_reads'
-        unique_together = [['user', 'audit_log']]
+        unique_together = [['user', 'audit_log'], ['client', 'audit_log']]

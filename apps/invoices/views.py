@@ -1958,6 +1958,7 @@ def invoice_claim_reject(request, pk, claim_id):
     claim.review_note = review_note
     claim.save(update_fields=['status', 'reviewed_at', 'review_note'])
 
+    emit('PaymentClaimRejected', invoice_id=str(invoice.pk), user_id=str(request.user.pk), claim_id=str(claim.pk))
     logger.info('[INVOICES] Payment claim %s rejected on invoice %s.', claim.pk, invoice.invoice_number)
     return Response(PaymentClaimSerializer(claim).data)
 

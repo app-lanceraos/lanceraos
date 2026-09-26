@@ -1502,6 +1502,14 @@ Invoice.view_token support this app deliberately doesn't have yet — see DECISI
 - POST /api/clients/portal/request-link/ (self-serve resend, rate-limited 5/email/hr + 20/IP/hr)
 - POST /api/clients/portal/logout/ + /logout-everywhere/ (both require a valid current portal session)
 
+Key API endpoints — apps/clients/ portal notifications (built, real — the Client Notification Bell,
+Client Portal Redesign Phase 5; backend only, no frontend/WebSocket consumer built this pass):
+- GET /api/clients/portal/notifications/ (this client's own notifications, newest first,
+  read/dismissed state included; real 401 with no valid session)
+- POST /api/clients/portal/notifications/{id}/mark-read/
+- POST /api/clients/portal/notifications/mark-all-read/
+- POST /api/clients/portal/notifications/dismiss/ (body: {"ids": [...]})
+
 Key API endpoints — apps/invoices/ (built, real):
 - GET/POST /api/invoices/
 - GET/PUT/DELETE /api/invoices/{id}/ (PUT: draft only; DELETE: draft/created only — both 403 otherwise)
@@ -2518,6 +2526,47 @@ surfaced — a Phase 1b test in a different file still asserted the pre-Phase-4b
 dedicated test file), same 1 pre-existing unrelated `SecuritySection.test.jsx` failure; `vite build`
 clean. See DECISIONS.md's second 23 September 2026 entry for the full real pixel-sampled proof table
 and every verification step's evidence.
+
+**26 September 2026 (Client Portal Redesign, Phase 5 — the Client Notification Bell, backend only).**
+A parallel, additive extension of the freelancer's own bell (`core/notifications.py`), not a retrofit
+of it: `AuditLog`/`NotificationRead` both gained a nullable `client` FK (string reference,
+`'clients.Client'` — keeps `core/` itself free of any import from an app, matching `core/events.py`'s
+own "app-agnostic" discipline) alongside their existing `user` FK; `NotificationRead.user` was loosened
+to nullable to allow this. `core.observability.log_event()` gained a matching `client=` kwarg. Five new
+client-facing `@on(...)` handlers landed in `apps/invoices/notifications.py` — a SECOND, independent
+handler for `InvoiceSent` (fires ONLY for `via='platform'`, mirroring Phase 1's own initial-portal-link-
+email scope decision exactly), `CommentPosted` (the mirror image of the freelancer's own handler:
+`author_type == 'freelancer'` here, `== 'client'` there), and `PaymentClaimConfirmed`, plus a brand-new
+`PaymentClaimRejected` event — the one genuinely new `emit()` call this pass adds, since
+`invoice_claim_reject` (`apps/invoices/views.py`) emitted nothing at all before this pass, confirmed
+directly rather than assumed. Each writes a client-scoped `AuditLog` row under a new, distinct
+`client_*`-prefixed event name, skipped outright for a one-time client (no `Client` row to attach to,
+no portal session to ever read it from). A new, parallel REST surface,
+`apps/clients/views_portal_notifications.py` (portal-session-authenticated, mirroring
+`core/notifications.py`'s own list/mark-one-read/mark-all-read/dismiss shape exactly, scoped to
+`client=` instead of `user=`), is the client-facing bell's read/write API — wired into
+`apps/clients/urls.py` under `/api/clients/portal/notifications/...`. `PortalInvoiceListSerializer`
+also gained a real `has_unread_message` flag: the `Exists()` annotation `portal_overview`'s own
+needs-attention computation already had was factored into a new shared `_annotate_unread_message`
+helper (`apps/invoices/views_portal.py`), applied to both `portal_invoice_list` and (via `base_qs`)
+`portal_overview`'s own `recent_invoices` — exactly one definition of "this invoice has an unread
+message" anywhere in the portal now, not two independently-written ones. No client-facing email
+template was added for `PaymentClaimRejected` (a real, confirmed gap — no
+`build_payment_claim_rejected_email` exists anywhere, unlike its `_confirmed`/`_submitted` siblings) —
+flagged rather than built unasked, since the client can already see a rejection's `review_note` via the
+existing claims endpoints. Deliberately out of scope, per this task's own brief: no WebSocket consumer
+(polling only), no frontend of any kind, and a client is never notified about their own action
+(acknowledgment, their own claim submission). Verified with real seeded data exercising each handler
+directly, one true integration test driving the real `invoice_claim_reject` HTTP view end to end (not
+just the handler in isolation), a dedicated additive-migration test proving an existing user-scoped
+query's result set is byte-identical before and after a client-scoped row exists (and vice versa), and
+dedicated cross-client-isolation + freelancer-bell-unaffected tests. One real, pre-existing test
+regression was found and fixed along the way: `test_portal_overview.py`'s own
+`RecentInvoicesTests.test_same_shape_as_portal_invoice_list` pinned the exact field set
+`PortalInvoiceListSerializer` returns and needed updating for the new field — not a sign of anything
+broken, just the expected consequence of a genuinely additive serializer field. `python manage.py test
+--keepdb`: **1290 tests, OK, 0 failures** (up from 1251 — 39 new). See DECISIONS.md's 26 September
+2026 entry for the full investigation findings and every alternative considered.
 
 ---
 

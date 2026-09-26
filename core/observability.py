@@ -141,7 +141,7 @@ def redact_sensitive_fields(data):
 # AUDIT LOG WRITER
 # ══════════════════════════════════════════════════════════════════
 
-def log_event(event, user=None, actor=None, request=None, ip_address=None, user_agent=None, metadata=None):
+def log_event(event, user=None, actor=None, client=None, request=None, ip_address=None, user_agent=None, metadata=None):
     """
     Writes a row to AuditLog. Never raises — an audit-logging failure
     must not take down the request that triggered it. Logs the failure
@@ -156,6 +156,12 @@ def log_event(event, user=None, actor=None, request=None, ip_address=None, user_
     action — an admin acting on someone else's account. Leave it unset
     for every self-service event, where the actor and the subject are
     already the same person captured in `user`.
+
+    Pass `client` (a Client Portal Redesign, Phase 5 addition) instead of
+    `user` for a CLIENT-facing notification — e.g. a client-scoped
+    'client_invoice_sent'/'client_comment_posted' row. Never pass both:
+    every real caller picks one or the other, matching AuditLog.client's
+    own docstring.
     """
     request_id = None
     if request is not None:
@@ -167,6 +173,7 @@ def log_event(event, user=None, actor=None, request=None, ip_address=None, user_
         audit_log = AuditLog.objects.create(
             user=user,
             actor=actor,
+            client=client,
             event=event,
             request_id=request_id,
             ip_address=ip_address or None,
@@ -174,7 +181,7 @@ def log_event(event, user=None, actor=None, request=None, ip_address=None, user_
             metadata=redact_sensitive_fields(metadata or {}),
         )
     except Exception:
-        logger.exception('Failed to write AuditLog entry for event=%s user=%s actor=%s', event, user, actor)
+        logger.exception('Failed to write AuditLog entry for event=%s user=%s actor=%s client=%s', event, user, actor, client)
         return None
 
     # Lazy import — avoids coupling this module's import-time behavior to

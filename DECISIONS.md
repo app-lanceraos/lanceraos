@@ -14104,3 +14104,96 @@ zone with no gap.
 **Out of scope, honored.** Moat width (4px), the badge's 65/35 overlap, and Phase 4f's layer-split
 structure are all unchanged — this pass only replaced the corner guard's own shape (disc -> bounded
 band). No other portal page was touched.
+
+---
+
+Date: 26 September 2026
+Decision: Client Portal Redesign, Phase 5 — the Client Notification Bell (backend only). AuditLog
+and NotificationRead both gained a nullable `client` FK (a string reference, `'clients.Client'`,
+not a direct import — keeps `core/` itself free of any import from an app) alongside their existing
+`user` FK; `NotificationRead.user` was loosened to nullable to allow this. A row has exactly one of
+`user`/`client` set, never both. `core.observability.log_event()` gained a matching `client=` kwarg.
+Five new client-facing `@on(...)` handlers were added to `apps/invoices/notifications.py` (a SECOND,
+independent handler for `InvoiceSent`/`CommentPosted`/`PaymentClaimConfirmed`, alongside the
+existing freelancer-facing ones, plus a brand-new `PaymentClaimRejected` event — the one genuinely
+new `emit()` call this task adds, since `invoice_claim_reject` emitted nothing at all before this
+pass) — each writes a client-scoped AuditLog row under a new, distinct `client_*`-prefixed event
+name (`client_invoice_sent`, `client_comment_posted`, `client_payment_claim_confirmed`,
+`client_payment_claim_rejected`, `client_formal_notice_sent`), never touching the freelancer's own
+existing handler for the same event. A new, parallel REST surface,
+`apps/clients/views_portal_notifications.py` (portal-session-authenticated, mirroring
+`core/notifications.py`'s own list/mark-one-read/mark-all-read/dismiss shape exactly, scoped to
+`client=` instead of `user=`), is the client-facing bell's read/write API — no WebSocket consumer,
+no frontend, both explicitly out of scope for this pass. `PortalInvoiceListSerializer` also gained a
+real `has_unread_message` flag (an `Exists()` annotation factored out of `portal_overview`'s own
+needs-attention computation into a new shared `_annotate_unread_message` helper in
+`apps/invoices/views_portal.py`, reused by both `portal_invoice_list` and `portal_overview`'s
+`recent_invoices`, so there is exactly one definition of "this invoice has an unread message"
+anywhere in the portal).
+
+Investigation findings ahead of building anything (per this task's own Step 1): `InvoiceSent` is
+emitted with `via='platform'|'manual'` exactly as assumed; the client-facing `InvoiceSent` handler
+fires ONLY for `via='platform'`, mirroring the exact same "genuinely sent through LanceraOS itself"
+scope decision the Phase 1 initial-portal-link email already established — a manual mark-sent flip
+means the freelancer delivered the invoice through their own channel outside LanceraOS, so there's
+no real "LanceraOS notified you" story for that side to tell. `CommentPosted` already carries
+`author_type`; the client-facing handler is the exact mirror image of the freelancer's own
+(`author_type == 'client'` there, `== 'freelancer'` here). `PaymentClaimConfirmed` was already
+emitted (from `invoice_claim_confirm`) but had no AuditLog write anywhere — only an email to the
+client; `invoice_claim_reject` emitted NOTHING at all — confirmed directly by reading the view before
+assuming otherwise, so `PaymentClaimRejected` is a real, brand-new event added at that existing call
+site. `FormalNoticeSent` is emitted from `invoice_send_formal_notice` exactly as referenced in this
+document's own prior history. `PortalInvoiceListSerializer` genuinely had no unread-message flag
+before this pass — confirmed by reading it directly, not assumed from Overview's own aggregation
+existing.
+
+Every handler is skipped outright for a one-time client (`invoice.client_id is None`) — there is no
+Client row to attach the notification to and no portal session a one-time client could ever read it
+from. Every handler is a SECOND, independent `@on(...)` registration for an event this file already
+had a freelancer-facing handler for — `core/events.py`'s `emit()` already supports multiple
+independent handlers per event, each wrapped in its own try/except, so this required no change to
+the event bus itself. No new client-facing email template was added for `PaymentClaimRejected` — a
+real, confirmed gap (no `build_payment_claim_rejected_email` exists anywhere in
+`apps/invoices/email_service.py`, unlike its `_confirmed`/`_submitted` siblings), left as a genuine,
+separate product decision rather than built unasked; the client can already see a rejected claim's
+`review_note` via the existing `GET .../portal/{id}/claims/` or the Payments page's own claims list.
+
+Reason: The client side of the portal had no notification mechanism of its own at all — every
+existing "does the client know something happened" signal was either a one-shot email (easy to miss,
+no persistent record inside the product) or nothing (a formal notice's own bell-equivalent never
+existed on the client's side). A portal client is not a Django `User` and cannot be forced through
+`apps.users`' JWT-cookie auth, so the existing bell's `user`-only schema genuinely could not be
+reused without a real, additive schema change — hence the parallel `client` column rather than
+overloading `user` with a polymorphic id.
+
+Alternatives considered: (1) A separate `ClientNotification` table, structurally independent from
+`AuditLog`/`NotificationRead` — rejected: it would duplicate the read/dismissed-state mechanics
+`NotificationRead` already gets right (idempotent `get_or_create`, `dismissed_at` as the soft-delete)
+for no real benefit, and the freelancer/client split maps cleanly onto "one more nullable FK," not
+"a second parallel system." (2) Reusing the freelancer's existing event-name strings for the
+client-scoped rows too (e.g. writing `event='comment_posted'` with `client=` set instead of a new
+`event='client_comment_posted'`) — rejected: harmless in practice (a `user=`-scoped query can never
+match a `user_id=NULL` row regardless of event-name spelling), but a distinct prefix keeps every
+future direct `AuditLog` query/debug session unambiguous about which side of the portal a given row
+belongs to, and keeps each side's own title/description copy (worded in second person to whichever
+party will actually read it) in genuinely separate dictionaries rather than one shared one that has
+to branch on `log.client_id is not None`. (3) Building the client-facing email for
+`PaymentClaimRejected` alongside the bell entry, for symmetry with `PaymentClaimConfirmed` — rejected
+per this task's own explicit backend-notification-bell scope; flagged instead of silently added.
+
+Verification: real seeded data (an Invoice/Client/Comment/Claim actually saved to the database, not
+mocked) exercising each of the 5 handlers directly via `emit()`, plus one true integration test
+driving the real `invoice_claim_reject` HTTP view end to end to prove the new emit() call site itself
+works, not just the handler in isolation. A dedicated additive-migration test
+(`core/tests/test_models.py`) proves an existing user-scoped `AuditLog`/`NotificationRead` query's
+result set is byte-identical before and after a client-scoped row exists, and vice versa. Cross-client
+isolation (one client cannot read, mark-read, or dismiss another client's notifications) and the
+freelancer's own bell being completely unaffected (a client-scoped row never appears in
+`core/notifications.py`'s `list_notifications`) are both covered by dedicated tests, not just
+asserted in prose. Full backend suite (`python manage.py test --keepdb`): **1290 tests, OK, 0
+failures** (up from 1251 before this pass — 39 new). One real, pre-existing test needed updating
+along the way, not a sign of anything broken: `test_portal_overview.py`'s own
+`RecentInvoicesTests.test_same_shape_as_portal_invoice_list` pinned the exact field set
+`PortalInvoiceListSerializer` returns, and needed the new `has_unread_message` field added to that
+pinned set — the expected consequence of a genuinely additive serializer field, caught by the first
+full-suite run and fixed immediately.

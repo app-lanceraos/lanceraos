@@ -214,11 +214,9 @@ def portal_invoice_list(request):
     if client is None:
         return Response({'error': 'No active portal session.'}, status=status.HTTP_401_UNAUTHORIZED)
 
-    invoices = (
-        Invoice.objects.filter(client=client)
-        .exclude(status__in=('draft', 'created'))
-        .order_by('-issue_date', '-created_at')
-    )
+    invoices = _annotate_unread_message(
+        Invoice.objects.filter(client=client).exclude(status__in=('draft', 'created'))
+    ).order_by('-issue_date', '-created_at')
     return Response(PortalInvoiceListSerializer(invoices, many=True).data)
 
 
@@ -226,6 +224,25 @@ def portal_invoice_list(request):
 # above) — 5 is a deliberate, small choice; there is no product spec
 # pinning an exact number.
 PORTAL_OVERVIEW_RECENT_INVOICES_LIMIT = 5
+
+
+def _annotate_unread_message(qs):
+    """
+    Shared has_unread_message annotation — an Exists() subquery for an
+    unread freelancer-authored comment on each invoice in `qs`. Factored
+    out (Client Notification Bell, Client Portal Redesign Phase 5) so
+    there is exactly one definition of "this invoice has an unread
+    message" anywhere in the portal: originally inlined only inside
+    portal_overview's own needs_attention_qs below; now also reused by
+    PortalInvoiceListSerializer's own `has_unread_message` field, both
+    at portal_invoice_list (above) and at portal_overview's own
+    recent_invoices (which inherits it for free once applied to base_qs).
+    """
+    return qs.annotate(
+        has_unread_message=Exists(
+            InvoiceComment.objects.filter(invoice=OuterRef('pk'), author_type='freelancer', read_by_client_at__isnull=True)
+        )
+    )
 
 
 def _client_balances_by_currency(base_qs):
@@ -362,7 +379,7 @@ def portal_overview(request):
         freelancer = {'business_name': '', 'logo': None}
 
     today = timezone.now().date()
-    base_qs = Invoice.objects.filter(client=client).exclude(status__in=('draft', 'created'))
+    base_qs = _annotate_unread_message(Invoice.objects.filter(client=client).exclude(status__in=('draft', 'created')))
 
     balances = _client_balances_by_currency(base_qs)
 
@@ -370,9 +387,6 @@ def portal_overview(request):
         base_qs.filter(status__in=ACTIVE_STATUSES)
         .annotate(
             has_pending_claim=Exists(PaymentClaim.objects.filter(invoice=OuterRef('pk'), status='pending')),
-            has_unread_message=Exists(
-                InvoiceComment.objects.filter(invoice=OuterRef('pk'), author_type='freelancer', read_by_client_at__isnull=True)
-            ),
         )
         .filter(
             Q(status__in=('sent', 'viewed'), client_acknowledged=False)

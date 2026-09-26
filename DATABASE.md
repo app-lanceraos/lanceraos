@@ -473,6 +473,9 @@ id                UUIDField, primary key
 user              FK to User, nullable, SET_NULL  — the account the event is ABOUT
 actor             FK to User, nullable, SET_NULL  — who PERFORMED the action, only populated
                                                        when different from `user` (admin actions)
+client            FK to clients.Client, nullable, SET_NULL  — set INSTEAD of `user` for a
+                                                       CLIENT-facing notification (Client Notification
+                                                       Bell, Client Portal Redesign Phase 5)
 event             CharField(60)  — free-form, not a fixed choices list, deliberately
 request_id        CharField(36), nullable
 ip_address        GenericIPAddressField, nullable
@@ -484,14 +487,32 @@ created_at
 1. **Mutable?** No — never updated after creation. This is the one hard rule on this table.
 2. **Soft deleted?** No deletion at all under normal operation.
 3. **Audit trail?** This *is* the audit trail for the whole application.
-4. **Indexed?** `(user, created_at)`, `(event, created_at)`, `(ip_address, created_at)`,
-   `request_id` — plus the single-column index Django creates automatically on every `ForeignKey`
-   (so `actor` alone is indexed too). See the correction below: there is **no** composite
-   `(actor, created_at)` index, despite the pattern used for `user`/`event`/`ip_address`.
+4. **Indexed?** `(user, created_at)`, `(client, created_at)`, `(event, created_at)`,
+   `(ip_address, created_at)`, `request_id` — plus the single-column index Django creates
+   automatically on every `ForeignKey` (so `actor` alone is indexed too). See the correction below:
+   there is **no** composite `(actor, created_at)` index, despite the pattern used for
+   `user`/`client`/`event`/`ip_address`.
 5. **Encrypted?** No — `metadata` should never contain raw secrets; sensitive request fields are
    redacted before logging (`core.observability.redact_sensitive_fields`).
-6. **Cascade behavior?** `SET_NULL` on both `user` and `actor` — the log entry survives even if
-   the account it describes (or the admin who performed the action) is later deleted.
+6. **Cascade behavior?** `SET_NULL` on `user`, `actor`, and `client` — the log entry survives even
+   if the account/client it describes (or the admin who performed the action) is later deleted.
+
+**`client` (added Client Portal Redesign, Phase 5 — the Client Notification Bell):** a row has
+exactly one of `user`/`client` set, never both — this table has no concept of an event belonging to
+both a freelancer and a client at once. A string FK reference (`'clients.Client'`, not a direct
+`from apps.clients.models import Client` at the top of `core/models.py`) deliberately keeps `core/`
+itself free of any import from an app — the same "core is app-agnostic" discipline `core/events.py`
+already documents for itself. `core.observability.log_event()` gained a matching `client=` kwarg;
+every real writer of a client-scoped row is one of the new `@on(...)` handlers in
+`apps/invoices/notifications.py` (see that file's own "Client Notification Bell" section) — never
+`apps.clients` itself, since apps.clients cannot import the Invoice-related models those handlers
+need. Read back exclusively by `apps/clients/views_portal_notifications.py`, a parallel,
+portal-session-authenticated REST surface — the freelancer's own `core/notifications.py` always
+filters on `user=request.user`, so a `client`-scoped row (`user_id=NULL`) can never match it,
+regardless of any overlap in event-name spelling (there is none: every client-scoped event uses a
+new, distinct `client_*`-prefixed string). Verified directly with a dedicated additive-migration
+test (`core/tests/test_models.py`) proving an existing user-scoped query's result set is unchanged
+before and after a client-scoped row is created, and vice versa.
 
 **`actor` — correction: this document previously claimed this field was added during the
 notification-bell work. That was wrong.** It was designed then (in `ADMIN_PANEL_DESIGN.md`, as a
@@ -556,12 +577,14 @@ off `AuditLog` itself, which must stay immutable.
 
 **Schema**:
 ```
-id, user (FK, CASCADE)
+id, user (FK, CASCADE, now nullable — see below)
+client            FK to clients.Client, nullable, CASCADE  — the client-side counterpart to `user`
 audit_log         FK to AuditLog, CASCADE
 read_at           DateTimeField, auto_now_add
 dismissed_at      DateTimeField, nullable
 ```
-`unique_together = [['user', 'audit_log']]` — one row per user per notification.
+`unique_together = [['user', 'audit_log'], ['client', 'audit_log']]` — one row per user (or per
+client) per notification.
 
 1. **Mutable?** Yes — `dismissed_at` is set after creation, on dismiss.
 2. **Soft deleted?** N/A — this table itself *is* the soft-delete mechanism for notifications: a
@@ -571,11 +594,20 @@ dismissed_at      DateTimeField, nullable
    confirms the `AuditLog` row is still present, unchanged.
 3. **Audit trail?** N/A — this table exists specifically *because* the real audit trail
    (`AuditLog`) must never carry mutable UI state like read/dismissed.
-4. **Indexed?** Implicit via the `unique_together` constraint (also serves as the lookup index for
-   "has this user seen this notification").
+4. **Indexed?** Implicit via both `unique_together` constraints (each also serves as the lookup
+   index for "has this user/client seen this notification").
 5. **Encrypted?** No — carries no sensitive data of its own.
-6. **Cascade behavior?** `CASCADE` from both `User` and `AuditLog` — if either is gone, the
-   read-state record has no meaning either.
+6. **Cascade behavior?** `CASCADE` from `User`, `Client`, and `AuditLog` — if any of them is gone,
+   the read-state record has no meaning either.
+
+**`client` + `user` now nullable (added Client Portal Redesign, Phase 5 — the Client Notification
+Bell):** mirrors `AuditLog.client`'s own user/client split immediately above — a row has exactly one
+of the two set, never both. `user` was a required FK before this pass; loosening it to nullable is
+purely additive (every pre-existing row already had `user` set, so nothing already in the database
+is affected) and was the one schema change genuinely required to let a client-scoped row exist in
+this table at all. `apps/clients/views_portal_notifications.py`'s mark-read/mark-all-read/dismiss
+endpoints are the only real writers of a `client`-scoped row, mirroring `core/notifications.py`'s
+own three equivalents exactly, just keyed by `client=` instead of `user=`.
 
 ---
 
