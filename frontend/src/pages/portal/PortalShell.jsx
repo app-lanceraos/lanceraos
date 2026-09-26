@@ -51,8 +51,8 @@
 // 3. The account menu is now a single "Log Out" action (always
 //    logout-everywhere — Step 2.G) plus a real dark/light theme toggle
 //    (Step 2.B, via usePortalThemeContext — see PortalThemeRoot.jsx).
-import { createContext, useEffect, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { createContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Home, IdCard, LogOut, Moon, Receipt, Sun, UserCircle2, Wallet } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -133,41 +133,163 @@ export function Skeleton() {
 // VISUAL badge grows for the active tab, the tap target doesn't shrink
 // for the inactive ones.
 //
-// Phase 4c (final, corrected spec): Phases 4 and 4b both chased a
+// Phase 4c (corrected overlap spec): Phases 4 and 4b both chased a
 // requirement — a genuinely transparent gap/cutout between the badge and
 // the pill — that turned out to never be the actual design. The real
 // reference is much simpler: a flat, solid circle overlapping a flat,
 // solid pill, with **65% of the badge's own diameter sitting below the
 // pill's top edge (overlapping into it) and 35% poking out above it**,
-// rendered with plain stacking order — no border, no box-shadow, no
-// mask, nothing between them but one shape drawn on top of the other.
-// Phase 4b's own `top: -57` (a deliberate ZERO-overlap gap, the opposite
-// of what's wanted here) is replaced with a value computed from the
-// real measured badge diameter (`D = 44px`, unchanged from every prior
-// pass) against the real measured pill position: target overlap
+// rendered with plain stacking order — no border, no box-shadow, nothing
+// between the badge and the pill but one shape drawn on top of the
+// other. Phase 4b's own `top: -57` (a deliberate ZERO-overlap gap, the
+// opposite of what's wanted here) is replaced with a value computed from
+// the real measured badge diameter (`D = 44px`, unchanged from every
+// prior pass) against the real measured pill position: target overlap
 // `0.65 × 44 = 28.6px` below the pill's top edge, `0.35 × 44 = 15.4px`
 // above it. With the pill's real top edge at 742px and the NavLink's own
 // real absolute top at 747px (unchanged since Phase 4b — nothing about
 // the surrounding layout moved), the badge's target absolute top is
 // `742 − 15.4 = 726.6px`, giving `top: 726.6 − 747 = -20.4`. Verified
-// empirically after applying it, not assumed from the arithmetic alone
-// — see DECISIONS.md's Phase 4c entry for the real post-fix measurement
-// and how close it actually lands to the 65/35 target. `border`/
-// `boxShadow` stay `none` (already true since Phase 4b, re-confirmed
-// here, not reintroduced) — the reference design has neither.
+// empirically (post-fix measurement landed at 65.02%/34.98%, see
+// DECISIONS.md's Phase 4c entry). `border`/`boxShadow` stay `none`
+// (already true since Phase 4b, re-confirmed, not reintroduced) — the
+// reference design has neither on the badge itself.
+//
+// Phase 4d (final piece of the same reference design): the ~65% of the
+// badge embedded in the pill sits against a thin curved MOAT — a real
+// circular hole cut into the pill's own material, tracing the badge's
+// edge, through which the true page background shows (not the pill's
+// own CARD_BG fill read as "close enough"). A border can't do this — a
+// border paints on top of an element's existing background, it can't
+// remove material the way a hole needs to. `mask-image`/
+// `WebkitMaskImage` on the PILL itself does: a radial gradient, opaque
+// (pill renders normally) everywhere except a ring from the badge's own
+// radius (22px) out to radius + a 4px moat width (26px), which is
+// transparent (the pill becomes genuinely see-through there, so
+// whatever is truly behind the fixed nav shows). 4px was chosen by
+// direct comparison against the 44px badge at real screen size — narrow
+// enough to read as a deliberate, precise cut rather than an accidental
+// gap, wide enough to be unambiguously visible as a curve, not a
+// rounding artifact.
+//
+// The mask's center must track WHICH of the 4 equal-width nav items is
+// active — each one centers its own badge over its own flex slot, not
+// over the pill's overall center — so a single hardcoded position would
+// only be correct for one tab. Measured directly via `pillRef`/
+// `useLayoutEffect` (the real rendered badge's center relative to the
+// real rendered pill's own box, both from `getBoundingClientRect()`),
+// not computed from assumed flex-math, and re-measured on every real
+// navigation (`useLocation()`) and viewport resize (the pill's own
+// `maxWidth: 340` means its real width — and therefore each item's own
+// center — changes on narrower screens). No mask is applied until the
+// first real measurement lands (`moat` starts `null`), so there's no
+// flash of a wrongly-positioned hole before layout settles.
+//
+// This only ever affects the pill's own painted area (its `<div>`'s own
+// box) — the ~35% of the badge poking out above the pill's top edge is
+// rendered by the BADGE's own element, a sibling the mask never touches,
+// so it needed no separate handling, exactly as expected going in.
+//
+// Phase 4e: Phase 4d's own report verified the moat on Payments only —
+// on Overview and My Details (the two tabs nearest the pill's own
+// rounded ends) it produced a visibly irregular bite, not a clean ring.
+// Direct measurement ruled out a coordinate bug first: the mask's parsed
+// center matched the real badge center to 0.000px on all 4 tabs, both
+// themes (8/8 exact). The real cause is geometric, confirmed by the
+// actual numbers, not assumed: the pill's `border-radius: 999px` on a
+// 54px-tall box clamps to a 27px corner radius (`height / 2`) at each
+// end. For Overview, the distance from the badge's own center to the
+// LEFT corner's own center is ~30.2px — less than the sum of the two
+// radii (moat outer radius 26 + corner radius 27 = 53), so the moat's
+// circle and the corner's own rounding circle genuinely intersect,
+// leaving a thin lens-shaped sliver of pill material between two
+// non-concentric, similarly-sized curves — which is exactly what reads
+// as an irregular bite, not a coordinate offset (there is none). For
+// Invoices/Payments (the 2 middle tabs), that same distance is ~105px,
+// nowhere near either corner's own radius, which is why only those two
+// looked correct in Phase 4d's own single-tab check.
+//
+// Fixed with a second, corner-protecting mask layer rather than moving
+// the badge or shrinking the moat (both out of scope) — 2 more
+// `radial-gradient()`s, one centered on each of the pill's own real
+// corner centers (`cornerRadius`px from that end, `cornerRadius`px from
+// the top — the exact center CSS itself already uses for the rounding),
+// opaque within that same `cornerRadius` and transparent beyond it. CSS
+// mask layers composite top-to-bottom with the default `add` (source-
+// over) operator, which — for pure alpha masks — behaves as a union:
+// wherever EITHER layer is opaque, the result is opaque. Listed above
+// (before) the moat layer, these two guards force the pill's own
+// natural corner material to stay solid regardless of what the moat
+// ring alone would say there, cleanly capping the ring exactly at the
+// edge of each corner's own real rounding — with zero visible effect on
+// Invoices/Payments, where the guards' own opaque discs never overlap
+// the moat's own transparent ring in the first place.
+const BADGE_RADIUS = 22
+const MOAT_WIDTH = 4
+
 function PillNav() {
+  const pillRef = useRef(null)
+  const location = useLocation()
+  // { x, y, pillWidth, pillHeight } — badge center relative to the
+  // pill's own top-left corner, plus the pill's own real box size (used
+  // to place the two corner-guard gradients, see above) — null until
+  // the first real post-layout measurement.
+  const [moat, setMoat] = useState(null)
+
+  useLayoutEffect(() => {
+    function measure() {
+      const pill = pillRef.current
+      const badge = pill?.querySelector('span')
+      if (!pill || !badge) { setMoat(null); return }
+      const pr = pill.getBoundingClientRect()
+      const br = badge.getBoundingClientRect()
+      setMoat({
+        x: (br.left + br.right) / 2 - pr.left, y: (br.top + br.bottom) / 2 - pr.top,
+        pillWidth: pr.width, pillHeight: pr.height,
+      })
+    }
+    // Confirmed live (real repeated fresh page loads, not assumed): applying
+    // a freshly-computed 3-layer mask-image synchronously in the SAME paint
+    // as the layout measurement that produced it is a genuine Chromium
+    // compositor race — the exact same mask string, verified correct via
+    // getComputedStyle every time, rendered a visibly broken corner-guard
+    // seam on some page loads and a clean one on others, with no other
+    // variable changed between runs. Deferring the actual `setMoat` call to
+    // the NEXT animation frame (rather than applying it in the same pass
+    // `useLayoutEffect` runs) gives the compositor a settled prior frame to
+    // diff against instead of computing the mask's own first-ever texture
+    // in the same commit as the layout that positions it — this resolved
+    // the flakiness across every repeated fresh-load test run afterward.
+    const raf = requestAnimationFrame(measure)
+    window.addEventListener('resize', measure)
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', measure) }
+  }, [location.pathname])
+
+  let maskImage
+  if (moat) {
+    const cornerRadius = moat.pillHeight / 2
+    const leftGuard = `radial-gradient(circle at ${cornerRadius}px ${cornerRadius}px, black 0, black ${cornerRadius}px, transparent ${cornerRadius}px, transparent 100%)`
+    const rightGuard = `radial-gradient(circle at ${moat.pillWidth - cornerRadius}px ${cornerRadius}px, black 0, black ${cornerRadius}px, transparent ${cornerRadius}px, transparent 100%)`
+    const moatRing = `radial-gradient(circle at ${moat.x}px ${moat.y}px, black 0, black ${BADGE_RADIUS}px, transparent ${BADGE_RADIUS}px, transparent ${BADGE_RADIUS + MOAT_WIDTH}px, black ${BADGE_RADIUS + MOAT_WIDTH}px, black 100%)`
+    maskImage = [leftGuard, rightGuard, moatRing].join(', ')
+  }
+
   return (
     <div style={{
       position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50,
       display: 'flex', justifyContent: 'center', pointerEvents: 'none',
       padding: '0 16px calc(16px + env(safe-area-inset-bottom, 0px))',
     }}>
-      <div style={{
-        pointerEvents: 'auto', position: 'relative',
-        display: 'flex', alignItems: 'center', width: '100%', maxWidth: 340,
-        background: CARD_BG, borderRadius: 999, boxShadow: MENU_SHADOW,
-        border: `1px solid ${CARD_BORDER}`, padding: '4px 8px',
-      }}>
+      <div
+        ref={pillRef}
+        style={{
+          pointerEvents: 'auto', position: 'relative',
+          display: 'flex', alignItems: 'center', width: '100%', maxWidth: 340,
+          background: CARD_BG, borderRadius: 999, boxShadow: MENU_SHADOW,
+          border: `1px solid ${CARD_BORDER}`, padding: '4px 8px',
+          maskImage, WebkitMaskImage: maskImage,
+        }}
+      >
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.path} to={item.path} end={item.end} aria-label={item.label}

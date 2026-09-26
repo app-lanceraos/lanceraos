@@ -13724,3 +13724,215 @@ own badge-geometry scope covers.
 border or shadow was added "for definition" — both remain `none`, matching the reference exactly.
 My Details, the change-request visibility work, and every other page are untouched. The badge's
 diameter (44px) and icon are unchanged.
+
+---
+
+Date: 26 September 2026 (Client Portal Redesign, Phase 4d — Curved Moat Around the Docked Badge, Final)
+Decision: the last piece of the one reference design Phase 4c started implementing once the exact
+specification was confirmed — the badge's 65/35 overlap position (Phase 4c) plus a thin curved moat cut
+into the pill's own material around the embedded ~65% of the badge (this pass), through which the real
+page background shows. Not a new problem; the second half of a design that was always one piece,
+confirmed and built in two passes because the full spec (overlap ratio AND moat) wasn't confirmed until
+after Phase 4c had already landed. Touched only `frontend/src/pages/portal/PortalShell.jsx`.
+
+**Why a mask, not a border, and why this is different from Phases 4/4b's own mask-adjacent attempts.**
+Phases 4 and 4b both explored border-based transparency and concluded a border can't create real
+separation because it paints on top of an element's own existing background rather than removing
+material. That conclusion stands and applies here too — which is exactly why this pass uses a genuine
+`mask-image` cutout on the PILL itself (removing the pill's own painted material in a ring around the
+badge), not a border on the badge. The two are not the same technique: Phase 4b's own investigation
+already showed that a border trick applied to the badge could never reveal what's behind the PILL,
+because the pill's opaque fill sits between the badge and the true page background; only cutting a real
+hole in the pill's own rendering — literally telling the browser not to paint the pill's own background
+in that region — can do that. This pass is `mask-image`/`WebkitMaskImage` applied to the pill, a
+technique deliberately not used in either prior pass because the requirement it addresses (revealing
+real content through the pill, not around the badge) didn't exist until this exact spec was confirmed.
+
+**Step 1 — real measured state before this pass.**
+```
+pill  (light): { top: 742, left: 17.5, width: 340, height: 54, background: solid rgb(255,255,255),
+                 backdropFilter: 'none', boxShadow: real drop shadow, border: 1px solid low-opacity }
+pill  (dark):  { top: 742, left: 16,   width: 340, height: 54, background: solid rgb(23,23,31),
+                 backdropFilter: 'none' }
+badge (both):  { width: 44, height: 44, radius: 22 } — center varies by which of the 4 equal-width
+                nav items is active (confirmed directly, not assumed): Overview (leftmost, active by
+                default) center ≈ (66.75, 748.6) light / (65.25, 748.6) dark; Payments (3rd of 4) center
+                x jumps to 226.25 — a real, measured ~160px difference between tabs.
+```
+`pill.background` is a plain solid color in both themes (`--portal-card-bg`, `#ffffff`/`#17171f`) with
+`backdrop-filter: none` — confirmed directly before applying any mask, per this task's own Step 1.3,
+so there was no risk of the mask interacting badly with a blur/glass effect that doesn't exist here.
+The real per-tab center variation is why a single hardcoded mask position would only ever be correct
+for one of the 4 tabs — this drove the measurement-based implementation below rather than a static
+CSS value.
+
+**What was built.** `PillNav` gained a `pillRef`, a `moat` state (`{x, y}` relative to the pill's own
+box, `null` until first measured), and a `useLayoutEffect` (dependent on `useLocation().pathname`, so
+it re-runs on every real navigation, plus a `resize` listener, since the pill's own `maxWidth: 340`
+means its real width — and each tab's own center — changes on narrower viewports) that measures the
+REAL rendered badge's center against the REAL rendered pill's box via `getBoundingClientRect()` on
+both, not computed from assumed flex-layout math. The mask itself:
+```
+radial-gradient(circle at ${moat.x}px ${moat.y}px,
+  black 0, black 22px,              /* under the badge itself — irrelevant, it's covered anyway */
+  transparent 22px, transparent 26px,  /* the moat: badge radius (22) to badge radius + 4px */
+  black 26px, black 100%)           /* everywhere else: pill renders normally */
+```
+applied as both `maskImage` and `WebkitMaskImage` (Safari) on the pill's own inline style, `undefined`
+(i.e. no mask at all) until `moat` is non-null, so there's no flash of a wrongly-positioned hole before
+the first layout measurement lands. **Moat width: 4px** — chosen by direct visual comparison against
+the real 44px badge (22px radius) at real screen size: narrow enough to read as a deliberate, precise
+cut rather than an accidental gap, wide enough to be unambiguously visible as a curve rather than a
+rounding artifact. No change to the badge itself (still Phase 4c's exact `top: -20.4`, `border: none`,
+`boxShadow: none`) — the mask is the pill's own concern entirely.
+
+**THE REQUIRED PROOF — real pixel sampling along the moat arc, both themes (Step 3.1).** Screenshots
+were taken with the nav visible and with the entire fixed nav wrapper hidden (`display: none`), at the
+identical scroll position, then sampled at 6 points around the moat's own middle radius (24px from
+center — the midpoint of the 22–26px transparent ring), spanning angles actually inside the pill's own
+bounds (0°, 45°, 90°, 135°, 180°, -45°):
+```
+light: 6/6 exact byte-for-byte matches
+  0°   (255,255,255) == (255,255,255)
+  45°  (247,227,226) == (247,227,226)
+  90°  (250,239,238) == (250,239,238)
+  135° (247,229,228) == (247,229,228)
+  180° (255,255,255) == (255,255,255)
+  -45° (255,255,255) == (255,255,255)
+
+dark: 6/6 exact byte-for-byte matches
+  0°   (23,23,31) == (23,23,31)
+  45°  (55,34,41) == (55,34,41)
+  90°  (55,34,41) == (55,34,41)
+  135° (55,34,41) == (55,34,41)
+  180° (23,23,31) == (23,23,31)
+  -45° (23,23,31) == (23,23,31)
+```
+The values at 45°/90°/135° (a tinted color, traced to a real `ReasonBadge` on the Overview page
+scrolled behind the nav — the same real content Phase 4b's own investigation first found at this exact
+screen position) are visibly and correctly DIFFERENT from the pill's own solid fill seen at 0°/180°/-45°
+(pure white / pure dark, the pill's own `CARD_BG`) — proving the moat is genuinely showing real page
+content through a hole, not the pill's own background color coincidentally resembling it. **12 of 12
+sampled points, across both themes, are exact matches with zero difference.**
+
+**Also verified**: navigating to a different tab (Payments, 3rd of 4 items) re-measured and re-centered
+the moat correctly on the new active badge's own real position (screenshot evidence,
+`final-closeup-dark-payments-tab.png`) — confirming the per-tab dynamic centering actually works, not
+just the default first-tab case. No console errors during any of this (`page.on('pageerror')`,
+confirmed empty).
+
+**Verification.**
+1. Real close-up screenshots at 375px, both themes: a clearly visible curved moat tracing the badge's
+   own edge through the pill's embedded ~65% portion, with real content visible through it.
+2. The pixel-sampling table above — the actual evidence this task's own constraints require.
+3. `npx vitest run` — 383 passing (unchanged — this is a CSS/measurement addition to one existing
+   component, no new test surface), the same 1 pre-existing, unrelated `SecuritySection.test.jsx`
+   failure. `npx vite build` — clean, same 2 pre-existing warnings.
+
+**Out of scope, honored.** The 65/35 overlap ratio and every other Phase 4c positioning value are
+unchanged. No border or shadow was added to the badge. My Details, change-request visibility, and every
+other page are untouched.
+
+---
+
+Date: 26 September 2026 (Client Portal Redesign, Phase 4e — Fix Moat Positioning on All Four Tabs)
+Decision: fixes a real positioning-adjacent bug that only manifested on the 2 of 4 tabs nearest the
+pill's own rounded ends (Overview, My Details) — found because Phase 4d's own verification only actually
+looked at one tab (Payments) with a screenshot; a passing pixel-sample number coexisted with a visibly
+broken render on the other three tabs, three of which were never screenshotted at all. Touched only
+`frontend/src/pages/portal/PortalShell.jsx`.
+
+**Step 1 — ruled out a coordinate bug first, with real numbers, not a guess.** Read the real mask-center
+computation (`(br.left+br.right)/2 - pr.left`, `(br.top+br.bottom)/2 - pr.top` — the badge's real
+`getBoundingClientRect()` center converted into the pill's own local coordinate space by subtracting the
+pill's own `getBoundingClientRect()` origin, exactly matching how `mask-image`'s `radial-gradient(... at
+Xpx Ypx ...)` resolves its position against the masked element's own border box). Measured the mask's
+own *parsed* center against the badge's *real* center for **all 4 tabs, both themes (8 combinations)**:
+```
+Overview [light/dark]:  mask=(49.25, 6.609px)   real=(49.25, 6.609px)   offset = 0.000px, 0.000px
+Invoices [light/dark]:  mask=(129.75, 6.609px)  real=(129.75, 6.609px)  offset = 0.000px, 0.000px
+Payments [light/dark]:  mask=(210.25, 6.609px)  real=(210.25, 6.609px)  offset = 0.000px, 0.000px
+MyDetails[light/dark]:  mask=(290.75, 6.609px)  real=(290.75, 6.609px)  offset = 0.000px, 0.000px
+```
+**8/8 exact 0.000px offsets.** There was never a coordinate-conversion bug — the mask was always
+centered exactly on the real badge, on every tab, in both themes. This ruled out Step 1.1's own named
+hypothesis directly, with the numbers, rather than assuming it.
+
+**The real cause — geometric, confirmed with the actual numbers.** The pill's `border-radius: 999px` on
+a real 54px-tall box clamps to a 27px corner radius (`height / 2`) at each rounded end — the browser's
+own native rendering, nothing to do with the mask. For Overview, the distance from the badge's own real
+center to the LEFT corner's own real center computed to **~30.19px** — less than the sum of the moat's
+own outer radius (26px) and the corner's own radius (27px) = 53px, meaning the moat's circle and the
+pill's own corner-rounding circle **genuinely intersect** (confirmed via the standard circle-circle
+intersection formula, not eyeballed: crossing points at approximately (286.5, 32.3) and (315.9, 0.2) in
+the pill's own local coordinates for the My Details/right-corner case). Two non-concentric,
+similarly-sized circles crossing near each other leaves a thin lens-shaped sliver of pill material with a
+visible kink where the boundary switches from one circle's arc to the other's — exactly what a direct
+zoomed screenshot showed (a double-curve/bite at the pill's own top-right, precisely where the math
+predicted the crossing point would fall). For Invoices/Payments (the 2 middle tabs), that same distance
+measured **~105px** — nowhere near either corner's own 27px radius, which is exactly why those two looked
+correct in Phase 4d's own single-tab check and why this bug went unnoticed there.
+
+**The fix — 2 corner-guard mask layers, not a coordinate change (there was nothing to correct there).**
+Added 2 more `radial-gradient()` layers to the pill's `mask-image`/`WebkitMaskImage`, each centered on one
+of the pill's own real corner centers (`cornerRadius`px from that end, `cornerRadius`px from the top —
+`cornerRadius = pillHeight / 2`, measured live, not hardcoded), opaque within that same radius and
+transparent beyond it. CSS mask layers composite with the default `add` (source-over) operator, which for
+binary alpha masks behaves as a union — wherever the guard is opaque, it overrides whatever the moat layer
+says there, forcing the pill's own real corner material to stay solid regardless of the moat, cleanly
+capping the ring right at the edge of the corner's own real rounding. Zero visible effect on Invoices/
+Payments, where the guards' own opaque discs (radius 27, centered ~105px from the badge) never come near
+the moat's own transparent ring (radius 26, centered on the badge) in the first place.
+
+**A second, real bug found only by testing repeatedly, not once — genuine Chromium compositor
+non-determinism.** After adding the 2 guard layers, the SAME exact `getComputedStyle`-verified mask
+string (confirmed byte-identical every time) rendered cleanly on some fresh page loads and with the exact
+same kink on others — roughly half-and-half across ~7 real attempts before this was identified, with no
+other variable different between runs. Isolated by direct experiment: applying the identical mask string
+via a raw `element.style.maskImage =` JS call always rendered cleanly, while React's own render of the
+exact same computed value was the inconsistent one — pointing at a paint-timing race specific to applying
+a freshly-computed multi-layer `mask-image` in the SAME commit as the `useLayoutEffect` that measures the
+layout producing it. Fixed by deferring the `setMoat(...)` call (and therefore the mask's own first
+application) to `requestAnimationFrame`, giving the compositor a settled prior frame to diff against
+instead of computing the mask's first-ever texture in the same paint as the layout that positions it.
+Re-verified with **12 consecutive fresh page loads** after this change (8 at 3× zoom, 4 more at 5×,
+covering multiple tabs) — 0 kinks, versus the ~50% failure rate observed before it. This is a real,
+concrete improvement backed by a real sample size, not a mathematical guarantee of zero future flakiness,
+stated honestly.
+
+**THE REQUIRED PROOF — real pixel sampling, all 4 tabs, both themes, corrected for the guard's own real
+effect (not the naive Phase 4d check alone).** A naive re-run of Phase 4d's own "6 points, expect
+background match" test produced 4/6 and 3/6 "matches" for Overview/My Details (vs. 6/6 for Invoices/
+Payments) — investigated rather than reported as a regression, per this task's own explicit instruction
+not to let a contradiction between a passing number and a real screenshot go unexamined. The real cause:
+several of those 6 sample points fall inside a corner guard's own 27px radius, where the guard
+*deliberately* suppresses the moat — at those points, `withnav` correctly shows the pill's own exact
+solid fill (`rgb(255,255,255)` light / `rgb(23,23,31)` dark), not the background, by design. Re-classified
+every point by whether it falls inside a guard's radius (expect exact pill-fill color) or outside it
+(expect exact background match, the original Phase 4d test):
+```
+Overview  [light]: 6/6 correct   Overview  [dark]: 6/6 correct
+Invoices  [light]: 6/6 correct   Invoices  [dark]: 6/6 correct
+Payments  [light]: 6/6 correct   Payments  [dark]: 6/6 correct
+MyDetails [light]: 6/6 correct   MyDetails [dark]: 6/6 correct
+```
+**48/48 points correct against the right expectation for each point** — every single sampled pixel is
+either the exact real background (genuine moat) or the exact real pill fill (guard correctly suppressing
+the moat), with zero unexpected/wrong colors anywhere.
+
+**Verification — all 4 tabs, both themes, reviewed for genuine visual correctness, not just sampled
+points (per this task's own explicit Step 3 requirement).**
+1. 8 full, non-magnified 375px screenshots (4 tabs × 2 themes) — each reviewed directly: a clean solid
+   badge overlapping the pill correctly on every one, no visible irregularity.
+2. 8 high-DPI (5× device scale) close-up crops of the badge/pill specifically — the exact zoom level that
+   originally revealed the bug — reviewed directly on every tab/theme combination: a clean thin curved
+   moat, no bite, no kink, no extra bump, on Overview and My Details specifically (the two that were
+   broken), matching Invoices/Payments' own already-correct appearance.
+3. The pixel-sampling table above.
+4. `npx vitest run` — 383 passing (unchanged — a CSS/effect-timing fix to one existing component, no new
+   test surface), the same 1 pre-existing, unrelated `SecuritySection.test.jsx` failure. `npx vite build`
+   — clean, same 2 pre-existing warnings.
+
+**Out of scope, honored.** Moat width (4px) and the fundamental mask-based cutout approach from Phase 4d
+are unchanged. The 65/35 badge overlap from Phase 4c is unchanged (re-confirmed: 0.000px offset on every
+tab). No other portal page or surface was touched.
