@@ -189,6 +189,7 @@ export function Skeleton() {
 // box) — the ~35% of the badge poking out above the pill's top edge is
 // rendered by the BADGE's own element, a sibling the mask never touches,
 // so it needed no separate handling, exactly as expected going in.
+// CORRECTED, Phase 4f — this "sibling" claim was wrong; see that entry.
 //
 // Phase 4e: Phase 4d's own report verified the moat on Payments only —
 // on Overview and My Details (the two tabs nearest the pill's own
@@ -224,11 +225,57 @@ export function Skeleton() {
 // edge of each corner's own real rounding — with zero visible effect on
 // Invoices/Payments, where the guards' own opaque discs never overlap
 // the moat's own transparent ring in the first place.
+// Phase 4f (structural fix — the real root cause of the badge-clipping/
+// corner-inconsistency behavior, present since Phase 4d): every pass
+// through 4e applied `maskImage`/`WebkitMaskImage` to the SAME `<div>`
+// that also CONTAINED the `NavLink`s, including the active badge's own
+// raised `<span top: -20.4>`. `mask-image` clips the ENTIRE painted
+// output of the element it's applied to — including descendant content
+// that overflows the element's own box via absolute positioning — to
+// that element's own mask positioning area (border-box by default). The
+// badge's ~35%-poking-out-above portion sits OUTSIDE the pill's own
+// border-box, so it was never actually a mask-untouched "sibling" the
+// way the Phase 4d comment above (now corrected) claimed — it was a
+// masked DESCENDANT whose overflow happened to render acceptably only
+// because `mask-repeat`'s real default is `repeat` (confirmed via
+// `getComputedStyle` before this fix, not assumed), which tiles the
+// mask at a period matching the pill's own box size — for THIS specific
+// badge position/pill size, the wrapped tile coordinate happened to
+// evaluate opaque, so the badge LOOKED fine. That's a fragile
+// coincidence of today's exact numbers, not a guarantee — and it's very
+// likely what produced the corner-tab-vs-middle-tab inconsistency Ali
+// reported, since the corner-guard layers' own tiled wraparound differs
+// by tab position in ways the 4e pass never accounted for.
+//
+// Fixed by separating the masked decoration from the unmasked content
+// into two stacked sibling layers, both absolutely filling a shared
+// `position: relative` container (`height: 54`, `PILL_HEIGHT` below —
+// the exact real height every prior pass already measured, now made
+// explicit rather than emerging implicitly from flex content, since
+// both layers are removed from normal flow):
+//   - `pillRef` (background): the decorative pill shape — background,
+//     border, border-radius, box-shadow, and the mask — `pointer-events:
+//     none`, nothing interactive lives here. This is what's measured for
+//     `pillWidth`/`pillHeight`/the corner-guard centers.
+//   - a foreground layer: the real `NavLink`s and the active badge,
+//     `pointer-events: auto`, and — this is the actual fix — NO mask
+//     property at all, so nothing it renders, including the badge's
+//     overflowing top, is ever subject to any mask/tiling ambiguity.
+//     `badgeLayerRef` finds the real badge `<span>` here for measurement
+//     (Step 3's own instruction: measure the badge in the foreground,
+//     the pill in the background — not the same node any more).
+// A `1px solid transparent` border on the foreground (same width as the
+// background's own real border, just invisible) keeps its own content
+// box — and therefore every `NavLink`'s and the badge's own computed
+// position — pixel-identical to before this split, so `top: -20.4` and
+// every mask-position formula below it need no numeric change at all.
 const BADGE_RADIUS = 22
 const MOAT_WIDTH = 4
+const PILL_HEIGHT = 54
 
 function PillNav() {
   const pillRef = useRef(null)
+  const badgeLayerRef = useRef(null)
   const location = useLocation()
   // { x, y, pillWidth, pillHeight } — badge center relative to the
   // pill's own top-left corner, plus the pill's own real box size (used
@@ -239,7 +286,7 @@ function PillNav() {
   useLayoutEffect(() => {
     function measure() {
       const pill = pillRef.current
-      const badge = pill?.querySelector('span')
+      const badge = badgeLayerRef.current?.querySelector('span')
       if (!pill || !badge) { setMoat(null); return }
       const pr = pill.getBoundingClientRect()
       const br = badge.getBoundingClientRect()
@@ -280,40 +327,53 @@ function PillNav() {
       display: 'flex', justifyContent: 'center', pointerEvents: 'none',
       padding: '0 16px calc(16px + env(safe-area-inset-bottom, 0px))',
     }}>
-      <div
-        ref={pillRef}
-        style={{
-          pointerEvents: 'auto', position: 'relative',
-          display: 'flex', alignItems: 'center', width: '100%', maxWidth: 340,
-          background: CARD_BG, borderRadius: 999, boxShadow: MENU_SHADOW,
-          border: `1px solid ${CARD_BORDER}`, padding: '4px 8px',
-          maskImage, WebkitMaskImage: maskImage,
-        }}
-      >
-        {NAV_ITEMS.map((item) => (
-          <NavLink
-            key={item.path} to={item.path} end={item.end} aria-label={item.label}
-            style={{
-              position: 'relative', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              height: 44, textDecoration: 'none',
-            }}
-          >
-            {({ isActive }) => (
-              isActive ? (
-                <span style={{
-                  position: 'absolute', top: -20.4, left: '50%', transform: 'translateX(-50%)',
-                  width: 44, height: 44, borderRadius: '50%', background: ACCENT,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: 'none', border: 'none',
-                }}>
-                  <item.icon size={19} color={TEXT_ON_ACCENT} />
-                </span>
-              ) : (
-                <item.icon size={20} color={MUTED_TEXT} />
-              )
-            )}
-          </NavLink>
-        ))}
+      <div style={{ position: 'relative', width: '100%', maxWidth: 340, height: PILL_HEIGHT }}>
+        {/* Background layer — masked, decorative only, never interactive. */}
+        <div
+          ref={pillRef}
+          style={{
+            position: 'absolute', inset: 0, boxSizing: 'border-box', pointerEvents: 'none',
+            background: CARD_BG, borderRadius: 999, boxShadow: MENU_SHADOW,
+            border: `1px solid ${CARD_BORDER}`,
+            maskImage, WebkitMaskImage: maskImage,
+          }}
+        />
+        {/* Foreground layer — the real nav content, including the active
+            badge. Never masked, so its overflow (the badge's own raised
+            top) is never subject to any mask/tiling ambiguity. */}
+        <div
+          ref={badgeLayerRef}
+          style={{
+            position: 'absolute', inset: 0, boxSizing: 'border-box', pointerEvents: 'auto',
+            display: 'flex', alignItems: 'center', padding: '4px 8px',
+            border: '1px solid transparent',
+          }}
+        >
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.path} to={item.path} end={item.end} aria-label={item.label}
+              style={{
+                position: 'relative', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                height: 44, textDecoration: 'none',
+              }}
+            >
+              {({ isActive }) => (
+                isActive ? (
+                  <span style={{
+                    position: 'absolute', top: -20.4, left: '50%', transform: 'translateX(-50%)',
+                    width: 44, height: 44, borderRadius: '50%', background: ACCENT,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: 'none', border: 'none',
+                  }}>
+                    <item.icon size={19} color={TEXT_ON_ACCENT} />
+                  </span>
+                ) : (
+                  <item.icon size={20} color={MUTED_TEXT} />
+                )
+              )}
+            </NavLink>
+          ))}
+        </div>
       </div>
     </div>
   )

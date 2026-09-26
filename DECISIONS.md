@@ -13936,3 +13936,89 @@ points (per this task's own explicit Step 3 requirement).**
 **Out of scope, honored.** Moat width (4px) and the fundamental mask-based cutout approach from Phase 4d
 are unchanged. The 65/35 badge overlap from Phase 4c is unchanged (re-confirmed: 0.000px offset on every
 tab). No other portal page or surface was touched.
+
+---
+
+Date: 26 September 2026 (Client Portal Redesign, Phase 4f — Fix Badge Clipping, Structural)
+Decision: fixes a real structural DOM/masking mistake present since the moat was first introduced (Phase
+4d) — the active badge was a DESCENDANT of the same element `mask-image` was applied to, not a sibling the
+mask never touched, contrary to what Phase 4d's own comment claimed at the time. This was a structural
+error, not a value or geometry error in any of Phases 4c/4d/4e's own math, which were all independently
+correct (every prior pass's own real measurements — the 65/35 overlap ratio, the 0.000px mask-center
+offsets — are unchanged by this fix, because none of them were ever wrong). Touched only
+`frontend/src/pages/portal/PortalShell.jsx`.
+
+**The real root cause, confirmed directly before changing anything.** `mask-image`/`WebkitMaskImage` clip
+the entire painted output of the element they're applied to — including descendant content that overflows
+the element's own box via absolute positioning — to that element's own mask positioning area (border-box
+by default). The active badge's own raised `<span top: -20.4>` was a child of the SAME `<div>` the mask
+was on, and its own ~35%-poking-out-above portion sits outside that div's own border-box. Checked the
+actual `mask-repeat` computed value before assuming anything: **`repeat`** (the genuine CSS default, not
+`no-repeat` as might be assumed) — meaning the overflow region wasn't simply invisible, it was subject to
+the mask's own gradient TILED at a period matching the pill's box size, evaluated at the wrapped
+coordinate. For today's exact badge size/position, that wrapped evaluation happened to land on an opaque
+part of the gradient, which is why the badge LOOKED fine in every screenshot across Phases 4c–4e — a
+fragile coincidence of the specific numbers in play, not a real guarantee, and very likely the actual
+source of the corner-tab-vs-middle-tab inconsistency Ali reported, since the two corner-guard layers'
+OWN tiled wraparound differs by each tab's own badge position in ways Phase 4e's fix never accounted for
+(Phase 4e's own fix and verification were real and correct for the problem it was solving — the moat/
+corner-guard geometry — this is a separate, deeper issue in the same feature).
+
+**The fix — two stacked sibling layers instead of one masked element containing the content.** `PillNav`
+now renders a `position: relative` container (`height: 54`, the exact real pill height every prior pass
+already measured, now explicit rather than emerging implicitly from flex content once both children are
+removed from normal flow) holding two `position: absolute; inset: 0` siblings:
+- **Background** (`pillRef`): the decorative pill shape only — `background`, `border`, `border-radius`,
+  `box-shadow`, and the mask (`maskImage`/`WebkitMaskImage`, unchanged formula from Phase 4e) —
+  `pointer-events: none`. This is what's measured for `pillWidth`/`pillHeight`/the corner-guard centers.
+- **Foreground** (`badgeLayerRef`): the real `NavLink`s and the active badge — `pointer-events: auto`, and
+  critically, **no mask property at all**. A `1px solid transparent` border (same width as the
+  background's own real border, just invisible) keeps its own content box — and every `NavLink`'s and the
+  badge's own computed position — pixel-identical to before the split, so `top: -20.4` and every mask-
+  position formula needed zero numeric change.
+The badge measurement in `useLayoutEffect` now looks for the badge inside `badgeLayerRef` (the foreground)
+while measuring `pillRef` (the background) for the pill's own box, per this task's own explicit
+instruction — confirmed the two queries still produce the exact same real numbers as before (see below).
+
+**Verification, with real evidence, all 4 tabs, both themes — this time actually looked at, not sampled
+once and assumed.**
+1. Real geometry check immediately after the change: `pillRect` `{top:742, bottom:796, left:17.5,
+   width:340, height:54}` and `badgeRect` `{top:726.609375, bottom:770.609375, left:44.75, width:44}` —
+   **byte-identical to every measurement from Phases 4c through 4e**, confirming the structural split
+   introduced zero positional drift. `pillHasMask: true` on the background, `badgeMaskCheck: 'none'` and
+   `badgeParentMask: 'none'` on the badge and its own foreground container — confirmed directly, not
+   assumed, that the badge is now genuinely outside any mask's reach.
+2. 8 full, non-magnified 375px screenshots (4 tabs × 2 themes) plus 8 high-DPI (3×) close-up crops,
+   **every one reviewed directly**: a full, clean circular badge on every tab, both themes, with the
+   correct ~35% poking out above the pill and no clipped/flattened top anywhere.
+3. **The corner-tab-vs-middle-tab inconsistency, explicitly checked, not assumed fixed**: measured the
+   real overlap/poke-out proportion for all 8 combinations —
+   `Overview/Invoices/Payments/MyDetails × light/dark` **all measured exactly `65.02%` overlap /
+   `34.98%` poke-out**, badge height `44px` in every case, no variation across tabs. The close-up crops
+   (composited into one grid, all 8 side by side) show Overview and My Details (the two corner tabs)
+   structurally identical to Invoices and Payments (the two middle tabs) — same badge shape, same visible
+   proportion, same moat appearance — differing only in horizontal position, exactly as this task's own
+   Step 3.2 requires being confirmed, not assumed.
+4. Pixel-sampling re-run (Phase 4e's own nav-visible/nav-hidden methodology, corrected for the corner-
+   guard's own deliberate suppression zone, same as Phase 4e's own final table): **48/48 points correct**
+   across all 4 tabs, both themes — the moat genuinely still shows real background where it should, and
+   the guards still correctly suppress it where they should, confirming the restructuring didn't disturb
+   the masking logic itself.
+5. Click-through confirmed for all 4 real `NavLink`s in sequence (Invoices → Payments → My Details →
+   Overview), each producing the correct real URL change. Hit-testing specifically at a point 8px ABOVE
+   the pill's own top edge — squarely inside the badge's raised poke-out zone, in the now-separate
+   foreground layer — resolved to the real badge `<span>` (`document.elementFromPoint`, not assumed), and
+   a real `page.mouse.click()` at that exact point registered as a genuine navigation click, confirming
+   the badge's raised portion is still fully clickable and its hit area wasn't narrowed by the layer
+   split.
+6. Re-ran Phase 4e's own repeated-fresh-load race-condition check against the new structure specifically
+   (6 consecutive fresh loads of the My Details/corner tab, the case that most exposed the original
+   compositor race) — **6/6 clean**, confirming the `requestAnimationFrame` timing fix from Phase 4e still
+   holds with the mask now applied to a different (background-only) element.
+7. `npx vitest run` — 383 passing (unchanged — a DOM-structure fix to one existing component, no new test
+   surface), the same 1 pre-existing, unrelated `SecuritySection.test.jsx` failure. `npx vite build` —
+   clean, same 2 pre-existing warnings.
+
+**Out of scope, honored.** Moat width, the 65/35 overlap ratio, the corner-guard concept, and the badge's
+own color/border/shadow are all unchanged — this was purely a DOM-structure fix for where the mask was
+applied, not a change to the visual design itself. No other portal page or surface was touched.
