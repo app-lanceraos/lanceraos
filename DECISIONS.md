@@ -14022,3 +14022,85 @@ once and assumed.**
 **Out of scope, honored.** Moat width, the 65/35 overlap ratio, the corner-guard concept, and the badge's
 own color/border/shadow are all unchanged — this was purely a DOM-structure fix for where the mask was
 applied, not a change to the visual design itself. No other portal page or surface was touched.
+
+---
+
+Date: 26 September 2026 (Client Portal Redesign, Phase 4g — Fix Corner-Guard Overreach)
+Decision: fixes a second, distinct bug living in the same corner-guard mechanism Phase 4e introduced —
+NOT a continuation of Phase 4f's badge-clipping fix (that one was about the wrong ELEMENT being masked;
+this one is about the guard's own SHAPE being wrong). On Overview and My Details, the moat rendered on
+only one side of the badge — the side facing away from the nearest corner; Invoices/Payments were
+correct. Touched only `frontend/src/pages/portal/PortalShell.jsx` (`PillNav`'s mask-image construction).
+
+**Confirmed with real numbers first, not assumed.** A headless Chromium session against the live dev app
+(`getBoundingClientRect()` on the real pill/badge nodes, `Client.portal_token` of a real seeded client)
+measured, for all 4 tabs: badge-to-nearest-corner-center distance `d = 30.180px` for both Overview
+(nearest corner: left, center `(27,27)`) and My Details (nearest corner: right, center `(313,27)`) —
+exactly matching Phase 4e's own reported "~30.2px", and symmetric as expected from the 4-equal-width-tab
+layout. Invoices/Payments measured `d = 104.754px`, matching Phase 4e's own "~105px".
+
+**Root cause, confirmed by direct numeric simulation of the real stadium-shape geometry (pill 340×54,
+corner radius 27, moat inner/outer radius 22/26) — not hand-waved.** Phase 4e's guard is a SOLID DISC:
+opaque for every point with `dist_C` (distance to the corner's own center) `<= cornerRadius` (27px),
+transparent beyond. A disc erases that ENTIRE range, including points close to the corner's own CENTER
+(as low as `dist_C = 4.18px` at the point of the moat ring directly facing the corner) — which is
+actually the most deeply INTERIOR part of the pill, nowhere near any real edge (the nearest true edge
+from that center point is a full 27px away in every direction). Measured directly: of the ring points
+that are legitimately part of the pill's own true rendered shape (excluding the ~40% every tab already
+loses to the ordinary top-edge clip, unrelated to this bug), the disc guard erased **54.3% (r=26, the
+moat's outer boundary) / 55.8% (r=22, inner boundary)** of them on Overview/My Details, and exactly
+**0%** on Invoices/Payments (their `d=104.75px` never comes anywhere near the guard's 27px reach) — this
+matches the reported symptom precisely: not a sliver, roughly half the ring actually erased.
+
+Where the real kink risk (Phase 4e's own "thin lens-shaped sliver of pill material") actually lives:
+measured `dist_C` along the ring's true-inside arc as it approaches the point where it exits the pill's
+real shape near the corner — it climbs SMOOTHLY, e.g. `20.39px -> 23.46px -> 27.22px` over just the last
+~18 degrees of arc before the ring exits (r=22 boundary; r=26 shows the identical pattern over a similar
+span, no jump anywhere). The genuine "sliver" risk is confined to a narrow band right at `dist_C approx=
+cornerRadius`, never the full `0..cornerRadius` disc Phase 4e used.
+
+**The fix.** Each corner guard is now a bounded ANNULAR BAND around that corner's own center instead of a
+solid disc — opaque only for `dist_C` in `[cornerRadius - MOAT_WIDTH, cornerRadius]`, transparent both
+inside that band (left to the moat ring's own decision — this is what restores the missing side) and
+outside `cornerRadius` (moot; already clipped by the pill's own border-radius, matching Phase 4e's
+original outer bound exactly, so the true edge itself always stays protected — no gap can appear there
+by construction, since the band's outer edge IS the corner's own real rounding radius). The band's inner
+radius reuses `MOAT_WIDTH` (the moat's own already-established width, 4px) as its buffer rather than
+introducing a new tuned magic number, and both bounds derive from `cornerRadius`, itself still
+`moat.pillHeight / 2` computed live from the real measured pill box every render — exactly the same
+live-measurement principle the moat's own center already used, extended to the guard. Because the band
+is bounded and centered on the corner (not the badge), it is automatically inert for any tab whose real
+measured badge-to-corner distance clears `cornerRadius` by more than the band's own width — true for
+Invoices/Payments today (`104.75px` vs a `23-27px` band) and true for any future layout with nav items
+placed even closer together, with zero per-tab special-casing anywhere in the code.
+
+**Verified analytically before touching the browser**, via a standalone Node simulation of the exact
+stadium-shape/mask math (not the live DOM): with the new band, Overview/My Details go from 54.3-55.8%
+erasure down to **8.8% (r=26) / 9.9% (r=22)** of the true-inside ring — and, critically, a direct sweep
+for any true-pill point within 1.5px of the corner's real edge that the new band leaves UNPROTECTED
+found **zero** on all 4 tabs — confirming the band's outer bound still fully covers the original kink
+zone with no gap.
+
+**Verified live, with real evidence, all 4 tabs, both themes.**
+1. 8 full-page 375px screenshots (4 tabs × 2 themes) plus 8 high-DPI (3×) close-up crops on the badge
+   itself, plus 4 additional 4×-DPI close-ups tightly cropped on just the rounded corner region for
+   Overview/My Details in both themes (8 total) — every one reviewed directly. The moat ring is visible
+   as a clean, symmetric arc on BOTH sides of the badge on every tab, including Overview and My Details,
+   matching Invoices/Payments' own unchanged appearance. The pill's own outer silhouette at both rounded
+   corners is smooth and continuous in every crop — no notch, no jagged double-curve, no visible seam
+   where the moat ring would cross the corner's own rounding. The original Phase 4e kink has not
+   reappeared on either tab, either theme.
+2. Pixel-sampling re-run (Phase 4d/4e's own nav-visible/nav-hidden methodology), this time explicitly at
+   points on BOTH sides of the badge — directly left, directly right, toward the nearest corner, and away
+   from it — for Overview and My Details specifically, in both light and dark: **16/16 sample points
+   (2 tabs × 2 themes × 4 positions) show `colorDist: 0`** between the nav-visible and nav-hidden
+   captures, confirming every one of those points is genuinely showing the real page background through
+   a real cutout in the pill — including the corner-facing side, which previously showed nothing at all.
+3. `npx vitest run` — **383 passing / 384 total** (unchanged from the pre-existing baseline — a mask-
+   formula-only change to one existing component introduces no new test surface), the same 1
+   pre-existing, unrelated `SecuritySection.test.jsx` failure this document already tracks as unrelated.
+   `npx vite build` — clean, same pre-existing chunk-size/dynamic-import warnings, no new ones.
+
+**Out of scope, honored.** Moat width (4px), the badge's 65/35 overlap, and Phase 4f's layer-split
+structure are all unchanged — this pass only replaced the corner guard's own shape (disc -> bounded
+band). No other portal page was touched.

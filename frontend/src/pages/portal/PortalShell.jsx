@@ -269,6 +269,61 @@ export function Skeleton() {
 // box — and therefore every `NavLink`'s and the badge's own computed
 // position — pixel-identical to before this split, so `top: -20.4` and
 // every mask-position formula below it need no numeric change at all.
+//
+// Phase 4g (a second, distinct bug from the same corner-guard mechanism Phase
+// 4e introduced — NOT a continuation of Phase 4f's badge-clipping fix, which
+// was about the wrong element being masked, not the guard's own shape): on
+// Overview and My Details, the moat rendered on only ONE side of the badge —
+// the side facing away from the nearest corner. Real measurement (a headless
+// Chromium session against the live dev app, `getBoundingClientRect()` on the
+// real pill/badge nodes) confirmed Phase 4e's own reported ~30.2px badge-to-
+// corner distance exactly: d=30.180px for both Overview (nearest corner: left,
+// center (27,27)) and My Details (nearest corner: right, center (313,27)) —
+// symmetric, as expected from the 4-equal-width-tab layout. Invoices/Payments
+// measured d=104.754px, matching Phase 4e's own "~105px" figure.
+//
+// Root cause, confirmed by direct numeric simulation (not assumed): Phase 4e's
+// guard is a SOLID DISC — opaque for every point with dist_C (distance to the
+// corner's own center) <= cornerRadius (27px), transparent beyond. A disc
+// erases ALL of that range, including points very close to the corner's own
+// CENTER (as low as dist_C=4.18px at the point of the ring directly facing the
+// corner) — which is actually the most deeply INTERIOR part of the pill (nowhere
+// near any real edge; the nearest true edge from that center point is a full
+// 27px away in every direction). Measured directly: of the ring points that are
+// legitimately part of the pill's own true rendered shape (i.e. excluding the
+// ~40% every tab already loses to the top-edge clip, unrelated to this bug),
+// the disc guard erases 54.3% (r=26, the moat's outer boundary) / 55.8% (r=22,
+// inner boundary) of them on Overview/My Details — and exactly 0% on Invoices/
+// Payments, since their measured distance (104.75px) never comes anywhere near
+// the guard's 27px reach. This matches the reported symptom precisely: not a
+// sliver, closely half the ring actually gone.
+//
+// Where the real kink risk (Phase 4e's own "thin lens-shaped sliver of pill
+// material") actually lives: measured dist_C along the ring's true-inside arc,
+// approaching the point where it exits the pill's real shape near the corner —
+// dist_C climbs smoothly, e.g. 20.39px -> 23.46px -> 27.22px over just the last
+// ~18 degrees of arc before the ring exits (r=22; r=26 shows the identical
+// pattern over a similar span). It is a smooth, monotonic approach with no
+// jump — the genuine "sliver" risk is confined to a narrow band right at
+// dist_C approx= cornerRadius, never the full 0..cornerRadius disc.
+//
+// Fix: each corner guard is now a bounded ANNULAR BAND around that corner's
+// own center — opaque only for dist_C in [cornerRadius - MOAT_WIDTH,
+// cornerRadius], transparent both inside that band (left to the moat ring's
+// own decision — this is what restores the missing side) and outside
+// cornerRadius (moot; already clipped by the pill's own border-radius). The
+// band's inner radius reuses MOAT_WIDTH (the moat's own already-established
+// width) as its buffer rather than a new tuned constant, and both bounds
+// derive from `cornerRadius`, itself still `moat.pillHeight / 2` — computed
+// live from the real measured pill box, same as every prior pass. Because the
+// band is bounded and centered on the CORNER (not the badge), it is
+// automatically inert for any tab whose real measured badge-to-corner
+// distance clears cornerRadius by more than the band's own width — true for
+// Invoices/Payments today (104.75px vs a ~23-27px band) and true for any
+// future layout with more nav items placed even closer together, without any
+// per-tab special-casing in the code itself. See DECISIONS.md's Phase 4g entry
+// for the full before/after evidence (erasure percentages, exit-angle
+// dist_C readings, and the 8 real screenshots + pixel-sampling verification).
 const BADGE_RADIUS = 22
 const MOAT_WIDTH = 4
 const PILL_HEIGHT = 54
@@ -315,8 +370,26 @@ function PillNav() {
   let maskImage
   if (moat) {
     const cornerRadius = moat.pillHeight / 2
-    const leftGuard = `radial-gradient(circle at ${cornerRadius}px ${cornerRadius}px, black 0, black ${cornerRadius}px, transparent ${cornerRadius}px, transparent 100%)`
-    const rightGuard = `radial-gradient(circle at ${moat.pillWidth - cornerRadius}px ${cornerRadius}px, black 0, black ${cornerRadius}px, transparent ${cornerRadius}px, transparent 100%)`
+    // Phase 4g — the guard is now a bounded ANNULAR BAND around each corner
+    // center, not a solid disc from 0. See this file's own Phase 4g comment
+    // block above `PillNav` for the full measured-geometry derivation; the
+    // short version: a solid disc (opaque for every dist_C <= cornerRadius)
+    // forces opacity across dist_C values as low as ~4px on Overview/My
+    // Details, which is deep interior — nowhere near the pill's real edge —
+    // and that's exactly the arc real screenshots showed the moat missing
+    // from. The real kink only ever risked appearing in a narrow band right
+    // at the true edge (measured: dist_C climbs smoothly from ~20px to 27px
+    // over the last ~10-15deg of arc before the ring exits the pill's real
+    // shape — never a jump). `guardInnerRadius` reuses the moat's own width
+    // as the band's buffer (both already-live-measured/derived quantities,
+    // not a new magic number), so the guard now only forces opacity for
+    // dist_C in [cornerRadius - MOAT_WIDTH, cornerRadius] and leaves
+    // dist_C < that band fully alone, restoring the moat there. This is
+    // still zero-effect on Invoices/Payments (their measured badge-to-
+    // corner distance, ~105px, never gets anywhere near this band either).
+    const guardInnerRadius = Math.max(0, cornerRadius - MOAT_WIDTH)
+    const leftGuard = `radial-gradient(circle at ${cornerRadius}px ${cornerRadius}px, transparent 0, transparent ${guardInnerRadius}px, black ${guardInnerRadius}px, black ${cornerRadius}px, transparent ${cornerRadius}px, transparent 100%)`
+    const rightGuard = `radial-gradient(circle at ${moat.pillWidth - cornerRadius}px ${cornerRadius}px, transparent 0, transparent ${guardInnerRadius}px, black ${guardInnerRadius}px, black ${cornerRadius}px, transparent ${cornerRadius}px, transparent 100%)`
     const moatRing = `radial-gradient(circle at ${moat.x}px ${moat.y}px, black 0, black ${BADGE_RADIUS}px, transparent ${BADGE_RADIUS}px, transparent ${BADGE_RADIUS + MOAT_WIDTH}px, black ${BADGE_RADIUS + MOAT_WIDTH}px, black 100%)`
     maskImage = [leftGuard, rightGuard, moatRing].join(', ')
   }
