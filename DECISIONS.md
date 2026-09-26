@@ -13651,3 +13651,76 @@ full 375px viewport once settled). A separate, real, pre-existing gap WAS found:
 Analytics/Notes/Requests) overflows at 375px with the last tab's label partially cut off — this affects
 Notes too, predates this pass, and is unrelated to the Requests tab specifically added here, so it's
 flagged rather than fixed under this task's own scope.
+
+---
+
+Date: 26 September 2026 (Client Portal Redesign, Phase 4c — Badge Overlap Geometry, Final)
+Decision: this corrects a SPECIFICATION error carried through both prior badge passes (Phase 4 and
+Phase 4b), not a new execution problem in either one. Both of those passes solved, correctly, a
+requirement — a genuinely transparent gap/cutout between the badge and the pill — that turned out to
+never be the actual design. Confirmed directly from Ali: the real reference is a plain, solid-colored
+circle overlapping a plain, solid-colored pill, with 65% of the badge's own diameter sitting below the
+pill's top edge and 35% poking out above it, via ordinary z-index/paint-order stacking — no border, no
+box-shadow, no mask, no transparency technique of any kind. Touched only
+`frontend/src/pages/portal/PortalShell.jsx` (the badge's own `top` value and its header comment); no
+other file.
+
+**Real measured geometry, before this pass (375×812, unchanged from Phase 4b's own end state).**
+```
+pill:  { top: 742, bottom: 796, height: 54 }
+badge: { top: 690, bottom: 734, width: 44, height: 44 }, top: -57 (CSS, relative to the NavLink)
+overlap: 0px — Phase 4b's own deliberate zero-overlap fix, exactly what this task supersedes.
+```
+`border`/`boxShadow` were already `none`/`none` (Phase 4b had already removed both — nothing to
+reintroduce). `z-index` on both elements: `auto` — `document.elementFromPoint()` at the badge's own
+center confirmed the badge's own icon `<path>` (not the pill) is the topmost element there, meaning
+plain DOM-order stacking already renders the badge above the pill wherever they'd overlap; no explicit
+`z-index` was needed at any point in this fix.
+
+**The arithmetic (shown, not hand-tuned).** Badge diameter `D = 44px` (unchanged across every pass —
+this task's own explicit "do not change diameter" constraint, confirmed against the code before
+touching it). Target: `0.65 × 44 = 28.6px` of the badge below the pill's top edge (the overlapping
+portion), `0.35 × 44 = 15.4px` above it (the poking-out portion). The pill's real top edge sits at
+`742px`; the badge's positioning `<span>` is `position: absolute` relative to its own parent `NavLink`,
+whose real absolute top — derived from Phase 4b's own measurement (`690 − (−57) = 747`) and confirmed
+unchanged this pass, since nothing about the surrounding layout was touched — is `747px`. Target badge
+absolute top: `742 − 15.4 = 726.6px`. New CSS `top`: `726.6 − 747 = -20.4`.
+
+**Real post-fix measurement (not assumed from the arithmetic).**
+```
+pill:  { top: 742, bottom: 796 }                    (unchanged)
+badge: { top: 726.609375, bottom: 770.609375 }        (top: -20.4 applied)
+overlap: 28.609375px  ->  28.609375 / 44 = 65.02% below the pill's top edge
+above-pill portion: 44 − 28.609375 = 15.390625px  ->  34.98%
+```
+**65.02% / 34.98%, within 0.02 percentage points of the 65/35 target** — well inside the ±3-point
+tolerance this task's own Step 3.1 required. Identical in dark mode (geometry has no theme dependency;
+re-measured directly rather than assumed) — `border: '0px none'`, `boxShadow: 'none'`,
+`background: rgb(0, 200, 150)` (the real `ACCENT` token, unchanged), confirmed via the actual theme
+toggle, not a forced DOM attribute.
+
+**What was NOT touched, and why.** `main`'s mobile bottom padding (`140px`, raised from `96px` in Phase
+4b to clear the badge's own zero-overlap position) was left as-is — this task's own scope is the
+badge's position and appearance only ("Do NOT touch... any other page"). Since the badge now sits
+CLOSER to the pill than Phase 4b's own state (overlapping it again, not floating 8px above), the
+existing 140px padding is now more generous than strictly necessary, not less — re-verified with the
+same scroll-to-bottom methodology every prior pass has used: **54.77px real clearance** at the bottom
+of a real 22-invoice scrolled list, not obscured. A future pass could tighten this back down if the
+extra whitespace is worth reclaiming, but that's a separate, cosmetic call, not something this task's
+own badge-geometry scope covers.
+
+**Verification, with real evidence.**
+1. Real screenshots at 375px, both themes, close-up crops of the badge/pill: a flat, solid circle with
+   no visible border and no visible glow, overlapping the pill at the measured 65/35 ratio, matching
+   the reference design directly — no transparency, no seam, no mask artifact of any kind (there is
+   none to have one, since none was applied).
+2. Real full-page screenshots confirming the badge reads correctly in context against real scrolled
+   content, both themes.
+3. `npx vitest run` — 383 passing (unchanged from the immediately prior pass — this is a pure CSS
+   value change on one existing element, no new test surface), the same 1 pre-existing, unrelated
+   `SecuritySection.test.jsx` failure. `npx vite build` — clean, same 2 pre-existing warnings.
+
+**Out of scope, honored.** No mask/`clip-path`/cutout technique of any kind was implemented. No
+border or shadow was added "for definition" — both remain `none`, matching the reference exactly.
+My Details, the change-request visibility work, and every other page are untouched. The badge's
+diameter (44px) and icon are unchanged.
