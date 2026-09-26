@@ -15,7 +15,7 @@
 // is a components/ file that isn't a route either.
 import { useEffect, useState } from 'react'
 import {
-  X, Flag, Archive, RotateCcw, Pencil, Plus, FileText, StickyNote, BarChart3, Tag as TagIcon, FileDown,
+  X, Flag, Archive, RotateCcw, Pencil, Plus, FileText, StickyNote, BarChart3, Tag as TagIcon, FileDown, Inbox,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -31,7 +31,18 @@ const TABS = [
   { id: 'invoices', label: 'Invoices', Icon: FileText },
   { id: 'analytics', label: 'Analytics', Icon: BarChart3 },
   { id: 'notes', label: 'Notes', Icon: StickyNote },
+  { id: 'requests', label: 'Requests', Icon: Inbox },
 ]
+
+// Mirrors apps/clients/notifications.py's own _PROPOSED_FIELD_LABELS
+// exactly (the human-readable labels for the raw `proposed_*` metadata
+// keys GET /api/clients/<pk>/change-requests/ returns verbatim, not
+// re-derived) — kept here rather than fetched, since it's small, static,
+// and the same shape the backend's own email/AuditLog metadata already use.
+const PROPOSED_FIELD_LABELS = {
+  proposed_name: 'Name', proposed_email: 'Email', proposed_company: 'Company',
+  proposed_phone: 'Phone', proposed_address: 'Address', proposed_country: 'Country',
+}
 
 // Provisional — apps.invoices doesn't exist yet, so this mapping has
 // never been exercised against a real invoice status. Kept local to this
@@ -62,6 +73,10 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
   const [invoices, setInvoices] = useState([])
   const [invoicesLoading, setInvoicesLoading] = useState(true)
 
+  const [changeRequests, setChangeRequests] = useState([])
+  const [changeRequestsLoading, setChangeRequestsLoading] = useState(true)
+  const [dismissingId, setDismissingId] = useState(null)
+
   const [activeTab, setActiveTab] = useState('invoices')
 
   const [editing, setEditing] = useState(false)
@@ -81,6 +96,18 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
   useEffect(() => { loadClient() }, [clientId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadNotesAndTags() }, [clientId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadInvoices() }, [clientId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadChangeRequests() }, [clientId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Entry point from the notification bell's own action_url
+  // (`/clients?client={id}&tab=requests`, core/notifications.py) — jumps
+  // straight to the Requests tab once the client record is loaded, the
+  // same "wait for client+!loading, then act on initialAction" shape the
+  // pre-existing 'flag' entry point below already established.
+  useEffect(() => {
+    if (initialAction === 'requests' && client && !loading) {
+      setActiveTab('requests')
+    }
+  }, [initialAction, client, loading])
 
   // Entry point from the list card's one-click "Flag" quick action — opens
   // straight into the flag modal once the client record is loaded, rather
@@ -138,6 +165,35 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
       setInvoices([])
     } finally {
       setInvoicesLoading(false)
+    }
+  }
+
+  async function loadChangeRequests() {
+    setChangeRequestsLoading(true)
+    try {
+      const { data } = await api.get(`/clients/${clientId}/change-requests/`)
+      setChangeRequests(data)
+    } catch {
+      setChangeRequests([])
+    } finally {
+      setChangeRequestsLoading(false)
+    }
+  }
+
+  // Dismissing reuses the exact same POST /api/notifications/dismiss/
+  // AppShell.jsx's own bell already calls — never a second, parallel
+  // dismiss endpoint. It only ever marks a core.models.NotificationRead
+  // row for this freelancer; the underlying AuditLog entry (and the
+  // bell's own unread count, since dismissing also marks it read) is
+  // untouched. Optimistic local removal on success — a real reload
+  // would show the same result, this just avoids the round trip.
+  async function handleDismissChangeRequest(id) {
+    setDismissingId(id)
+    try {
+      await api.post('/notifications/dismiss/', { ids: [id] })
+      setChangeRequests((prev) => prev.filter((r) => r.id !== id))
+    } catch { /* no-op — the entry stays in the list, the user can retry */ } finally {
+      setDismissingId(null)
     }
   }
 
@@ -417,7 +473,11 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
               <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: '1px solid var(--border-subtle)' }}>
                 {TABS.map((tab) => {
                   const isActive = activeTab === tab.id
-                  const count = tab.id === 'notes' ? ` (${notes.length})` : ''
+                  const count = tab.id === 'notes'
+                    ? ` (${notes.length})`
+                    : (tab.id === 'requests' && changeRequests.length > 0)
+                      ? ` (${changeRequests.length})`
+                      : ''
                   return (
                     <button
                       key={tab.id}
@@ -449,6 +509,12 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
                 <NotesTab
                   notes={notes} input={noteInput} saving={noteSaving}
                   onInputChange={setNoteInput} onAdd={handleAddNote} onDelete={handleDeleteNote}
+                />
+              )}
+              {activeTab === 'requests' && (
+                <RequestsTab
+                  requests={changeRequests} loading={changeRequestsLoading}
+                  dismissingId={dismissingId} onDismiss={handleDismissChangeRequest}
                 />
               )}
             </>
@@ -645,6 +711,72 @@ function NotesTab({ notes, input, saving, onInputChange, onAdd, onDelete }) {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ── RequestsTab ───────────────────────────────────────────────────
+// Client Portal Redesign, Phase 4b. Read-only content + Dismiss only —
+// deliberately NO "apply" action anywhere here: the freelancer still
+// makes any accepted change through the existing "Edit" button/
+// EditClientModal above, now simply with this request's real content
+// visible on screen while they do it. GET /api/clients/<pk>/change-
+// requests/ already filters out dismissed entries server-side, so
+// every entry rendered here is genuinely pending.
+function RequestsTab({ requests, loading, dismissingId, onDismiss }) {
+  if (loading) {
+    return <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Loading…</div>
+  }
+  if (requests.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+        No pending change requests from this client.
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {requests.map((req) => {
+        const fields = Object.entries(req.proposed_changes || {})
+        return (
+          <div key={req.id} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: '14px 16px' }}>
+            <p style={{ margin: '0 0 10px', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
+              {new Date(req.created_at).toLocaleString()}
+            </p>
+
+            {fields.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: req.message ? 10 : 0 }}>
+                {fields.map(([key, value]) => (
+                  <div key={key} style={{ display: 'flex', gap: 8, fontSize: '0.85rem' }}>
+                    <span style={{ fontWeight: 600, color: 'var(--text-secondary)', minWidth: 70, flexShrink: 0 }}>
+                      {PROPOSED_FIELD_LABELS[key] || key}:
+                    </span>
+                    <span style={{ color: 'var(--text-primary)', wordBreak: 'break-word' }}>{value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {req.message && (
+              <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-primary)', lineHeight: 1.6, whiteSpace: 'pre-wrap', fontStyle: fields.length > 0 ? 'italic' : 'normal' }}>
+                {fields.length > 0 ? `"${req.message}"` : req.message}
+              </p>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
+              <button
+                onClick={() => onDismiss(req.id)}
+                disabled={dismissingId === req.id}
+                className="fos-btn fos-btn-ghost"
+                style={{ padding: '4px 10px', fontSize: '0.72rem' }}
+              >
+                {dismissingId === req.id ? <span className="fos-spinner" /> : null}
+                {dismissingId === req.id ? 'Dismissing…' : 'Dismiss'}
+              </button>
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

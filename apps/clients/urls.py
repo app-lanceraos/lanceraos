@@ -29,6 +29,7 @@ urlpatterns = [
     path('<uuid:pk>/notes/', views.client_notes, name='client_notes'),
     path('<uuid:pk>/notes/<uuid:note_id>/', views.client_note_detail, name='client_note_detail'),
     path('<uuid:pk>/analytics/', views.client_analytics, name='client_analytics'),
+    path('<uuid:pk>/change-requests/', views.client_change_requests, name='client_change_requests'),
     path('<uuid:pk>/tags/<uuid:tag_id>/attach/', views.client_tag_attach, name='client_tag_attach'),
     path('<uuid:pk>/tags/<uuid:tag_id>/', views.client_tag_detach, name='client_tag_detach'),
 ]

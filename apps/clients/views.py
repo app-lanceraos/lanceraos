@@ -11,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from core.events import emit
+from core.models import AuditLog, NotificationRead
 
 from .models import FLAG_TYPE_CHOICES, Client, ClientNote, ClientTag
 from .serializers import ClientListSerializer, ClientNoteSerializer, ClientSerializer, ClientTagSerializer
@@ -336,6 +337,59 @@ def client_analytics(request, pk):
     """
     client = get_object_or_404(Client, pk=pk, user=request.user)
     return Response(client.payment_stats)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def client_change_requests(request, pk):
+    """
+    GET /api/clients/<pk>/change-requests/ — Client Portal Redesign,
+    Phase 4b. Freelancer-facing, read-only: every real, non-dismissed
+    'client_details_change_requested' AuditLog entry for this client,
+    newest first, with its actual submitted content (the proposed field
+    values and/or freeform message apps.clients.notifications wrote into
+    the row's own metadata at submission time — never re-derived or
+    summarized).
+
+    This is a READ surface only, by design — see this app's own
+    apps/clients/notifications.py docstring: the freelancer applies any
+    accepted change themselves via the existing, already-secure
+    PUT /api/clients/<pk>/ (ClientSerializer), never a one-click "apply"
+    from here. "Dismissing" an entry (POST /api/notifications/dismiss/,
+    core/notifications.py — reused verbatim, not reimplemented) hides it
+    from this list via core.models.NotificationRead, the exact same
+    per-user read/dismiss mechanism the bell already uses; AuditLog
+    itself is immutable/append-only by its own model docstring and is
+    never written to by dismissing anything.
+
+    Filters out already-dismissed entries server-side, mirroring
+    core.notifications._visible_logs_and_states' own "visible = not
+    dismissed" definition exactly — so this list only ever shows what
+    still needs the freelancer's attention, not a permanently growing
+    history.
+    """
+    client = get_object_or_404(Client, pk=pk, user=request.user)
+    logs = list(
+        AuditLog.objects.filter(
+            user=request.user, event='client_details_change_requested',
+            metadata__client_id=str(client.pk),
+        ).order_by('-created_at')
+    )
+    dismissed_ids = set(
+        NotificationRead.objects.filter(
+            user=request.user, audit_log__in=logs, dismissed_at__isnull=False,
+        ).values_list('audit_log_id', flat=True)
+    )
+    data = [
+        {
+            'id': str(log.id),
+            'created_at': log.created_at.isoformat(),
+            'proposed_changes': log.metadata.get('proposed_changes', {}),
+            'message': log.metadata.get('message', ''),
+        }
+        for log in logs if log.id not in dismissed_ids
+    ]
+    return Response(data)
 
 
 # ══════════════════════════════════════════════════════════════════

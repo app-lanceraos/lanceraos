@@ -22,6 +22,7 @@
 // selection either — never existed here and isn't being added now
 // (deferred, confirmed with Ali — see DECISIONS.md).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Search, X, Plus, Users, Flag, Archive, RotateCcw, ChevronRight, ArrowUpDown,
 } from 'lucide-react'
@@ -86,6 +87,7 @@ export default function Clients() {
   const [selectedClientId, setSelectedClientId] = useState(null)
   const [selectedInitialAction, setSelectedInitialAction] = useState(null)
   const [rowBusyId, setRowBusyId] = useState(null)
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const searchTimer = useRef(null)
   const latestRequestId = useRef(0)
@@ -150,6 +152,21 @@ export default function Clients() {
   useEffect(() => {
     api.get('/clients/currencies/').then(({ data }) => setAvailableCurrencies(data.currencies || [])).catch(() => setAvailableCurrencies([]))
   }, [])
+
+  // Notification click-through (Client Portal Redesign, Phase 4b) —
+  // mirrors Invoices.jsx's own `?invoice=<id>&tab=<tab>` mount effect
+  // exactly. This page previously read no query params at all (a real,
+  // confirmed gap — core/notifications.py's own `client_details_change_
+  // requested` action_url pointed here with a `?client=` param that
+  // nothing ever consumed), so `openDetail` here is called for the
+  // first time from a URL rather than a click.
+  useEffect(() => {
+    const clientParam = searchParams.get('client')
+    if (!clientParam) return
+    openDetail(clientParam, searchParams.get('tab') === 'requests' ? 'requests' : null)
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   function handleSearchChange(value) {
     setSearch(value)

@@ -122,51 +122,51 @@ export function Skeleton() {
 // Mobile floating pill nav (Step 2.C) — fully rounded container, real
 // margin from every screen edge (never flush/full-width), soft shadow.
 // The active tab gets its own larger circular badge, accent-filled,
-// positioned to poke up above the pill's own top edge — a negative
-// `top` offset on an element inside a container with no `overflow`
-// set (the default, `visible`) renders fully un-clipped; the pill
-// itself deliberately never sets `overflow: hidden` for exactly this
-// reason. Every tab (active or not) is a real 44×44 touch target,
-// matching this pass's own mobile-audit minimum (Step 2.D) — only the
-// VISUAL badge grows for the active tab, the tap target doesn't shrink
-// for the inactive ones.
+// floating ABOVE the pill's own top edge with real vertical separation
+// (Phase 4b — see below for why "above" replaced "poking up out of," a
+// deliberate reversal) — a negative `top` offset on an element inside a
+// container with no `overflow` set (the default, `visible`) renders
+// fully un-clipped; the pill itself deliberately never sets `overflow:
+// hidden` for exactly this reason. Every tab (active or not) is a real
+// 44×44 touch target, matching this pass's own mobile-audit minimum
+// (Step 2.D) — only the VISUAL badge grows for the active tab, the tap
+// target doesn't shrink for the inactive ones.
 //
-// Mobile Polish (Phase 3.5b): the badge's own box-shadow — real
-// computed value was `0 6px 16px rgba(0,200,150,.45)` — rendered as a
-// pronounced accent-colored halo/glow around the active tab (confirmed
-// visually in both themes with a real screenshot crop, not assumed from
-// the numbers alone). `top: -20` is also reduced to `-14`: real
-// scroll-to-bottom testing (a 22-invoice seeded list, 3 real device
-// heights) found no actual content collision either before or after —
-// this is a deliberate toning-down of how aggressively the badge pokes
-// above the pill, not a fix for a reproduced overlap. See DECISIONS.md
-// for the full before/after evidence on both.
+// Mobile Polish (Phase 3.5b) softened the badge's box-shadow glow and
+// its raise offset. Phase 4 then tried to fix a still-visible ring
+// around the badge with `border: 3px solid transparent` +
+// `backgroundClip: 'padding-box'` — CSS that is individually correct
+// for making a border genuinely see-through, but wrong for THIS
+// element, for a reason neither prior pass actually measured: **Phase
+// 4b's own direct geometry measurement (`getBoundingClientRect()` on
+// both elements, not a CSS property) found the badge overlapping the
+// pill's own rectangle by 35 of its 44px height** — only a ~9px sliver
+// at the very top ever poked into real page space at all. A transparent
+// border can only reveal whatever is genuinely painted BELOW the
+// element in the compositing stack — for the 35px that sits over the
+// pill, that's the pill's own opaque CARD_BG, correctly, because the
+// pill really is there; no border trick changes that. There was never
+// a color bug to fix — there was no actual gap for a border to make
+// transparent, because the badge was never geometrically separate from
+// the pill's own body in the first place. (A second real finding from
+// this same measurement pass: the page content visible directly behind
+// the nav is NOT a flat color — sampling it with the nav hidden entirely
+// returned real scrolled-content pixels, e.g. a pinkish tint from a
+// ReasonBadge on Overview — which is exactly why a fixed-color "reveal"
+// of any kind, mask included, would have been fragile: it would need to
+// correctly composite arbitrary real content, which only genuine DOM-
+// level non-overlap does for free.)
 //
-// Phase 4: the 3.5b softening pass left two things behind, both real
-// (confirmed by direct visual review, re-verified here in both themes
-// rather than re-litigated) — the `3px solid ${CARD_BG}` ring and the
-// `boxShadow` glow were both only ever turned DOWN, not removed. The
-// ring's own root cause: `CARD_BG` is an OPAQUE color (white in light
-// mode, `#17171f` in dark) — by default a CSS border paints on top of
-// the element's own background (`background-clip: border-box`), so a
-// "transparent" gap painted in a solid color is not actually
-// transparent, it's a same-color cutout that only coincidentally
-// blends where the badge overlaps the pill's own identical background,
-// and visibly does NOT blend in the ~10px of the badge that pokes
-// above the pill into the page background behind it (a different real
-// color/content). Fixed at the root: `border: 3px solid transparent`
-// with `backgroundClip: 'padding-box'` — the latter is what actually
-// makes this work, since without it the accent `background` paints
-// straight through a transparent border by default (border-box
-// clipping), which would make the "ring" invisible for the wrong
-// reason (accent bleeding into it) rather than genuinely see-through.
-// `backgroundClip: 'padding-box'` keeps the badge's own accent fill
-// inside the padding box, leaving the 3px border area genuinely
-// transparent — whatever is actually behind the badge (the pill, or
-// the page/scrolled content above it) shows through for real, in both
-// themes, with no theme-dependent color to get wrong. `boxShadow` is
-// now `'none'` outright, not a softer value — this task's own
-// instruction is "actually gone," not "softer again."
+// Fixed for real this time by removing the overlap itself: the badge
+// now sits with a real ~8px vertical gap fully above the pill's own top
+// edge (`top: -57`, computed from the real measured geometry — see
+// DECISIONS.md's Phase 4b entry for the exact before/after numbers and
+// pixel-sampled proof) — zero overlap, so there is nothing left for any
+// border/mask to need to "reveal": whatever renders in that gap is just
+// the ordinary page underneath the fixed nav, composited normally, no
+// special-casing required. The border/backgroundClip trick from Phase 4
+// is removed as dead code now that there's nothing for it to be
+// covering for.
 function PillNav() {
   return (
     <div style={{
@@ -191,11 +191,10 @@ function PillNav() {
             {({ isActive }) => (
               isActive ? (
                 <span style={{
-                  position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)',
+                  position: 'absolute', top: -57, left: '50%', transform: 'translateX(-50%)',
                   width: 44, height: 44, borderRadius: '50%', background: ACCENT,
-                  backgroundClip: 'padding-box',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: 'none', border: '3px solid transparent',
+                  boxShadow: 'none', border: 'none',
                 }}>
                   <item.icon size={19} color={TEXT_ON_ACCENT} />
                 </span>
@@ -443,7 +442,14 @@ export default function PortalShell() {
 
       <main style={{
         flex: 1, width: '100%', maxWidth: 760, margin: '0 auto', boxSizing: 'border-box',
-        padding: isMobile ? '16px 16px 96px' : '28px 24px 40px',
+        // Phase 4b: bottom padding increased 96px -> 140px — the badge's
+        // real footprint from the viewport's own bottom edge grew once it
+        // stopped overlapping the pill (now floating with a real gap
+        // above it, not embedded 35px into it), so the old value no
+        // longer reserves enough clearance. Re-verified with the same
+        // scroll-to-bottom methodology as every prior pass — see
+        // DECISIONS.md's Phase 4b entry for the real measured numbers.
+        padding: isMobile ? '16px 16px 140px' : '28px 24px 40px',
       }}>
         <Outlet />
         {/* Mobile Polish (Phase 3.5b): rendered HERE, as the last item of

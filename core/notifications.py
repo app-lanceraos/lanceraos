@@ -130,14 +130,19 @@ EVENT_ACTION_URLS = {
     'stale_drafts_digest': '/invoices/?status=draft',
     # {id} here is a CLIENT id, not an invoice id — see _action_url's own
     # updated fallback below. '/clients?client={id}' matches
-    # '/invoices?invoice={id}''s established query-param convention
-    # (Clients.jsx is presumed to be the same kind of state-driven-panel
-    # page Invoices.jsx already is, per CLAUDE.md's own frontend section)
-    # but is UNVERIFIED against the real frontend route — this task was
-    # backend-only and did not read frontend/src/App.jsx/Clients.jsx to
-    # confirm. Flagged directly rather than assumed silently; correct
-    # this string, not the mechanism, if the real route differs.
-    'client_details_change_requested': '/clients?client={id}',
+    # '/invoices?invoice={id}''s established query-param convention.
+    # CONFIRMED, Client Portal Redesign Phase 4b (the previous entry here
+    # was flagged UNVERIFIED — this pass read frontend/src/App.jsx and
+    # pages/Clients.jsx directly): Clients.jsx is a state-driven-panel
+    # page exactly like Invoices.jsx, and previously had NO query-param
+    # handling at all (confirmed by grep — a real, confirmed gap, not
+    # assumed), so this link landed on the bare client list with no
+    # panel ever opening. Clients.jsx now mirrors Invoices.jsx's own
+    # `?invoice=<id>&tab=<tab>` mount-effect exactly, and `&tab=requests`
+    # is added here so this link opens the new Requests tab directly
+    # (ClientDetailPanel.jsx's own `initialAction='requests'` handling),
+    # not just the client's default Invoices tab.
+    'client_details_change_requested': '/clients?client={id}&tab=requests',
 }
 
 

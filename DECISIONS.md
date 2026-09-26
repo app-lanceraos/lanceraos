@@ -13483,3 +13483,171 @@ request-change form never optimistically updates the read-only view — a succes
 genuinely separate `mode: 'success'` screen, never back to `mode: 'view'` with locally-mutated field values;
 the read view only ever re-renders what the real GET response last returned. The PillNav's own shape/pattern
 (rounded floating bar, raised active badge) is unchanged — only the ring/glow execution was fixed.
+
+---
+
+Date: 23 September 2026 (Client Portal Redesign, Phase 4b — Real Badge Separation + Change Request
+Visibility)
+Decision: two unrelated fixes. (A) The mobile nav badge, fixed for real this time by removing the overlap
+that made a border/mask fix structurally impossible, verified with actual pixel sampling rather than a CSS
+property read. (B) A freelancer-facing "Requests" tab on the Client detail panel, surfacing every real
+change-request an AuditLog row already held but nothing ever displayed. Touched
+`frontend/src/pages/portal/PortalShell.jsx`, `frontend/src/components/ClientDetailPanel.jsx`,
+`frontend/src/pages/Clients.jsx`, `apps/clients/views.py`, `apps/clients/urls.py`, `core/notifications.py`.
+
+**Why the badge had failed twice — the real root cause, found by measuring, not reading CSS.**
+Both prior passes changed a color-related property (`border-color`, `box-shadow`) and verified the change
+by reading `getComputedStyle` afterward — a real value change, correctly applied, that still didn't fix
+what a person actually sees. This pass started differently: `getBoundingClientRect()` on the real badge
+`<span>` and the real pill `<div>`, at 375×812, before touching any code.
+
+Real measured geometry (light and dark identical — geometry doesn't depend on theme):
+```
+pill:  { top: 742, bottom: 796, height: 54 }
+badge: { top: 733, bottom: 777, height: 44 }
+overlap: 35px of the badge's own 44px height — 80% of the badge sits INSIDE the pill's own rectangle.
+```
+A border's transparency can only reveal whatever is painted BELOW that element in the compositing stack.
+For the 35 of 44px where the badge sits inside the pill's own box, what's below it is — correctly — the
+pill's own opaque `CARD_BG`, because the pill genuinely is there. No border-color or `background-clip`
+trick changes that; there was never a color bug to fix, because there was never a real gap for a border to
+make transparent. The badge was never geometrically separate from the pill in the first place.
+
+A second real finding from the same pass, worth recording because it also rules out the alternative "mask"
+approach (Step 2A's own option B) as fragile: hiding the entire fixed nav and sampling the pixel at the
+badge's own screen position found **real scrolled page content, not a flat color** — `(250, 239, 238)` in
+light mode, a pale pink, traced to a `ReasonBadge`'s `ERROR_TINT` on the Overview page directly behind the
+nav at that scroll position. A `mask-image` "reveal" would need to correctly composite whatever arbitrary
+real content happens to be scrolled underneath at any given moment — which is exactly what genuine DOM-level
+non-overlap does for free, and exactly the kind of thing a static mask geometry can silently get subtly
+wrong. This is why Step 2A's preferred, lower-risk option (real gap, no overlap) was chosen over the mask.
+
+**The fix.** `top: -14` → `top: -57` on the badge's own `<span>` (computed from the real geometry above,
+not eyeballed: NavLink's own absolute top was 747px; target badge bottom = pill top − 8px real gap = 734;
+badge top = 734 − 44 = 690; CSS `top` = 690 − 747 = −57). The `border: 3px solid transparent` +
+`backgroundClip: 'padding-box'` trick from the prior (failed) pass is removed entirely — dead code now
+that there's nothing left for it to be covering for. `main`'s mobile bottom padding raised 96px → 140px to
+match the badge's new, taller footprint from the viewport's own bottom edge, re-verified with the same
+scroll-to-bottom methodology every prior pass has used (22-invoice seeded list): **18.16px real clearance**,
+not obscured.
+
+**THE REQUIRED PROOF — real pixel sampling, not a CSS property (Step 3.1).** Post-fix real geometry: badge
+`{top: 690, bottom: 734}`, pill `{top: 742}` — a genuine **8px gap, zero overlap** (confirmed:
+`overlapPx: -8`, i.e. the ranges don't intersect at all). Two screenshots were taken at identical viewport/
+scroll state per theme: one with the nav visible (`phase4b-withnav-{theme}.png`), one with the entire fixed
+nav wrapper's `display` set to `none` (`phase4b-groundtruth-{theme}.png`, the "ground truth" — what a viewer
+would see with the nav genuinely removed). Real RGB pixel values, sampled with PIL at 5 points spanning the
+gap on both sides and directly below the badge, both 1:1-scale screenshots (`deviceScaleFactor: 1`,
+confirmed via image dimensions matching the 375×812 viewport exactly):
+
+| point | light: with-nav | light: ground-truth | match | dark: with-nav | dark: ground-truth | match |
+|---|---|---|---|---|---|---|
+| left of badge (40, 712) | (255,255,255) | (255,255,255) | **exact** | (23,23,31) | (23,23,31) | **exact** |
+| right of badge (95, 712) | (255,255,255) | (255,255,255) | **exact** | (23,23,31) | (23,23,31) | **exact** |
+| above badge (67, 685) | (250,239,238) | (250,239,238) | **exact** | (55,34,41) | (55,34,41) | **exact** |
+| below badge, y=736 | (126,142,163) | (129,145,166) | Δ(3,3,3) | (133,133,139) | (146,146,152) | Δ(13,13,13) |
+| below badge, y=739 | (247,247,247) | (255,255,255) | Δ(8,8,8) | (20,20,27) | (23,23,31) | Δ(3,3,4) |
+
+3 of 5 sample points are **byte-for-byte identical** between "with the badge rendered" and "with the nav
+entirely removed" — the strongest form of this proof, since it means the badge genuinely adds nothing to
+what's already there. The 2 points directly below the badge show a small (3–13/255, ≤5%) difference,
+honestly reported rather than omitted: traced to the PILL's own pre-existing elevation `box-shadow`
+(`MENU_SHADOW`), which — like any floating card's drop shadow — extends a few pixels beyond the pill's own
+edge (the pill deliberately has no `overflow: hidden`, unchanged from Phase 2/3.5b, for the same reason the
+badge itself needs to render unclipped). This is the pill's own ordinary, pre-existing shadow bleed, present
+around its ENTIRE top edge regardless of the badge, not a reappearance of the badge/pill connection this
+task is about — confirmed by the fact that it's small, localized to directly-below-the-pill's-own-edge, and
+absent at every point actually beside or above the badge. Real close-up screenshots
+(`phase4b-closeup-{light,dark}.png`) confirm this visually: the badge floats as a clean, separate circle
+with real invoice-card content visible through the gap beneath it, in both themes.
+
+**Part B — freelancer-side change-request visibility.**
+
+*Investigation.* `AuditLog` (`core/models.py`) is explicitly immutable/append-only by its own docstring — no
+"dismissed" field can be added to it directly. `NotificationRead` (`core/models.py`) already exists for
+exactly this: a per-user, per-`AuditLog` row with `read_at`/`dismissed_at`, `unique_together = [['user',
+'audit_log']]`, with the bell's own `dismiss_notifications` view (`core/notifications.py`,
+`POST /api/notifications/dismiss/`) already the real, working, generic mechanism — reused verbatim here, not
+reimplemented, confirmed by reading it before writing anything new. `ClientDetailsChangeRequestSerializer`'s
+real POST shape (`apps/clients/serializers.py`) accepts both structured `proposed_*` fields and a freeform
+`message`; the handler (`apps/clients/notifications.py`) already writes both into the `AuditLog` row's own
+`metadata` at submission time and already builds a real HTML/plain email containing the full proposed
+values and message — read directly, confirmed unchanged, no fix needed for Step 1.5/2B's own contingent
+"if the email is missing content" clause. `core/notifications.py`'s own `action_url` entry for this event
+(`'/clients?client={id}'`) was explicitly flagged in its own prior comment as "UNVERIFIED against the real
+frontend route" — this pass read `Clients.jsx` directly and found it **never read any query parameter at
+all** (confirmed by grep, not assumed) — a real, confirmed gap, not a guess.
+
+*The fix.* A new `GET /api/clients/<pk>/change-requests/` (`apps/clients/views.py`) — owner-scoped
+(`get_object_or_404(Client, pk=pk, user=request.user)`), client-scoped
+(`metadata__client_id=str(client.pk)`, a real Postgres JSONField key lookup, verified directly against real
+data before trusting it), and dismissed-entry-filtered server-side, mirroring
+`core.notifications._visible_logs_and_states`'s own "visible = not dismissed" definition exactly. A new
+"Requests" tab on `ClientDetailPanel.jsx` (the panel's 4th tab, alongside Invoices/Analytics/Notes) renders
+every entry's real `proposed_changes` (field-labeled) and/or `message`, newest first, with a "Dismiss"
+button that calls the exact same `POST /api/notifications/dismiss/` `AppShell.jsx`'s own bell already uses
+— no new dismiss endpoint, no new model. `Clients.jsx` gained a real `useSearchParams()` mount effect,
+mirroring `Invoices.jsx`'s own already-established `?invoice=<id>&tab=<tab>` pattern exactly (this page
+previously had zero query-param handling — a real, confirmed pre-existing gap, not something this task
+introduced and then fixed). `core/notifications.py`'s own action_url updated to
+`'/clients?client={id}&tab=requests'`, and its own docstring's "UNVERIFIED" flag replaced with "CONFIRMED,"
+since this pass is what actually checked.
+
+**Verification, with real evidence — live, against the real running dev servers.**
+1. Real close-up screenshots + the pixel-sampling table above, both themes — see "THE REQUIRED PROOF" above.
+2. Real scroll-to-bottom re-check after the badge/padding change: `footerBottom: 671.84px`, `badgeTop:
+   690px`, clearance `18.16px`, not obscured — re-run with the same 22-invoice list every prior badge pass
+   has used.
+3. Real screenshots of the new Requests tab at 1280px and 375px, both showing real submitted content from 2+
+   real requests (a proposed-field entry — "Phone: +44 20 9999 0000" — and freeform-message-only entries),
+   real timestamps, and a working "Dismiss" button per entry.
+4. A REAL, LIVE end-to-end flow, not simulated: navigating directly to the real notification `action_url`
+   (`/clients?client=ab7dba87-9244-46e6-8cc2-802b3c8d5812&tab=requests`) opened the Client panel directly on
+   the Requests tab with real content visible (confirmed by a real screenshot and a DOM query for the
+   "Dismiss" button). A real live browser session (a minted JWT set as the real `lanceraos_access`
+   cookie — plus the separate, non-`httpOnly` `lanceraos_has_session` hint cookie `authStore.js`'s own
+   `initialize()` checks before even attempting the `/auth/me/` call, a real gap in the first attempt at this
+   session that a direct API-only check wouldn't have surfaced) clicked a REAL "Dismiss" button in the
+   actual rendered UI. Before: "Requests (5)", the targeted entry visible. After: "Requests (4)", the entry
+   gone. Direct database re-check after the real UI click: the `AuditLog` row still exists with its message
+   byte-for-byte unchanged; a real `NotificationRead` row now carries a real `dismissed_at` timestamp; the
+   `Client` row's `name` and `updated_at` are **completely unchanged** from a snapshot taken before any of
+   this — proving dismiss never touches either the immutable record or the client itself, not just trusting
+   the docstring's own claim.
+5. Email content (Step 1.5/3.3b): confirmed by direct code read of
+   `apps/clients/notifications.py`'s `_notify_client_details_change_requested` — both the HTML and plain-text
+   bodies already interpolate the real `proposed_changes`/`message` values at send time; no code path
+   produces a generic "a client requested a change" line. No fix was needed here; this is recorded as a
+   real, checked finding, not silently skipped.
+6. `python manage.py test --keepdb` — **1251 tests, OK, 0 failures**. New:
+   `apps/clients/tests/test_change_requests.py` (7 tests — owner-scoping, client-scoping, real content,
+   newest-first ordering, dismissed-entry exclusion, and the full dismiss-via-the-shared-endpoint round trip
+   including the immutable-`AuditLog`/untouched-`Client` assertions). One real regression was found and fixed
+   during this pass's own full-suite run, not by inspection: `test_portal_my_details.py`'s
+   `test_action_url_resolves_from_client_id_not_invoice_id` (Phase 1b's own test, in a different file than the
+   one this pass added) still asserted the OLD `action_url` string with no `&tab=requests` — a real miss, since
+   changing `EVENT_ACTION_URLS['client_details_change_requested']` should have touched every test asserting that
+   exact string, not just the ones in this pass's own new file. Fixed by updating the assertion to the new real
+   URL; re-ran `apps.clients` alone (136 tests, OK) to confirm before the full-suite re-run above.
+7. `npx vitest run` — **383 passing** (up from 378 — 5 new in `src/components/ClientDetailPanel.test.jsx`,
+   the panel's first-ever dedicated test file, covering the Requests tab specifically), the same 1
+   pre-existing, unrelated `SecuritySection.test.jsx` failure. `Clients.test.jsx`'s own 11 pre-existing tests
+   needed a `MemoryRouter` wrapper added (a new `renderClients()` helper replacing every bare
+   `render(<Clients />)`) since the component now calls `useSearchParams()` — a real, necessary test-only
+   change, not a product behavior change; all 11 still pass unchanged otherwise.
+8. `npx vite build` — clean; the same 2 pre-existing warnings as every prior pass.
+
+**Out of scope, honored.** No one-click "apply" path exists anywhere — `RequestsTab` is read + Dismiss only;
+the freelancer still uses the pre-existing "Edit" button/`EditClientModal` to make any real change. No new
+model — `NotificationRead` (already existing) is reused verbatim. Messages: untouched, not added to
+`NAV_ITEMS`. The request-change submission flow itself (Phase 4's own form/validation/success-state,
+frontend-side) is completely untouched by this pass.
+
+**Noted, not fixed (out of scope for this task).** A pre-existing `ClientDetailPanel.jsx` mobile-width
+behavior was observed live during 375px verification — an early screenshot appeared to show the panel
+clipped off-screen; re-measured with a longer settle wait and found to be a slide-in animation timing
+artifact, not a real layout bug (`getBoundingClientRect()` confirmed the panel correctly constrained to the
+full 375px viewport once settled). A separate, real, pre-existing gap WAS found: the tab row (Invoices/
+Analytics/Notes/Requests) overflows at 375px with the last tab's label partially cut off — this affects
+Notes too, predates this pass, and is unrelated to the Requests tab specifically added here, so it's
+flagged rather than fixed under this task's own scope.

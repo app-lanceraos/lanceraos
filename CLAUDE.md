@@ -2480,6 +2480,45 @@ in `PortalMyDetails.test.jsx`), the same 1 pre-existing unrelated `SecuritySecti
 build` clean. See DECISIONS.md's second 23 September 2026 entry for the full real numbers, the real POST-
 shape investigation, and every verification step's evidence.
 
+**23 September 2026 (Client Portal Redesign, Phase 4b — Real Badge Separation + Change Request
+Visibility).** Two unrelated fixes. **(A) Nav badge — SUPERSEDES the entry immediately above's own badge
+claim.** The Phase 4 `border: 3px solid transparent` + `backgroundClip: 'padding-box'` fix was individually
+correct CSS that still didn't fix what a person actually sees, because it addressed the wrong root cause —
+found this time by measuring real geometry (`getBoundingClientRect()`) instead of reading a CSS property:
+the badge overlapped the pill's own rectangle by **35 of its 44px height**. A transparent border can only
+reveal whatever's genuinely painted below an element — for the 80% of the badge sitting inside the pill's
+own box, that's correctly the pill's own opaque background; there was never a real gap for a border to make
+transparent. Fixed by removing the overlap itself (`top: -14` → `-57`, badge now floats with a real,
+measured 8px gap fully above the pill, zero overlap) rather than trying to mask a non-existent gap — the
+border/`backgroundClip` trick is now dead code, removed. Proven this time with actual pixel sampling (PIL,
+not `getComputedStyle`): screenshots with the nav visible vs. with the entire nav hidden, sampled at 5 points
+in the gap, in both themes — 3 of 5 points **byte-for-byte identical**, the remaining 2 within 5% (traced to
+the pill's own separate, pre-existing elevation shadow, not a badge/pill connection). `main`'s mobile bottom
+padding raised 96px → 140px to match the badge's new position; re-verified 18.16px real scroll-to-bottom
+clearance. **(B) Freelancer-side change-request visibility.** The freelancer previously had no way to see
+what a client's "My Details" (Phase 4) change request actually contained — the notification led to the bare
+client list with no content anywhere. A new `GET /api/clients/<pk>/change-requests/` (owner- and client-
+scoped, dismissed entries filtered server-side) backs a new "Requests" tab on `ClientDetailPanel.jsx` (the
+panel's 4th tab), showing every real proposed field value and/or message, newest first — read + Dismiss
+only, no one-click "apply" anywhere; the freelancer still uses the existing Edit button to make any real
+change. Dismiss reuses the exact same `POST /api/notifications/dismiss/` the bell already uses (via
+`core.models.NotificationRead`, already built for exactly this — no new model). `Clients.jsx` gained a real
+`?client=<id>&tab=requests` query-param mount effect (mirroring `Invoices.jsx`'s own established pattern) —
+a real, confirmed pre-existing gap: this page previously read no query params at all, so the notification's
+`action_url` led nowhere real; `core/notifications.py`'s own action_url updated to match and its prior
+"UNVERIFIED against the real frontend route" comment resolved. The request-change email (Phase 4) was
+checked and already contains the full real content — no fix needed there. Verified live end to end: the
+real notification `action_url` opens the Requests tab directly with real content (screenshot + DOM proof);
+a real Dismiss click in the actual UI removed an entry from the list while the underlying `AuditLog` row
+and the `Client` row itself stayed provably untouched (direct DB re-check, including `Client.updated_at`
+unchanged to the microsecond). `python manage.py test --keepdb`: **1251 tests, OK, 0 failures** (new:
+`test_change_requests.py`, 7 tests; also fixed one real regression this pass's own full-suite run
+surfaced — a Phase 1b test in a different file still asserted the pre-Phase-4b `action_url` string).
+`npx vitest run`: 383 passing (up from 378 — 5 new in `ClientDetailPanel.test.jsx`, its first-ever
+dedicated test file), same 1 pre-existing unrelated `SecuritySection.test.jsx` failure; `vite build`
+clean. See DECISIONS.md's second 23 September 2026 entry for the full real pixel-sampled proof table
+and every verification step's evidence.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L
