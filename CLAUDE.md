@@ -2568,6 +2568,36 @@ broken, just the expected consequence of a genuinely additive serializer field. 
 --keepdb`: **1290 tests, OK, 0 failures** (up from 1251 — 39 new). See DECISIONS.md's 26 September
 2026 entry for the full investigation findings and every alternative considered.
 
+**26 September 2026 (Client Portal Redesign, Phase 5b — the Client Notification Bell, frontend,
+same day).** Consumes Phase 5's backend exactly as it exists — no backend changes this pass. A new
+`NotificationBell.jsx` (bell icon + dropdown, real unread count capped at "9+") lives in
+`PortalShell.jsx`'s header next to the account menu, not a nav tab — its own local click-outside/
+Escape-to-close handling mirrors `AccountMenu`'s exactly (confirmed by reading that component first;
+not a `DropdownMenu.jsx` reuse, for the identical theme-namespace-isolation reason `AccountMenu`
+itself is local), and it polls every 20000ms
+(`useNotificationSocket.js`'s own established `POLL_INTERVAL_MS`, reused rather than re-tuned — no
+WebSocket on this side at all, so this interval is the steady state). `ClientPortal.jsx`'s per-row
+Messages button gained a small unread dot from the invoice list's own real `has_unread_message` field
+(Phase 5), never shifting the row's layout. A real, live-reproduced bug was found and fixed during
+verification: clicking a notification fired the mark-read POST without awaiting it before navigating,
+and the full-page navigation aborted the request before it completed — a real reload afterward showed
+the notification still unread. Fixed by awaiting the mark-read call before navigating; re-verified
+against the real backend (a seeded client, 5 real notifications, a `ClientPortalSession` cookie set
+directly via Playwright) that the badge correctly persists at 4 after one mark-read + reload, and 0
+after "Mark all read" + reload — real server state, not optimistic client memory that reverts. Mobile
+gets a real, measurement-driven full-width sheet (not the desktop small floating panel, which a real
+375px measurement showed would leave only ~11px of breathing room on either side) anchored to the
+portal's own mobile header padding. Verified with real seeded data covering all 5 client-scoped event
+types plus a zero-notification client, real screenshots at 375/1280px in both themes (light/dark
+emulation plus a real forced-toggle check confirming no `theme.css` leakage — the bell's computed
+background resolved `--portal-card-bg`'s real dark value byte-exact), and real click-through against
+the live backend. `npx vitest run`: **397 passing / 398 total** (up from 383 — 15 new:
+`NotificationBell.test.jsx`, its first-ever dedicated test file, plus 2 new in `ClientPortal.test.jsx`),
+the same 1 pre-existing, unrelated `SecuritySection.test.jsx` failure, re-confirmed via `git stash`
+against the unmodified branch; `vite build` clean. See DECISIONS.md's second 26 September 2026 entry
+for the full investigation findings, the navigation-race bug's before/after, and every alternative
+considered.
+
 ---
 
 ### Module 3 — Payments + Expenses + P&L

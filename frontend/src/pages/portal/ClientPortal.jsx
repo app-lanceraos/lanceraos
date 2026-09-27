@@ -283,13 +283,34 @@ export default function ClientPortal() {
                     <Receipt size={15} />
                   </button>
                 )}
-                <button
-                  onClick={() => setMessagesInvoice(inv)}
-                  style={rowIconBtnStyle}
-                  aria-label={`Messages for ${inv.invoice_number || 'this invoice'}`}
-                >
-                  <MessageCircle size={15} />
-                </button>
+                {/* Client Notification Bell, Phase 5b — a real unread-
+                    message indicator on this exact button, sourced from
+                    the invoice list's own real has_unread_message field
+                    (apps/invoices/serializers_portal.py, Phase 5). A
+                    plain dot, not a count — this doesn't need one, per
+                    this task's own instruction. Absolutely positioned
+                    inside a `position: relative` wrapper so it never
+                    changes the button's own 34×34 box (and therefore
+                    never shifts this row's layout or collides with its
+                    sibling buttons) — the same "decoration on top,
+                    layout untouched" approach PortalShell.jsx's own
+                    PillNav badge already establishes for this codebase. */}
+                <div style={{ position: 'relative', flexShrink: 0 }}>
+                  <button
+                    onClick={() => setMessagesInvoice(inv)}
+                    style={rowIconBtnStyle}
+                    aria-label={`Messages for ${inv.invoice_number || 'this invoice'}${inv.has_unread_message ? ' (unread)' : ''}`}
+                  >
+                    <MessageCircle size={15} />
+                  </button>
+                  {inv.has_unread_message && (
+                    <span style={{
+                      position: 'absolute', top: -1, right: -1,
+                      width: 9, height: 9, borderRadius: '50%',
+                      background: ACCENT, boxShadow: `0 0 0 2px ${CARD_BG}`,
+                    }} />
+                  )}
+                </div>
               </div>
             </div>
           ))}

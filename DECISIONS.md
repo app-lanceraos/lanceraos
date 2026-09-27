@@ -14197,3 +14197,87 @@ along the way, not a sign of anything broken: `test_portal_overview.py`'s own
 `PortalInvoiceListSerializer` returns, and needed the new `has_unread_message` field added to that
 pinned set — the expected consequence of a genuinely additive serializer field, caught by the first
 full-suite run and fixed immediately.
+
+---
+
+Date: 26 September 2026 (Phase 5b, same day)
+Decision: Client Portal Redesign, Phase 5b — the Client Notification Bell frontend, consuming
+Phase 5's already-built/already-tested backend exactly as it exists (no backend changes this pass).
+A new `NotificationBell.jsx` (bell icon + dropdown) lives in `PortalShell.jsx`'s header, next to the
+account menu, not as a nav tab — a small, local component with its own click-outside/Escape-to-close
+handling, deliberately mirroring `PortalShell.jsx`'s own `AccountMenu` exactly rather than reusing the
+freelancer-side `DropdownMenu.jsx` (theme-dependent, resolves `theme.css` tokens that don't exist
+inside this portal's separate `data-portal-theme` scope — the same reason `AccountMenu` itself is a
+local component and not a `DropdownMenu.jsx` reuse, confirmed by reading that file first per this
+task's own Step 1). Polls every 20000ms (`src/hooks/useNotificationSocket.js`'s own
+`POLL_INTERVAL_MS`, the freelancer bell's established WS-down fallback cadence, reused rather than
+re-tuned — there is no WebSocket at all on this side, so this interval is the steady state, not a
+temporary bridge) against `GET /api/clients/portal/notifications/`, and calls the mark-one-read/
+mark-all-read endpoints Phase 5 already built. The trigger shows a real unread count, capped at "9+"
+for anything over 9. `ClientPortal.jsx`'s per-row Messages button gained a small unread dot (no
+count) sourced from the invoice list's own real `has_unread_message` field (Phase 5), absolutely
+positioned inside a new `position: relative` wrapper so it never changes the button's own 34×34 box
+or shifts the row's layout.
+
+A real, live-reproduced bug was found and fixed during Step 3 verification (not assumed correct from
+the implementation alone): `handleClickNotification` originally fired `markOneRead(n.id)` without
+awaiting it, then immediately set `window.location.href` to navigate to the notification's target
+invoice — the full-page navigation aborted the in-flight mark-read POST before it could complete.
+Live-reproduced against the real dev backend (a seeded client, 5 real notifications, a raw
+`ClientPortalSession` token set directly via Playwright's `context.addCookies`): clicking an unread
+notification, then reloading `/portal` fresh, showed the unread badge still at 5 — the notification
+reverted to unread despite the optimistic UI update a moment earlier, exactly the "not just
+optimistic client-side state that reverts" failure this task's own Step 3.3 explicitly asked to rule
+out. Fixed by awaiting `markOneRead` before navigating; re-verified the identical scenario afterward
+— badge correctly read 4 after one mark-read + reload, and 0 (no badge) after "Mark all read" +
+reload, both against real server-side state, not client memory.
+
+Mobile treatment (Step 2.C): a real 375px Playwright measurement against the live dev app found the
+desktop-style small floating panel (340px wide, 12px right offset) would leave only ~11px of
+breathing room on either side at this viewport — cramped, not "fits, technically." Replaced, mobile-
+only, with a full-width sheet anchored via `left`/`right: 16` (matching `PortalShell.jsx`'s own
+mobile header side padding exactly) and `top: 76` (the real measured 72.5px mobile header height plus
+a small visible gap, confirmed by screenshot to sit cleanly below the header with no overlap — an
+earlier `top: 64` value was corrected after the real measurement showed it would overlap the header
+by ~8.5px). Desktop keeps the existing small floating panel unchanged.
+
+Reason: The client side of the portal had a real, working notification MECHANISM (Phase 5's backend)
+with no way for a client to actually see or act on it — every existing "does the client know
+something happened" signal was a one-shot email, easy to miss, with no persistent in-app record. This
+closes that gap on the one side (client) that had nothing at all, mirroring the freelancer's own
+already-established bell pattern closely enough to feel like the same product, without literally
+reusing freelancer-side components that resolve the wrong theme namespace.
+
+Alternatives considered: (1) Reusing `DropdownMenu.jsx` directly for the notification panel —
+rejected for the same theme-namespace-isolation reason `AccountMenu.jsx` already rejected it for
+(confirmed directly, not assumed, by reading that component's own header comment first). (2) A fixed
+small panel on mobile too (no separate treatment) — rejected once the real 375px measurement showed
+genuine cramping, not a hypothetical one. (3) Firing the mark-read POST via `navigator.sendBeacon`
+(a true fire-and-forget primitive immune to page-unload cancellation) instead of awaiting the axios
+POST before navigating — rejected as unnecessary complexity: the CSRF-header/cookie-credentialed POST
+this endpoint needs isn't a natural fit for `sendBeacon`'s simpler API, and a plain `await` before a
+same-origin navigation (typically well under 100ms on localhost, and the target page itself has to
+load regardless) is simpler and was verified to work correctly.
+
+Verification: real seeded data on the `screenshot-demo@example.com` account (client "Jordan Rivera,"
+3 invoices, all 5 real client-scoped event types: `client_invoice_sent`, `client_comment_posted`,
+`client_payment_claim_confirmed`, `client_payment_claim_rejected`, `client_formal_notice_sent"; a
+second client, "Sam Empty," with zero notifications for the empty-state check) plus a real
+`ClientPortalSession` raw token set directly via Playwright's `context.addCookies` (no magic-link
+email round trip needed for this verification). Real screenshots at 375px and 1280px, light and dark
+(`prefers-color-scheme` emulation, matching Phase 0/3.5's own established verification method),
+covering: the bell with a real unread count, the dropdown open with all 5 real notification types
+correctly iconified and worded, the per-invoice badge both present and absent on different rows, and
+the empty state. A real forced-dark-theme check (the actual in-app toggle, not just
+`prefers-color-scheme`) confirmed the bell's own computed background color resolves
+`--portal-card-bg`'s real dark value (`rgb(23, 23, 31)` = `#17171f`, byte-exact) — no `theme.css`
+leakage. `npx vitest run`: **397 passing / 398 total** (up from 383 — 15 new: `NotificationBell.test.jsx`,
+its first-ever dedicated test file, plus 2 new in `ClientPortal.test.jsx` for the per-row badge), the
+same 1 pre-existing, unrelated `SecuritySection.test.jsx` failure, re-confirmed via `git stash` against
+the unmodified branch (identical single failure, identical message, on the code as it existed before
+this pass). `npx vite build`: clean, same pre-existing chunk-size/dynamic-import warnings, no new ones.
+
+Note: real demo data (client "Jordan Rivera" with 3 invoices and 5 notifications, client "Sam Empty"
+with none) was added to the `screenshot-demo@example.com` account for this verification and left in
+place, matching this project's own established precedent of reusing that account as a persistent
+screenshot fixture across passes — flagged here so Ali knows where it came from if he notices it.

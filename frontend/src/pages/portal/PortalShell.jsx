@@ -57,6 +57,7 @@ import { Home, IdCard, LogOut, Moon, Receipt, Sun, UserCircle2, Wallet } from 'l
 
 import api from '@/lib/api'
 import { WordmarkSVG } from '@/components/Brand'
+import NotificationBell from './NotificationBell'
 import PortalLayout from './PortalLayout'
 import PortalRequestLinkForm from './PortalRequestLinkForm'
 import { usePortalThemeContext } from './PortalThemeRoot'
@@ -669,7 +670,10 @@ export default function PortalShell() {
               </p>
             </div>
           </div>
-          <AccountMenu onLogout={handleLogout} loggingOut={loggingOut} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <NotificationBell isMobile={isMobile} />
+            <AccountMenu onLogout={handleLogout} loggingOut={loggingOut} />
+          </div>
         </div>
 
         {!isMobile && (
