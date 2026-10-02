@@ -1,9 +1,15 @@
 // src/pages/Clients.jsx
 //
-// Client CRM list — apps/clients/ backend only, no apps/invoices/ code.
+// Client CRM list. Renders a real table (ClientTable.jsx) on desktop and a
+// card grid (ClientCard, below) at ≤768px — the same .list-desktop /
+// .list-mobile CSS toggle, wrapper markup and breakpoint Invoices.jsx uses.
+// (Until 02 October 2026 this file claimed to apply Invoices' pattern
+// "identically" but only the chrome — search row, sort, filters, pagination —
+// had been carried over; the list body was still a card grid at every
+// width. Corrected in Clients list alignment, Part B.)
+//
 // List/Table restructure pass (see Invoices.jsx's own header comment for
-// the full reasoning shared across both pages — this file applies the
-// identical pattern minus anything invoice-specific):
+// the full reasoning shared across both pages):
 //   - Header action ("+ Add Client") moved out of this page's own inline
 //     header into AppShell's shared header via usePageHeaderActions.
 //     Mobile keeps the existing FAB as the real entry point; no 3-dot
@@ -15,16 +21,21 @@
 //     Client.default_currency) joins the existing filter-pill row, with
 //     the same real measured-width overflow (useFilterOverflow.js) into
 //     a "More filters" dropdown Invoices.jsx uses.
-//   - Pagination: the old flat single-fetch list is now uniform, real
-//     server-paginated (20/page, numbered nav) — see Pagination.jsx.
+//   - Pagination: uniform, real server-paginated (20/page, numbered nav) —
+//     see Pagination.jsx.
 // No KPI cards, no period/currency-conversion controls — Clients has no
 // financial summary concept, unlike Invoices' own KPI strip. No bulk
-// selection either — never existed here and isn't being added now
-// (deferred, confirmed with Ali — see DECISIONS.md).
+// selection either (and so no checkbox column) — deferred, confirmed with
+// Ali — see DECISIONS.md.
+//
+// Every control here is real: Has Overdue / Highest Value / Most Overdue
+// are backend-backed since 02 October 2026 (Part A). Per-row money comes
+// from payment_stats and is labelled with payment_stats.currency — never
+// client.default_currency (see clientHelpers.formatClientMoney).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Search, X, Plus, Users, Flag, Archive, RotateCcw, ChevronRight, ArrowUpDown,
+  Search, X, Plus, Users, Flag, Archive, RotateCcw, ChevronRight, ArrowUpDown, Info,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -38,9 +49,10 @@ import FormField from '@/components/FormField'
 import FormSelect from '@/components/FormSelect'
 import FosAlert from '@/components/FosAlert'
 import ClientDetailPanel from '@/components/ClientDetailPanel'
+import ClientTable from '@/components/ClientTable'
 import Pagination from '@/components/Pagination'
 import {
-  reliabilityBand, STATUS_BADGE_STYLE, badgeBaseStyle, tagPillStyle, formatMoney,
+  reliabilityBand, STATUS_BADGE_STYLE, badgeBaseStyle, tagPillStyle, formatClientMoney, unconvertedNote,
   CURRENCY_OPTIONS, PAYMENT_TERMS_OPTIONS,
 } from './clientHelpers'
 
@@ -337,9 +349,21 @@ export default function Clients() {
               {error} <button className="fos-btn fos-btn-ghost" style={{ marginLeft: 8 }} onClick={() => load(page)}>Retry</button>
             </FosAlert>
           )}
+          {/* Desktop: real table. Mobile: card list — same wrapper markup as Invoices.jsx. */}
+          <div className="list-desktop" style={{ opacity: loading ? 0.55 : 1, transition: 'opacity 0.15s ease' }}>
+            <ClientTable
+              clients={clients}
+              busyId={rowBusyId}
+              onOpen={(client) => openDetail(client.id)}
+              onFlag={(client) => openDetail(client.id, 'flag')}
+              onArchive={handleQuickArchive}
+              onRestore={handleQuickRestore}
+            />
+          </div>
           <div
+            className="list-mobile"
             style={{
-              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12,
+              display: 'none', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12,
               opacity: loading ? 0.55 : 1, transition: 'opacity 0.15s ease',
             }}
           >
@@ -405,6 +429,8 @@ export default function Clients() {
           .filter-row-mobile { display: flex !important; }
           .sort-select-desktop { display: none !important; }
           .sort-icon-mobile { display: flex !important; }
+          .list-desktop { display: none !important; }
+          .list-mobile { display: grid !important; }
           .pagination-desktop { display: none !important; }
           .pagination-mobile { display: block !important; }
         }
@@ -417,7 +443,9 @@ export default function Clients() {
 function ClientCard({ client, busy, onOpen, onFlag, onArchive, onRestore }) {
   const [hovered, setHovered] = useState(false)
   const hasFlag = client.is_flagged || client.auto_flagged
-  const band = reliabilityBand(client.payment_stats?.reliability_score)
+  const stats = client.payment_stats
+  const band = reliabilityBand(stats?.reliability_score)
+  const unconverted = stats?.unconverted_count || 0
 
   return (
     <div
@@ -466,13 +494,26 @@ function ClientCard({ client, busy, onOpen, onFlag, onArchive, onRestore }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
         <div>
           <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-            {formatMoney(client.payment_stats?.total_invoiced, client.default_currency)}
+            {formatClientMoney(stats, 'total_invoiced')}
+            {unconverted > 0 && (
+              <span
+                role="img" aria-label={unconvertedNote(unconverted)} title={unconvertedNote(unconverted)}
+                style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: 6, color: 'var(--text-tertiary)' }}
+              >
+                <Info size={13} />
+              </span>
+            )}
           </p>
           <p style={{ margin: '2px 0 0', fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
-            {client.payment_stats?.invoice_count ?? 0} invoice{client.payment_stats?.invoice_count !== 1 ? 's' : ''}
+            {stats?.invoice_count ?? 0} invoice{stats?.invoice_count !== 1 ? 's' : ''}
           </p>
         </div>
-        <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[band.statusKey] }}>{band.label}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {stats?.overdue_count > 0 && (
+            <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE.red }}>{stats.overdue_count} overdue</span>
+          )}
+          <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[band.statusKey] }}>{band.label}</span>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 6, marginTop: 4 }} onClick={(e) => e.stopPropagation()}>

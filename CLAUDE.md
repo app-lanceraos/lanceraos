@@ -406,6 +406,8 @@ lanceraos/                          <- Django project root
 │   │   │   ├── AppShell.jsx        <- Layout: header, nav, frame — full, v1-faithful
 │   │   │   │                          implementation, see rule 5
 │   │   │   ├── PrivateRoute.jsx    <- Redirects to /login if not authenticated
+│   │   │   ├── ClientTable.jsx     <- Desktop client list table (Clients.jsx); mirrors InvoiceTable.jsx
+│   │   │   ├── listTableStyles.js  <- Shared th/td/wrapper/row-hover styles for InvoiceTable + ClientTable
 │   │   │   ├── PublicRoute.jsx     <- Redirects logged-in users away from Login/Register
 │   │   │   ├── Card.jsx, FormField.jsx, FormSelect.jsx,
 │   │   │   │   FosAlert.jsx, SaveButton.jsx  <- Shared authenticated-app primitives,
@@ -1418,6 +1420,19 @@ Value")/overdue ("Most Overdue") — the last two are real DB-level USD rankings
 by name then pk) since 02 October 2026, they used to silently fall back to name-sort. The list endpoint's
 query count is constant regardless of page size (prefetch + one snapshot lookup per request), asserted by
 a test.
+Clients list UI (02 October 2026 — Clients list alignment, Part B): `Clients.jsx` now renders a real table
+(`frontend/src/components/ClientTable.jsx`: Client | Tags | Invoices | Invoiced | Outstanding | Reliability |
+row-actions menu) on desktop and the existing card grid at ≤768px, via the same `.list-desktop`/`.list-mobile`
+CSS toggle Invoices uses — the whole row opens the detail panel, and the per-row menu holds Flag/Archive/Restore.
+Every th/td/wrapper/row-hover style comes from `frontend/src/components/listTableStyles.js`, shared with
+`InvoiceTable.jsx` so the two list tables cannot drift. Money is formatted with `payment_stats.currency` (via
+`clientHelpers.formatClientMoney`), never `client.default_currency`; invoices excluded for lack of an exchange rate
+(`unconverted_count`) show an Info icon with the same wording `InvoiceAnalytics.jsx` uses; an overdue client shows a
+red "N overdue" line (amount when convertible, the count otherwise). The detail panel's stat cards follow the same
+rule and say the Invoices count excludes drafts/cancelled/refunded. Known, deliberately kept inconsistencies:
+the list converts with the invoice's frozen source rate + today's target rate while the statement PDF uses a
+per-invoice snapshot, so their totals can differ; the loading skeleton is still a card grid on desktop (as on
+Invoices); clickable table rows are not keyboard-operable (neither table).
 Client statement PDF is built (Step 19 — see this module's own Step 19 entry above and the
 Key API endpoints list below). One-time-client conversion (the spec's own `convert-one-time`
 endpoint) is NOT built yet — scoped to a later step in this module's build order.

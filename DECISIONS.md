@@ -14438,3 +14438,126 @@ Audit backlog (found, not fixed — out of Part A's scope):
   sweep; the payload's `currency` equals it, so this is correct today but guesses rather than reads).
 - `Client` model docstring question 3 (event handlers for ClientCreated/Archived/Flagged) still describes an
   unbuilt piece of work.
+
+
+---
+
+Date: 02 October 2026 (Clients list alignment, Part B — table on desktop, cards on mobile, matching Invoices)
+
+Decision: The Clients list renders a real table (`frontend/src/components/ClientTable.jsx`) on desktop and keeps
+the card grid at ≤768px, using the same `.list-desktop`/`.list-mobile` CSS toggle, wrapper markup, loading dimming
+and breakpoint as Invoices. Columns: Client | Tags | Invoices | Invoiced | Outstanding | Reliability | actions.
+The whole row opens the detail panel; the per-row menu (the same portaled `DropdownMenu` the invoice rows use)
+holds exactly Flag / Archive / Restore, moved out of the inline card buttons. No checkbox column, no column-header
+sorting (Invoices has neither for sorting; bulk selection stays deferred). `Clients.jsx`'s header comment claimed it
+"applies the identical pattern" of Invoices — only the chrome had been carried over; the comment now describes
+what the file renders.
+
+Contract check (Part A's API, against the real code AND the live endpoint as a seeded test user): confirmed —
+`payment_stats` = currency, total_invoiced, total_paid, outstanding, overdue_amount, invoice_count, overdue_count,
+unconverted_count, reliability_score, reliability_breakdown; money are JSON numbers, counts integers; a drafts-only
+client returns invoice_count 0 / all money 0 / reliability_score null. Part B made no backend change
+(`git diff --stat -- apps core config` empty).
+
+Shared styles (done, with proof): `listTableStyles.js` now holds the th/td/wrapper/header-row/row-hover styles,
+imported by both tables. This touched `InvoiceTable.jsx`, which the brief allowed only if (a) its tests pass
+unmodified — all 9 do — and (b) the Invoices page is visually unchanged. Real Chromium, 1280px, light and dark,
+base and hover, pixel-diffed before vs after: the table region is byte-identical in all four. (The page-wide diff
+showed unrelated differences in the KPI strip and sidebar, regions this change does not touch; the KPI-strip one
+differed between the very first capture and every later one, the sidebar one between two captures of identical
+code — unexplained noise, not caused by this change.)
+
+Money labelling: every per-client figure is formatted with `payment_stats.currency` via the new
+`clientHelpers.formatClientMoney`, which renders an em dash if the payload carries no currency rather than
+guessing — never `client.default_currency`. The currency-label sweep over all of `frontend/src` found three
+consumers of `payment_stats` money (ClientTable, the Clients card, ClientDetailPanel's stat cards) and fixed the
+two that used `default_currency` (the card and the stat cards); every other `default_currency` hit is a create/
+settings form or a new-invoice default, not a label on a `payment_stats` number. `formatMoney` still rounds to whole
+units (the app-wide convention, same as the Invoices Amount column), so the exact 2dp value rides along as a hover
+title on Invoiced and Outstanding.
+
+Unconverted indicator: a small lucide `Info` icon with a `title`, using the wording `InvoiceAnalytics.jsx` already
+uses ("N invoice(s) excluded … no exchange rate was captured for it/them") via a shared `unconvertedNote` helper —
+one explanation of one backend behavior. The wording is imprecise in one case (a needed exchange-rate snapshot
+missing, not a missing per-invoice rate) but never false: either way no exchange rate was available.
+
+One deliberate deviation from the brief's literal spec: Outstanding's red second line is "{amount} overdue" only
+when overdue_amount > 0; when every overdue invoice is unconverted the real API returns overdue_count 1 with
+overdue_amount 0 (seen live: Unconverted GmbH), and a literal "USD 0 overdue" would be wrong, so it shows
+"1 overdue" instead. Mobile cards got the same overdue count and Info indicator, and their money label switched to
+`payment_stats.currency`; nothing else on mobile changed.
+
+ClientDetailPanel (scope was "currency-label fix only"; three more fixes were explicitly invited by the brief's
+"verify the mapping / remove stale comments / confirm no copy says all invoices"): (1) stat cards read
+`payment_stats.currency`. (2) `invoiceStatusBand` was wrong, not just stale: it had a dead `'overdue'` branch (no
+stored overdue status exists — CLAUDE.md), left `created`/`cancelled`/`refunded` unmapped and rendered raw strings
+like "partially_paid". Replaced by the real `INVOICE_STATUS_META` + `InvoiceStatusBadge` the invoice list uses.
+(3) Copy: the Invoices stat card now says "Excludes drafts, cancelled and refunded" (the Invoices tab beside it
+lists every invoice, so the two counts legitimately differ), Total Invoiced carries the unconverted note, and the
+Analytics tab no longer says reliability "fills in automatically once invoices exist". The "apps.invoices doesn't
+exist yet — this 404s today" comment on `loadInvoices` was false (the `?client=` filter is real,
+`invoice_list`) and was rewritten.
+
+Measured, not guessed: the table's min-content width in real Chromium was ~850px on page 1 and 1003px on page 2
+(a client with 2 tags + "+N" + an overdue line) — which would have forced a horizontal scrollbar at 1280px. The
+Client cell cap was reduced from 280 to 240px (page 2 → 972px, no scrollbar at 1280; at 1024px the wrapper
+scrolls, as Invoices' does) and `minWidth` set to 820 (typical rows ~810).
+
+Alternatives considered: (1) restyle the card grid instead of a table — rejected: the point is matching Invoices
+and putting four money figures in scannable columns. (2) a generic shared `<DataTable>` — rejected: only two
+tables exist and their cells share nothing but styling; a styles module gives the anti-drift guarantee without a
+prop-driven abstraction nobody has asked for (DESIGN.md Section 12 also discourages new shared UI components).
+(3) column-header sorting — rejected: Invoices has none and the sort select stays on the search row.
+(4) show "USD 0 overdue" literally — rejected, see above.
+
+Known inconsistency, deliberately not reconciled: the list/panel convert with each invoice's frozen source rate +
+TODAY's target rate; the client statement PDF converts with a per-invoice snapshot. The two can show different
+totals for the same client. Not reconciled in the UI (the brief said so).
+
+Verification (real Chromium against the real dev servers, a dedicated seeded test user — 28 clients, 29 invoices,
+since deleted): screenshots at 375/768/1280/1920 × light/dark of the table, hover, open row menu on the first row
+and on the last visible row, first-load skeleton, search-empty, archived-empty (real: Archived + EUR), no-clients
+(synthetic empty response — the account has clients), and the error state (aborted request, then a real Retry
+that recovered). Table shows at 1280/1920 and cards at 375/768 (computed `display` recorded). Menu overflow
+stressed in a 420px-high viewport on 6 rows × 2 themes: rows near the bottom open upward, others downward, every
+menu fully on screen and every item hit-testable. All 5 filters × 4 sorts (20 combos) driven through the real UI;
+each fired the real request, and the rendered row order equalled the direct API response in all 20; Highest Value
+(Zeta High Value, Overdue Heavy, Mixed PKR Client…) and Most Overdue (Overdue Heavy, Mixed PKR Client, Mid Overdue
+Co…) differ visibly from Name. API-vs-rendered numbers matched for 8 clients (PKR-default mixed client rendered
+"PKR 728,340"/"PKR 517,386"/"PKR 427,386 overdue" from 728339.75/517385.54/427385.54; the unconverted one showed the
+Info icon, "—" outstanding and "1 overdue"; the drafts-only one "0"/"USD 0"/"No data yet"). Archive, Restore and Flag
+from the row menu were exercised end to end against the real backend (Archive removed the row without opening the
+panel; Restore reversed it; Flag opened the panel on the flag form). Frontend suite 397 -> 451 passing of
+398 -> 452 (+54: ClientTable 35, Clients +13, ClientDetailPanel +6); the one pre-existing `SecuritySection` failure is
+identical to the pre-change baseline (captured before any edit). Six deliberate mutations (table labels money with
+default_currency; actions cell stops stopping propagation; overdue fallback removed; mobile CSS toggle removed; panel
+stat cards use a guessed currency; auto-flagged ignored by the menu) each failed 1-3 of the new tests, then the code
+was restored. `vite build` clean.
+
+Not verified / honest gaps: real touch devices; keyboard and screen-reader operation of the new menu/rows (rows are
+not keyboard-operable — see backlog); a true "account with zero clients" (synthetic response used); Safari/Firefox.
+
+Verification-environment note: the dev API's global DRF throttles (anonymous 100/hour per IP, authenticated
+1000/hour per user) and `/auth/login/`'s strict limiter were exhausted by ~70 page loads, returning 429 on every
+call. Cleared only the throttle cache keys for the test user/IP, and switched the scripts to log in once and reuse
+the saved session. Not an app bug, but see backlog.
+
+Audit backlog (found, not fixed):
+- **Invoices row hover has never worked.** `InvoiceTable.jsx` sets an inline `background: 'transparent'` on every
+  non-selected `<tr>`, which beats the `.invoice-row:hover` rule (inline style > selector). Proven on the untouched
+  code: base vs hover screenshots of the table region are identical in both themes; computed hover background is
+  `rgba(0, 0, 0, 0)`. Clients' hover works (`rgb(248, 248, 252)` light / `rgb(24, 24, 31)` dark). One-line fix:
+  use `background: isSelected ? 'var(--accent-glow)' : undefined`. Left alone because it changes Invoices' visuals
+  and Part B's no-diff proof was for the style extraction; a decision for Ali.
+- Clickable rows are not keyboard-operable in either table (no tabIndex/key handler); fix both together.
+- The first-load skeleton is a card grid on desktop for both pages (Clients matches Invoices' inconsistency).
+- `ClientDetailPanel`'s Invoices tab loads the first page only (`GET /invoices/?client=` default limit 50) while the
+  stat cards count every non-draft invoice.
+- Mobile `ClientCard` still shows no Flagged/Auto-flagged badge (only the red border), while the table does.
+- A single page load fires many duplicate calls (the throttled run showed `/auth/me/` ×4, `/auth/profile/` ×4,
+  `/notifications/` ×2) — likely dev StrictMode plus retries on 429, not investigated — which burns the 1000/hour
+  per-user throttle fast.
+- The repo tracks zero test files, backend or frontend (`.gitignore` lines 73 and 78), so no test is protected by
+  git. Ali's decision; not edited.
+- Part A's backlog item "ClientDetailPanel/Clients.jsx still format payment_stats money with default_currency" is
+  closed by this change.

@@ -22,10 +22,12 @@ import api from '@/lib/api'
 import FormField from './FormField'
 import FormSelect from './FormSelect'
 import FosAlert from './FosAlert'
+import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
-  reliabilityBand, STATUS_BADGE_STYLE, badgeBaseStyle, tagPillStyle, formatMoney,
+  reliabilityBand, STATUS_BADGE_STYLE, badgeBaseStyle, tagPillStyle, formatMoney, formatClientMoney, unconvertedNote,
   FLAG_TYPE_OPTIONS, CURRENCY_OPTIONS, PAYMENT_TERMS_OPTIONS,
 } from '@/pages/clientHelpers'
+import { INVOICE_STATUS_META } from '@/pages/invoiceHelpers'
 
 const TABS = [
   { id: 'invoices', label: 'Invoices', Icon: FileText },
@@ -42,17 +44,6 @@ const TABS = [
 const PROPOSED_FIELD_LABELS = {
   proposed_name: 'Name', proposed_email: 'Email', proposed_company: 'Company',
   proposed_phone: 'Phone', proposed_address: 'Address', proposed_country: 'Country',
-}
-
-// Provisional — apps.invoices doesn't exist yet, so this mapping has
-// never been exercised against a real invoice status. Kept local to this
-// file rather than in clientHelpers.js since it'll likely need revision
-// once that module actually lands.
-function invoiceStatusBand(status) {
-  if (status === 'paid') return 'green'
-  if (status === 'partially_paid' || status === 'sent' || status === 'viewed') return 'blue'
-  if (status === 'overdue' || status === 'bad_debt') return 'red'
-  return 'gray'
 }
 
 export default function ClientDetailPanel({ clientId, initialAction, onClose, onChanged }) {
@@ -156,9 +147,11 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
   async function loadInvoices() {
     setInvoicesLoading(true)
     try {
-      // apps.invoices doesn't exist yet — this 404s today. Caught and
-      // treated identically to a genuinely-empty result, the same
-      // pattern AppShell.jsx already uses for the notification bell.
+      // GET /invoices/?client=<id> is a real, server-side client filter
+      // (apps.invoices.views.invoice_list). Capped at that endpoint's
+      // default page size; a failed fetch degrades to the same empty state
+      // as a client with no invoices, the pattern AppShell.jsx's
+      // notification bell also uses.
       const { data } = await api.get('/invoices/', { params: { client: clientId } })
       setInvoices(Array.isArray(data) ? data : data.results || [])
     } catch {
@@ -466,8 +459,8 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
                 {newTagError && <p className="fos-error">{newTagError}</p>}
               </div>
 
-              {/* ── Stat cards — real numbers, genuinely zero until apps.invoices exists ── */}
-              <StatCards paymentStats={client.payment_stats} currency={client.default_currency} />
+              {/* ── Stat cards — payment_stats' own figures, converted into and labelled with payment_stats.currency ── */}
+              <StatCards paymentStats={client.payment_stats} />
 
               {/* ── Tabs ── */}
               <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: '1px solid var(--border-subtle)' }}>
@@ -548,14 +541,19 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
 }
 
 // ── StatCards ─────────────────────────────────────────────────────
-function StatCards({ paymentStats, currency }) {
+// Money is labelled with payment_stats.currency, never the client's
+// default_currency or a guess (STANDARDS.md). Drafts, cancelled and
+// refunded invoices are not counted in any of these figures, which the
+// Invoices card says out loud since the Invoices tab below lists them all.
+function StatCards({ paymentStats }) {
   const stats = paymentStats || {}
   const band = reliabilityBand(stats.reliability_score)
+  const unconverted = stats.unconverted_count || 0
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginBottom: 24 }}>
-      <StatCard label="Total Invoiced" value={formatMoney(stats.total_invoiced, currency)} />
-      <StatCard label="Total Paid" value={formatMoney(stats.total_paid, currency)} />
-      <StatCard label="Invoices" value={stats.invoice_count ?? 0} />
+      <StatCard label="Total Invoiced" value={formatClientMoney(stats, 'total_invoiced')} sub={unconverted > 0 ? unconvertedNote(unconverted) : undefined} />
+      <StatCard label="Total Paid" value={formatClientMoney(stats, 'total_paid')} />
+      <StatCard label="Invoices" value={stats.invoice_count ?? 0} sub="Excludes drafts, cancelled and refunded" />
       <StatCard
         label="Reliability"
         value={band.label}
@@ -605,8 +603,8 @@ function InvoicesTab({ loading, invoices }) {
             <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
               {formatMoney(inv.total, inv.currency)}
             </p>
-            <span style={{ ...badgeBaseStyle, ...STATUS_BADGE_STYLE[invoiceStatusBand(inv.status)], marginTop: 3 }}>
-              {inv.status}
+            <span style={{ display: 'inline-flex', marginTop: 3 }}>
+              <InvoiceStatusBadge meta={INVOICE_STATUS_META[inv.status] || INVOICE_STATUS_META.draft} />
             </span>
           </div>
         </div>
@@ -638,7 +636,7 @@ function AnalyticsTab({ paymentStats }) {
           <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
             {breakdown.qualifying_invoices
               ? `Based on ${breakdown.qualifying_invoices} completed invoice${breakdown.qualifying_invoices !== 1 ? 's' : ''}`
-              : 'No completed invoices yet — this fills in automatically once invoices exist.'}
+              : 'No paid or bad-debt invoices yet — reliability fills in once an invoice is paid or written off.'}
           </span>
         </div>
       </div>

@@ -84,6 +84,36 @@ export function formatMoney(amount, currency = 'USD') {
   return `${currency} ${value.toLocaleString('en', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
 }
 
+// A client's money figures (payment_stats.total_invoiced / total_paid /
+// outstanding / overdue_amount) are CONVERTED into payment_stats.currency by
+// the backend (Clients list alignment, Part A, 02 October 2026) — that
+// field, never client.default_currency or a guess, is what labels them
+// (STANDARDS.md: a number rendered with a currency symbol must be
+// denominated in that currency). Returns an em dash when the payload has no
+// stats/currency at all, rather than inventing a label.
+export function formatClientMoney(stats, field) {
+  if (!stats || !stats.currency) return '—'
+  return formatMoney(stats[field], stats.currency)
+}
+
+// Same wording InvoiceAnalytics.jsx uses for invoices left out of a
+// converted total for lack of a captured exchange rate — one explanation
+// of one backend behavior (payment_stats.unconverted_count), not two.
+export function unconvertedNote(count) {
+  return `${count} invoice${count !== 1 ? 's' : ''} excluded from these figures — no exchange rate was captured for ${count !== 1 ? 'them' : 'it'}.`
+}
+
+// The "N overdue" text under a client's Outstanding figure. overdue_amount
+// is 0 while overdue_count > 0 when every overdue invoice is unconverted
+// (counted, but contributes to no money figure) — a literal "USD 0 overdue"
+// would be wrong, so fall back to the count.
+export function overdueLabel(stats) {
+  if (!stats || !(stats.overdue_count > 0)) return null
+  return stats.overdue_amount > 0
+    ? `${formatClientMoney(stats, 'overdue_amount')} overdue`
+    : `${stats.overdue_count} overdue`
+}
+
 export const FLAG_TYPE_OPTIONS = [
   { value: 'payment_risk', label: 'Payment Risk' },
   { value: 'communication', label: 'Communication Issue' },

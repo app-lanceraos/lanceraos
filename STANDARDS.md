@@ -278,6 +278,19 @@ matched a card heading, both of which made the test pass or fail for the wrong r
 whose wait condition is wrong isn't a safety net — verify what the test is actually waiting on, not just
 that it eventually goes green.
 
+### List pages with a table share one table-styles module; a page's header comment must describe what it renders
+
+A list page that renders a table (Invoices, Clients) takes its wrapper, header row, `th`/`td` and clickable-row
+hover styles from `frontend/src/components/listTableStyles.js` — never a hand-copied set of style objects in the
+table component. Found 02 October 2026: `InvoiceTable.jsx` held the only copy, so a second table could only have
+been a duplicate that drifts the next time either is tuned; the module was extracted (the Invoices page was
+pixel-compared before and after: table region identical) and `ClientTable.jsx` built on it.
+
+A page or component's header comment must describe what the file ACTUALLY renders, not what it was meant to
+mirror. `Clients.jsx` claimed for weeks to "apply the identical pattern" of Invoices.jsx while only its search/
+sort/filter/pagination chrome had been carried over and the list body was still a card grid at every width. When a
+file's behavior changes, rewrite its header comment in the same change.
+
 ### Test files live next to what they test
 
 `ComponentName.test.jsx` sits in a `__tests__/` folder alongside `ComponentName.jsx`, not in one

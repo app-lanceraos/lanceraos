@@ -41,12 +41,13 @@
 // component's own existing scope (InvoiceCard/mobile is untouched).
 import InvoiceRowQuickActions from './InvoiceRowQuickActions'
 import InvoiceStatusBadge from './InvoiceStatusBadge'
+import { clickableRowCss, tableStyle, tableWrapperStyle, td, th, theadRowStyle } from './listTableStyles'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
 } from '@/pages/invoiceHelpers'
 
-const th = { textAlign: 'left', padding: '10px 12px', fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }
-const td = { padding: '12px', fontSize: '0.84rem', color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' }
+// th/td/wrapper/row-hover styles live in listTableStyles.js, shared with
+// ClientTable.jsx so the two list tables cannot drift apart.
 
 export default function InvoiceTable({
   invoices, deleteEligibleStatuses, selectedIds, onToggleSelect, onSelectAllEligible, onClearSelection, onOpen,
@@ -57,14 +58,11 @@ export default function InvoiceTable({
   const allEligibleSelected = hasEligible && eligibleIds.every((id) => selectedIds.has(id));
 
   return (
-    <div style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)' }}>
-      <style>{`
-        .invoice-row { cursor: pointer; transition: background var(--transition-fast); }
-        .invoice-row:not([data-selected="true"]):hover { background: var(--bg-surface-2); }
-      `}</style>
-      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 740 }}>
+    <div style={tableWrapperStyle}>
+      <style>{clickableRowCss('invoice-row')}</style>
+      <table style={tableStyle(740)}>
         <thead>
-          <tr style={{ background: 'var(--bg-surface-2)' }}>
+          <tr style={theadRowStyle}>
             {hasEligible && (
               <th style={{ ...th, width: 36 }}>
                 <input
