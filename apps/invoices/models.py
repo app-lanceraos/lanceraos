@@ -358,6 +358,24 @@ class Invoice(models.Model):
     def save(self, *args, **kwargs):
         if not self.view_token:
             self.view_token = self._generate_unique_view_token()
+        if self.currency == 'USD' and self.status != 'draft' and self.rate_to_usd_at_issue is None:
+            # Defensive invariant, NOT a repair of a live bug: a USD amount's rate
+            # into USD is exactly 1 by definition, so a non-draft USD invoice must
+            # never be stored without it. Every real path out of draft goes through
+            # _finalise_invoice -> capture_issue_rate(), which already sets this
+            # (all 48 USD invoices finalised through the app have rate 1 in the dev
+            # DB); the 29 NULL rows found there were created straight through the
+            # ORM by ad-hoc seed scripts that bypassed that function entirely. This
+            # guard covers every such bypass at the one choke point (seed scripts,
+            # a shell session, the planned CSV import). It only ever fills in that
+            # definitional 1 — non-USD is never touched (no honest rate exists
+            # without a snapshot), drafts are never touched (their rate is captured
+            # at finalise), and an explicit value is never overridden.
+            self.rate_to_usd_at_issue = Decimal('1')
+            update_fields = kwargs.get('update_fields')
+            if update_fields is not None and 'rate_to_usd_at_issue' not in update_fields:
+                # A partial save would otherwise silently drop the value just filled in.
+                kwargs['update_fields'] = [*update_fields, 'rate_to_usd_at_issue']
         super().save(*args, **kwargs)
 
     @classmethod
@@ -819,6 +837,18 @@ class InvoicePartialPayment(models.Model):
 
     def __str__(self):
         return f'{self.currency} {self.amount} on {self.invoice.invoice_number}'
+
+    def save(self, *args, **kwargs):
+        if self.currency == 'USD' and self.rate_to_usd is None:
+            # Same defensive invariant as Invoice.save(): USD -> USD is exactly 1.
+            # The three real payment paths (add-payment, mark-paid, claim-confirm)
+            # already set it via views._lookup_rate_to_usd; this covers any row
+            # created around them. Non-USD is never touched.
+            self.rate_to_usd = Decimal('1')
+            update_fields = kwargs.get('update_fields')
+            if update_fields is not None and 'rate_to_usd' not in update_fields:
+                kwargs['update_fields'] = [*update_fields, 'rate_to_usd']
+        super().save(*args, **kwargs)
 
 
 # ══════════════════════════════════════════════════════════════════

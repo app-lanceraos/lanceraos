@@ -204,6 +204,20 @@ count queries with `CaptureQueriesContext`, require equality, and add an explici
 per-row queries fails loudly. Found 02 October 2026: `GET /api/clients/` cost 4 / 12 / 26 queries for 1 / 5 /
 12 rows (2 per client) until fixed (constant 6 now, `apps/invoices/tests/test_client_list_money.py`).
 
+## Never hand-roll a `rate is None` skip — all currency conversion goes through `core.money.convert_amount`
+
+Any code that turns an amount in one currency into another (a KPI, a chart bucket, a ranking, a client total)
+calls `core.money.convert_amount(amount, currency, rate_to_usd, target, snapshot)` (or
+`unify_amounts_to_currency` over rows) and treats a `None` result as "cannot be honestly converted" — counted or
+skipped, never guessed. Do not write `if row['rate'] is None: continue` yourself. Found 02 October 2026: the
+analytics trend and top-clients code did exactly that, which would have silently dropped every USD row with a
+missing rate even though USD→USD needs no rate (it is 1 by definition) — while the KPI strip, the client list and
+the currency breakdown, which used the shared helper, counted the same rows. One conversion implementation means a
+fix to it reaches every reader. A related rule for tests: to build a LEGACY row that violates a model invariant
+(e.g. a USD invoice with a NULL rate, which `Invoice.save()` now prevents), use a queryset `.update()` — that is
+how the real ones were created — never `create(rate=None)`, which the guard would quietly fix and make the test
+vacuous.
+
 ## Testing discipline for this project
 
 Every file that touches the database, an external service, or security-sensitive logic gets exercised
@@ -290,6 +304,23 @@ A page or component's header comment must describe what the file ACTUALLY render
 mirror. `Clients.jsx` claimed for weeks to "apply the identical pattern" of Invoices.jsx while only its search/
 sort/filter/pagination chrome had been carried over and the list body was still a card grid at every width. When a
 file's behavior changes, rewrite its header comment in the same change.
+
+### A deep link that resolves an invoice must route by status exactly as the list's row click does, in one place
+
+`Invoices.jsx`'s row click sends a draft to the wizard (edit mode) and everything else to the detail panel
+(`openDetail`). Any URL that opens an invoice — notification click-through, a link from the client panel — must make
+the same decision, and make it in ONE effect, not at each call site: the `?invoice=` mount effect fetches the invoice
+and branches on `status`. Before 02 October 2026 it always opened the detail panel, silently sending a draft down a path
+the product treats as unreachable (a real case: a `recurring_invoice_generated` notification for an auto-send-off series
+points at a draft). Resolve asynchronous deep links with a request id (not effect-cleanup cancellation, which the
+param-clearing re-run would trip) so a late response never opens a surface after the user moved on.
+
+### Never put an inline `background` on an element whose :hover rule is a class
+
+An inline style beats any stylesheet selector, so an inline `background: 'transparent'` silently disables a class-based
+`:hover` background. `InvoiceTable`'s rows had one and never showed a hover state; a row that needs both a state tint
+and a hover rule should set the tint inline only when active (`isSelected ? tint : undefined`) or move the base
+background into the stylesheet. Known remaining instance: `DropdownMenu`'s ghost trigger (see DECISIONS.md backlog).
 
 ### Test files live next to what they test
 

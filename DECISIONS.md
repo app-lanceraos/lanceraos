@@ -14561,3 +14561,268 @@ Audit backlog (found, not fixed):
   git. Ali's decision; not edited.
 - Part A's backlog item "ClientDetailPanel/Clients.jsx still format payment_stats money with default_currency" is
   closed by this change.
+
+
+---
+
+Date: 02 October 2026 (Part A2 — USD invoices with a NULL rate: root cause, guard, backfill, reader sweep)
+
+Decision: A non-draft USD invoice and every USD payment always store rate exactly 1. Enforced by a narrow
+model-level guard (`Invoice.save()`, `InvoicePartialPayment.save()`), the legacy rows fixed by data migration
+`0022_backfill_usd_rates`, and the two analytics readers that hand-rolled a `rate is None` skip now go through
+`core.money.convert_amount` like every other reader.
+
+Root cause — the Part A report's question "legacy or live?" is answered: neither a live app path nor a bug in
+one. The 29 NULL-rate USD invoices are dev/seed data created straight through the ORM by throwaway scripts that
+bypassed `_finalise_invoice`, the only function that sets `finalised_at` and calls `capture_issue_rate()`.
+Evidence (dev DB, 130 non-draft invoices): all 29 have `finalised_at IS NULL`, `exchange_rate_snapshot IS NULL`
+and status sent(27)/viewed(1)/bad_debt(1); 43 non-draft invoices in total lack `finalised_at`, every one owned by
+a dev/seed user (dropdown-check 25 on 2026-09-21 numbered INV-2026-9000..9024 — hand-assigned, not
+`generate_invoice_number`; screenshot-demo; invoicetest; admin; aliamir.irp). Of the 87 non-draft invoices that DID
+go through the app (finalised_at set), the 48 USD ones all have rate 1 — zero USD NULLs. The 3 NULL-rate USD
+payments were recorded 2026-08-09/10, before the 2026-08-17 earliest rate-1 payment (the `_lookup_rate_to_usd`
+fix). 0 USD invoices or payments carry a non-NULL, non-1 rate. The 20 NULL-rate GBP invoices that DO have
+`finalised_at` (all screenshot-demo, created and "finalised" within the same millisecond over 5 minutes on
+2026-09-23, no snapshot attached although GBP snapshots existed) are the same kind of seed row, not a live gap.
+
+Every path that can move an invoice out of draft, traced: `invoice_finalise` (views.py:707), `invoice_mark_sent` on
+a draft (759), `invoice_finalise_and_send` (1028) and recurring auto-send generation (tasks.py:360) all call
+`_finalise_invoice` -> `capture_issue_rate()` (views.py:611). `invoice_send` only accepts an already-finalised
+invoice; `invoice_duplicate`/`_duplicate_invoice_core`, `invoice_create` and preset create-invoice create drafts
+(rate deliberately not copied). All three payment paths (add-payment, mark-paid, claim-confirm) set the rate via
+`_lookup_rate_to_usd`, which returns 1 for USD. So **the fix at the source is already satisfied** — no live path
+produces the defect. Each path is pinned by a characterization test (the invoice ones also assert the snapshot
+is attached, which only `capture_issue_rate()` does, proving the path ran it rather than the guard).
+
+Why the guard anyway, and why it is defensive rather than masking: the rows exist because the ORM is a door the
+views cannot close, and more doors are coming (the planned CSV import, shell sessions, future seed scripts).
+Options weighed: (a) fix each offending path — there are none to fix; (b) a model-level guard at the choke point —
+chosen. It is safe to apply silently because the value it fills in is definitional (USD -> USD is 1), not an
+estimate, so it cannot hide a wrong number; it is deliberately narrow so it cannot hide a bug that matters: it
+never touches non-USD (no honest rate exists without a snapshot — a guard that filled those would corrupt
+figures, tested), never touches drafts (their rate is captured at finalise), never overrides an explicit value,
+and persists through `save(update_fields=[...])`. A DB CHECK constraint was rejected: it would fail every test
+fixture and ad-hoc script that creates a USD sent invoice without a rate (hundreds), for no extra safety over the
+guard. The readers also stay tolerant of a USD NULL (`convert_amount`), because queryset `.update()` /
+`bulk_create` bypass `save()`.
+
+Backfill: migration `0022_backfill_usd_rates` sets `rate_to_usd_at_issue = 1` on non-draft USD invoices and
+`rate_to_usd = 1` on USD payments where NULL. Lossless (USD -> USD is 1 by definition). Non-USD NULLs are NOT
+backfilled — nothing honest exists to fill them with — and are reported. Idempotent, `apps.get_model`, queryset
+`.update()` (so `updated_at` is untouched — also tested), explicit no-op reverse (a backfilled 1 is
+indistinguishable from a real captured 1; un-setting would only recreate the defect), counts logged. Applied to
+the dev DB: 29 invoices and 3 payments backfilled; left NULL by design: 21 non-USD invoices (GBP 20, EUR 1) and 1
+non-USD payment (EUR); anomalies (USD rate present but != 1): 0.
+
+Reader sweep (every non-test read of `rate_to_usd_at_issue`/`rate_to_usd`; none in templates or the frontend):
+- handled correctly already: `apps/clients/scoring.py:114-122` and `apps/clients/views.py:72` (USD branch first),
+  `views.py` `_collected_amount` (233), `invoice_summary` (2032-2050) and `_build_currency_breakdown` (2293) via
+  `unify_amounts_to_currency`, `_lookup_rate_to_usd` (147), `core/money.py`, the read-only serializer fields,
+  `serializers_portal.py`.
+- FIXED: `_build_monthly_trend` invoiced loop and collected loop (both `if ... is None: continue`) and
+  `_build_top_clients` (`if inv.rate_to_usd_at_issue is None ...`) now call `convert_amount(..., 'USD', None)`; a USD
+  row converts to itself, a non-USD row with no rate still returns None and is still skipped. One conversion
+  implementation. The unused `Money` import in views.py was dropped.
+- Left, by design: `Invoice.client_currency_conversion` (models.py:517) and `pdf_generator.
+  _invoice_amounts_in_client_currency` (744) return None when `rate_to_usd_at_issue` OR `exchange_rate_snapshot`
+  is missing. They are deliberately frozen-per-invoice-snapshot semantics (the statement PDF), and a snapshot cannot
+  be backfilled (the target-currency rate at issue time is unknowable), so a USD invoice with no snapshot shows as
+  unconverted on the statement while the list (today's rate) converts it — the already-recorded list-vs-statement
+  difference, not a NULL-rate bug. 5 healthy USD invoices (rate 1) have no snapshot.
+
+Before/after on the real dev DB, three snapshots (S0 untouched, S1 reader fixes only, S2 after backfill) for the
+three users who own the NULL rows (dropdown-check, screenshot-demo, invoicetest — all default currency USD):
+the KPI strip for all four periods (this_month, last_6_months, this_year, all_time), the analytics trend (24
+months), top clients, the currency breakdown, and the client list's payment_stats for their 8 clients. **There is
+no difference anywhere: S0 = S1 = S2.** That is the honest result, for three separate reasons, not an omission:
+(1) the 29 rows have `finalised_at = NULL`, and `_build_monthly_trend` filters on `finalised_at`, so they were never
+in the invoiced trend regardless of rate (a premise in the brief that turned out to be wrong for these rows); the
+trend change matters only for rows that DO have `finalised_at`, and none of the dev NULL-rate USD rows do —
+covered by tests; (2) all three users' default currency is USD, so Part A's KPI behaviour change cannot show on
+this data — covered by the new `invoice_summary` call-site tests (default currency PKR); (3) the client-list
+readers were already tolerant of USD NULL (Part A). What actually changed in the DB is the 29 + 3 rows.
+
+Tests (+33, `apps/invoices/tests/test_usd_rate_invariant.py`): model guards (every status, draft/non-USD
+untouched, explicit rate kept, update_fields), every real finalise and payment path, the readers given a legacy
+NULL-rate USD row — `invoice_summary` with default currency PKR (Outstanding, Overdue, Collected: the call-site
+test Part A's report said was missing), trend (both loops), top clients, currency breakdown — plus non-USD never
+guessed (with and without a snapshot) and the migration function called directly (fixes USD, leaves drafts/non-
+USD/explicit untouched, idempotent, no `updated_at` change, no-op reverse). Eight deliberate mutations each failed
+1-5 of them (trend invoiced skip back; trend collected skip back; top-clients skip back; Invoice guard removed;
+Payment guard removed; Part A's USD carve-out in `convert_amount` reverted; the guard widened to non-USD; the
+migration widened to drafts + non-USD), then the code was restored. Note the source-path tests are
+characterization tests: they pass without this change because those paths were already correct.
+Two Part A tests (`test_client_payment_stats.py`, `test_client_list_money.py`) built a USD NULL row with
+`create(rate=None)`, which the guard would now quietly fix and so make the test vacuous; both rebuild the legacy row
+with queryset `.update()` (how the real ones were made) and say why in a comment. No assertion was weakened.
+Backend suite: 1339 -> 1372 passing, one clean run each, nothing in flight; `manage.py check` clean;
+`makemigrations --check --dry-run` clean (the only new migration is the data migration).
+
+Did any code treat sent/viewed/bad_debt invoices with NULL `finalised_at` as valid? Implicitly yes, two places,
+neither enforced: `invoice_timeline` (views.py:1679, `if invoice.finalised_at:`) silently omits the "finalised" entry
+for such a row, and `_build_monthly_trend` (2201, `finalised_at__date__gte`) silently excludes it from the
+invoiced trend — whose docstring (2163) asserts `finalised_at` "is set the moment an invoice leaves draft" as if
+it were guaranteed. Nothing guarantees it for ORM-created rows. Not changed (a definition question — see backlog).
+
+Alternatives considered: a CHECK constraint (above); backfilling non-USD with the nearest snapshot's rate
+(rejected — that is inventing a frozen rate); fixing the readers only and leaving the rows NULL (rejected — leaves
+the 29 rows violating the invariant for the next reader); backfilling `finalised_at` on the 43 seed rows (not
+asked, and fabricating a timestamp is a different decision from fabricating a 1).
+
+Audit backlog (found, not fixed):
+- **43 seeded non-draft invoices have `finalised_at = NULL`** and are therefore invisible to the invoiced trend and
+  missing a timeline entry. Groups: dropdown-check@example.com, 25, 2026-09-21, INV-2026-9000..9024;
+  screenshot-demo@example.com, 6 on 2026-08-17 (INV-2026-0001..0006) and 3 on 2026-09-26 (BELLDEMO-9001..9003);
+  admin@lanceraos.com 3 and aliamir.irp@gmail.com 3 and invoicetest@example.com 3, all 2026-08-09
+  (INV-2026-0001..0003). **No seed script exists in the repo or in git history** (neither `INV-2026-9000` nor
+  `BELLDEMO` was ever committed; `git log -S` finds nothing) — they were throwaway shell scripts, so no file:line
+  can be given. The only in-repo, non-test code that creates a non-draft Invoice without `finalised_at` is
+  `apps/invoices/management/commands/generate_template_previews.py:108` (`status='created'`, on a throwaway user
+  that is deleted after rendering — nothing persists) and the shared test helper `apps/invoices/tests/test_models.py:
+  17` (`make_invoice`) used by hundreds of tests. Whether to backfill `finalised_at` for the dev rows, or to make
+  the trend/timeline define "invoiced" by `status != 'draft'` instead, is a definition decision for Ali.
+- The 20 GBP + 1 EUR invoices with `finalised_at` but a NULL rate are seed rows too (screenshot-demo, 2026-09-22/23);
+  they and the 1 non-USD payment remain "unconverted" by design.
+- `_lookup_rate_to_usd`, `Invoice.capture_issue_rate()`, `ExchangeRateSnapshot.get_current()` and
+  `serializers.validate_currency_code` still hold four copies of "today's snapshot, else latest" (carried from
+  Part A's backlog).
+- 5 healthy USD invoices have rate 1 but no snapshot; the statement PDF reports them as unconverted for a
+  non-USD client (the known list-vs-statement difference).
+- `generate_template_previews.py:108` creates `status='created'` with no `finalised_at` (harmless: deleted).
+
+
+---
+
+Date: 02 October 2026 (Part C — client panel: open invoices in the Invoices page, and create an invoice for the client)
+
+Decision: In the client detail panel, (1) each Invoices-tab row is a real `<Link>` to `/invoices?invoice=<id>`, (2) a
+"New Invoice" `<Link>` to `/invoices?new_for_client=<client id>` leads the quick-actions row (and an empty-state
+"Create the first invoice" CTA), and (3) `Invoices.jsx` resolves both deep links in one status-aware mount effect.
+Frontend only; no backend change in this workstream (`git diff --stat -- apps core config` shows only Workstream 1's
+files: `apps/invoices/models.py`, `apps/invoices/views.py`, and the untracked migration).
+
+Facts re-verified before acting: the panel's rows were plain non-clickable divs; the old effect always opened
+`InvoiceDetailPanel` even for a draft while the list's own `openDetail` sends a draft to the wizard; the wizard had
+no prefill prop; `ClientSearchField.selectResult` held the only client->form mapping; the wizard's search (`GET
+/clients/?search=`, default filter `active`) cannot find archived clients; `InvoiceTable`'s rows carried an inline
+`background: 'transparent'`. All confirmed. One difference from the brief: the wizard has NO address input at all
+(stage 1 shows name, email, company, phone), so "address prefilled" can only be checked on the saved invoice
+(`client_address` — verified, below), not on screen.
+
+Design: (a) Navigation goes to `/invoices` (the panel is left behind; no stacked panels). (b) Query-param convention
+(`?invoice=`, `&tab=`, `?new_for_client=`), not router state, so a refresh keeps working. (c) ONE exported pure helper,
+`invoiceHelpers.applyClientToInvoiceForm(form, client)`, now used by both `selectResult` and the wizard's initial form —
+a "pick" and a "pre-fill" cannot drift; it does NOT apply `default_payment_terms` to `due_date` (search-pick never did;
+parity was the decision). (d) `NewInvoiceWizard` gained an optional `initialClient` prop; `editInvoiceId` wins if both are
+given. Mounting with it POSTs nothing — delayed creation is intact. (e) The effect fetches `GET /invoices/<id>/` first
+and branches on `status` (draft -> `setWizardEditId`, otherwise `setSelectedInvoiceId` + the `tab`), costing one extra
+GET that the panel then repeats; rejected alternative: infer status from the already-loaded list (the invoice may
+not be on the current page). (f) Staleness is guarded with a request id, not effect-cleanup cancellation — clearing the
+params (`replace`) re-runs the effect, so cleanup-based cancellation would cancel the very request it follows. An
+unmount bumps the id too. (g) Archived clients cannot be invoiced from here (the button is disabled with the title
+"Restore this client to create invoices for them", a title also on a wrapper because a disabled button swallows
+pointer events in some browsers), consistent with the wizard's search; a hand-typed `?new_for_client=<archived>`
+shows "Restore this client before creating an invoice for them." Flagged clients: no extra friction.
+
+**Backend behaviour for an archived client (the brief asked to verify): the API ACCEPTS it.** A direct authenticated
+`POST /api/invoices/` with `client=<archived client id>` returned **201** and created a draft linked to that archived
+client (deleted again, 204). `InvoiceSerializer`'s client field is scoped by ownership only (`Client.objects.filter(
+user=request.user)`, serializers.py:155), with no `is_active` check. So the archived rule is a frontend/consistency rule,
+not an enforced invariant — recorded, not changed (no backend change was in scope).
+
+The latent bug this fixes for every caller: notification `action_url`s of the form `/invoices?invoice={id}` come from
+`core/notifications.py` `EVENT_ACTION_URLS` for five events — `comment_posted` (+`&tab=comments`),
+`payment_claim_submitted` (+`&tab=claims`), `invoice_acknowledged`, `invoice_escalation_required`,
+`recurring_invoice_generated`. Four target delivered (non-draft) invoices. **`recurring_invoice_generated` can target a
+DRAFT**: `tasks.generate_recurring_invoices` emits `RecurringInvoiceGenerated(invoice_id=<child>)`, and the child stays a
+draft when the root's auto-send is off — so that bell click used to open the detail panel on a draft, the path this
+codebase otherwise treats as unreachable; it now opens the wizard in edit mode, like a list click. (Two other action_urls,
+`stale_drafts_digest` -> `/invoices/?status=draft` and `recurring_generation_*` -> `/invoices/?filter=recurring`, use
+query params `Invoices.jsx` has never read — pre-existing, backlog.) The existing backend tests pinning those
+`action_url` strings pass unmodified (this workstream touched no backend file).
+
+Hover fix (C4.0): `InvoiceTable`'s row had an inline `background: isSelected ? 'var(--accent-glow)' : 'transparent'`, which
+beats the stylesheet's `.invoice-row:not([data-selected="true"]):hover` (inline > selector), so Invoices rows never showed
+a hover state. Now `... : undefined`. Proven with computed styles in real Chromium, 1280px: BEFORE, hover == base
+(`rgba(0, 0, 0, 0)`) in both themes; AFTER, hover is `rgb(248, 248, 252)` light / `rgb(24, 24, 31)` dark — byte-identical to
+the Clients table's hover — with the base state unchanged and a selected row keeping its accent glow
+(`rgba(0, 200, 150, 0.12)` / `rgba(0, 229, 160, 0.1)`, selected+hover unchanged). This DOES change how the Invoices page
+looks (a hover tint now appears). `listTableStyles.js` and `ClientTable.jsx` do not have the trap (ClientTable sets no
+inline background). A multi-line scan of every JSX tag carrying a class that has a `:hover` background rule found two
+more inline-background hits: `AppShell`'s `.popup-item` (not the trap: that class has no hover background rule, hover is
+JS-driven) and **`DropdownMenu`'s ghost trigger — the same trap**: inline `background: 'transparent'` beats
+`.fos-btn-ghost:hover`. Measured live: the Invoices header "More" button's computed hover background equals its base
+(`rgba(0, 0, 0, 0)`) in both themes. NOT fixed (a shared component used by many surfaces; changing it alters every ghost
+dropdown trigger's look) — backlog, one-line fix: apply the inline transparent only when `bareTrigger`.
+
+Verification (real Chromium against the real dev servers; two dedicated users, since deleted):
+- Flow A, every status: from the client panel, clicking a numbered draft, an unnumbered draft, sent, paid,
+  partially_paid and cancelled — 24 results (6 kinds x 375/1280 x light/dark), all pass: you land on `/invoices`; drafts
+  open the wizard in edit mode with their saved data (stage 2 showed unit price 300 vs 400, proving the right draft
+  loaded); the rest open the detail panel showing that exact invoice number (never the wizard); the URL ends as plain
+  `/invoices`; Back returns to `/clients`. The 6 rows' hrefs are all `/invoices?invoice=<uuid>`; a middle-click opens the
+  invoice in a new tab (Ctrl+click is a right-click on macOS, so the platform-independent gesture was used). Rows show a
+  visible `:focus-visible` ring (`2px solid` accent) and a hover tint in both themes.
+- Flow B, New Invoice for 3 clients (USD full details; PKR; sparse): the wizard opens on stage 1, "Not saved yet",
+  with name/email/company/phone filled (sparse: company/phone empty, no "undefined") and "Linked to a saved client";
+  closing creates NO invoice (DB count before = after, all 3 and all four viewport/theme combos for the full client);
+  completing Next with a due date creates the invoice with `client` = that client's id, `is_one_time_client` false,
+  and the saved name/email/company/address/phone/currency (USD / PKR / USD) — the address, which has no input, is
+  on the row; Currency on stage 2 equals the client's default; Finalise opens the panel on the new number
+  (INV-2026-0107/0108/0109). The finalised rows also confirmed Workstream 1 live: rate 1.000000 (USD) and 0.003605 (PKR,
+  from the snapshot).
+- Archived: the button is disabled with its title in all 4 combos (wrapper title too, no new-invoice link rendered, a
+  forced click leaves the URL unchanged); `?new_for_client=<archived>` shows the restore error and opens no wizard.
+- Bad ids and isolation: a random invoice uuid, a random client uuid, a non-uuid (`abc`), **user 2's invoice id and user 2's
+  client id visited as user 1** — each shows "not found" and opens nothing (2 viewport/theme combos).
+- Regression: `?invoice=<sent>&tab=comments` still lands on the Comments tab (the only active tab).
+- Logged-out deep link: the redirect to `/login` carries only `location.pathname` in router state
+  (`PrivateRoute.jsx:20`), so the QUERY STRING is lost by construction — `?invoice=…&tab=comments` cannot survive login.
+  Observed: after login the seeded account landed on `/profile`; the controls — a plain login, and a deep link to bare
+  `/invoices` — also landed on `/profile`, so this account's post-login destination is unrelated to the link (cause not
+  investigated; likely an incomplete-profile redirect), and I could not observe whether even the pathname survives. Not
+  fixed (the brief: only if trivial); backlog.
+
+Tests (+46 frontend; 451 -> 497 passing of 452 -> 498, the one failure the known `SecuritySection` test, same message as
+the baseline): `applyClientToInvoiceForm` (5), the wizard's `initialClient` (6: prefill, no POST on mount/close, the
+Next payload has `client` and the currency, no due-date auto-fill, sparse client, `editInvoiceId` wins), the panel
+(8: every status renders a link with the right href, unnumbered-draft label, money/due/badge/chevron, focusable and no
+inline background, New Invoice href and position, archived disabled+title+no link, empty-state CTA active and
+archived), `Invoices.deeplink.test.jsx` (24: a draft -> wizard not panel, all 8 non-draft statuses -> panel not wizard,
+`tab` preserved for all four tabs, params cleared, 404/403/network errors, `new_for_client` active/archived/404/500,
+three stale-response cases), `InvoiceTable` (3: unselected row has no inline background, selected keeps the glow, the
+hover rule still targets unselected rows). The existing `ClientDetailPanel` tests were wrapped in a `MemoryRouter`
+(the panel renders `<Link>`s now) with no assertion changed; every pre-existing `InvoiceTable` test passes unmodified.
+Nine deliberate mutations (a draft no longer routed to the wizard; stale guard removed; archived client not rejected;
+tab dropped; inline transparent background restored; helper stops falling back to the form currency; wizard ignores
+`initialClient`; panel rows not linked; archived New Invoice left as a live link) each failed 1-4 of them, then the
+code was restored. `npx vite build` clean. Not covered by a test: the unmount-staleness case would pass without the
+guard under jsdom (no state-update warning is emitted for it in React 19), so it is a regression guard only for thrown
+errors (verified: deleting the unmount guard still passes 24/24); the invoice-branch and client-branch staleness are
+covered by the supersede tests, which do fail without the request-id check.
+
+Alternatives considered: stacked panels (the invoice panel opening on top of the client panel) — rejected, two
+overlapping side panels and a confusing back stack; router `state` instead of query params — rejected, a refresh would
+lose it and it can't be shared as a link; always opening the detail panel (the old behaviour) — rejected, it sends drafts
+down the unreachable path; applying `default_payment_terms` to `due_date` on pre-fill — rejected for now to keep parity
+with search-pick (recorded as a candidate follow-up below).
+
+Environment notes: the dev API throttles (anonymous 100/hour, per-user 1000/hour) were exhausted twice by browser
+sessions (each page load fires many calls); only the test users' throttle keys were cleared. A mid-session error in a
+Playwright script (Ctrl+click on macOS, a hidden desktop-table selector at 375px) was a script bug, not an app bug.
+
+Audit backlog (found, not fixed):
+- **`DropdownMenu`'s ghost trigger has no hover state** (inline `background: 'transparent'` beats `.fos-btn-ghost:hover`;
+  measured on the Invoices header "More" button, both themes). One-line fix; changes every ghost dropdown trigger.
+- **Candidate follow-up: apply the client's `default_payment_terms` to `due_date`** on pre-fill (and on search-pick) —
+  both entry points currently leave Due Date empty, so the freelancer re-enters a value the client record already has.
+- **The backend accepts invoices for archived clients** (`InvoiceSerializer` scopes the client by owner only). If "archived
+  clients can't be invoiced" should be an invariant, it needs a serializer check; the frontend rule alone is bypassable.
+- **A logged-out deep link loses its query string** (`PrivateRoute` stores only `pathname`), so a notification link to
+  `/invoices?invoice=…` followed while logged out lands without the invoice. The seeded account also always landed on
+  `/profile` after login, cause uninvestigated.
+- The wizard has no address field (the data flows through, `client_address`, but is not visible or editable on stage 1).
+- `stale_drafts_digest` (`/invoices/?status=draft`) and `recurring_generation_failed/paused` (`/invoices/?filter=
+  recurring`) action_urls use query params `Invoices.jsx` has never read.
+- The panel's Invoices tab still lists only the first page (`GET /invoices/?client=`, default limit 50).
+- Notification `?invoice=` links now cost one extra `GET /invoices/<id>/` before the panel opens (which fetches it again).

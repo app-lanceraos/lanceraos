@@ -1411,7 +1411,12 @@ figure could read "PKR 10,881" for a client invoiced in USD and PKR), plus `outs
 honestly converted and so contribute to no money figure — never guessed, never silently dropped). Money
 values serialize as JSON numbers, as before. Conversion is `core.money.convert_amount` (frozen
 `rate_to_usd_at_issue` into USD, one current snapshot out; a USD invoice needs no rate), promoted from
-`apps/invoices/views.py` so `apps.clients` never imports `apps.invoices`. The status sets this depends on are
+`apps/invoices/views.py` so `apps.clients` never imports `apps.invoices`. Invariant (02 October 2026, Part A2):
+a non-draft USD invoice (`rate_to_usd_at_issue`) and every USD payment (`rate_to_usd`) always store rate exactly 1 —
+`Invoice.save()`/`InvoicePartialPayment.save()` fill a missing USD rate, migration `0022_backfill_usd_rates` fixed the
+legacy rows, and the analytics trend/top-clients readers now go through `convert_amount` like every other reader
+(no hand-rolled `rate is None` skips). Non-USD rows with no rate stay unconverted by design — never guessed.
+The status sets this depends on are
 mirrored in `apps/clients/scoring.py` and guarded by `apps/invoices/tests/test_client_status_drift.py`.
 List/search/filter/sort: filter by active/flagged/archived/all/new_this_month/with_overdue (clients with
 at least one overdue invoice — a real annotation-based filter since 02 October 2026; it used to return an
@@ -1433,6 +1438,20 @@ rule and say the Invoices count excludes drafts/cancelled/refunded. Known, delib
 the list converts with the invoice's frozen source rate + today's target rate while the statement PDF uses a
 per-invoice snapshot, so their totals can differ; the loading skeleton is still a card grid on desktop (as on
 Invoices); clickable table rows are not keyboard-operable (neither table).
+Client panel -> Invoices page (02 October 2026 — Part C): `ClientDetailPanel.jsx`'s Invoices-tab rows are real
+`<Link>`s to `/invoices?invoice=<id>` and its quick-actions row leads with a "New Invoice" `<Link>` to
+`/invoices?new_for_client=<client id>` (disabled, with an explanatory title, for an archived client). `Invoices.jsx`
+resolves both in ONE mount effect: `?invoice=<id>[&tab=details|timeline|claims|comments]` fetches the invoice and routes
+BY STATUS exactly as a list-row click does (a draft opens `NewInvoiceWizard` in edit mode, everything else the detail
+panel, on the given tab); `?new_for_client=<id>` fetches the client and opens the wizard with its new `initialClient`
+prop, pre-filled via the shared `invoiceHelpers.applyClientToInvoiceForm` (the same mapping a search-pick uses; it does
+NOT apply default_payment_terms). A bad/foreign id shows "That invoice/client could not be found."; an archived client
+shows "Restore this client before creating an invoice for them." (the API itself would accept it). The params are
+cleared with `replace`; a request id guards against stale responses. Notification `action_url`s of the form
+`/invoices?invoice=` (comment_posted, payment_claim_submitted, invoice_acknowledged, invoice_escalation_required,
+recurring_invoice_generated) all flow through the same effect — `recurring_invoice_generated` can target a DRAFT (auto-send
+off), which now opens the wizard instead of the draft-in-panel path DECISIONS.md treats as unreachable. Also fixed:
+`InvoiceTable`'s rows never showed a hover state (an inline `background: 'transparent'` beat the `:hover` rule).
 Client statement PDF is built (Step 19 — see this module's own Step 19 entry above and the
 Key API endpoints list below). One-time-client conversion (the spec's own `convert-one-time`
 endpoint) is NOT built yet — scoped to a later step in this module's build order.

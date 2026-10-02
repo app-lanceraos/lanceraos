@@ -38,7 +38,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from core.events import emit
-from core.money import Money, unify_amounts_to_currency
+from core.money import convert_amount, unify_amounts_to_currency
 from apps.clients.scoring import EXCLUDED_STATUSES as CLIENT_SCORING_EXCLUDED_STATUSES
 from apps.clients.serializers import validate_currency_code
 from apps.clients.views_portal import _send_portal_link_email
@@ -2180,9 +2180,12 @@ def _build_monthly_trend(user, months):
     dated event in this data model, so there's no honest month to
     attribute a refund to — see DECISIONS.md.
 
-    A row with no captured conversion rate is skipped, never guessed —
-    an invoice/payment predating this step's rate_to_usd fix, or issued
-    before any ExchangeRateSnapshot existed.
+    A row that cannot be honestly converted (a non-USD one with no
+    captured rate — predating the rate_to_usd fix, or issued before any
+    ExchangeRateSnapshot existed) is skipped, never guessed. The decision
+    is core.money.convert_amount's alone: a USD row converts to itself with
+    rate 1 even when its stored rate is NULL, which a hand-rolled
+    `rate is None: continue` here used to wrongly drop.
     """
     today = timezone.now().date()
     window_start = today.replace(day=1) - relativedelta(months=months - 1)
@@ -2201,9 +2204,10 @@ def _build_monthly_trend(user, months):
     )
     for row in invoiced_qs:
         key = row['finalised_at'].strftime('%Y-%m')
-        if key not in buckets or row['rate_to_usd_at_issue'] is None:
+        usd = convert_amount(row['total'], row['currency'], row['rate_to_usd_at_issue'], 'USD', None)
+        if key not in buckets or usd is None:
             continue
-        buckets[key]['invoiced'] += Money(row['total'], row['currency'], row['rate_to_usd_at_issue']).to_usd()
+        buckets[key]['invoiced'] += usd
 
     collected_qs = (
         InvoicePartialPayment.objects.filter(invoice__user=user, payment_date__gte=window_start)
@@ -2211,9 +2215,10 @@ def _build_monthly_trend(user, months):
     )
     for row in collected_qs:
         key = row['payment_date'].strftime('%Y-%m')
-        if key not in buckets or row['rate_to_usd'] is None:
+        usd = convert_amount(row['amount'], row['currency'], row['rate_to_usd'], 'USD', None)
+        if key not in buckets or usd is None:
             continue
-        buckets[key]['collected'] += Money(row['amount'], row['currency'], row['rate_to_usd']).to_usd()
+        buckets[key]['collected'] += usd
 
     return [
         {
@@ -2244,9 +2249,11 @@ def _build_top_clients(user, limit=5):
     )
     totals = {}
     for inv in invoices:
-        if inv.rate_to_usd_at_issue is None or inv.amount_paid == 0:
+        if inv.amount_paid == 0:
             continue
-        usd_paid = Money(inv.amount_paid, inv.currency, inv.rate_to_usd_at_issue).to_usd()
+        usd_paid = convert_amount(inv.amount_paid, inv.currency, inv.rate_to_usd_at_issue, 'USD', None)
+        if usd_paid is None:
+            continue
         entry = totals.setdefault(inv.client_id, {'client': inv.client, 'total_paid_usd': Decimal('0')})
         entry['total_paid_usd'] += usd_paid
 

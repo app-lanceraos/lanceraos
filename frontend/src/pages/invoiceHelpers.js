@@ -263,6 +263,32 @@ export function blankInvoiceForm() {
   }
 }
 
+// The ONE mapping from a saved Client to the invoice form's client fields —
+// used both when the user picks a client in the wizard's search box
+// (ClientSearchField.selectResult) and when the wizard is opened pre-filled
+// for a client (NewInvoiceWizard's `initialClient`, reached from the client
+// detail panel's "New Invoice" button). Extracted so those two entry points
+// cannot drift apart: a "pick" and a "pre-fill" are the same act.
+//
+// Deliberately does NOT apply the client's default_payment_terms to
+// due_date — search-pick never did, and parity between the two entry points
+// is the point (a candidate follow-up, recorded in DECISIONS.md, not part of
+// this mapping). Currency falls back to the form's current one when the
+// client has none; missing optional fields become '' (never undefined).
+export function applyClientToInvoiceForm(form, client) {
+  return {
+    ...form,
+    client: client.id,
+    save_as_new_client: false,
+    client_name: client.name,
+    client_email: client.email,
+    client_company: client.company || '',
+    client_address: client.address || '',
+    client_phone: client.phone || '',
+    currency: client.default_currency || form.currency,
+  }
+}
+
 export function invoiceToForm(invoice) {
   return {
     client: invoice.client || null,

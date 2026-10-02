@@ -897,7 +897,9 @@ values it can legally hold grew.
 `view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
 `client_address`/`client_phone` (immutable snapshot at creation), `currency` (CharField(3), no
 `choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`,
-`rate_to_usd_at_issue` (Decimal(10,6), nullable), `exchange_rate_snapshot` (FK →
+`rate_to_usd_at_issue` (Decimal(10,6), nullable — **invariant: a non-draft USD invoice always stores 1**,
+enforced by `Invoice.save()` and backfilled by migration `0022_backfill_usd_rates`; non-USD and draft rows may
+legitimately be NULL), `exchange_rate_snapshot` (FK →
 `payments.ExchangeRateSnapshot`, `SET_NULL`, nullable), `pdf_url`/`pdf_generated_at`,
 `issue_date`/`due_date`/`paid_date`/`sent_at`, `notes`/`terms`, `reminders_enabled`/
 `reminder_count`/`last_reminder_sent_at`, `late_fee_enabled`/`late_fee_rate`, `is_recurring`/
@@ -1025,8 +1027,15 @@ confirmed directly by grep before writing Step 18's own analytics/statement work
 per-payment conversion to be possible at all. Fixed via a new `apps.invoices.views._lookup_rate_to_usd`
 helper (mirrors `Invoice.capture_issue_rate()`'s own snapshot-selection logic — today's
 `ExchangeRateSnapshot`, falling back to the most recent), called at all three sites. Every payment
-recorded before this fix still has `rate_to_usd=NULL` — a real, permanent historical gap in old
-rows, not backfilled (no reliable historical rate to backfill from that wasn't already lost).
+recorded before this fix had `rate_to_usd=NULL`. **Update, 02 October 2026 (Part A2):** the USD ones
+are now backfilled to exactly 1 (USD→USD is 1 by definition, so this is lossless — migration
+`0022_backfill_usd_rates`, idempotent, USD-only), and **the invariant is "every USD payment stores rate 1"**,
+enforced at the model by `InvoicePartialPayment.save()` (which fills a missing USD rate with 1 and never
+touches any other currency). Non-USD payments recorded before the original fix stay NULL — no honest
+historical rate exists for them (1 in the dev DB), and `core.money.convert_amount` reports them as
+unconverted rather than guessing. The same migration and guard cover `invoices.rate_to_usd_at_issue` for
+non-draft USD invoices (29 rows in the dev DB, created through the ORM by seed scripts that bypassed
+`_finalise_invoice`; see DECISIONS.md).
 
 1. **Mutable?** No — append-only; record/undo creates or deletes a row, never edits in place.
 2. **Soft deleted?** No — deletion IS the undo mechanism (see `Invoice.update_paid_status()`'s

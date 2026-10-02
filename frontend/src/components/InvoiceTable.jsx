@@ -93,7 +93,11 @@ export default function InvoiceTable({
               <tr
                 key={inv.id} className="invoice-row" data-selected={isSelected}
                 onClick={() => onOpen(inv)}
-                style={{ background: isSelected ? 'var(--accent-glow)' : 'transparent' }}
+                // `undefined`, NOT 'transparent': an inline background beats the stylesheet's
+                // `.invoice-row:not([data-selected="true"]):hover` rule (inline > selector), so the
+                // old 'transparent' meant this row never showed a hover state at all — proven on the
+                // untouched code (computed hover background == base, both themes).
+                style={{ background: isSelected ? 'var(--accent-glow)' : undefined }}
               >
                 {hasEligible && (
                   <td style={td} onClick={(e) => e.stopPropagation()}>

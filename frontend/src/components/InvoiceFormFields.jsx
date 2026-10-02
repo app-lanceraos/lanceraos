@@ -20,7 +20,7 @@ import FormField from './FormField'
 import FormSelect from './FormSelect'
 import FosAlert from './FosAlert'
 import {
-  CURRENCY_OPTIONS, formatMoney, RECURRING_INTERVAL_OPTIONS, computeTotals,
+  CURRENCY_OPTIONS, formatMoney, RECURRING_INTERVAL_OPTIONS, computeTotals, applyClientToInvoiceForm,
 } from '@/pages/invoiceHelpers'
 
 const BLANK_ITEM = { description: '', quantity: '1', unit_price: '' }
@@ -311,13 +311,7 @@ function ClientSearchField({ form, setForm, errors }) {
   }
 
   function selectResult(c) {
-    setForm((f) => ({
-      ...f, client: c.id, save_as_new_client: false,
-      client_name: c.name, client_email: c.email,
-      client_company: c.company || '', client_address: c.address || '',
-      client_phone: c.phone || '',
-      currency: c.default_currency || f.currency,
-    }))
+    setForm((f) => applyClientToInvoiceForm(f, c))
     setQuery(c.name)
     setOpen(false)
   }

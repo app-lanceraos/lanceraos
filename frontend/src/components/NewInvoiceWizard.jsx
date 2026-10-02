@@ -21,6 +21,16 @@
 // being built, so it belongs in the same guided flow a brand-new one
 // does, pre-filled with its real saved data instead of starting blank.
 //
+// Also accepts `initialClient` (a saved Client, as GET /clients/<id>/ returns
+// it) — opened from the client detail panel's "New Invoice" button via
+// Invoices.jsx's `?new_for_client=` deep link. The form starts as
+// applyClientToInvoiceForm(blankInvoiceForm(), initialClient): exactly what
+// picking that client in the search box would produce, so it lands on stage 1
+// with the client already valid. Delayed creation is untouched — mounting
+// this way POSTs nothing; the invoice row still only comes into existence on
+// stage 1's Next. Mutually exclusive with `editInvoiceId` (an existing draft
+// is loaded from the server and always wins).
+//
 // 3 stages:
 //   1. Client (search-driven — see InvoiceFormFields.jsx's ClientSearchField)
 //      + due date — the stage the threshold gets crossed on.
@@ -47,7 +57,7 @@ import api from '@/lib/api'
 import useInvoiceAutosave from '@/hooks/useInvoiceAutosave'
 import FosAlert from './FosAlert'
 import InvoiceFormFields from './InvoiceFormFields'
-import { blankInvoiceForm, formToPayload, invoiceToForm } from '@/pages/invoiceHelpers'
+import { applyClientToInvoiceForm, blankInvoiceForm, formToPayload, invoiceToForm } from '@/pages/invoiceHelpers'
 
 const STAGES = [{ n: 1, label: 'Client & Dates' }, { n: 2, label: 'Line Items' }, { n: 3, label: 'Options' }]
 
@@ -67,8 +77,12 @@ function hasValidDueDate(form) {
   return !!form.due_date && (!form.issue_date || form.due_date > form.issue_date)
 }
 
-export default function NewInvoiceWizard({ editInvoiceId = null, onClose, onFinalised }) {
-  const [form, setForm] = useState(editInvoiceId ? null : blankInvoiceForm())
+export default function NewInvoiceWizard({ editInvoiceId = null, initialClient = null, onClose, onFinalised }) {
+  const [form, setForm] = useState(() => {
+    if (editInvoiceId) return null
+    const blank = blankInvoiceForm()
+    return initialClient ? applyClientToInvoiceForm(blank, initialClient) : blank
+  })
   const [stage, setStage] = useState(1)
   const [invoiceId, setInvoiceId] = useState(editInvoiceId)
   const [loadingExisting, setLoadingExisting] = useState(!!editInvoiceId)

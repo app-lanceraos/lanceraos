@@ -14,8 +14,9 @@
 // conditionally when a client is selected, the same way DeletionModal.jsx
 // is a components/ file that isn't a route either.
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
-  X, Flag, Archive, RotateCcw, Pencil, Plus, FileText, StickyNote, BarChart3, Tag as TagIcon, FileDown, Inbox,
+  X, Flag, Archive, RotateCcw, Pencil, Plus, FileText, StickyNote, BarChart3, Tag as TagIcon, FileDown, Inbox, ChevronRight,
 } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -383,6 +384,7 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
 
               {/* ── Quick actions ── */}
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+                <NewInvoiceButton clientId={client.id} active={client.is_active} />
                 <button className="fos-btn fos-btn-ghost" onClick={() => setEditing(true)}>
                   <Pencil size={14} /> Edit
                 </button>
@@ -493,7 +495,7 @@ export default function ClientDetailPanel({ clientId, initialAction, onClose, on
               </div>
 
               {activeTab === 'invoices' && (
-                <InvoicesTab loading={invoicesLoading} invoices={invoices} />
+                <InvoicesTab loading={invoicesLoading} invoices={invoices} clientId={client.id} clientActive={client.is_active} />
               )}
               {activeTab === 'analytics' && (
                 <AnalyticsTab paymentStats={client.payment_stats} />
@@ -573,8 +575,43 @@ function StatCard({ label, value, sub }) {
   )
 }
 
+// ── New Invoice ───────────────────────────────────────────────────
+// Leads to /invoices?new_for_client=<id>, where Invoices.jsx opens the
+// new-invoice wizard pre-filled with this client (a real link, so ctrl/
+// middle-click open a new tab and a refresh keeps working). An ARCHIVED
+// client can't be invoiced from here — the wizard's own client search only
+// finds active clients, so this stays consistent with it — hence a disabled
+// button that says why. (The backend itself would accept it; see
+// DECISIONS.md.) The title sits on a wrapper too: a disabled <button>
+// swallows pointer events in some browsers, so its own title can fail to show.
+const NEW_INVOICE_ARCHIVED_TITLE = 'Restore this client to create invoices for them'
+
+function NewInvoiceButton({ clientId, active, label = 'New Invoice' }) {
+  if (!active) {
+    return (
+      <span title={NEW_INVOICE_ARCHIVED_TITLE} style={{ display: 'inline-flex' }}>
+        <button type="button" className="fos-btn fos-btn-accent" disabled title={NEW_INVOICE_ARCHIVED_TITLE}>
+          <Plus size={14} /> {label}
+        </button>
+      </span>
+    )
+  }
+  return (
+    <Link to={`/invoices?new_for_client=${clientId}`} className="fos-btn fos-btn-accent" style={{ textDecoration: 'none' }}>
+      <Plus size={14} /> {label}
+    </Link>
+  )
+}
+
 // ── InvoicesTab ───────────────────────────────────────────────────
-function InvoicesTab({ loading, invoices }) {
+// Each row is a real <Link> to /invoices?invoice=<id> — Invoices.jsx resolves
+// that by status exactly as a click on its own list row does (a draft opens
+// the wizard, everything else the detail panel). A link, not a click handler,
+// so it is keyboard-operable (focusable, Enter activates) and ctrl/middle-click
+// open it in a new tab. The row's background lives in the stylesheet below, not
+// an inline style: an inline background would override the :hover rule (the
+// same trap InvoiceTable.jsx had).
+function InvoicesTab({ loading, invoices, clientId, clientActive }) {
   if (loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -587,28 +624,49 @@ function InvoicesTab({ loading, invoices }) {
   if (invoices.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: 32, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
-        No invoices yet. Invoices you create for this client will show up here.
+        <p style={{ margin: '0 0 14px' }}>No invoices yet. Invoices you create for this client will show up here.</p>
+        <NewInvoiceButton clientId={clientId} active={clientActive} label="Create the first invoice" />
       </div>
     )
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {invoices.map((inv) => (
-        <div key={inv.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)' }}>
-          <div>
-            <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{inv.invoice_number}</p>
-            {inv.due_date && <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>Due {inv.due_date}</p>}
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-              {formatMoney(inv.total, inv.currency)}
-            </p>
-            <span style={{ display: 'inline-flex', marginTop: 3 }}>
-              <InvoiceStatusBadge meta={INVOICE_STATUS_META[inv.status] || INVOICE_STATUS_META.draft} />
-            </span>
-          </div>
-        </div>
-      ))}
+      <style>{`
+        .cdp-invoice-link { background: var(--bg-surface); transition: background var(--transition-fast); }
+        .cdp-invoice-link:hover { background: var(--bg-surface-2); }
+        .cdp-invoice-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      `}</style>
+      {invoices.map((inv) => {
+        const number = inv.invoice_number || '(unnumbered draft)'
+        return (
+          <Link
+            key={inv.id}
+            to={`/invoices?invoice=${inv.id}`}
+            className="cdp-invoice-link"
+            aria-label={inv.invoice_number ? `Open invoice ${inv.invoice_number}` : 'Open unnumbered draft invoice'}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px',
+              border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', textDecoration: 'none', color: 'inherit',
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{number}</p>
+              {inv.due_date && <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>Due {inv.due_date}</p>}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ textAlign: 'right' }}>
+                <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                  {formatMoney(inv.total, inv.currency)}
+                </p>
+                <span style={{ display: 'inline-flex', marginTop: 3 }}>
+                  <InvoiceStatusBadge meta={INVOICE_STATUS_META[inv.status] || INVOICE_STATUS_META.draft} />
+                </span>
+              </div>
+              <ChevronRight size={15} aria-hidden="true" style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+            </div>
+          </Link>
+        )
+      })}
     </div>
   )
 }

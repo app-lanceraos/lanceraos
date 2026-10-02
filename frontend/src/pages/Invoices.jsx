@@ -90,6 +90,7 @@ export default function Invoices() {
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
   const [showNewWizard, setShowNewWizard] = useState(false)
   const [wizardEditId, setWizardEditId] = useState(null)
+  const [newInvoiceClient, setNewInvoiceClient] = useState(null)
   const [pendingDetailMessage, setPendingDetailMessage] = useState(null)
   const [pendingDetailTab, setPendingDetailTab] = useState(null)
 
@@ -99,6 +100,7 @@ export default function Invoices() {
 
   const searchTimer = useRef(null)
   const latestRequestId = useRef(0)
+  const deepLinkRequestId = useRef(0)
 
   // ── Header actions — registered into AppShell's own header, not
   // rendered inline on this page anymore (item 1/7 of this pass).
@@ -203,13 +205,69 @@ export default function Invoices() {
   // InvoiceDetailPanel.jsx's own identical convention.
   useEffect(() => { initTooltipBindings() })
 
-  // Notification click-through — unchanged from the prior round.
+  // Deep links into this page, resolved in ONE place:
+  //   ?invoice=<id>[&tab=<tab>]   — notification click-through, and the client panel's invoice rows
+  //   ?new_for_client=<client id> — the client panel's "New Invoice" button
+  //
+  // `?invoice=` is routed BY STATUS exactly as a row click is (`openDetail`
+  // below): a draft opens the wizard in edit mode, everything else opens the
+  // detail panel. Before this was async it always opened the panel, even for
+  // a draft — a path DECISIONS.md treats as unreachable (a draft is still
+  // being built, so it belongs in the guided wizard). That latent
+  // inconsistency was real for `recurring_invoice_generated` notifications,
+  // whose generated child stays a draft when auto-send is off. Fixed here for
+  // every caller at once rather than patched at one call site.
+  //
+  // The params are read into locals and cleared at once (`replace`, so Back
+  // is not polluted). Clearing re-runs this effect, so staleness is guarded
+  // with a request id rather than effect-cleanup cancellation (cleanup would
+  // cancel the very request the clearing re-run follows): a late response
+  // never opens anything after the user navigated away (unmount bumps the id)
+  // or followed another deep link (the next link bumps it).
+  useEffect(() => () => { deepLinkRequestId.current += 1 }, [])
   useEffect(() => {
     const invoiceParam = searchParams.get('invoice')
-    if (!invoiceParam) return
-    setSelectedInvoiceId(invoiceParam)
-    setPendingDetailTab(searchParams.get('tab'))
+    const newForClientParam = searchParams.get('new_for_client')
+    if (!invoiceParam && !newForClientParam) return
+    const tabParam = searchParams.get('tab')
+    const requestId = ++deepLinkRequestId.current
     setSearchParams({}, { replace: true })
+    setCreateError(null)
+
+    async function resolveInvoiceLink() {
+      try {
+        const { data } = await api.get(`/invoices/${invoiceParam}/`)
+        if (requestId !== deepLinkRequestId.current) return
+        if (data.status === 'draft') {
+          setWizardEditId(data.id)
+        } else {
+          setSelectedInvoiceId(data.id)
+          setPendingDetailTab(tabParam)
+        }
+      } catch {
+        if (requestId !== deepLinkRequestId.current) return
+        setCreateError('That invoice could not be found.')
+      }
+    }
+
+    async function resolveNewForClientLink() {
+      try {
+        const { data } = await api.get(`/clients/${newForClientParam}/`)
+        if (requestId !== deepLinkRequestId.current) return
+        if (!data.is_active) {
+          setCreateError('Restore this client before creating an invoice for them.')
+          return
+        }
+        setNewInvoiceClient(data)
+        setShowNewWizard(true)
+      } catch (e) {
+        if (requestId !== deepLinkRequestId.current) return
+        setCreateError(e.response?.status === 404 ? 'That client could not be found.' : 'That client could not be loaded. Please try again.')
+      }
+    }
+
+    if (invoiceParam) resolveInvoiceLink()
+    else resolveNewForClientLink()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
@@ -340,12 +398,14 @@ export default function Invoices() {
   function handleWizardClosed(createdId) {
     setShowNewWizard(false)
     setWizardEditId(null)
+    setNewInvoiceClient(null)
     if (createdId) refreshAfterChange()
   }
 
   function handleWizardFinalised(id, message) {
     setShowNewWizard(false)
     setWizardEditId(null)
+    setNewInvoiceClient(null)
     setSelectedInvoiceId(id)
     setPendingDetailMessage(message || null)
     refreshAfterChange()
@@ -639,6 +699,7 @@ export default function Invoices() {
       {(showNewWizard || wizardEditId) && (
         <NewInvoiceWizard
           editInvoiceId={wizardEditId}
+          initialClient={newInvoiceClient}
           onClose={handleWizardClosed}
           onFinalised={handleWizardFinalised}
         />
