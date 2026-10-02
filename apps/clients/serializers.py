@@ -14,6 +14,7 @@ from rest_framework import serializers
 from apps.payments.models import ExchangeRateSnapshot
 
 from .models import Client, ClientNote, ClientTag
+from .scoring import LAZY
 
 
 def validate_currency_code(value):
@@ -119,9 +120,14 @@ class ClientSerializer(serializers.ModelSerializer):
 class ClientListSerializer(serializers.ModelSerializer):
     """
     Read representation for list/detail GET responses — includes
-    computed payment_stats (which returns real numbers only once
-    apps/invoices exists, see Client._invoices_for_scoring) and the
-    client's tags, neither of which belong on the write serializer above.
+    computed payment_stats (Client.compute_payment_stats, the single source
+    of truth for every per-client money figure) and the client's tags,
+    neither of which belong on the write serializer above.
+
+    Optional context key `snapshot`: an already-fetched ExchangeRateSnapshot
+    (or None). client_list supplies one per request so a page of N clients
+    costs one snapshot lookup, not N; single-object callers omit it and the
+    snapshot is fetched lazily.
     """
     tags = ClientTagSerializer(many=True, read_only=True)
     payment_stats = serializers.SerializerMethodField()
@@ -136,7 +142,7 @@ class ClientListSerializer(serializers.ModelSerializer):
         ]
 
     def get_payment_stats(self, obj):
-        return obj.payment_stats
+        return obj.compute_payment_stats(snapshot=self.context.get('snapshot', LAZY))
 
 
 class PortalClientDetailSerializer(serializers.ModelSerializer):

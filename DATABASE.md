@@ -706,13 +706,18 @@ checked in a loop against real collisions) only when blank — an explicitly-sup
 overwritten. This is the actual magic-link credential for the future client portal ("view all
 invoices with this freelancer"), not a session token — it's persistent and non-expiring by design.
 
-**`payment_stats` (property, not a column)** — computes reliability-score stats by calling
-`apps.clients.scoring.compute_reliability_stats()` with `self._invoices_for_scoring()`, which
-returns `None` (not an exception) when `apps.invoices` hasn't added its reverse relation to this
-model yet — this is what makes `GET /api/clients/<pk>/analytics/` callable today, correctly
-returning a zero/`None`-shaped response rather than a 500. See the `client_analytics` endpoint and
-`DECISIONS.md` for the reliability-score formula itself and the reasoning behind testing it via a
-model-agnostic pure function rather than a fake Invoice stand-in.
+**`payment_stats` (property, not a column)** — `Client.compute_payment_stats()` (zero-argument form:
+the `payment_stats` property) calls `apps.clients.scoring.compute_reliability_stats()` over the client's
+invoices (the `invoices` reverse accessor apps.invoices defines; read from the prefetch cache when
+the caller used `prefetch_related('invoices')`). Every money figure is denominated in the client's own
+`default_currency`, converted with `core.money.convert_amount`. Returns `currency`, `total_invoiced`/
+`total_paid`/`invoice_count` (drafts, cancelled, refunded excluded — corrected 02 October 2026; they used
+to be raw cross-currency sums that included drafts), `outstanding`, `overdue_amount`, `overdue_count`,
+`unconverted_count`, `reliability_score` and `reliability_breakdown`. **No schema change** — the
+2 October 2026 Clients-list alignment work added no model field, index or migration (the
+`filter=with_overdue`/`sort=total_invoiced|overdue` annotations run against the existing `invoices`
+table; an index was not added — see DECISIONS.md for the measurement and the proposal). See
+`DECISIONS.md` for the reliability-score formula and the metric-definitions table.
 
 **`flag_type` choices** — `payment_risk`/`communication`/`other`. Reconstructed for v2; v1's
 original flag-type choice set wasn't available in this session (see `DECISIONS.md`). Kept

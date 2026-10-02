@@ -184,6 +184,26 @@ Found and fixed during the LanceraOS Template Builder's production cutover (see 
 and half a dozen module docstrings that still said "Phase 1/2/3, isolated, non-production" were
 rewritten to state current reality.
 
+## A number rendered with a currency symbol must be denominated in that currency
+
+Never display a raw sum across rows of different currencies, and never attach a currency label to a figure
+that wasn't actually converted into it. Found 02 October 2026: `Client.payment_stats.total_invoiced` was a raw
+sum of every invoice's `total` (USD and PKR alike, drafts included) and the UI formatted it with the client's
+`default_currency` — a PKR client invoiced in USD and PKR showed "PKR 10,881" for what was really PKR 1,168,920.
+A money figure that crosses currencies is converted with `core.money.convert_amount` (frozen rate into USD,
+one current snapshot out), carries the currency it is denominated in as a field of the same payload, and
+reports rows it cannot honestly convert as a count (`unconverted_count`) rather than guessing or silently
+dropping them. The frontend formats with the payload's own `currency` field, never a guessed one.
+
+## List endpoints must have a constant query count, asserted by a test
+
+A list endpoint's query count must not grow with page size. Every nested relation and per-row computed field
+needs `prefetch_related`/`select_related` or an annotation, and every per-request lookup (an exchange-rate
+snapshot, a profile) is fetched once and passed down — not once per row. Assert it: build 1 row and N rows,
+count queries with `CaptureQueriesContext`, require equality, and add an explicit ceiling so a regression to
+per-row queries fails loudly. Found 02 October 2026: `GET /api/clients/` cost 4 / 12 / 26 queries for 1 / 5 /
+12 rows (2 per client) until fixed (constant 6 now, `apps/invoices/tests/test_client_list_money.py`).
+
 ## Testing discipline for this project
 
 Every file that touches the database, an external service, or security-sensitive logic gets exercised

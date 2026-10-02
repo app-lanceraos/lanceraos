@@ -1,8 +1,9 @@
 # apps/clients/models.py
 """
-Client CRM — Section 3 of INVOICES_CLIENTS_TECHNICAL_SPEC.md. Built ahead
-of apps/invoices/ (which doesn't exist yet), so Client carries no FK to
-Invoice at all; the future Invoice.client FK (SET_NULL) will point here.
+Client CRM — Section 3 of INVOICES_CLIENTS_TECHNICAL_SPEC.md. Client
+carries no FK to Invoice: apps.invoices owns the Invoice.client FK
+(SET_NULL, related_name='invoices'), and this app reads it only through
+that reverse accessor — never by importing apps.invoices.
 """
 import hashlib
 import secrets
@@ -14,7 +15,9 @@ from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
 
-from .scoring import compute_reliability_stats
+from apps.payments.models import ExchangeRateSnapshot
+
+from .scoring import LAZY, compute_reliability_stats
 
 # Reconstructed for v2 — v1's original flag-type choices weren't available
 # in this session. Kept deliberately small; extend via migration if a real
@@ -32,8 +35,9 @@ class Client(models.Model):
     1. Mutable? Yes — a live CRM record, edited from the client detail page.
     2. Soft deleted? No — archived via `is_active`, not deleted. Deletion
        is a separate, explicit, invoice-preserving-by-default action
-       (matching v1's `keep_invoices` choice) that belongs to a later
-       prompt once apps/invoices/ exists to actually have that choice.
+       (matching v1's `keep_invoices` choice). apps/invoices exists now, so
+       the choice is possible, but the client-deletion endpoint itself is
+       still unbuilt — archive/restore is the only removal path today.
     3. Audit trail? Via core.events (ClientCreated/ClientArchived/
        ClientFlagged), not a bespoke log — handlers that turn those into
        core.AuditLog rows get wired up when apps/invoices/'s own
@@ -41,8 +45,8 @@ class Client(models.Model):
     4. Indexed? `(user, is_active)`, `(user, email)`, `portal_token`.
     5. Encrypted? No — no CNIC/NTN-class data lives on this model.
     6. Cascade behavior? CASCADE from User (a deleted/anonymized user's
-       clients have no independent meaning). The future
-       Invoice.client FK is SET_NULL in the other direction (invoices
+       clients have no independent meaning). Invoice.client is
+       SET_NULL in the other direction (invoices
        outlive a deleted client record) — defined on Invoice, not here.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -128,20 +132,36 @@ class Client(models.Model):
 
     def _invoices_for_scoring(self):
         """
-        Returns the client's invoices queryset, or None when
-        apps.invoices (not yet built) hasn't added its reverse relation
-        to this model yet. getattr(..., None) is what makes calling this
-        safe today — client_analytics' endpoint SHAPE is final now per
-        the spec, but its numbers are genuinely zero/empty (not faked)
-        until Invoice.client (related_name='invoices') actually lands.
+        The client's invoices, via the reverse accessor apps.invoices
+        defines (Invoice.client, related_name='invoices'). `.all()` reads
+        from a prefetch cache when the caller used
+        prefetch_related('invoices') — client_list does, which is what
+        keeps its query count constant regardless of page size.
         """
-        manager = getattr(self, 'invoices', None)
-        return manager.all() if manager is not None else None
+        return self.invoices.all()
+
+    def compute_payment_stats(self, snapshot=LAZY):
+        """
+        The single source of truth for every per-client money figure and
+        the reliability score — see apps.clients.scoring for the exact
+        definitions. Denominated in this client's own default_currency.
+
+        `snapshot`: pass an already-fetched ExchangeRateSnapshot (or None
+        when none exists) to avoid a per-client lookup — client_list fetches
+        one per request. Left as LAZY (the default), it is fetched at most
+        once, and only if some invoice is in a different currency from the
+        client's and the client's currency isn't USD.
+        """
+        if snapshot is LAZY:
+            snapshot = ExchangeRateSnapshot.get_current
+        return compute_reliability_stats(
+            self._invoices_for_scoring(), currency=self.default_currency, snapshot=snapshot,
+        )
 
     @property
     def payment_stats(self):
-        invoices = self._invoices_for_scoring()
-        return compute_reliability_stats(invoices if invoices is not None else [])
+        """Zero-argument form of compute_payment_stats() for callers that don't carry a pre-fetched snapshot (analytics, detail, tag attach/detach, top-clients)."""
+        return self.compute_payment_stats()
 
 
 class ClientNote(models.Model):

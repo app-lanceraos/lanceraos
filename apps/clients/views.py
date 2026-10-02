@@ -2,7 +2,8 @@
 import logging
 
 from django.core.cache import cache
-from django.db.models import Q
+from django.db.models import Case, Count, DecimalField, ExpressionWrapper, F, Q, Sum, Value, When
+from django.db.models.functions import Coalesce, Greatest
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -13,7 +14,10 @@ from rest_framework.response import Response
 from core.events import emit
 from core.models import AuditLog, NotificationRead
 
+from apps.payments.models import ExchangeRateSnapshot
+
 from .models import FLAG_TYPE_CHOICES, Client, ClientNote, ClientTag
+from .scoring import INVOICED_EXCLUDED_STATUSES, OUTSTANDING_STATUSES
 from .serializers import ClientListSerializer, ClientNoteSerializer, ClientSerializer, ClientTagSerializer
 
 logger = logging.getLogger(__name__)
@@ -41,6 +45,59 @@ def _too_many_requests(message):
     return Response({'error': message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
 
+# ── DB-level money annotations (filter=with_overdue, sort=total_invoiced/overdue) ──
+#
+# These exist ONLY to filter/order in SQL across the whole result set before
+# pagination. The numbers a client row DISPLAYS come from
+# Client.compute_payment_stats (Python, the client's own currency); these
+# annotations are in USD via each invoice's frozen rate_to_usd_at_issue. The
+# two can therefore rank a mixed-currency client's neighbours slightly
+# differently than the displayed figures suggest — an accepted trade-off for
+# not loading every invoice of every client just to sort. Invoices that
+# can't be converted (non-USD with no frozen rate) simply contribute nothing
+# to a sort key; the row's unconverted_count is how the UI surfaces that.
+#
+# Every aggregate is a conditional Sum/Count over the ONE `invoices` join,
+# never `.filter(invoices__...)` followed by an aggregate — that pattern
+# reuses the filtered join, so the aggregate would only see matching
+# invoices (a client with one overdue and one on-time invoice would report
+# only the overdue one as "invoiced").
+_USD_DECIMAL = DecimalField(max_digits=30, decimal_places=8)
+
+
+def _usd_value(amount_expr):
+    """`amount_expr` converted to USD from the invoice's frozen rate: USD needs none (so a NULL rate on a USD invoice is fine), anything else without a rate is NULL (ignored by Sum)."""
+    return Case(
+        When(invoices__currency='USD', then=ExpressionWrapper(amount_expr, output_field=_USD_DECIMAL)),
+        When(invoices__rate_to_usd_at_issue__isnull=False, then=ExpressionWrapper(amount_expr * F('invoices__rate_to_usd_at_issue'), output_field=_USD_DECIMAL)),
+        default=None, output_field=_USD_DECIMAL,
+    )
+
+
+def _overdue_condition(today):
+    """Exactly invoice_list's ?overdue=true: an OUTSTANDING status (the complement of NON_OVERDUE_STATUSES) with due_date < today. A NULL due_date never compares < today."""
+    return Q(invoices__status__in=OUTSTANDING_STATUSES, invoices__due_date__lt=today)
+
+
+def _annotate_overdue(qs, today):
+    return qs.annotate(
+        overdue_n=Count('invoices', filter=_overdue_condition(today)),
+        overdue_usd=Coalesce(
+            Sum(_usd_value(Greatest(F('invoices__total') - F('invoices__amount_paid'), Value(0), output_field=_USD_DECIMAL)), filter=_overdue_condition(today)),
+            Value(0), output_field=_USD_DECIMAL,
+        ),
+    )
+
+
+def _annotate_invoiced_usd(qs):
+    return qs.annotate(
+        invoiced_usd=Coalesce(
+            Sum(_usd_value(F('invoices__total')), filter=~Q(invoices__status__in=INVOICED_EXCLUDED_STATUSES)),
+            Value(0), output_field=_USD_DECIMAL,
+        ),
+    )
+
+
 # ══════════════════════════════════════════════════════════════════
 # CLIENT LIST / CREATE
 # ══════════════════════════════════════════════════════════════════
@@ -60,7 +117,14 @@ def client_list(request):
     if request.method == 'POST':
         return client_create(request)
 
-    qs = Client.objects.filter(user=request.user)
+    # prefetch 'invoices' + 'tags' so ClientListSerializer's per-row
+    # payment_stats and tag list read from cache — without this every row
+    # cost 2 extra queries (measured: 4 / 12 / 26 queries for 1 / 5 / 12
+    # rows). Whole Invoice rows are prefetched because apps.clients cannot
+    # import Invoice to build a narrower Prefetch(queryset=...); the page
+    # size cap (limit <= 200) bounds it.
+    qs = Client.objects.filter(user=request.user).prefetch_related('invoices', 'tags')
+    today = timezone.now().date()
 
     filter_param = request.query_params.get('filter', 'active')
     if filter_param == 'active':
@@ -73,11 +137,9 @@ def client_list(request):
         start_of_month = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         qs = qs.filter(created_at__gte=start_of_month)
     elif filter_param == 'with_overdue':
-        # apps.invoices doesn't exist yet — there's no overdue data to
-        # filter on. An empty queryset is more honest than silently
-        # falling back to "all", which would make this filter look like
-        # it matched every client rather than none.
-        qs = qs.none()
+        # Filter on an annotation (HAVING), never .filter(invoices__...) —
+        # see the join note above the annotation helpers.
+        qs = _annotate_overdue(qs, today).filter(overdue_n__gt=0)
     # filter=all (or anything unrecognized) applies no is_active filter.
 
     # Real WHERE-clause filter (List/Table restructure pass, mirrors
@@ -91,19 +153,21 @@ def client_list(request):
     if search:
         qs = qs.filter(Q(name__icontains=search) | Q(email__icontains=search) | Q(company__icontains=search))
 
+    # Every ordering ends in name then pk so pagination is stable: a client
+    # can never appear on two pages (or none) because of a tie.
     sort = request.query_params.get('sort', 'name')
-    if sort in ('total_invoiced', 'overdue'):
-        # Both need real Invoice data to mean anything, and apps.invoices
-        # doesn't exist yet — this app is deliberately being built ahead
-        # of it, per the spec's build order. Falling back to name-sort
-        # rather than reaching into a nonexistent app; revisit once
-        # Invoice exists and Client has a real reverse relation to it.
-        logger.info('[CLIENTS] sort=%s requested but not yet supported (apps.invoices does not exist); falling back to name.', sort)
-        qs = qs.order_by('name')
+    if sort == 'total_invoiced':
+        qs = _annotate_invoiced_usd(qs).order_by('-invoiced_usd', 'name', 'pk')
+    elif sort == 'overdue':
+        # Clients with nothing overdue have overdue_usd/overdue_n == 0 and
+        # so sort last, by name.
+        if 'overdue_n' not in qs.query.annotations:
+            qs = _annotate_overdue(qs, today)
+        qs = qs.order_by('-overdue_usd', '-overdue_n', 'name', 'pk')
     elif sort == 'recent':
-        qs = qs.order_by('-created_at')
+        qs = qs.order_by('-created_at', 'pk')
     else:
-        qs = qs.order_by('name')
+        qs = qs.order_by('name', 'pk')
 
     try:
         limit = min(max(int(request.query_params.get('limit', 50)), 1), 200)
@@ -117,8 +181,11 @@ def client_list(request):
     total = qs.count()
     page = qs[offset:offset + limit]
 
+    # One snapshot lookup per request, shared by every row's payment_stats.
+    snapshot = ExchangeRateSnapshot.get_current()
+
     return Response({
-        'results': ClientListSerializer(page, many=True).data,
+        'results': ClientListSerializer(page, many=True, context={'snapshot': snapshot}).data,
         'total': total,
         'limit': limit,
         'offset': offset,
@@ -330,10 +397,11 @@ def client_note_detail(request, pk, note_id):
 @permission_classes([IsAuthenticated])
 def client_analytics(request, pk):
     """
-    Returns payment_stats (totals + the reliability score/breakdown) for
-    a client. The endpoint's shape is final now per the spec; every
-    number is genuinely zero/None, not faked, until apps.invoices exists
-    and Client._invoices_for_scoring has a real reverse relation to see.
+    Returns payment_stats for a client — the identical dict
+    ClientListSerializer embeds in every list/detail/tag response (both
+    call Client.compute_payment_stats), so the numbers can never differ
+    between this endpoint and the list: currency-correct totals, outstanding/
+    overdue figures, unconverted_count, and the reliability score/breakdown.
     """
     client = get_object_or_404(Client, pk=pk, user=request.user)
     return Response(client.payment_stats)

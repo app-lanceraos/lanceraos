@@ -14281,3 +14281,160 @@ Note: real demo data (client "Jordan Rivera" with 3 invoices and 5 notifications
 with none) was added to the `screenshot-demo@example.com` account for this verification and left in
 place, matching this project's own established precedent of reusing that account as a persistent
 screenshot fixture across passes — flagged here so Ali knows where it came from if he notices it.
+
+
+---
+
+Date: 02 October 2026 (Clients list alignment, Part A — make every number and control real)
+
+Decision: The Clients list endpoint (`GET /api/clients/`) and `Client.payment_stats` were rebuilt so every
+number and control the Clients page exposes is real, ahead of Part B's table redesign. Four findings, all
+re-verified against the working tree before acting:
+
+F1 — three dead controls (CONFIRMED). `filter=with_overdue` returned `qs.none()` unconditionally;
+`sort=total_invoiced` and `sort=overdue` logged "not yet supported" and fell back to name-sort — all three
+justified by "apps.invoices doesn't exist yet", which stopped being true long ago (recorded as a known,
+unfixed finding in the 17 August 2026 List/Table entry). Now real: `with_overdue` is a HAVING filter on an
+`overdue_n` annotation; `total_invoiced` orders by a USD-valued invoiced annotation; `overdue` orders by
+overdue USD, then overdue count, then name. Every ordering ends `name, pk` so pagination is stable.
+
+F2 — the per-client money figure was wrong in two ways (CONFIRMED, with a real example). The old
+`total_invoiced`/`total_paid` raw-summed `inv.total` across every currency with no conversion, and counted
+`draft` invoices. Real dev client "Ali Amir" (default PKR, invoiced in PKR and USD): the old figure was
+"PKR 10,881" — 5 drafts included, and 4,200 USD added to PKR amounts as if they were the same unit. Correct
+figure: PKR 1,168,920.26 over 10 invoices. (`_build_top_clients`'s docstring had already warned these raw
+sums were "not safe" across currencies; its warning is now updated, since the figures are safe.)
+
+F3 — N+1 queries (CONFIRMED, measured). Against the real dev DB, a user with 12 clients: `client_list` cost
+4 / 12 / 26 queries for limit 1 / 5 / 12 rows — 2 per client (the `invoices.all()` in `payment_stats` and the
+nested `tags`). After `prefetch_related('invoices', 'tags')` and one snapshot lookup per request: constant
+6 queries (4 when the page is empty, since the prefetch is skipped) regardless of page size.
+
+F4 — stale comments in apps/clients (CONFIRMED, fixed). `client_list`'s with_overdue/sort comments,
+`ClientListSerializer`'s docstring, `Client._invoices_for_scoring`'s docstring, `scoring.py`'s module
+docstring, `client_analytics`'s docstring, `models.py`'s module docstring and two lines of `Client`'s
+6-question docstring, plus three tests whose names/docstrings recorded the dead behavior as intended (see
+"Tests changed"). Left alone, with reason: `Client`'s question-3 text ("handlers wired up when apps/invoices'
+notification integration is built") is still literally true — no ClientCreated/ClientArchived/ClientFlagged
+handler exists anywhere.
+
+Metric definitions (one definition, used by the Python figures, the SQL annotations and the tests). All
+figures are over the client's invoices, denominated in `client.default_currency`:
+
+| Metric | Definition |
+|---|---|
+| invoiced (`total_invoiced`) | sum of `total` over invoices whose status is NOT draft / cancelled / refunded |
+| paid (`total_paid`) | sum of `amount_paid` over the same set |
+| outstanding | sum of `outstanding_amount` over `sent`/`viewed`/`partially_paid` — identical to `ACTIVE_STATUSES`, the Invoices KPI strip's Outstanding set |
+| overdue_amount / overdue_count | the part of outstanding with `due_date < today` — identical to `invoice_list`'s `?overdue=true` |
+| invoice_count | count of invoices in the invoiced set |
+| unconverted_count | invoices in the invoiced set that cannot be honestly converted; they contribute to NO money figure |
+
+Verified, not assumed: `ACTIVE_STATUSES` = {sent, viewed, partially_paid}; `NON_OVERDUE_STATUSES` = {paid,
+cancelled, refunded, draft, created, bad_debt}; over the nine `STATUS_CHOICES` they are exact complements, so
+"overdue = outstanding statuses AND due_date < today" is the same predicate as `invoice_list`'s
+exclude-NON_OVERDUE form. Counts (`invoice_count`, `overdue_count`) count real invoices regardless of
+convertibility; only money figures drop unconvertible rows — so a client whose only overdue invoice has no rate
+shows `overdue_count: 1, overdue_amount: 0, unconverted_count: 1` rather than looking clean, and the
+`with_overdue` filter (a DB count) agrees with the displayed `overdue_count`.
+
+Semantic change, deliberate: `total_invoiced`/`total_paid`/`invoice_count` lose drafts and become currency-correct.
+Reliability score/breakdown logic is untouched (drafts never qualified). New keys added to `payment_stats`:
+`currency`, `outstanding`, `overdue_amount`, `overdue_count`, `unconverted_count`. No key renamed or removed.
+Money values still serialize as JSON numbers (DRF encodes a bare Decimal as a float) — the contract
+`formatMoney` already consumes; every value is quantized to 2dp.
+
+Conversion mechanism chosen: `core.money.convert_amount` — the invoice's FROZEN `rate_to_usd_at_issue` into
+USD, then USD into the client's currency via one current `ExchangeRateSnapshot` (the family of logic behind
+`_unify_amounts_to_currency`, the KPI strip's helper). Rejected: `_invoice_amounts_in_client_currency` (the
+statement PDF's), which converts through each invoice's OWN `exchange_rate_snapshot` FK — right for a
+one-client document where history matters, wrong for a list: it needs a per-invoice snapshot load (N+1 again)
+and the brief requires one snapshot per request. The unified helper's source leg is still frozen, so a past
+invoice's value doesn't drift with the source rate; only the USD->client-currency leg is "today", which is
+unavoidable for a currency the invoice was never issued in.
+
+Move into core: `_unify_amounts_to_currency` moved from `apps/invoices/views.py` to
+`core/money.py::unify_amounts_to_currency` (the 13 August 2026 `send_client_facing_email` precedent), built on
+a new per-row `convert_amount` plus `needs_snapshot`; `apps.invoices.views` imports it and the 5 call sites
+were renamed. Its one pre-existing test (`MultiCurrencyKPITests`) passes unmodified. `apps.clients` imports
+`core.money` only; the AST no-`apps.invoices`-import test passes unmodified. `ExchangeRateSnapshot.get_current()`
+(a classmethod, no migration) is the single "today's snapshot, else most recent" lookup, now used by
+`_get_latest_snapshot()` and by `apps.clients` — `apps.clients` may import `apps.payments` (it already did).
+
+One behaviour change inside the moved helper, found by real data (pitfall P3): 29 finalised USD invoices in the
+dev DB have `rate_to_usd_at_issue = NULL` (58 have 1.0). The old helper marked every one unconvertible into any
+non-USD currency even though USD->USD needs no rate (`Money.to_usd` already ignores it). `convert_amount` now
+treats a USD source as rate 1, so those rows count. This also corrects the KPI strip/analytics for a freelancer
+whose default currency isn't USD (previously those 29 invoices would read as `unconverted`). No existing test
+pinned the old behaviour.
+
+Single source of truth: `Client.compute_payment_stats(snapshot=LAZY)` backs the list, `client_analytics`, detail
+GET, and tag attach/detach (all via `ClientListSerializer` / the zero-arg `payment_stats` property) — a parity
+test asserts all five responses are identical. `client_list` fetches the snapshot once and passes it in via
+serializer context; a single-object caller leaves it lazy, and a client whose invoices are all in its own
+currency (or a USD client) never queries the snapshot table at all (tested).
+
+Drift guard: `apps/clients/scoring.py` mirrors the status sets (`INVOICED_EXCLUDED_STATUSES`,
+`OUTSTANDING_STATUSES`) because it cannot import them; `apps/invoices/tests/test_client_status_drift.py`
+(modelled on `test_manifest_drift.py`) asserts they equal `ACTIVE_STATUSES`, the complement of
+`NON_OVERDUE_STATUSES`, and scoring-exclusions-plus-draft; that every one of the nine statuses is classified;
+and, behaviourally, that the two overdue definitions agree for every status.
+
+Display vs sort keys: displayed figures are Python, in each client's own currency; sort keys are SQL, in USD
+via frozen rates. For mixed-currency clients these can rank neighbours slightly differently than the displayed
+numbers suggest — accepted and commented at the sort code, in exchange for not loading every invoice of every
+client to sort. A client with unconverted invoices ranks on its convertible invoices only.
+
+Alternatives considered: (1) compute every metric in SQL — rejected: the display figures need per-client
+currency conversion and the snapshot's JSON rates, awkward and untestable in the ORM; SQL is used only where
+whole-set ordering/filtering requires it. (2) move `client_list` into `apps.invoices` so it can import both —
+rejected: splits one resource's endpoints across apps and entrenches the layering workaround. (3)
+`apps.get_model('invoices', 'Invoice')` / `Client._meta.get_field('invoices').related_model` at runtime — rejected:
+DECISIONS.md already ruled "deferred to runtime" the same dependency violation, and reflection to reach the model
+is the same thing in different clothes. (4) a narrower `Prefetch('invoices', queryset=Invoice.objects.only(...))`
+— not possible without importing Invoice, so whole Invoice rows are prefetched (bounded by the 200 row cap).
+(5) a new index — see below.
+
+Index: no migration added. `EXPLAIN ANALYZE` of the full filter+sort query on the dev DB: 0.785 ms, Hash Right
+Join with a Seq Scan on `invoices` (175 rows — the planner correctly prefers it at this size), `clients` via its
+`user_id` index; `invoices_client_id_50ee676b` (Django's FK index) exists. Nothing here proves an index would
+help. Proposal for if it ever does: a composite `invoices(client_id, status)`; measure at real scale first.
+
+Tests changed (and why): `apps/clients/tests/test_models.py` — `make_invoice` stand-ins gained `currency` /
+`rate_to_usd_at_issue` because the scoring function reads them (USD stand-ins against the default USD client
+currency need no conversion, so every scoring assertion is byte-for-byte unchanged); the "safe before
+apps.invoices exists" test was renamed/re-docstringed and now also asserts the new keys. `apps/clients/tests/
+test_views.py` — three tests whose names/docstrings enshrined the dead behaviour ("falls back to name",
+"empty since invoices do not exist yet") were renamed and re-explained (their assertions still hold for
+invoice-less fixtures; real-invoice behaviour is in the new files); the analytics-shape test also asserts the
+new keys. No assertion was loosened.
+
+Tests added (49): `core/tests/test_money.py` (+13: `needs_snapshot`, `convert_amount`, `unify_amounts_to_currency`,
+incl. USD-null-rate); `apps/invoices/tests/test_client_payment_stats.py` (hand-computed multi-currency fixture,
+draft/cancelled/refunded exclusion, no-snapshot honesty, lazy-snapshot query behaviour, 5-endpoint parity);
+`test_client_list_money.py` (with_overdue incl. non-overdue statuses, P1 filter-then-aggregate, P2/P4 total vs
+row count, both sorts with mixed currency/ties/empty/unconverted, every filter x sort total + membership, paging
+stability, constant query count with a ceiling, cross-user isolation); `test_client_status_drift.py`. Four
+deliberate mutations (drop the prefetch; ignore status in the overdue filter; make a USD-null-rate row
+unconvertible; count drafts) each made 2-7 of the new tests fail, then the code was restored.
+
+Verification: `payment_stats` cross-checked against independent raw-ORM arithmetic for all 26 real dev clients —
+0 mismatches. Full backend suite (`python manage.py test --keepdb`, one clean run each, no edits in flight): before 1290 tests, OK; after 1339 tests, OK (+49). `manage.py check` clean; `makemigrations --check --dry-run`: No changes detected.
+
+Audit backlog (found, not fixed — out of Part A's scope):
+- `apps/invoices/views.py::_lookup_rate_to_usd` and `Invoice.capture_issue_rate()` re-implement the
+  "today's snapshot else latest" lookup `ExchangeRateSnapshot.get_current()` now centralises; and
+  `serializers.validate_currency_code` uses `order_by('-date').first()`. Same behaviour, four copies.
+- 29 finalised USD invoices have `rate_to_usd_at_issue = NULL` and 21 non-draft non-USD invoices have it NULL
+  too (genuinely unconvertible). The cause of the USD NULLs wasn't investigated (older finalise path or test
+  data); `capture_issue_rate()` sets 1 today.
+- `invoice_summary`'s `unify_amounts_to_currency` calls now count the 29 USD-null rows as converted — a visible
+  (correct) change to a non-USD-default freelancer's KPI figures; not separately regression-tested at that call
+  site.
+- Whole `Invoice` rows are prefetched for the client list (wide rows: addresses, URLs) — bounded by the 200-row
+  cap but wasteful; fixing it needs either a cheap queryset hook on the reverse relation or moving the
+  computation, both architectural.
+- `ClientDetailPanel`/`Clients.jsx` still format `payment_stats` money with `client.default_currency` (Part B's
+  sweep; the payload's `currency` equals it, so this is correct today but guesses rather than reads).
+- `Client` model docstring question 3 (event handlers for ClientCreated/Archived/Flagged) still describes an
+  unbuilt piece of work.

@@ -38,7 +38,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from core.events import emit
-from core.money import Money
+from core.money import Money, unify_amounts_to_currency
 from apps.clients.scoring import EXCLUDED_STATUSES as CLIENT_SCORING_EXCLUDED_STATUSES
 from apps.clients.serializers import validate_currency_code
 from apps.clients.views_portal import _send_portal_link_email
@@ -173,54 +173,8 @@ def _lookup_rate_to_usd(currency):
 
 
 def _get_latest_snapshot():
-    """Shared 'today's snapshot, falling back to the most recent one' lookup — same selection logic as _lookup_rate_to_usd/Invoice.capture_issue_rate, factored out so invoice_summary and invoice_analytics don't each duplicate it."""
-    return (
-        ExchangeRateSnapshot.objects.filter(date=timezone.now().date()).first()
-        or ExchangeRateSnapshot.objects.order_by('-date').first()
-    )
-
-
-def _unify_amounts_to_currency(rows, target_currency, snapshot):
-    """
-    Real anchor-currency unification across mixed-currency invoices —
-    the single shared implementation invoice_summary (KPI cards) AND
-    invoice_analytics's _build_currency_breakdown both call, instead of
-    each reimplementing the same "sum raw Decimals across whatever
-    currencies happen to be present" bug independently (the real,
-    confirmed KPI-card bug this helper exists to fix — see DECISIONS.md).
-
-    `rows` is an iterable of (amount, currency, rate_to_usd_at_issue)
-    tuples — callers decide what they're summing (outstanding, total,
-    amount_paid, ...), this only handles the conversion + honest-gap
-    bookkeeping. A row whose currency already equals target_currency
-    converts trivially with no rate needed at all — even with no
-    snapshot/rate captured, matching Money.to_usd()'s own "USD converts
-    to itself" carve-out generalized to an arbitrary target. A row with a
-    genuinely different currency and no frozen rate_to_usd_at_issue (or a
-    target_currency missing from `snapshot`) is skipped and counted in
-    `unconverted_count` — never guessed, never silently included
-    unconverted (see DECISIONS.md).
-    """
-    unified_total = Decimal('0')
-    unconverted_count = 0
-    for amount, currency, rate_to_usd_at_issue in rows:
-        if currency == target_currency:
-            unified_total += amount
-            continue
-        # snapshot is only actually needed for the USD->target leg
-        # (Money.to_currency short-circuits that lookup entirely when
-        # target_currency == 'USD') — requiring it unconditionally would
-        # wrongly mark every row unconverted on a fresh install with no
-        # ExchangeRateSnapshot row yet, even for the common "everything
-        # defaults to USD" case.
-        if rate_to_usd_at_issue is None or (snapshot is None and target_currency != 'USD'):
-            unconverted_count += 1
-            continue
-        try:
-            unified_total += Money(amount, currency, rate_to_usd_at_issue).to_currency(target_currency, snapshot)
-        except ValueError:
-            unconverted_count += 1
-    return unified_total.quantize(Decimal('0.01')), unconverted_count
+    """Shared 'today's snapshot, falling back to the most recent one' lookup — now ExchangeRateSnapshot.get_current(), the same function apps.clients' payment_stats uses, so both sides of "the current rate" can't diverge."""
+    return ExchangeRateSnapshot.get_current()
 
 
 def _parse_date_param(raw, default=None):
@@ -275,7 +229,7 @@ def _collected_amount(user, start, end, target_currency, snapshot):
     qs = InvoicePartialPayment.objects.filter(invoice__user=user)
     if start is not None:
         qs = qs.filter(payment_date__gte=start, payment_date__lte=end)
-    total, unconverted = _unify_amounts_to_currency(
+    total, unconverted = unify_amounts_to_currency(
         ((p.amount, p.currency, p.rate_to_usd) for p in qs), target_currency, snapshot,
     )
     count = qs.values('invoice_id').distinct().count()
@@ -2012,7 +1966,7 @@ def invoice_summary(request):
     Real multi-currency bug fix (also confirmed, previously reported as
     raw Decimal totals summed across mixed currencies — e.g. $64 + Rs.100
     showing as "164"): every figure is now unified into the freelancer's
-    own FreelancerProfile.default_currency via _unify_amounts_to_currency
+    own FreelancerProfile.default_currency via core.money.unify_amounts_to_currency
     (core.money.Money + each invoice's own historically-frozen
     rate_to_usd_at_issue), the exact same shared utility
     invoice_analytics's currency breakdown uses — not a second,
@@ -2074,13 +2028,13 @@ def invoice_summary(request):
     outstanding_qs = qs.filter(status__in=ACTIVE_STATUSES)
     if start is not None:
         outstanding_qs = outstanding_qs.filter(issue_date__gte=start, issue_date__lte=end)
-    outstanding_total, outstanding_unconverted = _unify_amounts_to_currency(
+    outstanding_total, outstanding_unconverted = unify_amounts_to_currency(
         ((inv.outstanding_amount, inv.currency, inv.rate_to_usd_at_issue) for inv in outstanding_qs),
         target_currency, snapshot,
     )
 
     past_due_qs = outstanding_qs.filter(due_date__lt=today)
-    past_due_total, past_due_unconverted = _unify_amounts_to_currency(
+    past_due_total, past_due_unconverted = unify_amounts_to_currency(
         ((inv.outstanding_amount, inv.currency, inv.rate_to_usd_at_issue) for inv in past_due_qs),
         target_currency, snapshot,
     )
@@ -2092,7 +2046,7 @@ def invoice_summary(request):
         # netting, since refunded_amount is itself a cumulative,
         # undated field with no period to scope it into).
         paid_qs = qs.filter(amount_paid__gt=0)
-        collected_total, collected_unconverted = _unify_amounts_to_currency(
+        collected_total, collected_unconverted = unify_amounts_to_currency(
             ((inv.amount_paid - inv.refunded_amount, inv.currency, inv.rate_to_usd_at_issue) for inv in paid_qs),
             target_currency, snapshot,
         )
@@ -2273,17 +2227,15 @@ def _build_monthly_trend(user, months):
 
 def _build_top_clients(user, limit=5):
     """
-    Ranked by total amount_paid converted to USD (core.money.Money) —
-    genuinely currency-aware, unlike Client.payment_stats' own
-    total_paid/total_invoiced (a raw, unconverted sum across whatever
-    currencies that client's invoices happen to use — fine for a
-    single-client reliability view where currency usually doesn't vary,
-    not safe to reuse here where ranking ACROSS clients in mixed
-    currencies is the entire point). reliability_score/breakdown IS
-    reused directly from Client.payment_stats for each of the top N
-    only (never reimplemented) — a real, non-trivial tiered-points
-    formula with no reason to exist twice, and cheap here since it's
-    only called for a handful of clients, not the whole client list.
+    Ranked by total amount_paid converted to USD (core.money.Money) — a
+    single USD ranking ACROSS clients, which is why this keeps its own
+    USD-anchored computation rather than reading Client.payment_stats
+    (that one is denominated in each client's OWN currency, so figures from
+    two clients aren't comparable). reliability_score/breakdown IS reused
+    directly from Client.payment_stats for each of the top N only (never
+    reimplemented) — a real, non-trivial tiered-points formula with no
+    reason to exist twice, and cheap here since it's only called for a
+    handful of clients, not the whole client list.
     """
     invoices = (
         Invoice.objects.filter(user=user, client__isnull=False)
@@ -2318,7 +2270,7 @@ def _build_currency_breakdown(user):
     in the freelancer's OWN FreelancerProfile.default_currency (Step 18
     originally hardcoded this to USD — a real, confirmed gap: changing
     the setting in Settings had no effect on this figure — fixed here via
-    the same _unify_amounts_to_currency utility invoice_summary's KPI
+    the same core.money.unify_amounts_to_currency utility invoice_summary's KPI
     cards use, not a second, independent conversion). unconverted_count
     is a real, honest signal: invoices excluded from unified_total
     because they have no frozen rate_to_usd_at_issue (never finalised via
@@ -2337,7 +2289,7 @@ def _build_currency_breakdown(user):
         for row in invoices.values('currency').annotate(count=Count('id'), total=Sum('total'))
     }
 
-    unified_total, unconverted_count = _unify_amounts_to_currency(
+    unified_total, unconverted_count = unify_amounts_to_currency(
         ((inv.total, inv.currency, inv.rate_to_usd_at_issue) for inv in invoices.only('total', 'currency', 'rate_to_usd_at_issue')),
         target_currency, snapshot,
     )

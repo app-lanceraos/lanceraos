@@ -48,5 +48,18 @@ class ExchangeRateSnapshot(models.Model):
         db_table = 'exchange_rate_snapshots'
         ordering = ['-date']
 
+    @classmethod
+    def get_current(cls):
+        """
+        Today's snapshot, falling back to the most recent one — or None
+        when none exists yet. The single definition of "the current rate
+        table" for read paths that convert amounts (invoice KPIs/analytics
+        via apps.invoices.views._get_latest_snapshot, client payment_stats
+        via apps.clients). Mirrors Invoice.capture_issue_rate()'s own
+        selection logic.
+        """
+        from django.utils import timezone
+        return cls.objects.filter(date=timezone.now().date()).first() or cls.objects.order_by('-date').first()
+
     def __str__(self):
         return f'{self.date} — {len(self.rates_to_usd)} currencies'

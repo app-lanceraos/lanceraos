@@ -1380,7 +1380,7 @@ comment-posting/claim-confirm view layer yet either — invoice_timeline (built)
 reminders, and payments today, and will pick up comments/claims additively once those steps land,
 with no change to entries already there.
 
-Client CRM — backend built (apps/clients/), no frontend yet:
+Client CRM — backend built (apps/clients/); frontend: Clients.jsx/ClientDetailPanel.jsx:
 Client records with name, email, company, address, phone, country, default currency (no hardcoded
 choices — validated against apps.payments' ExchangeRateSnapshot instead, so a new currency is a
 data change, never a migration), default payment terms, and a freeform notes field. A separate
@@ -1396,14 +1396,28 @@ Reliability score: computed via Client.payment_stats, weighted and transparent, 
 breakdown by outcome — +5 paid on/before the due date, -3 paid 1-30 days late, -10 paid 31+ days
 late, -20 bad_debt; cancelled/refunded invoices excluded entirely (not counted at all, not scored
 zero); the score itself is the NORMALIZED AVERAGE across qualifying invoices (paid or bad_debt
-outcomes only), never a raw sum. Every number in this is genuinely zero/None today, honestly, not
-faked — apps/invoices doesn't exist yet, so there are no real invoices to score. See DECISIONS.md
-(08 August 2026) for the full formula reasoning.
-List/search/filter/sort: filter by active/flagged/archived/all/new_this_month (with_overdue exists
-as a filter option but returns empty until apps/invoices exists — there's no overdue data yet, and
-returning "all clients" instead would be misleading); search by name/email/company; sort by
-name/recent now, total_invoiced/overdue fall back to name-sort until apps/invoices exists (both need
-real invoice data to mean anything).
+outcomes only), never a raw sum. See DECISIONS.md (08 August 2026) for the full formula reasoning.
+Per-client money figures (02 October 2026 — Clients list alignment, Part A): `Client.payment_stats`
+(`Client.compute_payment_stats()`, `apps/clients/scoring.py`) is the SINGLE source of truth behind the
+client list, `GET /api/clients/{id}/analytics/`, the detail panel, and tag attach/detach responses — it
+returns `currency` (the client's own `default_currency`; every money figure is denominated in it),
+`total_invoiced`/`total_paid`/`invoice_count` (CORRECTED semantics: drafts, cancelled and refunded are no
+longer counted, and amounts are converted per invoice instead of raw-summed across currencies — the old
+figure could read "PKR 10,881" for a client invoiced in USD and PKR), plus `outstanding` (= the
+`sent`/`viewed`/`partially_paid` set, same as the Invoices KPI strip), `overdue_amount`/`overdue_count`
+(the same definition as `invoice_list`'s `?overdue=true`), and `unconverted_count` (invoices that cannot be
+honestly converted and so contribute to no money figure — never guessed, never silently dropped). Money
+values serialize as JSON numbers, as before. Conversion is `core.money.convert_amount` (frozen
+`rate_to_usd_at_issue` into USD, one current snapshot out; a USD invoice needs no rate), promoted from
+`apps/invoices/views.py` so `apps.clients` never imports `apps.invoices`. The status sets this depends on are
+mirrored in `apps/clients/scoring.py` and guarded by `apps/invoices/tests/test_client_status_drift.py`.
+List/search/filter/sort: filter by active/flagged/archived/all/new_this_month/with_overdue (clients with
+at least one overdue invoice — a real annotation-based filter since 02 October 2026; it used to return an
+empty list unconditionally); search by name/email/company; sort by name/recent/total_invoiced ("Highest
+Value")/overdue ("Most Overdue") — the last two are real DB-level USD rankings (frozen rates, ties broken
+by name then pk) since 02 October 2026, they used to silently fall back to name-sort. The list endpoint's
+query count is constant regardless of page size (prefetch + one snapshot lookup per request), asserted by
+a test.
 Client statement PDF is built (Step 19 — see this module's own Step 19 entry above and the
 Key API endpoints list below). One-time-client conversion (the spec's own `convert-one-time`
 endpoint) is NOT built yet — scoped to a later step in this module's build order.
