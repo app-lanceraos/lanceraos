@@ -269,6 +269,28 @@ This is how you investigate "why didn't this happened?"
 7. WebSocket connection is managed by a shared hook
    src/hooks/useWebSocket.js. Never open WebSocket connections
    directly inside page components.
+8. Tooltips: put `data-tooltip="Text"` on an element and nothing else. ONE
+   delegated controller (src/hooks/useAppTooltip.js, installed once in
+   src/main.jsx — `installTooltipController()`) owns the single shared
+   `.app-tooltip` div: it shows after a 500ms mouse/pen hover or on keyboard
+   focus (`:focus-visible` only — programmatic focus never shows one), NEVER on
+   touch, and dismisses on click, any key (Escape included), scroll, wheel,
+   resize, orientation change, route change, tab hide, window blur, the
+   pointer leaving, or the target being removed from the DOM (a
+   MutationObserver, active only while one is visible). Never bind tooltip
+   listeners per element and never call a "bind tooltips" function after a
+   render (the old `initTooltipBindings()`, removed 03 October 2026, scanned the
+   whole document on every render and could not see targets that unmounted).
+   A tooltip is a mouse/keyboard convenience for icon-only controls, never the
+   only home of information — essential text is visible text, and an
+   icon-only control also gets an `aria-label`. The collapsed sidebar rail is
+   the one separate mechanism: pure CSS, keyed off `data-tip`, gated to
+   `(hover: hover) and (pointer: fine)` + `:focus-visible`; its items must not
+   also carry `data-tooltip` (they used to, which showed two tooltips at once).
+   Hover effects: JS-driven ones use `hoverProps` (src/lib/hoverProps.js, pointer
+   events, touch ignored), never `onMouseEnter`/`onMouseLeave`; CSS `:hover` on a
+   tappable control sits inside `@media (hover: hover)` — a touch tap leaves
+   `:hover`/`mouseenter` state stuck otherwise. See DECISIONS.md, 03 October 2026.
 
 ### Database Design Rules
 
@@ -421,9 +443,11 @@ lanceraos/                          <- Django project root
 │   │   ├── store/
 │   │   │   └── authStore.js        <- Zustand auth state
 │   │   ├── lib/
-│   │   │   └── api.js              <- Shared Axios instance
+│   │   │   ├── api.js              <- Shared Axios instance
+│   │   │   └── hoverProps.js       <- Touch-safe props for JS-driven hover effects (replaces onMouseEnter/Leave)
 │   │   ├── hooks/
-│   │   │   └── useWebSocket.js     <- Shared WebSocket hook [not yet built]
+│   │   │   ├── useWebSocket.js     <- Shared WebSocket hook
+│   │   │   └── useAppTooltip.js    <- The one delegated tooltip controller (installTooltipController, called once in main.jsx)
 │   │   └── styles/
 │   │       └── theme.css           <- All CSS custom properties
 │   └── index.html

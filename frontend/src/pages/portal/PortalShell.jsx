@@ -51,6 +51,7 @@
 // 3. The account menu is now a single "Log Out" action (always
 //    logout-everywhere — Step 2.G) plus a real dark/light theme toggle
 //    (Step 2.B, via usePortalThemeContext — see PortalThemeRoot.jsx).
+import { hoverProps } from '@/lib/hoverProps'
 import { createContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Home, IdCard, LogOut, Moon, Receipt, Sun, UserCircle2, Wallet } from 'lucide-react'
@@ -522,8 +523,7 @@ function MenuButton({ children, disabled, onClick }) {
         fontSize: '0.85rem', fontWeight: 500, color: BODY_TEXT, cursor: 'pointer',
         fontFamily: "'DM Sans', sans-serif",
       }, disabled)}
-      onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = HOVER_BG }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+      {...hoverProps((e) => { if (!disabled) e.currentTarget.style.background = HOVER_BG }, (e) => { e.currentTarget.style.background = 'transparent' })}
     >
       {children}
     </button>

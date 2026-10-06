@@ -37,6 +37,7 @@
 // apps/invoices/models.py's days_overdue docstring; the "Overdue" FILTER
 // TOGGLE is still a separate, mutually-exclusive-with-status-pills
 // control, unchanged from the 11 August reload-feel fix.
+import { hoverProps } from '@/lib/hoverProps'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -47,7 +48,6 @@ import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import usePageHeaderActions from '@/hooks/usePageHeaderActions'
 import useFilterOverflow from '@/hooks/useFilterOverflow'
-import { initTooltipBindings } from '@/hooks/useAppTooltip'
 import DropdownMenu from '@/components/DropdownMenu'
 import FilterPill from '@/components/FilterPill'
 import FilterOverflowMenu from '@/components/FilterOverflowMenu'
@@ -197,13 +197,6 @@ export default function Invoices() {
     api.get('/invoices/presets/').then(({ data }) => setPresets(data)).catch(() => setPresets([]))
     api.get('/invoices/currencies/').then(({ data }) => setAvailableCurrencies(data.currencies || [])).catch(() => setAvailableCurrencies([]))
   }, [])
-
-  // The bulk-select bar's buttons go icon-only on mobile (below) and
-  // rely on a real [data-tooltip] for clarity — idempotent + cheap, so
-  // re-running on every render (including when the bar itself mounts/
-  // unmounts as selectedIds toggles) is safe, matching
-  // InvoiceDetailPanel.jsx's own identical convention.
-  useEffect(() => { initTooltipBindings() })
 
   // Deep links into this page, resolved in ONE place:
   //   ?invoice=<id>[&tab=<tab>]   — notification click-through, and the client panel's invoice rows
@@ -749,8 +742,7 @@ function InvoiceCard({ invoice, onOpen, selectable = false, selected = false, on
   return (
     <div
       onClick={onOpen}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      {...hoverProps(() => setHovered(true), () => setHovered(false))}
       style={{
         cursor: 'pointer', background: hovered ? 'var(--bg-surface-2)' : 'var(--bg-surface)',
         border: `1px solid ${selected ? 'var(--accent)' : isOverdue ? 'var(--status-red)' : 'var(--border-subtle)'}`,
@@ -899,8 +891,7 @@ function PresetPicker({ presets, busyId, onPick }) {
         <button
           key={p.id} onClick={() => onPick(p)} disabled={busyId === p.id}
           style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', padding: '12px 14px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
-          onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)' }}
-          onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-subtle)' }}
+          {...hoverProps((e) => { e.currentTarget.style.borderColor = 'var(--accent)' }, (e) => { e.currentTarget.style.borderColor = 'var(--border-subtle)' })}
         >
           <div>
             <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>

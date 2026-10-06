@@ -65,7 +65,6 @@ import api from '@/lib/api'
 import useAuthStore from '@/store/authStore'
 import useTimedMessage from '@/hooks/useTimedMessage'
 import useInvoiceAutosave from '@/hooks/useInvoiceAutosave'
-import { initTooltipBindings } from '@/hooks/useAppTooltip'
 import CommentThread from './CommentThread'
 import DropdownMenu from './DropdownMenu'
 import ErrorBoundary from './ErrorBoundary'
@@ -136,15 +135,6 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
   }, [initialMessage])
   useEffect(() => { loadTimeline() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadClaims() }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Tooltips — AppShell.jsx is the only OTHER place in this codebase that
-  // ever calls initTooltipBindings(); this panel's own [data-tooltip]
-  // icon buttons (the bare Close (X) button, every modal's own close
-  // button) were never wired at all before. Idempotent
-  // (dataset.tooltipBound guards re-binding) and cheap, so re-running it
-  // after every render — including tab switches and modal open/close,
-  // both of which mount fresh [data-tooltip] elements — is safe.
-  useEffect(() => { initTooltipBindings() })
 
   async function handleClose() {
     const flushed = await flushPendingSave()

@@ -7,6 +7,7 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 import './styles/theme.css'
 
 import App from './App'
+import { installTooltipController } from './hooks/useAppTooltip'
 
 // Apply the saved theme to <html> before React mounts, so there's zero
 // flash of the wrong theme on load.
@@ -16,6 +17,10 @@ import App from './App'
   const theme = (saved === 'dark' || saved === 'light') ? saved : (prefersDark ? 'dark' : 'light')
   document.documentElement.setAttribute('data-theme', theme)
 })()
+
+// The one delegated tooltip controller — see hooks/useAppTooltip.js. Installed
+// once for the whole app, so no component ever binds tooltip listeners itself.
+installTooltipController()
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

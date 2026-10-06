@@ -40,6 +40,6 @@ export function tableStyle(minWidth) {
 export function clickableRowCss(className) {
   return `
         .${className} { cursor: pointer; transition: background var(--transition-fast); }
-        .${className}:not([data-selected="true"]):hover { background: var(--bg-surface-2); }
+        @media (hover: hover) { .${className}:not([data-selected="true"]):hover { background: var(--bg-surface-2); } }
       `
 }

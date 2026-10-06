@@ -12,6 +12,7 @@
 // passes `form`/`setForm` down, matching how EditClientModal/
 // CreateClientModal take `form`/`onChange` from Clients.jsx rather than
 // managing their own state.
+import { hoverProps } from '@/lib/hoverProps'
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 
@@ -334,8 +335,7 @@ function ClientSearchField({ form, setForm, errors }) {
                 type="button" key={c.id}
                 onMouseDown={() => selectResult(c)}
                 style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: 'none', border: 'none', borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-2)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+                {...hoverProps((e) => { e.currentTarget.style.background = 'var(--bg-surface-2)' }, (e) => { e.currentTarget.style.background = 'none' })}
               >
                 <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.name}</p>
                 <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>{c.email}{c.company ? ` · ${c.company}` : ''}</p>

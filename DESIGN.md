@@ -527,8 +527,8 @@ draft / cancelled / neutral  → var(--status-gray)  / var(--status-gray-bg)
   ))}
 </div>
 ```
-Hover is JS-driven (onMouseEnter/Leave), not CSS :hover, because
-inline styles cannot use pseudo-classes.
+Hover is JS-driven (`hoverProps`, see "Hover interactions" in Section 8), not
+CSS :hover, because inline styles cannot use pseudo-classes.
 
 ### Slide-in side panel
 ```jsx
@@ -655,13 +655,35 @@ Never write a duration or easing that isn't one of the above.
 None. Route changes are instant. Do not add page-level transitions.
 
 ### Hover interactions
-All hover state changes are JS-driven via onMouseEnter/onMouseLeave
-because inline styles cannot use :hover. The pattern:
+Hover state that is set from JS (because inline styles cannot use :hover) goes
+through `hoverProps` (`src/lib/hoverProps.js`), never `onMouseEnter`/`onMouseLeave`:
 ```jsx
-onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface-2)' }}
-onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
+{...hoverProps(
+  e => { e.currentTarget.style.background = 'var(--bg-surface-2)' },
+  e => { e.currentTarget.style.background = 'var(--bg-surface)' },
+)}
 ```
+Why: on a touch screen a tap fires the compatibility `mouseenter` but no `mouseleave`
+until some other element is tapped, so a hover look set on enter stayed stuck.
+`hoverProps` is built on pointer events and ignores `pointerType === 'touch'`.
+Anything that CAN be a CSS rule is a class with its `:hover` inside
+`@media (hover: hover)` instead (`.fos-btn-*`, `.nav-item`, table rows, ...), for the
+same reason: iOS/Android Safari/Chrome leave `:hover` applied after a tap.
 Transition on the element's style prop: `transition: 'background var(--transition-fast)'`
+
+### Tooltips
+`data-tooltip="Text"` on an element is all a tooltip needs. One delegated controller
+(`src/hooks/useAppTooltip.js`, installed once in `main.jsx`) shows the shared
+`.app-tooltip` after a 500ms mouse/pen hover or on keyboard focus, and dismisses it on
+click, any key (Escape included), scroll, wheel, resize, route change, tab hide, or the
+target leaving the DOM. Touch NEVER shows one. So a tooltip is only ever a convenience
+for icon-only controls — it must not be the only place a piece of information lives
+(that goes in visible text), and the control still needs an `aria-label`. Do not bind
+tooltip listeners per element and do not call anything after render to "wire up" tooltips.
+The collapsed sidebar rail is the one exception in mechanism: its items use the
+pure-CSS tooltip keyed off `data-tip` (it opens to the side of the rail), gated to
+`(hover: hover) and (pointer: fine)` plus `:focus-visible`; they must not also carry
+`data-tooltip`.
 
 ---
 
@@ -898,8 +920,9 @@ font-weight: 600; background: var(--status-X-bg); color: var(--status-X-text)`
 DO use `var(--transition-fast)` or `0.15s ease` for hover transitions.
 Never write `transition: all` anywhere.
 
-DO use `onMouseEnter` / `onMouseLeave` for hover state changes because
-inline styles cannot use :hover.
+DO use `hoverProps` (never `onMouseEnter` / `onMouseLeave`) for JS-driven hover state
+changes, and `@media (hover: hover)` around any CSS `:hover` rule on a tappable control,
+so a touch tap cannot leave a stuck hover state.
 
 DO reuse the `spin` keyframe for spinners and `skeleton-pulse` for
 loading skeletons. Never define a new keyframe name for these patterns.

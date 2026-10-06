@@ -1,4 +1,5 @@
 // src/components/GoogleButton.jsx
+import { hoverProps } from '@/lib/hoverProps'
 import { useGoogleLogin } from '@react-oauth/google'
 import api from '@/lib/api'
 import useAuthStore from '@/store/authStore'
@@ -69,12 +70,10 @@ export default function GoogleButton({ onError, onSuccess, disabled = false, cre
         opacity: disabled ? 0.5 : 1,
         transition: 'background 0.15s ease',
       }}
-      onMouseEnter={(e) => {
-        if (!disabled) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent'
-      }}
+      {...hoverProps(
+        (e) => { if (!disabled) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' },
+        (e) => { e.currentTarget.style.background = 'transparent' },
+      )}
     >
       <GoogleG size={18} />
     </button>

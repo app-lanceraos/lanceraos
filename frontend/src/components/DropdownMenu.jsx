@@ -17,6 +17,7 @@
 // browser window the flip/clamp math measured against. A portaled fixed
 // panel has no such ancestor left, so its only constraint is the real
 // viewport — which is exactly what the placement math below measures.
+import { hoverProps } from '@/lib/hoverProps'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
@@ -180,8 +181,7 @@ export default function DropdownMenu({ trigger, triggerLabel, items, align = 'ri
                 transition: 'background var(--fast)',
                 flexShrink: 0,
               }}
-              onMouseEnter={(e) => { if (!item.disabled) e.currentTarget.style.background = 'var(--nav-hover-bg, var(--bg-surface-2))' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+              {...hoverProps((e) => { if (!item.disabled) e.currentTarget.style.background = 'var(--nav-hover-bg, var(--bg-surface-2))' }, (e) => { e.currentTarget.style.background = 'transparent' })}
             >
               {item.Icon && <item.Icon size={15} style={{ flexShrink: 0 }} />}
               {item.label}

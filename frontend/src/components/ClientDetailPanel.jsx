@@ -633,7 +633,7 @@ function InvoicesTab({ loading, invoices, clientId, clientActive }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <style>{`
         .cdp-invoice-link { background: var(--bg-surface); transition: background var(--transition-fast); }
-        .cdp-invoice-link:hover { background: var(--bg-surface-2); }
+        @media (hover: hover) { .cdp-invoice-link:hover { background: var(--bg-surface-2); } }
         .cdp-invoice-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       `}</style>
       {invoices.map((inv) => {

@@ -1,4 +1,5 @@
 // src/pages/Profile.jsx
+import { hoverProps } from '@/lib/hoverProps'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Cropper from 'react-easy-crop'
 import { Camera } from 'lucide-react'
@@ -251,8 +252,7 @@ export default function Profile() {
       <Card action={<SaveButton onClick={handleSave} disabled={!changed} saving={saving} />}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 20 }}>
           <div
-            onMouseEnter={() => setAvatarHover(true)}
-            onMouseLeave={() => setAvatarHover(false)}
+            {...hoverProps(() => setAvatarHover(true), () => setAvatarHover(false))}
             onClick={() => fileInputRef.current?.click()}
             style={{
               position: 'relative', width: 84, height: 84, borderRadius: '50%', flexShrink: 0,

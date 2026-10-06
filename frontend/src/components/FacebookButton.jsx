@@ -1,4 +1,5 @@
 // src/components/FacebookButton.jsx
+import { hoverProps } from '@/lib/hoverProps'
 import { useState } from 'react'
 import api from '@/lib/api'
 import useAuthStore from '@/store/authStore'
@@ -117,12 +118,10 @@ export default function FacebookButton({ onError, onSuccess, disabled = false, c
         opacity: isDisabled ? 0.5 : 1,
         transition: 'background 0.15s ease',
       }}
-      onMouseEnter={(e) => {
-        if (!isDisabled) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent'
-      }}
+      {...hoverProps(
+        (e) => { if (!isDisabled) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' },
+        (e) => { e.currentTarget.style.background = 'transparent' },
+      )}
     >
       {loading ? <span className="fos-spinner" /> : <FacebookF size={18} />}
     </button>

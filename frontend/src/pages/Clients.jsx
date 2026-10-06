@@ -32,6 +32,7 @@
 // are backend-backed since 02 October 2026 (Part A). Per-row money comes
 // from payment_stats and is labelled with payment_stats.currency — never
 // client.default_currency (see clientHelpers.formatClientMoney).
+import { hoverProps } from '@/lib/hoverProps'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
@@ -450,8 +451,7 @@ function ClientCard({ client, busy, onOpen, onFlag, onArchive, onRestore }) {
   return (
     <div
       onClick={onOpen}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      {...hoverProps(() => setHovered(true), () => setHovered(false))}
       style={{
         position: 'relative', overflow: 'hidden', cursor: 'pointer',
         background: hovered ? 'var(--bg-surface-2)' : 'var(--bg-surface)',

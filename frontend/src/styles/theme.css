@@ -506,16 +506,18 @@ html.app-shell-active {
   background: var(--btn-primary-bg);
   color: var(--btn-primary-text);
 }
-.fos-btn-primary:hover:not(:disabled) { background: var(--btn-primary-hover); }
+@media (hover: hover) { .fos-btn-primary:hover:not(:disabled) { background: var(--btn-primary-hover); } }
 
 /* Accent — teal/green */
 .fos-btn-accent {
   background: var(--btn-accent-bg);
   color: var(--btn-accent-text);
 }
-.fos-btn-accent:hover:not(:disabled) {
-  background: var(--btn-accent-hover);
-  box-shadow: 0 4px 20px var(--accent-glow-md);
+@media (hover: hover) {
+  .fos-btn-accent:hover:not(:disabled) {
+    background: var(--btn-accent-hover);
+    box-shadow: 0 4px 20px var(--accent-glow-md);
+  }
 }
 
 /* Ghost — outlined */
@@ -524,14 +526,14 @@ html.app-shell-active {
   border: 1.5px solid var(--btn-ghost-border);
   color: var(--btn-ghost-text);
 }
-.fos-btn-ghost:hover:not(:disabled) { background: var(--btn-ghost-hover); }
+@media (hover: hover) { .fos-btn-ghost:hover:not(:disabled) { background: var(--btn-ghost-hover); } }
 
 /* Danger */
 .fos-btn-danger {
   background: var(--error-text);
   color: #ffffff;
 }
-.fos-btn-danger:hover:not(:disabled) { filter: brightness(0.88); }
+@media (hover: hover) { .fos-btn-danger:hover:not(:disabled) { filter: brightness(0.88); } }
 
 /* Full-width util */
 .fos-btn-full { width: 100%; }
@@ -712,13 +714,17 @@ html.app-shell-active {
   transition: color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease;
 }
 
-/* Hover glass on non-active items */
-.nav-item:hover:not(.active) {
-  color: var(--nav-active);
-  background: color-mix(in srgb, var(--glass-tint) 34%, transparent);
-  -webkit-backdrop-filter: blur(8px) saturate(var(--saturation));
-  backdrop-filter: blur(8px) saturate(var(--saturation));
-  box-shadow: var(--glass-shadow);
+/* Hover glass on non-active items. Every :hover rule on a tappable control is
+   gated by (hover: hover): on touch a tap leaves :hover stuck until something
+   else is tapped (STANDARDS.md). */
+@media (hover: hover) {
+  .nav-item:hover:not(.active) {
+    color: var(--nav-active);
+    background: color-mix(in srgb, var(--glass-tint) 34%, transparent);
+    -webkit-backdrop-filter: blur(8px) saturate(var(--saturation));
+    backdrop-filter: blur(8px) saturate(var(--saturation));
+    box-shadow: var(--glass-shadow);
+  }
 }
 
 /* Active item: color only — the pill element provides the background */
@@ -729,11 +735,11 @@ html.app-shell-active {
 /* Nav icon — color controlled independently from nav item text */
 .nav-item .nav-icon          { color: var(--icon);        transition: color 0.22s ease; }
 .nav-item.active .nav-icon   { color: var(--icon-active); }
-.nav-item:hover  .nav-icon   { color: var(--icon-active); }
+@media (hover: hover) { .nav-item:hover .nav-icon { color: var(--icon-active); } }
 
 /* Popup-item icon colors — brand purple pair, unaffected by theme */
 .popup-item .nav-icon          { color: var(--icon);        transition: color var(--fast); }
-.popup-item:hover .nav-icon    { color: var(--icon-active); }
+@media (hover: hover) { .popup-item:hover .nav-icon { color: var(--icon-active); } }
 .popup-item.danger .nav-icon   { color: var(--danger) !important; }
 .popup-item.danger:hover .nav-icon { color: var(--danger) !important; }
 
@@ -746,8 +752,14 @@ html.app-shell-active {
   font-family: var(--font);
 }
 
-/* Collapsed rail tooltips (CSS pseudo-elements only on desktop) */
-@media (min-width: 769px) {
+/* Collapsed rail tooltips (CSS pseudo-elements, keyed off data-tip).
+   Gated to a real mouse-class pointer: on a touch device a tap leaves :hover
+   stuck on the tapped item until something else is tapped, which is exactly
+   how this tooltip used to stay on screen on an iPad (>= 769px wide). Keyboard
+   focus (:focus-visible) shows it too, so the rail is still labelled for
+   keyboard users. Anything that is not a hover-capable pointer gets no tooltip
+   here — tooltips never carry essential information (STANDARDS.md). */
+@media (min-width: 769px) and (hover: hover) and (pointer: fine) {
   body.collapsed .nav-item[data-tip]::after {
     content: attr(data-tip);
     position: absolute; left: calc(100% + 14px); top: 50%;
@@ -768,14 +780,17 @@ html.app-shell-active {
     pointer-events: none; opacity: 0; z-index: 9999;
     transition: opacity var(--fast), transform 0.22s cubic-bezier(0.34,1.56,0.64,1);
   }
-  body.collapsed .nav-item[data-tip]:hover::after {
+  body.collapsed .nav-item[data-tip]:is(:hover, :focus-visible)::after {
     opacity: 1; transform: translateY(-50%) translateX(0) scale(1);
     transition-delay: 0.5s;
   }
-  body.collapsed .nav-item[data-tip]:hover::before {
+  body.collapsed .nav-item[data-tip]:is(:hover, :focus-visible)::before {
     opacity: 1; transform: translateY(-50%) translateX(0) rotate(45deg);
     transition-delay: 0.5s;
   }
+}
+
+@media (min-width: 769px) {
   /* Let rail tooltip overflow sidebar bounds */
   body.collapsed aside { overflow: visible !important; }
   body.collapsed .shell-nav { overflow: visible !important; }

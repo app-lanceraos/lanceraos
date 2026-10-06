@@ -14826,3 +14826,138 @@ Audit backlog (found, not fixed):
   recurring`) action_urls use query params `Invoices.jsx` has never read.
 - The panel's Invoices tab still lists only the first page (`GET /invoices/?client=`, default limit 50).
 - Notification `?invoice=` links now cost one extra `GET /invoices/<id>/` before the panel opens (which fetches it again).
+
+---
+
+Date: 03 October 2026 (Part E — Tooltip lifecycle: tooltips that get stuck on screen)
+
+Decision: One delegated tooltip controller replaces per-element tooltip binding; touch never shows a tooltip; every JS
+hover effect goes through a touch-safe helper; every CSS `:hover` on a tappable control is gated by `(hover: hover)`; the
+collapsed rail keeps exactly one (CSS) tooltip. Frontend only, no backend/schema change.
+
+Reported problem: tooltips sometimes stay on screen, especially on a phone.
+
+What changed (files):
+- `hooks/useAppTooltip.js` rewritten. `installTooltipController()` (idempotent; called once in `main.jsx`) adds capture-phase
+  listeners on `document`/`window` and drives the single `.app-tooltip` div (now `id="app-tooltip"`, `role="tooltip"`).
+  Shows: `pointerover` with `pointerType` mouse/pen (500ms, unchanged) and `focusin` ONLY when the last real interaction was
+  the keyboard and the target matches `:focus-visible`. Never on touch. Hides on: `pointerdown`, `click`, `keydown` (any key,
+  Escape included), `scroll` (capture, so nested scrollers count), `wheel`, `touchstart`, `resize`, `orientationchange`,
+  `popstate`, window `blur`, `visibilitychange`, `pointerout`, `focusout`, and a `pointermove` onto anything that is not the
+  current target. While visible, a `MutationObserver` hides it the instant its target leaves the DOM or loses its
+  `data-tooltip`, and follows a text change. The show timer is validated at fire time and `show()` refuses a detached target
+  (a detached rect is all zeros, which used to put the tooltip at the top-left corner). `aria-describedby` is set while shown and
+  restored (not clobbered) on hide. New small behaviour: a target near the bottom edge (the fixed bulk-action bar) flips the
+  tooltip above it instead of running off-screen. `.app-tooltip`'s CSS, copy and the 500ms delay are unchanged.
+  Removed: `initTooltipBindings`, `dataset.tooltipBound`, the 3 call sites (`AppShell.jsx` x2, `InvoiceDetailPanel.jsx`,
+  `Invoices.jsx` — the last was not in the brief, the other two were).
+- `lib/hoverProps.js` (new): `hoverProps(onEnter, onLeave)` -> `onPointerEnter/Leave` that ignore `pointerType === 'touch'`.
+  Replaces all 17 `onMouseEnter`/`onMouseLeave` pairs (AppShell x7 incl. ThemeSwitch/PopupItem/collapse toggle/bell/profile
+  button/notification rows, DropdownMenu, InvoiceFormFields, AuthButton, GoogleButton, FacebookButton, Profile avatar,
+  Invoices x2 incl. InvoiceCard, Clients ClientCard, PortalShell).
+- `theme.css`: `.fos-btn-{primary,accent,ghost,danger}:hover`, `.nav-item:hover`(+icon), `.popup-item:hover .nav-icon` wrapped in
+  `@media (hover: hover)`; the collapsed-rail CSS tooltip is now `@media (min-width: 769px) and (hover: hover) and
+  (pointer: fine)` and also opens on `:focus-visible`; the rail's `overflow: visible` layout rules were split out so they still
+  apply at every >=769px width. `listTableStyles.js` and `ClientDetailPanel.jsx` row-hover rules gated the same way.
+- `AppShell.jsx`: collapsed rail items no longer carry `data-tooltip` (only the CSS `data-tip` one) and gain `aria-label` while
+  collapsed (they had NO accessible name: the text label is not rendered when collapsed).
+- Tests: `hooks/useAppTooltip.test.jsx` (42), `lib/hoverProps.test.jsx` (3), `AppShell.test.jsx` (+5), `InvoiceDetailPanel.test.jsx`
+  (the old `tooltipBound` assertion replaced by 6 lifecycle tests). Docs: CLAUDE.md (frontend rule 8 + tree), STANDARDS.md (3
+  rules), DESIGN.md (hover/tooltip sections that mandated `onMouseEnter`/`onMouseLeave`).
+
+Reproduction BEFORE the fix (real Chromium via Playwright, a dedicated test user; desktop mouse at 1280px, touch emulation
+`hasTouch+isMobile` at 390/820/1024px; `.app-tooltip.show` counted at runtime):
+- H1 (target removed on click): CONFIRMED, with a caveat the brief did not predict. A real click on the panel's Close X or a
+  modal's X did NOT leave a tooltip in Chromium — the clicked button is focused, Chromium fires `blur` on the removed element
+  (measured: 1 blur), and the old `blur` listener hid it. Activating WITHOUT focus (programmatic `.click()`, emulating browsers
+  where a click does not focus a button — Safari/iOS — and so never blur it on removal; NOT run in a real Safari, none is
+  installed here) left the tooltip visible and still visible after moving the pointer away; within 500ms of entering it appeared
+  500ms later at (8,8), the top-left corner. A route change (history back) with a tooltip visible also left it visible
+  (target detached; it only self-cleared when the pointer happened to move over the re-mounted twin).
+- H2 (touch): CONFIRMED at 390/820/1024. Event log of one tap: `pointerover:touch, pointerenter, pointerdown, touchstart,
+  pointerout, pointerleave, mouseover, mouseenter, mousedown, focus, click` — a compatibility `mouseenter`, never a
+  `mouseleave`. Tapping the bell, "View Invoice" and the sidebar toggle: tooltip 0 at 150ms, shown at 850ms, still shown at
+  2000ms; it left only when another element was tapped.
+- H3 (programmatic focus): CONFIRMED — `.focus()` on the bell after a click elsewhere showed it, on every device. (The app's
+  modals currently do not restore focus to their trigger — measured `activeElement = BODY` after closing — so no in-app flow
+  triggers it today.)
+- H4 (no scroll/resize dismissal): REFUTED for mouse in Chromium — it dispatches a synthetic `mouseleave` when content moves under
+  a resting pointer (scrolling a container so the target moved 200px hid the tooltip); resize also hid it. Touch has no hover.
+  Scroll/wheel/resize listeners were still added (defence in depth, and Safari/Firefox are unmeasured).
+- H5 (two rail tooltips + sticky CSS `:hover`): CONFIRMED. Desktop hover on a collapsed rail item: 1 JS tooltip ("Invoices") AND
+  the CSS `::after`/`::before` at opacity 1. At 820 and 1024 touch, tapping a rail item left both visible until a blank tap.
+- H6 (sticky JS hover): CONFIRMED. At 1024 touch, right after tapping the theme switch: `transform: scale(1.12)`,
+  `color: var(--nav-active)` stuck on the button. `ClientCard`: background `rgb(248,248,252)` (hover) right after a tap vs the
+  resting `rgb(255,255,255)`. (It reset once the panel's own close button was tapped, so on that screen it is only visible while
+  the panel overlays it.)
+- H7 (per-render scan): CONFIRMED — 13 `document.querySelectorAll('[data-tooltip]')` calls loading the Invoices list page, 26
+  after opening a panel, switching 4 tabs and opening/closing one modal. After the fix: 0 and 0.
+- Also found: Escape never dismissed a hover tooltip (WCAG 1.4.13 "dismissible"); Recharts' `<Tooltip>` under touch: shows on tap,
+  hides on a tap outside, on both touch and desktop (no defect, nothing changed).
+- Not reproduced / not defects: S1/S2 with a real click (blur masks it, above); resize (hid); keyboard focus tooltips and blur
+  already worked.
+
+Verification AFTER (same matrix, same user, devices 1280 mouse + 390/820/1024 touch, rail expanded and collapsed):
+`.app-tooltip.show` was 0 in every touch scenario (tap of every enumerated [data-tooltip] element at runtime in 5 UI states:
+list, panel open, modal open, bulk bar, mobile drawer; blank-space taps; programmatic focus); desktop hover still shows at 500ms
+(0 at 400ms, 1 at 650ms) with the same position and look in both themes; the S1/S2 no-focus variants, route change, scroll,
+wheel, resize, Escape, programmatic focus all end at 0; Tab traversal shows on keyboard focus and hides on blur; the rail shows
+exactly one tooltip (CSS, 0 JS) on mouse hover and on keyboard focus, and none on touch at 820/1024 (`::after` content `none`;
+`(hover: hover)` false); the theme switch has no inline hover style after a tap; exactly one `.app-tooltip` element in the DOM.
+
+Test evidence: frontend 497 -> 552 passing (+55), the same single pre-existing `SecuritySection.test.jsx` failure; `vite build`
+clean. 25 deliberate mutations of the controller each failed at least one test and were reverted (each hide trigger incl. a
+non-capture scroll listener, the touch filter, the `isConnected` validation, the observer, the keyboard-modality gate, the
+`aria-describedby` set/clear, the repeat-install guard, element reuse, timer cancellation, the bottom-edge flip); 4 more on
+`hoverProps`' touch filter and the rail's `aria-label`/duplicate attribute. Two mutations first SURVIVED (a redundant
+`isConnected` check in the timer, and a show-time focus re-check that `focusout` already covers) — the redundant code was
+deleted rather than tested around, and a missing "re-entering restarts the delay" test was added for the third (timer
+cancellation). jsdom cannot prove real layout or a real touch device; the browser matrix above covers that.
+
+Alternatives considered:
+- CSS-only tooltips (`::after` on `[data-tooltip]`): rejected — they cannot escape `overflow` clipping the way a body-level
+  element does (the rail needed `overflow: visible !important` hacks just for itself), cannot flip at viewport edges, and still
+  rely on `:hover`.
+- The native Popover API (`popover="hint"`): rejected for now — browser support for `hint`/anchor positioning is not yet safe for
+  this app's target browsers, and it solves showing/dismissing, not the hover-intent/touch policy that was the actual bug.
+- A library (Floating UI/Radix Tooltip): rejected — it would add a dependency to solve positioning that was never the problem;
+  the lifecycle bugs are policy, and the 500ms/visual-design decisions are already made. Revisit only if rich/hoverable tooltips
+  are wanted.
+- Tap-to-toggle tooltips on touch: rejected — a second interaction model, and exactly the "stays until another tap" behaviour
+  reported. Information that matters moves to visible text instead.
+- Keep per-element binding and just add a global hide: rejected — the pending timer, detached targets and the per-render rescan
+  all remain.
+- Make the JS tooltip own the collapsed rail: rejected — it opens BELOW its target, covering the next rail item; the CSS tooltip
+  opens to the side and is the one the July 2026 entry above intended for the rail. The stray `data-tooltip` was accidental.
+
+Sweep: every `onMouseEnter`/`onMouseLeave` (17 pairs) -> `hoverProps` (all fixed; the same flaw on every one, a shared helper made
+fixing all cheaper than triaging). Every CSS `:hover`: gated — `.fos-btn-*`, `.nav-item`, `.nav-item .nav-icon`, `.popup-item .nav-icon`,
+`.invoice-row`/`.client-row`, `.cdp-invoice-link`; left ungated, with reason — `::-webkit-scrollbar-thumb:hover` (desktop-only
+scrollbars), `.auth-orbit input:-webkit-autofill:hover` (browser-internal), `.popup-item.danger:hover .nav-icon` (sets the colour
+it already has, no visible change), the rail's own `:hover` (now inside its gated media query). Every `title=`: Google/Facebook
+buttons, notification select-mode buttons, session rename — redundant with an `aria-label`, kept. ClientTable name/email/company
+truncation titles — redundant convenience, kept. Component props named `title` (Card, ModalShell, ConfirmModal, iframes) are not
+HTML titles. ESSENTIAL and unreachable on touch — reported, not changed (see backlog).
+
+Audit backlog (found, not fixed):
+- **Essential information that lives only in a native `title` (unreachable on a phone)** — decision needed from Ali, proposal:
+  show it as visible text. (1) `NewInvoiceWizard.jsx`: the disabled "Preview PDF" / "Finalise" / "Finalise & Send" buttons explain WHY only
+  in `title` — a small visible hint under the footer ("Add a client, a valid due date and at least one line item") when disabled.
+  (2) `ClientTable.jsx` and `Clients.jsx` (the mobile CARD view is where touch users are): the `Info` icon explaining that invoices
+  were excluded for lack of an exchange rate is `title` + `aria-label` only — render `unconvertedNote` as small visible text on the
+  card and the detail panel. (3) `ClientDetailPanel.jsx` "New Invoice" for an archived client: disabled with the reason only in
+  `title` — visible helper text. (4) `ClientTable.jsx` "+N" hidden-tags `title` (names of the hidden tags) and the exact-amount
+  `title` on money cells — nice-to-have; the detail panel shows tags. (5) `FacebookButton.jsx`: the "being set up" reason is `title`
+  only. No new popover component was built, as instructed.
+- **WCAG 1.4.13 "hoverable"**: `.app-tooltip` has `pointer-events: none`, so the pointer cannot move onto a tooltip without it closing.
+  Dismissible (Escape) is now met; hoverable and persistent are not. Fixing needs a hover bridge and pointer events on the tooltip.
+- `CommentThread.jsx`'s attach `<label>` is icon-only with a `title` and no `aria-label` (no accessible name).
+- Modals do not restore focus to their trigger on close (`activeElement` is `BODY`), a keyboard-user gap independent of tooltips.
+- Safari and Firefox were not run (only Chromium is installed here): the no-focus-on-click and no-blur-on-removal behaviour that
+  makes H1 reproducible there is emulated, not observed.
+- The public pages (`InvoiceView`, `PaymentDetails`, the client portal) carry no `data-tooltip` (grep-confirmed), so the controller never fires there.
+
+Environment notes: the per-user dev throttle (1000/hour) was exhausted once by the browser matrix; only the test user's throttle key
+was cleared. Refresh-token rotation invalidates a saved Playwright `storageState` after one run, so the test user was re-logged-in
+per device run. The test user, its client/invoices/payment and every audit/notification/session row it generated were deleted
+afterwards (zero-residue query in the session report).

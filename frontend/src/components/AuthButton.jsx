@@ -1,4 +1,5 @@
 // src/components/AuthButton.jsx
+import { hoverProps } from '@/lib/hoverProps'
 import { useState } from 'react'
 import { authTokens } from './AuthLayout'
 
@@ -40,8 +41,7 @@ export default function AuthButton({ children, variant = 'primary', disabled, on
       type={type}
       disabled={disabled}
       onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      {...hoverProps(() => setHovered(true), () => setHovered(false))}
       style={{ ...base, ...variantStyle }}
     >
       {children}

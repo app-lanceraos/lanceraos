@@ -322,6 +322,33 @@ An inline style beats any stylesheet selector, so an inline `background: 'transp
 and a hover rule should set the tint inline only when active (`isSelected ? tint : undefined`) or move the base
 background into the stylesheet. Known remaining instance: `DropdownMenu`'s ghost trigger (see DECISIONS.md backlog).
 
+### Tooltips are mouse/keyboard only and never carry essential information
+
+A `data-tooltip` is shown on a 500ms mouse/pen hover or on keyboard focus, and NEVER on touch (there is no hover on
+touch, and a tap-to-toggle tooltip would be a second interaction model). So anything a user needs to read — why a
+button is disabled, what a number excludes, a validation reason — is VISIBLE text (or a visible hint beside the
+control); a `title=`/`data-tooltip` may repeat it, never be its only home. Icon-only controls also carry an
+`aria-label` (a tooltip is not an accessible name). Found 03 October 2026: several "essential" explanations lived only
+in a native `title` and were unreachable on a phone (see DECISIONS.md's audit backlog for the list).
+
+### Never bind tooltip listeners per element, and never re-scan the DOM to wire tooltips up
+
+Tooltips are one delegated controller on `document` (`hooks/useAppTooltip.js`, installed once in `main.jsx`). Per-element
+`mouseenter`/`mouseleave`/`focus`/`blur` listeners cannot cover a target that unmounts under its own click (no
+`mouseleave`, and Safari/iOS never blur a removed button), a touch tap (compatibility `mouseenter` with no
+`mouseleave`), a scroll, a resize, a route change or Escape — each of which left a tooltip stuck on screen — and needed a
+full-document `querySelectorAll` after every render to find new targets (13 scans on one list-page load). A new
+tooltip is just the attribute; do not add an init/bind call, and do not add a second tooltip mechanism for the same job.
+
+### Hover styles are gated by `(hover: hover)`; JS hover goes through `hoverProps`
+
+A CSS `:hover` rule on a tappable control sits inside `@media (hover: hover)`, and a hover effect set from JS uses
+`hoverProps` (`lib/hoverProps.js`, pointer events, touch ignored) — never `onMouseEnter`/`onMouseLeave`. On touch, a tap
+leaves `:hover` applied and fires `mouseenter` without `mouseleave` until something else is tapped, so the "hovered"
+look (a highlighted row, a scaled icon, a collapsed-rail tooltip on an iPad) stayed stuck. Exceptions that are fine
+ungated: scrollbar thumbs (desktop-only), a `:hover` that changes nothing visible, a browser-internal pseudo-class
+(`:-webkit-autofill:hover`).
+
 ### Test files live next to what they test
 
 `ComponentName.test.jsx` sits in a `__tests__/` folder alongside `ComponentName.jsx`, not in one

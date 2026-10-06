@@ -26,6 +26,7 @@
 //
 // The AI assistant widget from v1 is NOT included — no AssistantWidget
 // source was provided and it wasn't requested for this pass.
+import { hoverProps } from '@/lib/hoverProps'
 import { createContext, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import ReactDOM from 'react-dom'
@@ -38,7 +39,6 @@ import {
 
 import useAuthStore from '@/store/authStore'
 import useTheme from '@/hooks/useTheme'
-import { initTooltipBindings } from '@/hooks/useAppTooltip'
 import useNotificationSocket from '@/hooks/useNotificationSocket'
 import api from '@/lib/api'
 import DropdownMenu from './DropdownMenu'
@@ -215,8 +215,7 @@ function ThemeSwitch({ theme, onToggle, context }) {
             color: theme === val ? activeColor : idleColor,
             transition: 'color var(--fast), transform 0.2s cubic-bezier(0.5,0,0,1)',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--nav-active)'; e.currentTarget.style.transform = 'scale(1.12)' }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = theme === val ? activeColor : idleColor; e.currentTarget.style.transform = 'scale(1)' }}
+          {...hoverProps((e) => { e.currentTarget.style.color = 'var(--nav-active)'; e.currentTarget.style.transform = 'scale(1.12)' }, (e) => { e.currentTarget.style.color = theme === val ? activeColor : idleColor; e.currentTarget.style.transform = 'scale(1)' })}
         >
           <Icon />
         </button>
@@ -239,14 +238,16 @@ function PopupItem({ icon, label, onClick, danger }) {
         width: '100%', textAlign: 'left', fontFamily: 'var(--font)',
         transition: 'background var(--fast), color var(--fast)',
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = danger ? 'var(--danger-hover)' : 'var(--menu-hover-bg)'
-        if (!danger) e.currentTarget.style.color = 'var(--menu-text-hover)'
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent'
-        e.currentTarget.style.color = danger ? 'var(--danger)' : 'var(--menu-text)'
-      }}
+      {...hoverProps(
+        (e) => {
+          e.currentTarget.style.background = danger ? 'var(--danger-hover)' : 'var(--menu-hover-bg)'
+          if (!danger) e.currentTarget.style.color = 'var(--menu-text-hover)'
+        },
+        (e) => {
+          e.currentTarget.style.background = 'transparent'
+          e.currentTarget.style.color = danger ? 'var(--danger)' : 'var(--menu-text)'
+        },
+      )}
     >
       <span className="nav-icon" style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {icon}
@@ -417,7 +418,6 @@ export default function AppShell({ children }) {
 
   useEffect(() => {
     requestAnimationFrame(() => placePill(true))
-    setTimeout(() => initTooltipBindings(), 100)
   }, [placePill])
 
   useEffect(() => {
@@ -443,11 +443,6 @@ export default function AppShell({ children }) {
     if (!isMobile) document.body.classList.toggle('collapsed', collapsed)
     else document.body.classList.remove('collapsed')
     return () => document.body.classList.remove('collapsed')
-  }, [collapsed, isMobile])
-
-  useEffect(() => {
-    const id = setTimeout(() => initTooltipBindings(), 60)
-    return () => clearTimeout(id)
   }, [collapsed, isMobile])
 
   useEffect(() => {
@@ -690,8 +685,7 @@ export default function AppShell({ children }) {
               transform: collapsed ? 'rotate(0deg)' : 'rotate(180deg)',
               transition: 'background var(--fast), color var(--fast), transform var(--t)',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-hover)'; e.currentTarget.style.color = 'var(--nav-active)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--header-icon)' }}
+            {...hoverProps((e) => { e.currentTarget.style.background = 'var(--accent-hover)'; e.currentTarget.style.color = 'var(--nav-active)' }, (e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--header-icon)' })}
           >
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
               <path d="M1.9 1.44L9.9 9.44L1.9 17.44" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -775,8 +769,7 @@ export default function AppShell({ children }) {
                   justifyContent: 'center', color: 'var(--header-icon)',
                   transition: 'background var(--fast), color var(--fast)',
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--nav-hover-bg)'; e.currentTarget.style.color = 'var(--nav-active)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--header-icon)' }}
+                {...hoverProps((e) => { e.currentTarget.style.background = 'var(--nav-hover-bg)'; e.currentTarget.style.color = 'var(--nav-active)' }, (e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--header-icon)' })}
               >
                 <Bell
                   size={isMobile ? 18 : 20} strokeWidth={1.6}
@@ -802,8 +795,7 @@ export default function AppShell({ children }) {
                   borderRadius: 8, color: 'var(--header-icon)',
                   transition: 'background var(--fast), color var(--fast)',
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-hover)'; e.currentTarget.style.color = 'var(--nav-active)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--header-icon)' }}
+                {...hoverProps((e) => { e.currentTarget.style.background = 'var(--accent-hover)'; e.currentTarget.style.color = 'var(--nav-active)' }, (e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--header-icon)' })}
               >
                 <svg viewBox="0 0 24 24" width="20" height="20">
                   <rect x="3" y="5" width="18" height="2" rx="1" fill="currentColor" style={{ transformOrigin: 'center', transition: 'transform 0.34s cubic-bezier(0.65,0,0.35,1), opacity 0.2s ease', transform: mobileOpen ? 'translateY(7px) rotate(45deg)' : 'none' }} />
@@ -892,8 +884,13 @@ export default function AppShell({ children }) {
                     key={to}
                     to={to}
                     end={end !== false}
+                    /* The collapsed rail's tooltip is the CSS one (theme.css, keyed off data-tip) —
+                       it opens to the SIDE of the rail. These items used to carry a second,
+                       JS-driven data-tooltip as well, so a hovered rail icon showed two tooltips
+                       at once (DECISIONS.md, 03 October 2026). aria-label is what actually names
+                       an icon-only item for assistive tech. */
                     data-tip={tip}
-                    data-tooltip={(collapsed && !isMobile) ? tip : undefined}
+                    aria-label={(collapsed && !isMobile) ? tip : undefined}
                     className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
                     style={{ display: 'flex', alignItems: 'center', fontSize: '13.5px', whiteSpace: 'nowrap', textDecoration: 'none', cursor: 'pointer', userSelect: 'none' }}
                   >
@@ -939,8 +936,7 @@ export default function AppShell({ children }) {
               cursor: 'pointer', userSelect: 'none',
               transition: 'background var(--fast), padding var(--t)',
             }}
-            onMouseEnter={(e) => { if (!collapsed) e.currentTarget.style.background = 'var(--nav-hover-bg)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+            {...hoverProps((e) => { if (!collapsed) e.currentTarget.style.background = 'var(--nav-hover-bg)' }, (e) => { e.currentTarget.style.background = 'transparent' })}
           >
             <div style={{
               width: 32, height: 32, borderRadius: '50%',
@@ -1138,8 +1134,7 @@ export default function AppShell({ children }) {
                     display: 'flex', gap: 10, alignItems: 'flex-start',
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={(e) => { if (!selectMode && n.action_url) e.currentTarget.style.background = 'var(--bg-surface-2)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = isSelected ? 'var(--accent-glow)' : n.is_read ? 'transparent' : 'rgba(0,200,150,0.04)' }}
+                  {...hoverProps((e) => { if (!selectMode && n.action_url) e.currentTarget.style.background = 'var(--bg-surface-2)' }, (e) => { e.currentTarget.style.background = isSelected ? 'var(--accent-glow)' : n.is_read ? 'transparent' : 'rgba(0,200,150,0.04)' })}
                 >
                   {selectMode && (
                     <span style={{ flexShrink: 0, display: 'flex', marginTop: 2 }}>
