@@ -32,7 +32,9 @@ RUN apt-get update \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home --uid 1000 app
+RUN useradd --create-home --uid 1000 app \
+    && mkdir /app \
+    && chown app:app /app
 WORKDIR /app
 
 COPY requirements.txt .
