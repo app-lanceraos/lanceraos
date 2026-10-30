@@ -1,0 +1,43 @@
+# .dockerignore
+# The image is backend-only. Anything below is either a secret, a frontend
+# concern (Vercel builds that), or local state that must never ship.
+
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+frontend/
+admin-frontend/
+node_modules/
+**/node_modules/
+
+backups/
+archive/
+v1-reference/
+qa_invoices/
+qa_invoice_pdfs/
+DOCS/
+
+staticfiles/
+media/
+db.sqlite3
+*.sql
+*.dump
+*.log
+celerybeat-schedule*
+celerybeat.pid
+
+.vscode/
+.DS_Store

@@ -14961,3 +14961,70 @@ Environment notes: the per-user dev throttle (1000/hour) was exhausted once by t
 was cleared. Refresh-token rotation invalidates a saved Playwright `storageState` after one run, so the test user was re-logged-in
 per device run. The test user, its client/invoices/payment and every audit/notification/session row it generated were deleted
 afterwards (zero-residue query in the session report).
+
+
+---
+
+Date: 31 October 2026 (Deployment Foundation — making the app deployable)
+Decision: Added the deployment foundation without deploying anything: `Dockerfile`/`.dockerignore` (one
+image, three Railway services web/worker/beat), `railway/{web,worker,beat}.json`, `frontend/vercel.json`,
+`GET /api/health/` (`core/health.py`), WhiteNoise for `/static/`, `SECURE_PROXY_SSL_HEADER` +
+`SECURE_REDIRECT_EXEMPT`, env-driven HSTS (default 3600s, preload opt-in), a truthful `requirements.txt`
+and `.env.example`, and `DEPLOYMENT.md`. Not done, and said so in DEPLOYMENT.md: the image was never
+built (no Docker on the authoring machine), so PERF-001 (Celery prefork on Linux) is still unverified,
+and Railway's real `X-Forwarded-For` behaviour is still unverified. Both have exact procedures
+(Appendix A/B).
+Reason (each finding verified, not assumed):
+- Redirect loop: `SECURE_SSL_REDIRECT=True` with no `SECURE_PROXY_SSL_HEADER`. Under a real Daphne with
+  `DEBUG=False`: plain http -> 301; with `X-Forwarded-Proto: https` -> 200. The header is honoured without
+  any Daphne flag.
+- Health probe: Railway's probe is plain HTTP and its Host is `healthcheck.railway.app` (docs). Django
+  answers an unlisted Host with 400 (tested, health path included), so it goes in `ALLOWED_HOSTS`; the path
+  is in `SECURE_REDIRECT_EXEMPT` because a 301 isn't a 2xx. The endpoint has no auth and no DRF throttle
+  (the global anon limit is 100/hour — a 10s probe would hit 429 inside 17 minutes) and
+  `RequestLoggingMiddleware` skips it (0 `ApiRequestLog` rows after real requests; other paths still logged).
+- WhiteNoise, `CompressedStaticFilesStorage` not the Manifest variant: `pdf_generator.py` calls `static()`
+  at module import. With the manifest storage and no `staticfiles.json`, importing it raises
+  `ValueError: Missing staticfiles manifest entry for 'invoices/fonts/IBMPlexSans-Regular.ttf'` (reproduced);
+  that would crash web, worker, beat and tests in any process where collectstatic hadn't run. The cost is
+  no content-hashed filenames (60s max-age) for a few admin assets and fonts.
+- HSTS was hard-coded to 1 year + includeSubDomains + preload — unrecoverable if the first deploy had a
+  certificate mistake. Now `SECURE_HSTS_SECONDS` (default 3600), preload off, `W021` silenced with a comment.
+  `SECURE_BROWSER_XSS_FILTER` removed: not present anywhere in Django 5.2's source (dead since 4.0).
+  `check --deploy`: before = no issues (because of the hard-coded values), after = no issues (1 silenced).
+- Client IP: `get_client_ip` (last X-Forwarded-For entry) left UNCHANGED — no failing test justified a change.
+  Characterisation tests added (`core/tests/test_client_ip.py`). Daphne's `--proxy-headers` was rejected:
+  its parser takes the LEFTMOST entry (client-controlled) and the flag made no difference to the logged IP.
+  Whether Railway appends the real client address is unknowable from here (their forum answers
+  contradict each other) -> DEPLOYMENT.md Appendix B, to run once. Cloudflare stays DNS-only for the product
+  hostnames so no extra hop makes all users share one address.
+- `requirements.txt` had drifted from the venv the 1372-test suite passes on (channels 4.1 vs 4.3.2,
+  channels-redis, django-cors-headers 4.4 vs 4.9, django-environ, redis, google-auth, cloudinary): a fresh
+  image would have installed versions nobody tested. Pins updated to the tested versions; `pip install
+  --dry-run -r requirements.txt` now reports nothing to change.
+- `.env.example`: `EXCHANGE_RATE_API_KEY` removed (never read — the rate fetcher uses keyless
+  open.er-api.com); root-file `VITE_*` removed (Vite reads `frontend/.env`; new `frontend/.env.example`);
+  `RESEND_FROM_EMAIL` in CLAUDE.md §8 was dead (code reads `DEFAULT_FROM_EMAIL`). Diffed against the
+  `env()` calls in settings.py: zero differences either way.
+- Redis: cache, Celery broker and Channels layer must use separate logical DBs (/1, /0, /2) — Railway's
+  `REDIS_URL` has none, so everything would land in DB 0 and `cache.clear()` could flush the task queue.
+- Celery: `--concurrency=2` (default = CPU count, and a container can report the host's), `--max-tasks-per-child=50`
+  (WeasyPrint memory growth). Beat keeps the default `PersistentScheduler` with its file in `/tmp`.
+Alternatives considered:
+- Buildpack/Railpack instead of a Dockerfile — rejected: WeasyPrint needs apt-installed Pango/HarfBuzz and
+  tzdata; a Dockerfile makes those explicit and reviewable.
+- One service running worker+beat together (`celery worker -B`) — rejected: restarts/scaling couple the
+  scheduler to the worker, and a scaled worker would duplicate every scheduled task. Three services, one image.
+- `django_celery_beat`'s `DatabaseScheduler` (persists last-run times, so a restarted beat doesn't skip a
+  slot) — not adopted: the project runs `USE_TZ=False`, a combination with known django-celery-beat
+  naive/aware datetime friction that I couldn't validate without a deploy. Mitigation: all scheduled tasks
+  are idempotent and can be run by hand (DEPLOYMENT.md). Revisit after launch.
+- A separate static host/CDN for `/static/` — rejected: only Django admin and a few fonts need it.
+- Proxying the product hostnames through Cloudflare — rejected for the shared-IP rate-limit/audit reason above
+  and because Railway/Vercel issue their own certificates.
+- Railway config-as-code: its docs now mark it deprecated (legacy files honoured until 2026-12-01).
+  Used anyway because it's reviewable and removable; DEPLOYMENT.md lists the same values for manual entry.
+Out-of-scope observations (reported, not fixed): CLAUDE.md says the exchange-rate task runs 6:00 AM PKT but
+`config/celery.py` schedules 08:00; `frontend/viteset.config.js` is dead; local `.env` still has an unused
+`BACKEND_URL`; `SENTRY_DSN` is read but nothing initialises Sentry (`sentry-sdk` not installed); the
+`core/ws_test_consumer.py` "test/reference" consumer is still routed at `ws/echo/` in production.

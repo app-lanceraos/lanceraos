@@ -40,6 +40,24 @@ USE_TZ = False
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
+# WhiteNoise serves /static/ straight from the container (Django admin CSS/JS
+# and the invoice fonts) — no separate static host or CDN to provision.
+#
+# CompressedStaticFilesStorage, NOT CompressedManifestStaticFilesStorage, on
+# purpose: apps/invoices/pdf_generator.py calls static('invoices/fonts/...')
+# at MODULE IMPORT time (PORTAL_FONT_CONTEXT). The manifest variant raises
+# ValueError from static() for any file missing from staticfiles.json, so
+# every process that imports that module (web, the Celery worker, beat, and
+# the test suite) would crash at import unless collectstatic had already run
+# in that exact environment. The plain variant resolves URLs without a
+# manifest; the cost is no content-hashed filenames (WhiteNoise's default
+# short max-age applies instead of immutable caching), which only matters for
+# a handful of admin assets and fonts.
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
+
 # ══════════════════════════════════════════════════════════════════
 # DATABASE
 # ══════════════════════════════════════════════════════════════════
@@ -102,6 +120,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Immediately after SecurityMiddleware, per WhiteNoise's docs, so static
+    # responses still get the security headers and bypass everything below.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -156,8 +177,8 @@ CACHES = {
 }
 
 # ══════════════════════════════════════════════════════════════════
-# CORS / CSRF — cookie-based auth across the app.lanceraos.com /
-# api.lanceraos.com subdomain split
+# CORS / CSRF — cookie-based auth across the lanceraos.com (frontend) /
+# api.lanceraos.com (backend) subdomain split
 # ══════════════════════════════════════════════════════════════════
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
@@ -193,7 +214,7 @@ CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
     'http://127.0.0.1:5174',
 ])
 
-# Shared across app.lanceraos.com and api.lanceraos.com in production
+# Shared across lanceraos.com and api.lanceraos.com in production
 # (COOKIE_DOMAIN=.lanceraos.com); None (host-only cookie) is correct for
 # local dev where frontend/backend are on different localhost ports.
 COOKIE_DOMAIN = env('COOKIE_DOMAIN', default=None)
@@ -293,13 +314,37 @@ AXES_LOCKOUT_PARAMETERS = ['username', 'ip_address']
 # SECURITY HEADERS (production only)
 # ══════════════════════════════════════════════════════════════════
 
+# The platform's health probe is plain HTTP and must not be redirected to
+# HTTPS (a 301 is not a 2xx, so the deploy would be marked unhealthy). Matched
+# against the path with the leading slash stripped. Defined unconditionally —
+# harmless while SECURE_SSL_REDIRECT is off. Keep in sync with
+# core.health.HEALTH_CHECK_PATH.
+SECURE_REDIRECT_EXEMPT = [r'^api/health/$']
+
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
-    SECURE_BROWSER_XSS_FILTER = True
+    # Railway terminates TLS at its edge and forwards plain HTTP to the
+    # container with X-Forwarded-Proto. Without this Django sees every
+    # request as insecure and SECURE_SSL_REDIRECT redirects forever.
+    # Trust assumption: the container is reachable ONLY through the platform
+    # proxy, which sets/overwrites this header. If the service were ever
+    # exposed directly, a client could forge it — so never publish the
+    # container's port outside the platform.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_HSTS_SECONDS = 31536000  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
+    # Env-driven with a LOW default so a first staging deploy cannot pin a
+    # mistake into browsers for a year. Raise it in steps once HTTPS is proven
+    # (see DEPLOYMENT.md > "Raising HSTS"). The previous hard-coded value was
+    # 31536000 + preload.
+    SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=3600)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=True)
+    # Preload is effectively irreversible (browsers ship the list); opt-in only.
+    SECURE_HSTS_PRELOAD = env.bool('SECURE_HSTS_PRELOAD', default=False)
+    if not SECURE_HSTS_PRELOAD:
+        # `check --deploy` W021 nags to enable preload. Deliberately declined:
+        # removal from the browser preload list takes months, so it is only
+        # worth enabling after HSTS has run at a long max-age for a while.
+        SILENCED_SYSTEM_CHECKS = ['security.W021']
     X_FRAME_OPTIONS = 'DENY'
 
 # ══════════════════════════════════════════════════════════════════

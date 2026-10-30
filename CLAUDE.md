@@ -367,6 +367,8 @@ lanceraos/                          <- Django project root
 │   │                         apps.invoices' AI-seeded designs is the first real consumer
 │   ├── email.py            ← Resend HTTP API sender (send_email)
 │   ├── encryption.py        ← Fernet + HMAC blind-index helpers
+│   ├── health.py              ← GET /api/health/ platform probe (no auth, no throttle, no
+│   │                            ApiRequestLog row) — 31 October 2026, see DEPLOYMENT.md
 │   ├── events.py             ← Minimal on()/emit() event registry — apps.clients is its first
 │   │                            real consumer; apps.users deliberately not retrofitted (see
 │   │                            DECISIONS.md, 08 August 2026)
@@ -473,8 +475,18 @@ lanceraos/                          <- Django project root
 │   │       └── theme.css
 │   └── index.html
 ├── CLAUDE.md                       <- Master context file (this document)
+├── DEPLOYMENT.md                   <- Owner's deploy runbook (Cloudflare/Railway/Vercel/Resend/
+│                                      Google/Cloudinary), smoke tests, rollback, HSTS ladder
+├── Dockerfile                      <- ONE backend image for the web/worker/beat Railway services
+├── .dockerignore                   <- Keeps frontend/, secrets, backups/, archive/ out of the image
+├── railway/                        <- Config-as-code, one file per Railway service
+│   ├── web.json                    <- Daphne + pre-deploy `migrate` + /api/health/ healthcheck
+│   ├── worker.json                 <- Celery worker (prefork, concurrency 2)
+│   └── beat.json                   <- Celery Beat (exactly ONE instance, ever)
+├── frontend/vercel.json            <- SPA rewrite so deep links don't 404 on Vercel
+├── frontend/.env.example           <- The VITE_* vars the frontend actually reads
 ├── .env                            <- Environment variables (never committed)
-├── .env.example                    <- Template with all required keys
+├── .env.example                    <- Template with all backend keys (local + production values)
 ├── requirements.txt
 └── manage.py
 
@@ -2992,7 +3004,9 @@ GROQ_MODEL_FAST=
 GROQ_MODEL_QUALITY=
 GROQ_MODEL_VISION=
 RESEND_API_KEY=
-RESEND_FROM_EMAIL=noreply@lanceraos.com
+DEFAULT_FROM_EMAIL=LanceraOS <noreply@lanceraos.com>
+# (RESEND_FROM_EMAIL was listed here earlier but no code ever read it — core/email.py reads
+# DEFAULT_FROM_EMAIL. Removed 31 October 2026.)
 RESEND_FROM_NAME=LanceraOS
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
@@ -3000,8 +3014,9 @@ CLOUDINARY_API_SECRET=
 GOOGLE_CLIENT_ID=
 FACEBOOK_APP_ID=
 FACEBOOK_APP_SECRET=
-VITE_API_URL=http://localhost:8000
-VITE_WS_URL=ws://localhost:8000
+# VITE_API_URL / VITE_WS_URL / VITE_GOOGLE_CLIENT_ID / VITE_FACEBOOK_APP_ID are FRONTEND build-time
+# variables: they live in frontend/.env (see frontend/.env.example; Vercel env vars in production),
+# NOT in the backend .env — Vite reads frontend/.env. Production: wss://api.lanceraos.com for WS.
 FRONTEND_URL=http://localhost:5173
 # Also used to build Invoice.portal_view_url (the invoice VIEW itself,
 # InvoiceView.jsx's real /invoice/:token route) as of 18 August 2026 —
@@ -3010,6 +3025,13 @@ FRONTEND_URL=http://localhost:5173
 # consumer was that same link, back when it pointed at the raw backend/
 # API host instead. Left removed rather than defined-but-unused, per
 # this project's own dead-config convention.
+
+### HTTPS hardening (31 October 2026 — only applied when DEBUG=False)
+SECURE_HSTS_SECONDS=3600
+# Low default on purpose; raise in steps per DEPLOYMENT.md "Raising HSTS". Was hard-coded 1 year.
+SECURE_HSTS_INCLUDE_SUBDOMAINS=True
+SECURE_HSTS_PRELOAD=False
+# Opt-in only: preload is effectively irreversible.
 
 ### Cookies (httpOnly JWT + CSRF — see DECISIONS.md)
 COOKIE_DOMAIN=
@@ -3041,6 +3063,9 @@ SENTRY_DSN=
 Alongside CLAUDE.md, maintain these three files in the project root.
 Update them as you build. All three now have real content as of the
 Users/Auth module build — see DATABASE.md, STANDARDS.md, DECISIONS.md.
+A fourth, DEPLOYMENT.md (31 October 2026), is the owner's step-by-step deploy
+runbook — update it whenever an env var, service, health path or provider
+setting changes.
 
 ### STANDARDS.md
 Coding conventions every module chat must follow.
@@ -3136,13 +3161,19 @@ running more than one background task at a time anyway, that trade is free.
   verified as a fix on its own against the default prefork pool. Don't assume it would let you drop
   `--pool=solo` and go back to prefork without testing that combination for real first.
 
-**Believed macOS-only — genuinely unconfirmed on Linux, flagged rather than assumed:** this
-project's actual deployment target (Railway, per this doc's own Infrastructure section) runs
-Linux containers, where this specific fork-safety failure mode is NOT expected to reproduce —
-standard prefork concurrency (no `--pool=solo` restriction) is expected to work there. This has
-**not actually been verified against a real Linux staging/production container** as of this
-writing — treat `--pool=solo` as a local-macOS-dev-only requirement until someone confirms
-prefork's real behavior on the actual deployment target directly, not by assumption.
+**Linux / production status (31 October 2026) — STILL UNVERIFIED, now with a concrete procedure:**
+the deployment image (`Dockerfile`, Debian-based `python:3.13-slim`) runs the worker with the default
+**prefork** pool at `--concurrency=2 --max-tasks-per-child=50` (`railway/worker.json`), on the belief
+that the macOS fork-safety segfault does not occur on Linux. The pass that wrote the Dockerfile ran on a
+machine with no Docker, so this was **not** exercised: the only things proven there were everything
+that does not need Linux (settings under `DEBUG=False` through a real Daphne, WhiteNoise static
+serving, the health endpoint, `collectstatic` from a clean copy with no `.env`, Celery beat/worker
+config loading). `DEPLOYMENT.md` Appendix A is the exact procedure (N consecutive PDF renders under
+prefork, no `WorkerLostError`/`SIGSEGV`, fonts embedded) to run on Railway staging or any machine with
+Docker. If prefork crashes there, change the worker's start command to `--pool=solo` (then run
+more than one worker service if throughput matters) and record the result here. Until someone has
+run Appendix A, treat prefork-on-Linux as an expectation, not a fact. Local macOS dev still requires
+`--pool=solo`, unchanged.
 
 **To manually trigger a scheduled task right now**, without waiting for Beat's schedule (useful
 for testing deletion/cleanup behavior): `python manage.py shell`, then

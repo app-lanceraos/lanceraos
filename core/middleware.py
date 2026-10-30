@@ -15,6 +15,7 @@ import logging
 import time
 import uuid
 
+from core.health import HEALTH_CHECK_PATH
 from core.models import ApiRequestLog
 from core.observability import get_client_ip, get_user_agent, redact_sensitive_fields
 
@@ -31,6 +32,17 @@ class RequestLoggingMiddleware:
 
     def __call__(self, request):
         request.request_id = str(uuid.uuid4())
+
+        # The platform's health probe hits this every 10-30s for the life of
+        # the deployment. Logging it would bury api_request_logs under rows
+        # nobody will ever investigate. The one deliberate exception to
+        # "every request is logged" (CLAUDE.md rule 11); X-Request-ID is still
+        # returned so a probe failure can be correlated with server logs.
+        if request.path == HEALTH_CHECK_PATH:
+            response = self.get_response(request)
+            response['X-Request-ID'] = request.request_id
+            return response
+
         request_body = self._extract_request_body(request)
         started_at = time.perf_counter()
 

@@ -1,16 +1,18 @@
 # requirements.txt
 #
-# Everything here is a package actually imported by code that exists
-# today (core/ + apps/users/). Deliberately NOT included: WeasyPrint,
-# and anything else CLAUDE.md's tech-stack section names for a module
-# that hasn't been built yet (invoices, tax, etc.) — that module's own
-# chat adds its own dependencies when it's built, rather than this file
-# accumulating packages nothing imports yet.
+# Python dependencies for the backend (Django/DRF/Channels/Celery) AND the
+# production image built by ./Dockerfile — web, worker and beat all install
+# this one file. Every package is imported by code that exists today.
 #
-# Tested in this chat against Django 6.0.7 (what was available in the
-# sandbox) — pinned here to 5.2 LTS per CLAUDE.md's tech-stack decision.
-# Nothing version-specific to 6.0 was knowingly used, but re-run the test
-# suite locally against 5.2 before deploying to confirm.
+# Pinned to the Django 5.2 LTS line per CLAUDE.md's tech-stack decision. The
+# pins match the versions the full test suite was last run against (31 October
+# 2026: before then channels, cors-headers, environ, redis, google-auth and
+# cloudinary here lagged the dev venv, so a fresh image would have installed
+# versions nobody had tested).
+#
+# WeasyPrint needs native libraries (Pango/HarfBuzz) that pip cannot install;
+# the Dockerfile apt-installs them. pymupdf is used by the PDF tests and the
+# generate_template_previews command, so it ships in the image too.
 
 # ── Django core ──────────────────────────────────────────────
 Django==5.2.*
@@ -20,25 +22,29 @@ djangorestframework==3.15.*
 # directly relevant to this app's account-lockout story (CLAUDE.md).
 djangorestframework-simplejwt>=5.5.1,<6.0
 
-django-environ==0.11.*
+django-environ==0.14.*
+
+# ── Static files (serves /static/ in production without a separate host;
+#    config/settings.py MIDDLEWARE + STORAGES) ───────────────
+whitenoise==6.*
 
 # ── Database ─────────────────────────────────────────────────
 psycopg2-binary==2.9.*
 
-# ── ASGI / WebSockets (Daphne + Channels — no consumers exist yet,
-#    but config/asgi.py and config/settings.py already wire these up) ──
+# ── ASGI / WebSockets (Daphne + Channels: NotificationConsumer,
+#    ClientThreadConsumer — config/asgi.py, config/ws_routing.py) ──
 # >=4.2.2 required — CVE-2026-44546, CVE-2026-44545.
 daphne>=4.2.2,<5.0
-channels==4.1.*
-channels-redis==4.2.*
+channels==4.3.*
+channels-redis==4.3.*
 
 # ── Background tasks ─────────────────────────────────────────
 celery==5.6.*
 django-celery-beat==2.9.*
-redis==5.0.*
+redis==5.3.*
 
 # ── CORS ─────────────────────────────────────────────────────
-django-cors-headers==4.4.*
+django-cors-headers==4.9.*
 
 # ── Password hashing (Argon2 — CLAUDE.md rule 7) ────────────
 argon2-cffi==23.1.*
@@ -52,10 +58,10 @@ cryptography>=46.0.6,<47.0
 requests==2.32.*
 
 # ── Google OAuth ID-token verification ───────────────────────
-google-auth==2.34.*
+google-auth==2.56.*
 
 # ── Media storage (profile/business logo uploads) ───────────
-cloudinary==1.41.*
+cloudinary==1.45.*
 # Content-validates uploaded logos are genuine images before they reach
 # Cloudinary (apps/users/views/profile.py upload_logo) — extension alone
 # doesn't confirm file content, and SVG is deliberately excluded from

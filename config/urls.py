@@ -5,6 +5,7 @@ from django.contrib import admin
 from django.urls import include, path
 
 from apps.invoices.views_statement import client_statement_pdf
+from core.health import health_check
 from core.notifications import (
     dismiss_notifications,
     list_notifications,
@@ -14,6 +15,8 @@ from core.notifications import (
 )
 
 urlpatterns = [
+    # Platform probe (Railway healthcheck) — see core/health.py.
+    path('api/health/', health_check, name='health_check'),
     path('admin/', admin.site.urls),
     path('api/auth/', include('apps.users.urls')),
     path('api/admin/', include('apps.admin_panel.urls')),
@@ -41,5 +44,7 @@ urlpatterns = [
     # currency validation.)
 ]
 
+# Outside DEBUG, /static/ is served by WhiteNoise (settings.MIDDLEWARE), not
+# by Django URL routing; this helper only ever works in DEBUG anyway.
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
