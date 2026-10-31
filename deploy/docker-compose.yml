@@ -187,10 +187,18 @@ services:
 
   beat:
     <<: *app
-    # EXACTLY ONE beat, ever (a second one fires every task twice). The schedule
-    # file lives in /tmp and is lost when the container is recreated (not on a
-    # plain restart); the idempotent tasks can be run by hand. See DECISIONS.md.
-    command: ["celery", "-A", "config", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]
+    # EXACTLY ONE beat, ever (a second one fires every task twice). Beat records
+    # "when did each task last run" in a small file; it lives on the named volume
+    # `beatdata` (mounted at /app/beat-data, a directory the image creates owned by
+    # the non-root `app` user - a volume at a path the image lacks would be
+    # root-owned and beat would get "Permission denied"). On a container re-create
+    # (every `docker compose up -d --build`) beat then picks up where it left off
+    # instead of forgetting its history. If that file is ever corrupted, recreate
+    # it: `docker compose stop beat && docker compose rm -f beat && docker volume
+    # rm <project>_beatdata && docker compose up -d beat` (DEPLOYMENT.md D.3).
+    command: ["celery", "-A", "config", "beat", "-l", "info", "--schedule", "/app/beat-data/celerybeat-schedule"]
+    volumes:
+      - beatdata:/app/beat-data
     depends_on:
       db:
         condition: service_healthy
@@ -224,3 +232,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  beatdata:

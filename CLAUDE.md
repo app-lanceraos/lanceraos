@@ -487,7 +487,8 @@ lanceraos/                          <- Django project root
 │   │                                  VM until public launch, behind a Cloudflare Tunnel; 31 October 2026 —
 │   │                                  see DEPLOYMENT.md Appendix D and DECISIONS.md). Host-agnostic: runs
 │   │                                  unchanged on a Mac, an arm64 VM or an x86-64 VM.
-│   ├── docker-compose.yml          <- db, redis, migrate (one-shot), web, worker (solo), beat, cloudflared
+│   ├── docker-compose.yml          <- db, redis, migrate (one-shot), web, worker (solo), beat (+ named volume
+│   │                                  `beatdata` at /app/beat-data holding its last-run file), cloudflared
 │   │                                  (profile `tunnel`); one image; per-service mem_limit for a 2 GiB host
 │   ├── env.example                 <- Template for deploy/.env (CHANGE_ME placeholders only; real file gitignored)
 │   ├── make-test-env.sh            <- Writes deploy/.env.test: throwaway secrets for a separate test project
@@ -2715,7 +2716,7 @@ Deductible/non-deductible flag per expense (affects FBR calculation).
 
 Exchange rates:
 Daily USD, EUR, GBP to PKR snapshots via external rate API.
-Fetched by Celery Beat at 6:00 AM PKT daily.
+Fetched by Celery Beat at 8:00 AM PKT daily (config/celery.py; the 8:30 recurring-invoice and 9:00 reminder slots are ordered around it).
 Used for PKR conversion on invoices and payments.
 Exchange rate alerts: user sets target rate + direction (above/below).
 Celery checks hourly, sends in-app + email notification once when
@@ -3180,7 +3181,7 @@ restarts. So the macOS fork-safety segfault does **not** occur on Debian/arm64. 
 tested — the shipped worker is therefore `--pool=solo` everywhere (compose and `railway/worker.json`); do not switch
 Railway to prefork before running DEPLOYMENT.md Appendix A on it. Local macOS dev still requires `--pool=solo`, unchanged.
 Evidence and the full test-lab table: DEPLOYMENT.md Appendix A and D.8. **Hosting decision (31 October 2026):** until public
-launch the backend runs from `deploy/` on a free always-on AWS EC2 `t4g.small` behind a Cloudflare Tunnel; Railway at public
+launch the backend runs from `deploy/` on a free always-on AWS EC2 `t4g.small` in **Sydney** (`ap-southeast-2`: the Free plan is locked to that region; Mumbai needs "Upgrade plan", which can bill the card) behind a Cloudflare Tunnel; Railway at public
 launch — see DECISIONS.md's 31 October 2026 "Free-VM stack" entry and DEPLOYMENT.md Appendix D.
 
 **To manually trigger a scheduled task right now**, without waiting for Beat's schedule (useful

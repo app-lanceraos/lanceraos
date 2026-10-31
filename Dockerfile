@@ -16,7 +16,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Debian >= 11, wheels install): Pango + HarfBuzz subsetting. Pango >= 1.44 is
 # required; Debian's is newer.
 # - fontconfig + fonts-dejavu-core: Pango needs at least one system font for
-#   fallback glyphs (the invoice fonts themselves are loaded from file://).
+#   last-resort glyph fallback (the bundled invoice fonts are loaded from file://).
+# - fonts-liberation: 10 of the 11 invoice templates checked set their body text
+#   in a system font stack ('-apple-system, BlinkMacSystemFont, "Segoe UI", Arial,
+#   sans-serif') instead of a bundled font. On a Mac or Windows PC that resolves to
+#   a real Helvetica/Arial-class font; on slim Debian, with only DejaVu installed,
+#   it silently resolved to DejaVu Sans, whose letters are visibly wider, so line
+#   and page breaks differed from the gallery previews. Liberation Sans is
+#   metric-compatible with Arial (same glyph widths), and fontconfig's built-in
+#   aliases map Arial/Helvetica to it, so the PDFs lay out as designed.
 # - tzdata: config/settings.py sets TIME_ZONE='Asia/Karachi' with USE_TZ=False.
 #   Django exports that as the process TZ; without /usr/share/zoneinfo libc
 #   silently falls back to UTC and every "today"/due-date/overdue calculation
@@ -29,12 +37,19 @@ RUN apt-get update \
         libharfbuzz-subset0 \
         fontconfig \
         fonts-dejavu-core \
+        fonts-liberation \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 
+# /app/beat-data: where Celery Beat keeps its "when did each task last run" file.
+# docker-compose.yml mounts a named volume here. A named volume is created
+# root-owned unless the image already contains the directory owned by the
+# user, in which case Docker copies that ownership onto the new volume - so
+# creating it here, as app, is what lets the non-root beat process write to it
+# (a volume mounted at a path the image lacks gives "Permission denied").
 RUN useradd --create-home --uid 1000 app \
-    && mkdir /app \
-    && chown app:app /app
+    && mkdir /app /app/beat-data \
+    && chown app:app /app /app/beat-data
 WORKDIR /app
 
 COPY requirements.txt .

@@ -15033,6 +15033,7 @@ Out-of-scope observations (reported, not fixed): CLAUDE.md says the exchange-rat
 ---
 
 Date: 31 October 2026 (Free-VM stack — Compose + real-Linux verification)
+**Superseded in part (region only: `ap-south-1`/Mumbai is wrong for this account; the VM is in Sydney, `ap-southeast-2`) — see "Sydney region, beat volume, Liberation fonts" below. The rest of this entry stands.**
 Decision: Until public launch the backend runs from the same Docker image as a `docker compose` stack
 (`deploy/`: db, redis, one-shot migrate, web, worker `--pool=solo`, beat, optional cloudflared) on a **free,
 always-on rented Linux VM**, exposed through a **Cloudflare Tunnel** at `https://api.lanceraos.com` (no inbound
@@ -15091,3 +15092,56 @@ Findings (reported, not fixed — outside this pass's no-application-code scope)
   08:00 in `config/celery.py` while the docs say 06:00; `frontend/viteset.config.js` is dead; `SENTRY_DSN` is read but
   nothing initialises Sentry; `.dockerignore` does not exclude `apps/*/tests` or the `*.md` docs (they ship in the image).
 - The compose file uses `redis:7-alpine` as instructed, while CLAUDE.md names Redis 8 — nothing the app uses differs.
+
+
+---
+
+Date: 31 October 2026 (second entry — Sydney region, beat volume, Liberation fonts)
+Decision: Three small changes after the Free-VM stack landed.
+(1) **The VM is in Sydney (`ap-southeast-2`), not Mumbai.** The owner's AWS account is on the AWS Free plan, which
+is locked to Sydney; any other region needs the dashboard's "Upgrade plan", which switches the account to a plan
+that can bill the card — the one thing the owner will not do. The earlier entry's `ap-south-1` and DEPLOYMENT.md's
+"lowest latency from Pakistan" claim were wrong for this account and are removed. Latency from Pakistan to Sydney has
+NOT been measured; DEPLOYMENT.md D.7 step 6 is the procedure and holds a "(not measured yet)" placeholder for the number.
+(2) **Celery Beat's "last run" file moves to a named volume (Option A).** `Dockerfile` creates `/app/beat-data` owned
+by `app`; `deploy/docker-compose.yml` mounts volume `beatdata` there on the `beat` service only and runs
+`--schedule /app/beat-data/celerybeat-schedule`. `railway/beat.json` is untouched (documentation only).
+(3) **`fonts-liberation` is installed in the image**, so the system font stack most templates use for body text
+(`-apple-system, ... Arial, sans-serif`) resolves to Liberation Sans (Arial-metric) instead of DejaVu Sans.
+Reason:
+- (2) Evidence, same 15-minute task, old files vs new files, on the Compose test stack: re-creating beat 25 s after a send
+  re-sent nothing in EITHER setup (so the "re-sent at once" premise did not reproduce); with beat down across a slot, the old
+  setup SKIPPED the slot (container started 17:15:17, next send 17:30:00) while the volume setup CAUGHT IT UP at start
+  (started 17:30:16, sent 17:30:16). The real benefit is therefore "a deploy straddling a slot no longer skips it" (matters
+  for the 08:00/08:30/09:00 daily jobs), not "no duplicate runs". A brand-new empty volume starts fine; a damaged file is
+  repaired by Celery itself (`Removing corrupted schedule file ...`, tested with random bytes and with an emptied file);
+  the manual reset recipe (stop beat, `rm -f`, `docker volume rm <project>_beatdata`, `up -d beat`) also works.
+- (3) Evidence: 11 templates, 12 invoices, same data, old image vs new image, embedded fonts read with PyMuPDF — DejaVu Sans
+  gone from every template that had it, Liberation Sans in its place, every bundled font (IBM Plex, Source Serif 4) still
+  embedded, page counts unchanged, image +7 MB (675 -> 682 MB, built from identical trees). Not fully closed: `fc-match Georgia`
+  is still DejaVu Serif, so a `Georgia, serif` stack with no Times fallback (`pro_prestige`, one stack) keeps DejaVu Serif.
+Alternatives considered:
+- Beat Option B — `django_celery_beat`'s `DatabaseScheduler` (last-run times in Postgres: no volume, identical on Railway).
+  Not chosen NOW because: the app runs `USE_TZ = False`, and the library defaults `DJANGO_CELERY_BEAT_TZ_AWARE` to True —
+  checked in the installed 2.9.0 source (`schedulers.py` and `models.py` read `getattr(settings,
+  'DJANGO_CELERY_BEAT_TZ_AWARE', True)`) and in the package's own README (METADATA: "If you have a project that is time zone
+  naive, you can set DJANGO_CELERY_BEAT_TZ_AWARE=False in your settings file"). `config/settings.py` does not set it, so the
+  owner's concern is CORRECT: it would need that extra setting (a `config/` edit, out of scope for this pass) plus a
+  re-test of every cron slot. The separate worry that the library "has had time-zone problems" with naive projects is
+  supported only by third-party posts found by web search (not verified here). Also correct: `DatabaseScheduler.
+  update_from_dict` only adds/updates entries from `config/celery.py` (read in the 2.9.0 source, not run), so a task
+  deleted from code would keep its database row. REVISIT if the backend moves to Railway, where there is no volume by
+  default: then set `DJANGO_CELERY_BEAT_TZ_AWARE = False`, switch `CELERY_BEAT_SCHEDULER`, and test every slot.
+- Mount the volume at `/home/app` (writable without a Dockerfile change) — rejected: it hides the whole home directory
+  behind a volume to hold one file.
+- Region: Mumbai — rejected, needs "Upgrade plan". Any other region likewise.
+- Fonts: bundle Arial-compatible fonts into the app's static files — rejected: that is an application change, and the
+  distro package gives the same metrics for 7 MB with no code change. `fonts-gelasio` (a Georgia look-alike) — not tried.
+Docs fixed in the same pass: CLAUDE.md Module 3 said the exchange-rate fetch runs "6:00 AM PKT"; `config/celery.py` has
+scheduled it at `crontab(hour=8, minute=0)` since its first commit (d0564bc, 8 August 2026), `apps/payments/tasks.py`'s
+docstring, DATABASE.md and the 8:30/9:00 slot ordering in DECISIONS.md all say 8:00, and no DECISIONS entry ever chose 6:00,
+so the doc was corrected to 8:00 (the code was not changed).
+Out-of-scope findings (reported, not fixed): `ws/echo/` still routed in production; a failed Cloudinary upload still
+logs two errors and Celery reports `succeeded`; Sentry never initialised; `frontend/viteset.config.js` dead; `.dockerignore`
+lets `apps/*/tests` and `*.md` into the image. New: `DJANGO_CELERY_BEAT_TZ_AWARE` is unset (matters only if Option B is
+ever adopted).

@@ -118,9 +118,11 @@ dev needs, and now also the verified production choice: prefork was exercised on
 `--pool=prefork --concurrency=2 --max-tasks-per-child=50` (`--concurrency` because the default is "number
 of CPUs" and a container can report the *host's* count; `--max-tasks-per-child` to cap WeasyPrint memory
 growth) and run Appendix A on Railway staging first.
-Beat uses the default `PersistentScheduler`; its state file lives in `/tmp` and is lost when the
-container restarts, which means **a daily task is skipped if beat was down at its exact minute**.
-All scheduled tasks are idempotent, so you can trigger a missed one by hand (section 7).
+Beat uses the default `PersistentScheduler`. **On Railway** (this section) its state file lives in `/tmp`
+and is lost when the container restarts, which means **a daily task is skipped if beat was down at its exact
+minute** (and Railway has no volume for it unless you add one — D.9). **On the VM stack** the file is on a
+Docker volume and survives a re-create (D.6). All scheduled tasks are idempotent, so you can trigger a
+missed one by hand (section 7).
 **Never run more than one beat instance** — duplicates fire every task twice.
 
 Do **not** use `daphne --proxy-headers`: Daphne's parser takes the *leftmost* (client-controlled)
@@ -341,8 +343,9 @@ repeated 3 times per configuration = 36 renders; Cloudinary credentials blank, s
 "Renders ok" = 36 `weasyprint.progress: Step 7` lines and 36 `Cloudinary invoice-PDF upload failed` lines
 (the upload is attempted only after the render returns bytes). Also: all 22 selectable templates rendered
 through `generate_template_previews`; embedded fonts for 11 templates inspected with PyMuPDF — every PDF
-embeds IBM Plex / Source Serif, but 10 of 11 use **DejaVu** (the container's fallback) for body text where
-the template asks for a system font (details and a one-line fix: D.6). A 200-item, 23-page invoice rendered
+embeds IBM Plex / Source Serif, and **before the font fix** 10 of 11 used **DejaVu** (the container's
+fallback) for body text where the template asks for a system font; the image now installs `fonts-liberation`
+and those PDFs embed Liberation Sans instead (before/after table: D.6). A 200-item, 23-page invoice rendered
 in 24 s without a crash.
 
 **Repeat it (anywhere with Docker; this is the Compose stack, D.8):**
@@ -404,7 +407,8 @@ Repeat from a second network (phone, mobile data) to confirm two clients differ.
 - **Docker image:** built and run for real on 31 October 2026 (arm64; Appendix A/D.8): `apt-get`, user and
   permissions, `collectstatic` as `app`, and the final `CMD` all work. It has not been built on x86-64 or
   on the 2 GiB target VM itself (build memory there is an estimate, D.5).
-- Beat state is not persisted when its container is recreated (see 3.2 and D.6).
+- Beat's "last run" file survives a container re-create on the VM stack (volume, D.6) but **not on Railway** unless a volume is added there (3.2, D.9).
+- `pro_prestige` (and any template whose font stack is `Georgia, serif` with no Times fallback) still falls back to DejaVu Serif for that text: Debian has no Georgia look-alike in the packages installed (D.6).
 - `SENTRY_DSN` is read but nothing initialises Sentry: no error monitoring until someone adds
   `sentry-sdk`.
 - Railway's config-as-code is deprecated; dashboard settings are the source of truth (3.2).
@@ -423,6 +427,13 @@ Repeat from a second network (phone, mobile data) to confirm two clients differ.
 > `https://lanceraos.com`. At public launch the backend moves to Railway (if signups are open) or wherever
 > is then best (D.9). Sections 3-4 and Appendix B above describe that later Railway setup and still apply
 > to it.
+>
+> **Where the VM lives — Sydney, not Mumbai.** The owner's AWS account is on AWS's **Free plan, which is locked
+> to the Sydney region (`ap-southeast-2`)**. Any other region (Mumbai included) needs the dashboard's
+> "Upgrade plan" button, which switches the account to a plan that can **bill the card** — so the VM is in
+> Sydney. (An earlier version of this appendix said Mumbai; that was wrong for this account.) Latency from
+> Pakistan to Sydney has **not been measured yet**; a number will be added here after the live check (D.7
+> procedure step 6).
 
 ### D.0 In one paragraph
 
@@ -464,10 +475,20 @@ Mac, which is why they are about Docker, not about AWS).
 
 #### Part 1 — Create the server in AWS **[U]**
 
-1. Sign in to the AWS console. In the top-right region picker choose **Asia Pacific (Mumbai)
-   `ap-south-1`** (lowest latency from Pakistan among AWS regions). **Stay on the Free plan — do
-   not click "Upgrade plan"** (see Part 1a below).
-2. EC2 -> **Launch instance**.
+**1. Create the server's IAM role first (once).** The role is what later lets you open a shell with no
+open port, and the launch form can only *pick* an existing role, so make it before launching. IAM is
+account-wide (it has no region).
+
+   IAM -> **Roles** -> **Create role** -> Trusted entity type **AWS service** -> Use case **EC2** -> Next ->
+   in "Permissions policies" search for **`AmazonSSMManagedInstanceCore`** and tick it -> Next ->
+   Role name **`lanceraos-server-role`** -> **Create role**.
+
+**2. Pick the region.** In the top-right region picker choose **Asia Pacific (Sydney) `ap-southeast-2`**.
+The Free plan only works in Sydney; the console may let you *look at* other regions, but launching there
+needs "Upgrade plan", which can bill your card — **do not click it** (see Part 1a below). Latency from
+Pakistan to Sydney has not been measured yet (D.7 step 6 adds the number).
+
+**3. EC2 -> Launch instance.**
    - Name: `lanceraos`.
    - Image (AMI): **Ubuntu Server 24.04 LTS**, architecture **64-bit (Arm)**. It must be Arm,
      because `t4g` machines are Arm (Graviton) — an x86 image will not even appear for them.
@@ -482,10 +503,11 @@ Mac, which is why they are about Docker, not about AWS).
      Cloudflare, nothing dials in. Leave "Auto-assign public IP" **enabled** (the machine needs
      *some* route to the internet; with no inbound rule the address is unreachable anyway).
    - Storage: **30 GiB gp3**.
-   - Advanced details -> **IAM instance profile**: create/choose a role that has the AWS-managed
-     policy **`AmazonSSMManagedInstanceCore`** (this is what lets you open a shell with no open
-     port). Advanced details -> **Credit specification: `Standard`** (see below).
-3. Launch. Wait for "2/2 checks passed".
+   - Advanced details -> **IAM instance profile**: choose **`lanceraos-server-role`** (made in step 1).
+   - Advanced details -> **Termination protection: Enable** (stops a mis-click in the console from
+     deleting the server and its database; to delete it deliberately later you first switch this off).
+   - Advanced details -> **Credit specification: `Standard`** (see below).
+**4.** Launch. Wait for "2/2 checks passed".
 
 **CPU credit mode — set it to Standard. [D]** `t4g` machines are *burstable*: they earn a small
 amount of CPU "credit" every hour (20 % of one core per vCPU is the free baseline for
@@ -529,9 +551,17 @@ Modify IAM role).
 
 #### Part 3 — Prepare Ubuntu **[U]** (commands are standard; Docker's lines were checked against Docker's own docs **[D]**)
 
+Everything here is written to run **without any pop-up**. On Ubuntu 24.04 the `needrestart` helper and
+`dpkg-reconfigure` each open a full-screen blue dialog that hangs a browser terminal such as Session
+Manager. The `APT` line below turns both off for every apt command — paste it first, in the same
+terminal, and use `$APT ...` for every apt call.
+
 ```bash
+# 0. Non-interactive apt (no needrestart dialog, keep existing config files on upgrade)
+APT="sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y -o Dpkg::Options::=--force-confold"
+
 # 1. Updates
-sudo apt update && sudo apt -y upgrade
+$APT update && $APT upgrade
 
 # 2. Swap file (the safety net for a 2 GiB machine - see D.5 for what it does and doesn't do)
 sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
@@ -542,11 +572,16 @@ sudo sysctl vm.swappiness=10 && echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d
 echo 'vm.overcommit_memory=1' | sudo tee /etc/sysctl.d/99-redis.conf && sudo sysctl -p /etc/sysctl.d/99-redis.conf
 free -h     # should now show ~2 GiB of Swap
 
-# 3. Automatic security updates
-sudo apt -y install unattended-upgrades && sudo dpkg-reconfigure -plow unattended-upgrades   # answer Yes
+# 3. Automatic security updates: install the package, then switch it on by writing its settings file
+#    (this is what `dpkg-reconfigure -plow unattended-upgrades` does, minus the dialog)
+$APT install unattended-upgrades
+sudo tee /etc/apt/apt.conf.d/20auto-upgrades >/dev/null <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
 
 # 4. Docker Engine + Compose plugin from Docker's own apt repository
-sudo apt -y install ca-certificates curl git
+$APT install ca-certificates curl git
 sudo install -m 0755 -d /etc/apt/keyrings
 sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 sudo chmod a+r /etc/apt/keyrings/docker.asc
@@ -558,12 +593,16 @@ Components: stable
 Architectures: $(dpkg --print-architecture)
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
-sudo apt update
-sudo apt -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+$APT update
+$APT install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo systemctl enable --now docker containerd     # start on every boot
 sudo usermod -aG docker ubuntu                    # then log out and back in (sudo -iu ubuntu again)
 docker run --rm hello-world && docker compose version
 ```
+
+Unattended upgrades install security fixes by themselves but do **not** reboot the machine on their own;
+if a kernel update is waiting, `/var/run/reboot-required` exists — reboot at a quiet moment (`sudo reboot`;
+the stack comes back by itself, below).
 
 **Surviving a reboot:** Docker starts at boot (`systemctl enable` above) and every long-running
 service in `docker-compose.yml` has `restart: unless-stopped`, so after a reboot — or an AWS
@@ -573,13 +612,63 @@ you stopped yourself with `docker compose stop` stays stopped after a reboot, on
 
 #### Part 4 — Get the code and write the secrets file
 
+The repository is private (`app-lanceraos/lanceraos`), so the server needs permission to read it — and
+**only** read it. That is a GitHub **deploy key**: a key pair made on the server, whose public half you
+register on this one repository, read-only. No personal access token and no GitHub password ever goes on
+the server.
+
 ```bash
-git clone https://github.com/lanceraos/<repo-name>.git LanceraOS     # use your real repo URL
+# 4a. Make the key (no passphrase, so the server can pull unattended)
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+ssh-keygen -t ed25519 -N "" -C "lanceraos-server-deploy-key" -f ~/.ssh/lanceraos_deploy
+cat ~/.ssh/lanceraos_deploy.pub          # prints ONE line starting "ssh-ed25519 ..." - copy it
+```
+
+**4b. Register it on GitHub [D].** Open `https://github.com/app-lanceraos/lanceraos` -> **Settings** ->
+(sidebar) **Deploy keys** -> **Add deploy key** -> Title `lanceraos-server` -> paste the line into **Key**
+-> **leave "Allow write access" UNTICKED** (keys are read-only by default; a read-only key means that if
+the server is ever broken into, the attacker still cannot change your code) -> **Add key**. (Menu names
+from GitHub's "Managing deploy keys" page, fetched 31 October 2026.)
+
+```bash
+# 4c. Tell ssh to use that key for github.com
+cat >> ~/.ssh/config <<'EOF'
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/lanceraos_deploy
+  IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+
+# 4d. Teach the server GitHub's real identity BEFORE connecting (so it cannot be tricked into trusting an imposter)
+echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >> ~/.ssh/known_hosts
+ssh-keygen -lf ~/.ssh/known_hosts          # prints a line ending "github.com (ED25519)"
+```
+
+**Compare the fingerprint ssh just printed** with the one GitHub publishes — it must be exactly
+`SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU` (Ed25519). Source: GitHub Docs, "GitHub's SSH key
+fingerprints" (<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints>),
+fetched 31 October 2026; the `known_hosts` line above is the Ed25519 line quoted on that page.
+**Verified on the Mac:** that exact line produces that fingerprint, and `ssh-keyscan -t ed25519 github.com`
+returned the same fingerprint on the same day. If the server prints anything else, **stop** and do not
+continue. (GitHub can rotate host keys; if so, the page above is the source of truth — update this file.)
+
+```bash
+# 4e. Check access, then clone
+ssh -T git@github.com        # expect: "Hi app-lanceraos/lanceraos! You've successfully authenticated, but GitHub does not provide shell access."
+git clone git@github.com:app-lanceraos/lanceraos.git LanceraOS
 cd LanceraOS/deploy
 cp env.example .env
 nano .env          # replace every CHANGE_ME (Ctrl+O, Enter, Ctrl+X to save)
 chmod 600 .env
 ```
+
+(The exact wording of the `ssh -T` greeting is from memory **[U]**; the point is that it says it
+authenticated.) **If the repository is ever made public**, skip 4a-4d and just use
+`git clone https://github.com/app-lanceraos/lanceraos.git LanceraOS`.
+
+Later updates are `cd ~/LanceraOS && git pull` — the deploy key makes that work with no password.
 
 Fill the values from your password manager. The comments at the top of `env.example` give the
 exact one-line commands that generate each secret. **Put ENCRYPTION_KEY and BLIND_INDEX_KEY in
@@ -639,6 +728,7 @@ update `.env`, `docker compose up -d`.
 | Update to the newest code | `cd ~/LanceraOS && git pull && cd deploy && docker compose up -d --build` (then `docker compose ps`) |
 | Run a missed scheduled task by hand | `docker compose exec worker python manage.py shell -c "from apps.payments.tasks import fetch_exchange_rates; fetch_exchange_rates.delay()"` |
 | Open a Django shell | `docker compose exec web python manage.py shell` |
+| Reset beat's memory of when tasks last ran (rarely needed — Celery repairs a damaged file itself, D.6) | `docker compose stop beat && docker compose rm -f beat && docker volume rm lanceraos_beatdata && docker compose up -d beat` — replace `lanceraos` with the `COMPOSE_PROJECT_NAME` in your `.env`; `docker volume ls` shows the exact name. Beat then starts fresh and waits for the next scheduled slot. |
 | **Delete all data (!)** | `docker compose down -v` — **never** run this on the real stack; the `-v` deletes the database volume. Plain `docker compose down` is safe. |
 
 Updating briefly stops `web` while it rebuilds (a minute or two). `migrate` runs automatically
@@ -672,7 +762,7 @@ checked (row counts of 6 tables identical before and after) on the Mac test lab.
    Create bucket; keep "Block all public access" ON). In IAM add to the instance's role a policy
    allowing only `s3:PutObject` on that bucket. On the server: `sudo snap install aws-cli
    --classic`, then after each backup:
-   `aws s3 cp ~/lanceraos-backups/lanceraos-<date>.dump s3://<your-bucket>/ --region ap-south-1`.
+   `aws s3 cp ~/lanceraos-backups/lanceraos-<date>.dump s3://<your-bucket>/ --region ap-southeast-2`.
    The bucket outlives the instance. (Check S3's pricing/limits under the Free plan in the
    console; a few MB per day is tiny.)
 2. **A second copy of the whole disk: an EBS snapshot [U].** EC2 -> Volumes -> select the
@@ -758,26 +848,57 @@ safety net, not a plan.
   crash is restarted. Docker (documented behaviour; not exercised here) does **not** restart a container that is merely
   *unhealthy* — a hung Daphne with a live process would stay hung; the health check only reports. If that ever bites, add an
   "autoheal" sidecar — not done here.
-- **Beat state survives a plain restart but not a recreate.** The schedule file is `/tmp/celerybeat-schedule`
-  inside the container. `docker compose up -d --build` after a code change recreates `beat`, so its record
-  of "last run" is lost and a daily task is skipped if that moment straddles its slot. (All tasks are
-  idempotent; run any missed one by hand, D.3.) A named volume would fix this **only if** it is mounted
-  where the image already contains an `app`-owned directory: tested — a volume at a new path (`/beatdata`)
-  is created `root:root` and `app` gets *Permission denied*; a volume at `/home/app` is writable. The clean
-  fix is two lines in the `Dockerfile` (`mkdir /app/beat-data && chown app:app`) plus a volume and a
-  `--schedule` path. Not applied here, because the start command is deliberately identical to Railway's.
+- **Beat's memory of "when did each task last run" — FIXED (31 October 2026, second pass).** Beat keeps that
+  record in a small file. It used to be `/tmp/celerybeat-schedule`, which is thrown away whenever the container
+  is re-created (every `docker compose up -d --build`). It now lives on a Docker volume, `beatdata`, mounted at
+  `/app/beat-data` (the `Dockerfile` creates that directory owned by the non-root `app` user — a volume mounted
+  at a path the image does not already have is created `root:root` and `app` gets *Permission denied*, tested
+  last pass; a volume at an image-owned path inherits the right owner). Tested on the Compose stack, old
+  files vs new files, same 15-minute task (`notify-unread-comments-every-15-minutes`):
+
+  | Scenario | Old (`/tmp`, no volume) | New (`beatdata` volume) |
+  |---|---|---|
+  | **A.** Re-create beat 25 s after it sent the task | not re-sent (17:00:27 start, nothing until the next slot) | not re-sent (17:15:28 start, nothing until the next slot) |
+  | **B.** Beat is gone across a slot, then a *new* container starts after it | the missed 17:15 slot was **skipped** (container started 17:15:17, next send 17:30:00) | the missed 17:30 slot was **caught up at once** (container started 17:30:16, task sent 17:30:16) |
+
+  So the benefit is **not** "stops duplicate runs around a deploy" — nothing was re-sent in scenario A either
+  way — but **"a deploy that straddles a slot no longer silently skips it"**, which matters for the daily
+  jobs (08:00 exchange rates, 08:30 recurring invoices, 09:00 reminders). Catch-up runs each overdue task
+  once at start-up (seen for the one task tested); all scheduled tasks are idempotent. Also tested: a
+  **brand-new empty volume** starts fine (`id` 1000/`app`, `/app/beat-data` owned by `app`, writable, schedule
+  files created on first start); and a **damaged schedule file** (random bytes, or emptied, left with a stale
+  `-wal`) is **repaired by Celery itself** — it logs `Removing corrupted schedule file ... db type could not
+  be determined`, creates a fresh one and keeps running with zero restarts. The manual reset in D.3 (stop beat,
+  remove the container and the volume, start beat) was also run verbatim and works; you should rarely need it.
+  **Railway has no such volume by default**, so there the old `/tmp` behaviour remains (3.2, D.9).
 - **Timezone is Pakistan time in the containers.** `datetime.now()` and `datetime.utcnow()` differ by
   5 hours (the tzdata package is in the image); Celery's 15-minute schedule and the 08:00 daily jobs are
   PKT.
-- **The system-font fallback.** 11 distinct templates were rendered to real PDFs in the container and
-  their embedded fonts listed: 10 of them (every `free_*` and `pro_*` one tested; only `professional`
-  / "Ledger" was exempt) declare a system font stack (`-apple-system, 'Segoe UI', Arial, sans-serif`) for
-  body text. On a Mac that resolves to a real system font; in this Debian image it resolves to **DejaVu
-  Sans** (different letter shapes and widths, so line and page breaks can differ from the gallery previews,
-  which were rendered on a Mac). The other 11 templates were not rendered to PDF in this check. Tested
-  without changing the image: adding the Debian package `fonts-liberation` makes the same templates embed
-  **Liberation Sans** (metric-compatible with Arial). One-line fix for the `Dockerfile`'s `apt-get
-  install` list; **not applied** (reported only).
+- **The system-font fallback — FIXED (31 October 2026, second pass).** 10 of the 11 templates rendered to real
+  PDFs in the container set their body text in a system font stack (`-apple-system, BlinkMacSystemFont,
+  'Segoe UI', Arial, sans-serif`). On a Mac that is a real font; in the old image only DejaVu was installed,
+  so the PDFs silently used **DejaVu Sans** (different, wider letters; line and page breaks could differ from
+  the gallery previews, which were rendered on a Mac). The `Dockerfile` now installs `fonts-liberation`;
+  fontconfig then maps Arial/Helvetica to **Liberation Sans** (metric-compatible with Arial). Evidence — the
+  same 12 invoices rendered with the old and the new image, embedded fonts read with PyMuPDF:
+
+  | Template | Fonts BEFORE (old image) | Fonts AFTER (`fonts-liberation`) |
+  |---|---|---|
+  | `professional` (Ledger) | IBM Plex Mono/Sans (+Semi-Bold), Source Serif 4 Semi-Bold | identical |
+  | `pro_executive` | DejaVu Sans (+Bold), IBM Plex Mono, Source Serif 4 Semi-Bold | Liberation Sans (+Bold), IBM Plex Mono, Source Serif 4 Semi-Bold |
+  | `pro_grid` | DejaVu Sans (+Bold), IBM Plex Mono (+Semi-Bold) | Liberation Sans (+Bold), IBM Plex Mono (+Semi-Bold) |
+  | `pro_signature` | DejaVu Sans/Serif (+Bold), IBM Plex Mono | Liberation Sans/Serif (+Bold), IBM Plex Mono |
+  | `pro_prestige` | DejaVu Sans/Serif (+Bold), IBM Plex Mono | Liberation Sans/Serif (+Bold), **DejaVu Serif** (one `Georgia, serif` stack), IBM Plex Mono |
+  | `pro_consulting`, `free_essential`, `free_compact`, `free_minimal`, `free_professional` | DejaVu Sans (+Bold), IBM Plex Mono | Liberation Sans (+Bold), IBM Plex Mono |
+  | `free_classic` | DejaVu Sans (+Bold), DejaVu Serif Bold, IBM Plex Mono | Liberation Sans (+Bold), Liberation Serif Bold, IBM Plex Mono |
+
+  All bundled fonts (IBM Plex, Source Serif 4) are still embedded in every template (checked by comparing the
+  non-system font sets before/after: unchanged for all 11), and every page count is unchanged (all 1 page, except
+  `free_professional` at 2, before and after). Image size, built from identical trees: **675 MB -> 682 MB
+  (+7 MB)**. Remaining gap: `Georgia` has no look-alike among the installed packages (`fc-match Georgia` ->
+  DejaVu Serif), so a `Georgia, serif` stack with no Times fallback — only `pro_prestige` among the 11 tested — still
+  uses DejaVu Serif for that text. A Georgia-metric package (`fonts-gelasio` — name from memory) was not tried. The other 11
+  templates were not rendered in this check.
 - **cloudflared pinned to `2026.10.7`**, the newest release on <https://github.com/cloudflare/cloudflared>
   on 31 October 2026. With a deliberately invalid token the container starts, rejects it locally
   (`Provided Tunnel token is not valid`) and restart-loops harmlessly; a *real* token was never tried.
@@ -827,6 +948,11 @@ must be checked once, live.**
      entry; everyone shares one address. Same fix: read `CF-Connecting-IP`.
 5. Repeat step 1-3 from your phone on mobile data. The recorded address must be **different**
    from the first one (two real visitors, two addresses).
+6. **Measure the latency to Sydney** (never measured yet; the VM is in Sydney, `ap-southeast-2`, because that
+   is where the Free plan is locked). From a Pakistani connection run
+   `for i in 1 2 3 4 5; do curl -s -o /dev/null -w '%{time_total}s\n' https://api.lanceraos.com/api/health/; done`
+   and write the typical figure here, with the date and the network: *(not measured yet)*. Expect a few
+   hundred milliseconds per request; the first number includes connection set-up and is always the slowest.
 
 ### D.8 The test lab (how this was verified, and how to repeat it)
 
@@ -886,5 +1012,12 @@ Results of the 31 October 2026 run (all on **arm64 Linux**; see Appendix A for w
 5. DNS swap: in Cloudflare delete the tunnel's `api` record, create the `api` CNAME to Railway
    (DNS-only/grey per section 4), wait for Railway to issue the certificate. Switch **before**
    shutting the VM down; keep it stopped (not deleted) for a week as a fallback.
-6. Afterwards: the proxy topology is Railway's, not Cloudflare's, so Appendix B (client IP) applies
+6. **Beat's memory on Railway.** On the VM, beat remembers when each task last ran in a file on a Docker
+   volume (`beatdata`, D.6). `railway/beat.json` is documentation only and a Railway service has no such
+   volume by default, so on Railway a restart of `beat` forgets that history unless you add a Railway
+   volume to the `beat` service and set its start command to `--schedule <mount path>/celerybeat-schedule`
+   (the mount path must be owned by the container's non-root user — Railway's volume ownership was not
+   checked). The alternative that needs no volume, `django_celery_beat`'s `DatabaseScheduler`, is the thing to
+   revisit at that point — see DECISIONS.md, 31 October 2026 (second entry).
+7. Afterwards: the proxy topology is Railway's, not Cloudflare's, so Appendix B (client IP) applies
    again and must be re-run. Remove the AWS resources and the Cloudflare tunnel when you are sure.
