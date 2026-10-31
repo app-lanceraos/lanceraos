@@ -1,0 +1,226 @@
+# deploy/docker-compose.yml
+#
+# Production-style stack for ONE small Linux machine (a free always-on VM today,
+# the owner's Mac for testing). Same image as Railway will later run; only the
+# wiring differs. See DEPLOYMENT.md Appendix D for the owner's runbook.
+#
+#   cd deploy && cp env.example .env && (edit .env) && docker compose up -d --build
+#   docker compose --profile tunnel up -d   # also start the Cloudflare Tunnel
+#
+# ONE env file (deploy/.env) feeds BOTH Compose's ${...} interpolation and the
+# app containers' environment, so POSTGRES_* (db container) and DB_* (Django)
+# are the same variable and can never drift apart. A second, throwaway stack
+# (deploy/make-test-env.sh -> deploy/.env.test) coexists with the real one:
+# that file sets its own COMPOSE_PROJECT_NAME (=> own volumes/network), WEB_PORT
+# and APP_ENV_FILE, and is selected with `--env-file .env.test`.
+#
+# Memory budget: sized for a 2 GiB machine (AWS t4g.small). The per-service
+# mem_limit values are ceilings that sum to ~1.7 GiB, leaving the rest for the
+# OS, the Docker daemon and page cache. When a service exceeds its ceiling the
+# kernel OOM-kills THAT container only and `restart: unless-stopped` brings it
+# back; the other services (and the VM) keep running. The numbers come from the
+# measurements recorded in DEPLOYMENT.md Appendix D.
+
+x-app: &app
+  # Built once from the repo-root Dockerfile; every app service shares the tag,
+  # so `docker compose build` produces ONE image (layers cached for the rest).
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  image: lanceraos-app:${IMAGE_TAG:-local}
+  env_file:
+    - ${APP_ENV_FILE:-.env}
+  restart: unless-stopped
+  logging: &logging
+    # Rotation so container logs can never fill the VM's disk.
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: ${DB_NAME:?set DB_NAME in the env file}
+      POSTGRES_USER: ${DB_USER:?set DB_USER in the env file}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in the env file}
+    # No `ports:` on purpose: only containers on this Compose network can reach
+    # Postgres. Tuned for a ~2 GiB machine shared with 5 other processes
+    # (defaults assume Postgres owns the box):
+    #   shared_buffers 128MB      the default; ~1/3 of this service's ceiling.
+    #   max_connections 30        Django/Daphne (1 sync thread), 1 solo worker,
+    #                             beat, migrate, backups: <10 in practice.
+    #                             Each idle backend costs ~5-10 MB.
+    #   work_mem 4MB              per sort/hash node per connection; kept small.
+    #   maintenance_work_mem 32MB autovacuum/CREATE INDEX; default 64MB.
+    #   effective_cache_size 768MB planner hint only (allocates nothing): what
+    #                             the OS can realistically cache on 2 GiB.
+    #   random_page_cost 1.1      SSD (EBS gp3 / NVMe) - favours index scans.
+    #   jit off                   JIT compile memory/latency is wasted on this
+    #                             app's small OLTP queries.
+    #   max_wal_size 512MB        bounds WAL disk use between checkpoints.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=30
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - jit=off
+      - -c
+      - max_wal_size=512MB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 384m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *logging
+    # ONE Redis carries the Celery queue, the Django cache and the Channels
+    # layer (logical DBs 0/1/2). maxmemory-policy is `noeviction` and MUST stay
+    # that way: any evicting policy (allkeys-lru etc.) could silently delete a
+    # queued Celery task. At the limit Redis refuses WRITES with an OOM error
+    # instead (reads keep working) - what the app then does is recorded in
+    # DEPLOYMENT.md Appendix D. 64mb is ~35x the measured working set (1.8 MB
+    # after ~150 queued tasks and a day's worth of cache keys); the container
+    # ceiling (96m) leaves room for the AOF rewrite buffer.
+    # --appendonly yes: queued tasks survive a container restart.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 64mb
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 96m
+
+  migrate:
+    <<: *app
+    # One-shot: web waits for it. Runs here (not in web's command) so the three
+    # app services never race to migrate - same idea as Railway's pre-deploy.
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 384m
+
+  web:
+    <<: *app
+    # The Dockerfile's default CMD (Daphne on ${PORT:-8000}) - identical to the
+    # start command Railway will use. Not overridden here on purpose.
+    #
+    # Published on LOOPBACK ONLY. config/settings.py trusts X-Forwarded-Proto
+    # (SECURE_PROXY_SSL_HEADER) from whoever connects, so a port reachable from
+    # the LAN/internet would let anyone forge "this request was HTTPS". The
+    # Cloudflare Tunnel does not need a host port at all: cloudflared reaches
+    # this container over the Compose network at http://web:8000. 127.0.0.1 is
+    # only for local curl/smoke tests.
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # The slim image has no curl; python is already there. 127.0.0.1 must be
+      # in ALLOWED_HOSTS (env.example includes it) or Django answers 400.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health/', timeout=5).status == 200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Idle ~92 MiB, but web can also render a PDF inside a request (the
+    # draft-preview / self-heal fallbacks): measured 366 MiB peak for a
+    # 200-line-item, 23-page invoice, so the ceiling must clear that.
+    mem_limit: 448m
+
+  worker:
+    <<: *app
+    # --pool=solo is the PRODUCTION choice here (same as local macOS dev) until
+    # DEPLOYMENT.md Appendix A has proven prefork on every target architecture.
+    # The pool is deliberately not configurable in this file; prefork tests use
+    # `docker compose run ... worker celery ... --pool=prefork` overrides.
+    command: ["celery", "-A", "config", "worker", "-l", "info", "--pool=solo"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Largest ceiling: WeasyPrint renders (Pango/HarfBuzz) spike memory.
+    # Measured (solo): ~100 MiB idle, ~165 MiB peak for 36 ordinary renders,
+    # 366 MiB for one 200-item / 23-page invoice. Prefork c2 peaked at 339 MiB
+    # and c4 at 568 MiB on ordinary invoices - another reason solo is the pick.
+    mem_limit: 576m
+
+  beat:
+    <<: *app
+    # EXACTLY ONE beat, ever (a second one fires every task twice). The schedule
+    # file lives in /tmp and is lost when the container is recreated (not on a
+    # plain restart); the idempotent tasks can be run by hand. See DECISIONS.md.
+    command: ["celery", "-A", "config", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Measured ~101 MiB (it imports the whole Django app to resolve task names).
+    mem_limit: 160m
+
+  cloudflared:
+    # Optional: `docker compose --profile tunnel up -d`. Dials OUT to Cloudflare,
+    # so the machine needs no inbound ports at all. The public hostname
+    # (api.lanceraos.com -> http://web:8000) is configured in the Cloudflare
+    # dashboard, not here (a "remotely-managed" tunnel authenticated by token).
+    # Version pinned, never `latest`: 2026.10.7 was the newest stable release on
+    # github.com/cloudflare/cloudflared on 2026-10-31. Cloudflare supports
+    # versions within one year of the latest; bump it deliberately.
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:2026.10.7
+    restart: unless-stopped
+    logging: *logging
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      web:
+        condition: service_healthy
+    mem_limit: 96m
+
+volumes:
+  pgdata:
+  redisdata:

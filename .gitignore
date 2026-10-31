@@ -4,6 +4,12 @@
 .env.production
 .env.*.local
 
+# Compose stack secrets (deploy/.env = real, deploy/.env.test = throwaway).
+# `.env` above already matches deploy/.env; the wildcard covers .env.test etc.
+# deploy/env.example (no leading dot) stays tracked on purpose.
+deploy/.env
+deploy/.env.*
+
 # Python virtual environment
 venv/
 env/

@@ -15028,3 +15028,66 @@ Out-of-scope observations (reported, not fixed): CLAUDE.md says the exchange-rat
 `config/celery.py` schedules 08:00; `frontend/viteset.config.js` is dead; local `.env` still has an unused
 `BACKEND_URL`; `SENTRY_DSN` is read but nothing initialises Sentry (`sentry-sdk` not installed); the
 `core/ws_test_consumer.py` "test/reference" consumer is still routed at `ws/echo/` in production.
+
+
+---
+
+Date: 31 October 2026 (Free-VM stack — Compose + real-Linux verification)
+Decision: Until public launch the backend runs from the same Docker image as a `docker compose` stack
+(`deploy/`: db, redis, one-shot migrate, web, worker `--pool=solo`, beat, optional cloudflared) on a **free,
+always-on rented Linux VM**, exposed through a **Cloudflare Tunnel** at `https://api.lanceraos.com` (no inbound
+ports). Frontend stays on Vercel (`https://lanceraos.com`); cookie/CORS/CSRF design unchanged (`COOKIE_DOMAIN=
+.lanceraos.com`, Lax, Secure). At public launch the backend moves to Railway (if signups are open) or wherever is
+then best (DEPLOYMENT.md D.9). The owner's MacBook is only the test lab. **VM chosen by the owner, 31 Oct 2026:
+AWS EC2 `t4g.small` (2 vCPU, 2 GiB, arm64/Graviton), Ubuntu 24.04 LTS arm64, `ap-south-1` (Mumbai), ~30 GB gp3, one
+public IPv4, on the AWS Free plan (account created 31 Oct 2026; USD 100 credit + up to USD 100 earnable; plan ends
+30 Apr 2027; when credits or the window end the account closes instead of billing the card).** Chosen over the
+alternatives because it needs no university e-mail verification, never bills the card, and is available now.
+Reason:
+- Railway disclosed a security incident on 21 Oct 2026 (railway.com changelog, "October 21 security incident") and,
+  per its support forum, paused new signups with no reopening date. The owner also wants USD 0 spend pre-launch.
+- One image, many hosts: nothing in the stack is host-specific, so the later move is a dump/restore + DNS swap.
+- 2 GiB sizing is measured, not guessed: all services idle ~320 MiB; peak under 36 back-to-back renders plus a live
+  23-page render 442-496 MiB; per-service ceilings sum to 1.62 GiB; no OOM kill under those ceilings (DEPLOYMENT.md D.5).
+Design choices (each verified in the test lab, see D.5-D.8):
+- `web` published on `127.0.0.1` only; db/redis publish nothing. `SECURE_PROXY_SSL_HEADER` trusts `X-Forwarded-Proto` from
+  any caller, so the container must never be LAN-reachable. The tunnel reaches `web` over the Compose network.
+- Redis `maxmemory 64mb` + `noeviction`, never an evicting policy: one Redis holds the Celery queue, cache and Channels
+  layer, and eviction could delete queued tasks. At the limit the app refuses new work instead (health 503; login/CSRF/
+  invoice-create 500; `.delay()` raises `OperationalError`), queued work is kept, and it self-heals when memory frees.
+- `worker` is `--pool=solo` everywhere (compose and `railway/worker.json`). Prefork passed on **arm64** Linux (36/36
+  renders per config, zero crashes) — that closes PERF-001 for arm64 only; Railway is x86-64 and unverified.
+- Postgres flags tuned for 2 GiB (shared_buffers 128MB, max_connections 30, work_mem 4MB, maintenance_work_mem 32MB,
+  effective_cache_size 768MB, random_page_cost 1.1, jit off, max_wal_size 512MB); `CONN_MAX_AGE=0` under Daphne means one
+  short connection per request, so 30 is generous.
+- Cloudflare proxying for the tunnel hostname is a deliberate exception to the "DNS-only" rule (section 4): Cloudflare
+  becomes the single trusted hop. `get_client_ip` ("last X-Forwarded-For entry") is expected to keep working but is
+  UNVERIFIED against a real tunnel; DEPLOYMENT.md D.7 is the owner's numbered live check. Not changed in code.
+- `cloudflared` pinned to `2026.10.7` (newest stable on GitHub on 31 Oct 2026), never `latest`.
+- Railway config-as-code is deprecated (honoured only until 2026-12-01); the dashboard values are the source of truth.
+Alternatives considered:
+- Railway now — signups paused (above); paid cost roughly USD 10-15/month is an estimate from published rates, unverified.
+- The owner's own MacBook — rejected: it sleeps, home upload speed is poor, and power cuts. (A tunnel makes a changing home
+  IP irrelevant, but not those three.)
+- Azure for Students — USD 100 credit for 12 months, no card, but needs a recognised university e-mail, its terms limit use
+  to education/non-commercial demo, and its free VM sizes have only 1 GB RAM (all per the owner's research; not re-verified).
+- AWS Free plan — chosen (above): USD 100 credit + up to USD 100 earned, up to 6 months, account closes rather than billing.
+- Oracle Always Free — 2 OCPU / 12 GB arm64 on paper, but signup/capacity is a lottery and idle reclamation is a risk for a
+  quiet app (owner's research).
+- Hetzner — cheap plans unavailable to new customers (owner's research). DigitalOcean — student credit withdrawn.
+- Free PaaS tiers — sleep or expire; unsuitable for an always-on API with a scheduler.
+- Instance sizes 4/8 GiB — would burn the credit in roughly 2 months; the plan ends 30 Apr 2027 anyway.
+Findings (reported, not fixed — outside this pass's no-application-code scope):
+- The image's body text falls back to DejaVu Sans for 10 of 11 templates rendered (system font stacks); `fonts-liberation`
+  in the Dockerfile's apt list makes Arial resolve to Liberation Sans (tested in an ephemeral root container). Gallery
+  previews were rendered on macOS, so layout may differ slightly in production until fixed.
+- A failed Cloudinary upload logs two tracebacks, does not retry, and Celery still reports the task as `succeeded`.
+- `docker kill`/`stop` are manual stops: `restart: unless-stopped` does not revive them; OOM kills and crashes ARE revived
+  (verified). A merely unhealthy container is not restarted (documented Docker behaviour, not exercised).
+- Beat's schedule file is `/tmp/celerybeat-schedule`: lost on container recreate (every `up -d --build`), kept on restart.
+  A named volume works only at a path the image already owns as `app` (e.g. `/home/app`); at a new path it is root-owned
+  and beat gets Permission denied (tested). Clean fix: `mkdir /app/beat-data && chown app:app` in the Dockerfile.
+- Still true, unchanged: `core/ws_test_consumer.py` is routed at `ws/echo/` in production; the exchange-rate task runs at
+  08:00 in `config/celery.py` while the docs say 06:00; `frontend/viteset.config.js` is dead; `SENTRY_DSN` is read but
+  nothing initialises Sentry; `.dockerignore` does not exclude `apps/*/tests` or the `*.md` docs (they ship in the image).
+- The compose file uses `redis:7-alpine` as instructed, while CLAUDE.md names Redis 8 — nothing the app uses differs.

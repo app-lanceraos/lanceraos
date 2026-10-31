@@ -481,8 +481,17 @@ lanceraos/                          <- Django project root
 ├── .dockerignore                   <- Keeps frontend/, secrets, backups/, archive/ out of the image
 ├── railway/                        <- Config-as-code, one file per Railway service
 │   ├── web.json                    <- Daphne + pre-deploy `migrate` + /api/health/ healthcheck
-│   ├── worker.json                 <- Celery worker (prefork, concurrency 2)
+│   ├── worker.json                 <- Celery worker (--pool=solo; prefork verified on arm64 Linux only, see Section 8c)
 │   └── beat.json                   <- Celery Beat (exactly ONE instance, ever)
+├── deploy/                         <- Docker Compose stack for a single small Linux machine (a free always-on
+│   │                                  VM until public launch, behind a Cloudflare Tunnel; 31 October 2026 —
+│   │                                  see DEPLOYMENT.md Appendix D and DECISIONS.md). Host-agnostic: runs
+│   │                                  unchanged on a Mac, an arm64 VM or an x86-64 VM.
+│   ├── docker-compose.yml          <- db, redis, migrate (one-shot), web, worker (solo), beat, cloudflared
+│   │                                  (profile `tunnel`); one image; per-service mem_limit for a 2 GiB host
+│   ├── env.example                 <- Template for deploy/.env (CHANGE_ME placeholders only; real file gitignored)
+│   ├── make-test-env.sh            <- Writes deploy/.env.test: throwaway secrets for a separate test project
+│   └── backup.sh                   <- pg_dump -Fc to ~/lanceraos-backups/, keeps newest 14, verifies the archive
 ├── frontend/vercel.json            <- SPA rewrite so deep links don't 404 on Vercel
 ├── frontend/.env.example           <- The VITE_* vars the frontend actually reads
 ├── .env                            <- Environment variables (never committed)
@@ -3161,19 +3170,18 @@ running more than one background task at a time anyway, that trade is free.
   verified as a fix on its own against the default prefork pool. Don't assume it would let you drop
   `--pool=solo` and go back to prefork without testing that combination for real first.
 
-**Linux / production status (31 October 2026) — STILL UNVERIFIED, now with a concrete procedure:**
-the deployment image (`Dockerfile`, Debian-based `python:3.13-slim`) runs the worker with the default
-**prefork** pool at `--concurrency=2 --max-tasks-per-child=50` (`railway/worker.json`), on the belief
-that the macOS fork-safety segfault does not occur on Linux. The pass that wrote the Dockerfile ran on a
-machine with no Docker, so this was **not** exercised: the only things proven there were everything
-that does not need Linux (settings under `DEBUG=False` through a real Daphne, WhiteNoise static
-serving, the health endpoint, `collectstatic` from a clean copy with no `.env`, Celery beat/worker
-config loading). `DEPLOYMENT.md` Appendix A is the exact procedure (N consecutive PDF renders under
-prefork, no `WorkerLostError`/`SIGSEGV`, fonts embedded) to run on Railway staging or any machine with
-Docker. If prefork crashes there, change the worker's start command to `--pool=solo` (then run
-more than one worker service if throughput matters) and record the result here. Until someone has
-run Appendix A, treat prefork-on-Linux as an expectation, not a fact. Local macOS dev still requires
-`--pool=solo`, unchanged.
+**Linux / production status (31 October 2026, second pass) — PERF-001 CLOSED for arm64 Linux; x86-64 STILL UNVERIFIED:**
+the image (`Dockerfile`, Debian-based `python:3.13-slim`) was built and run for real in a Docker Compose stack
+(`deploy/`) on an Apple-silicon Mac's Linux VM (`uname -m` = `aarch64`, Docker 29.9.2). 12 invoices finalised through the
+app's own views, then 12 `render_and_store_invoice_pdf` tasks enqueued back to back, 3 bursts per configuration (36 renders
+each): `--pool=solo` (the production config), `--pool=prefork --concurrency=2 --max-tasks-per-child=50`, and
+`--pool=prefork --concurrency=4` all rendered 36/36 with **zero** `WorkerLostError`/`SIGSEGV`/`signal 11` and zero container
+restarts. So the macOS fork-safety segfault does **not** occur on Debian/arm64. **Railway runs x86-64**, which was not
+tested — the shipped worker is therefore `--pool=solo` everywhere (compose and `railway/worker.json`); do not switch
+Railway to prefork before running DEPLOYMENT.md Appendix A on it. Local macOS dev still requires `--pool=solo`, unchanged.
+Evidence and the full test-lab table: DEPLOYMENT.md Appendix A and D.8. **Hosting decision (31 October 2026):** until public
+launch the backend runs from `deploy/` on a free always-on AWS EC2 `t4g.small` behind a Cloudflare Tunnel; Railway at public
+launch — see DECISIONS.md's 31 October 2026 "Free-VM stack" entry and DEPLOYMENT.md Appendix D.
 
 **To manually trigger a scheduled task right now**, without waiting for Beat's schedule (useful
 for testing deletion/cleanup behavior): `python manage.py shell`, then

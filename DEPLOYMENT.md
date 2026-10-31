@@ -10,6 +10,12 @@ and **had no Docker on its machine**. Every step is tagged:
 - **[U]** written from general knowledge, NOT verified against a current provider doc or a real run.
   Read these with extra suspicion.
 
+> **Update, 31 October 2026 (second pass):** Docker *was* available on this pass's machine, so the image
+> was built and a Compose stack was run (on an Apple-silicon Mac). Appendix A now holds real results (for
+> **arm64** Linux only), and **Appendix D** is the runbook for the interim plan: the same image on a free
+> Linux VM behind a Cloudflare Tunnel, because Railway has paused new signups. Sections 3-4 and Appendix B
+> describe the later Railway setup.
+
 ## 0. Target architecture (decided, don't re-litigate)
 
 | Piece | Where | Hostname |
@@ -20,6 +26,11 @@ and **had no Docker on its machine**. Every step is tagged:
 | Scheduler (`beat`) | Railway, Celery Beat | none (private) |
 | Postgres 17, Redis | Railway managed plugins | private network |
 | DNS | Cloudflare, **DNS-only (grey cloud)** for product hostnames | |
+
+> **[Time-sensitive, 31 October 2026]** The "Railway" rows above are the *launch* plan. Railway disclosed a
+> security incident on 21 October 2026 and paused new signups with no reopening date (see Appendix D's
+> opening note for sources). Until public launch the API/worker/beat/Postgres/Redis run from `deploy/` on a
+> free VM instead (Appendix D); only the hostnames and the Vercel frontend stay as in this table.
 
 Why one registrable domain matters: the login cookies are `httpOnly`, `SameSite=Lax`,
 `Secure`, with `Domain=.lanceraos.com`. Lax cookies are only sent cross-origin between
@@ -82,10 +93,12 @@ command `python manage.py migrate --noinput` and health check `/api/health/`. Pr
 **only on web** so three services never race to migrate.
 
 > **Heads-up [D]:** Railway's docs now mark config-as-code as deprecated in favour of
-> "Infrastructure as Code"; existing files keep working "until 2026-12-01" for legacy
-> services. If `railway/*.json` stops being honoured, set the same values by hand in each
-> service's Settings (build: Dockerfile; start command / pre-deploy / health check as in the
-> JSON files). Nothing else in the repo depends on these files.
+> "Infrastructure as Code"; existing files are honoured only "until 2026-12-01" for legacy
+> services. **So the values you enter in each service's dashboard Settings are the source of truth**;
+> treat `railway/*.json` as a convenience that may silently stop applying. Set the same values by hand
+> (build: Dockerfile; start command / pre-deploy / health check as in the JSON files) and keep the two in
+> step — when you change a start command, change both. Nothing else in the repo depends on these files.
+> (Railway-specific; the interim VM stack in `deploy/` does not use them.)
 >
 > **Unverified [U]:** whether a leading `/` in the path resolves from the repo root (the docs
 > say "absolute path"; community answers disagree). The deploy build log states which config
@@ -95,13 +108,16 @@ Start commands (identical to the JSON files, in case you set them manually):
 
 ```
 web:    sh -c 'daphne -b 0.0.0.0 -p ${PORT:-8000} config.asgi:application'
-worker: celery -A config worker -l info --pool=prefork --concurrency=2 --max-tasks-per-child=50
+worker: celery -A config worker -l info --pool=solo
 beat:   celery -A config beat -l info --schedule /tmp/celerybeat-schedule
 ```
 
-Choices explained: `--concurrency=2` because the default is "number of CPUs", and a container
-can report the *host's* CPU count (dozens), each prefork child importing WeasyPrint's native
-libraries. `--max-tasks-per-child=50` recycles children to cap memory growth from PDF rendering.
+Choices explained: the worker is `--pool=solo` (one process, no forking) — the same setting local macOS
+dev needs, and now also the verified production choice: prefork was exercised on **arm64** Linux only
+(Appendix A), and Railway runs **x86-64**, which is still unproven. If you later want prefork there, use
+`--pool=prefork --concurrency=2 --max-tasks-per-child=50` (`--concurrency` because the default is "number
+of CPUs" and a container can report the *host's* count; `--max-tasks-per-child` to cap WeasyPrint memory
+growth) and run Appendix A on Railway staging first.
 Beat uses the default `PersistentScheduler`; its state file lives in `/tmp` and is lost when the
 container restarts, which means **a daily task is skipped if beat was down at its exact minute**.
 All scheduled tasks are idempotent, so you can trigger a missed one by hand (section 7).
@@ -302,68 +318,64 @@ isn't served by this header anyway. For a university demo, 86400 is plenty.
 
 ---
 
-## Appendix A — verify the Linux PDF stack (closes PERF-001; **NOT yet done**)
+## Appendix A — the Linux PDF stack (closes PERF-001 for **arm64**; x86-64 still **NOT verified**)
 
-**Status: not verified.** The pass that wrote this had no Docker. `CLAUDE.md` Section 8c's belief
-that Celery's prefork pool doesn't segfault on Linux (as it does on macOS with WeasyPrint's
-Pango/Cairo libraries) is therefore still an expectation. Run this once, either locally with
-Docker or on Railway staging.
+**Status (31 October 2026): verified on arm64 Linux; NOT verified on x86-64.** CLAUDE.md Section 8c
+feared that Celery's prefork pool segfaults with WeasyPrint's Pango/Cairo libraries on any OS, as it does
+on macOS. It does **not** on Debian (`python:3.13-slim`, this repo's `Dockerfile`) running as `aarch64`
+inside Docker Desktop's Linux VM. The test machine reported `uname -m` = `aarch64`; **Railway runs
+x86-64**, a different CPU architecture and different native library builds, so a pass here is strong
+evidence but not proof for Railway. Run the "repeat on x86-64" step below once there.
 
-**With Docker (local):**
+Results (12 finalised invoices, different templates, created through the app's own `invoice_create` /
+`invoice_finalise` views; the burst is 12 `render_and_store_invoice_pdf.delay()` tasks enqueued back to back,
+repeated 3 times per configuration = 36 renders; Cloudinary credentials blank, so the upload step fails
+**after** a successful render — expected, and what a bad Cloudinary config would look like, see D.6):
+
+| Worker configuration | Renders ok | `WorkerLostError` / `SIGSEGV` / `signal 11` | Restarts | Worker peak RAM |
+|---|---|---|---|---|
+| **solo** (production config) | 36/36 | 0 | 0 | 163 MiB |
+| prefork `--concurrency=2 --max-tasks-per-child=50` | 36/36 | 0 | 0 | 339 MiB |
+| prefork `--concurrency=4` | 36/36 | 0 | 0 | 568 MiB |
+
+"Renders ok" = 36 `weasyprint.progress: Step 7` lines and 36 `Cloudinary invoice-PDF upload failed` lines
+(the upload is attempted only after the render returns bytes). Also: all 22 selectable templates rendered
+through `generate_template_previews`; embedded fonts for 11 templates inspected with PyMuPDF — every PDF
+embeds IBM Plex / Source Serif, but 10 of 11 use **DejaVu** (the container's fallback) for body text where
+the template asks for a system font (details and a one-line fix: D.6). A 200-item, 23-page invoice rendered
+in 24 s without a crash.
+
+**Repeat it (anywhere with Docker; this is the Compose stack, D.8):**
 ```bash
-docker build -t lanceraos .                       # also proves the apt package list + collectstatic RUN
-# Postgres + Redis for the test (any reachable ones; adjust hosts)
-docker run -d --name lpg -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=lancera -p 55432:5432 postgres:17
-docker run -d --name lrd -p 56379:6379 redis:8
-export E="-e DEBUG=True -e SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_urlsafe(60))') \
- -e ENCRYPTION_KEY=$(python3 -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())') \
- -e BLIND_INDEX_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') \
- -e DB_NAME=lancera -e DB_USER=postgres -e DB_PASSWORD=pw -e DB_HOST=host.docker.internal -e DB_PORT=55432 \
- -e REDIS_URL=redis://host.docker.internal:56379/1 -e CELERY_BROKER_URL=redis://host.docker.internal:56379/0 \
- -e CELERY_RESULT_BACKEND=redis://host.docker.internal:56379/0 -e CHANNEL_LAYER_URL=redis://host.docker.internal:56379/2"
-
-# 1. Timezone: expect the two timestamps 5 hours apart
-docker run --rm $E lanceraos python -c "import os,django;os.environ['DJANGO_SETTINGS_MODULE']='config.settings';django.setup();import datetime;print(datetime.datetime.now(), datetime.datetime.utcnow())"
-
-# 2. Migrate, then render all template previews through the real render_invoice_pdf (single process)
-docker run --rm $E lanceraos sh -c "python manage.py migrate --noinput && python manage.py generate_template_previews"
-
-# 3. Prefork worker, concurrency 2 (exactly the production command)
-docker run -d --name lw $E lanceraos celery -A config worker -l info --pool=prefork --concurrency=2 --max-tasks-per-child=50
-# 4. Queue 12 renders back to back. (Needs finalised invoices: create a user + invoices via the app
-#    against this DB, or loop over a restored copy of your dev data.) Cloudinary upload will fail
-#    without credentials - acceptable; the *render* is what is under test.
-docker run --rm $E lanceraos python manage.py shell -c "
+deploy/make-test-env.sh
+alias dct='docker compose -f deploy/docker-compose.yml --env-file deploy/.env.test'
+dct up -d --build
+# create 12 finalised invoices through the app's own views, with the worker stopped so they stay queued:
+dct stop worker
+dct exec -T web python manage.py shell < deploy/test-seed.py
+# then for each configuration:
+dct run -d --no-deps --name lw worker celery -A config worker -l info --pool=prefork --concurrency=2 --max-tasks-per-child=50
+dct exec -T web python manage.py shell -c "
 from apps.invoices.models import Invoice
 from apps.invoices.tasks import render_and_store_invoice_pdf
-ids=list(Invoice.objects.exclude(status='draft').values_list('pk',flat=True)[:12])
-print(len(ids),'invoices');[render_and_store_invoice_pdf.delay(str(i)) for i in ids]"
+[render_and_store_invoice_pdf.delay(str(i)) for i in Invoice.objects.exclude(status='draft').values_list('pk', flat=True)[:12]]"
+docker logs lw 2>&1 | grep -c 'Step 7'                                   # expect 12
+docker logs lw 2>&1 | grep -c -E 'WorkerLostError|SIGSEGV|signal 11'     # expect 0
+docker inspect -f '{{.RestartCount}}' lw                                 # expect 0
+docker rm -f lw; dct down -v
 ```
-**Pass criteria** (report each): (a) `docker logs lw` shows at least 12 `weasyprint.progress: Step 7`
-lines; (b) **zero** occurrences of `WorkerLostError`, `SIGSEGV`, `signal 11`; (c) the worker is
-still `ready` and the container never restarted (`docker inspect -f '{{.RestartCount}}' lw` = 0);
-(d) fonts embedded - in the container:
-```bash
-docker exec lw python -c "
-import os,django;os.environ['DJANGO_SETTINGS_MODULE']='config.settings';django.setup()
-import fitz
-from apps.invoices.models import Invoice
-from apps.invoices.pdf_generator import render_invoice_pdf
-inv=Invoice.objects.exclude(status='draft').first()
-doc=fitz.open(stream=render_invoice_pdf(inv),filetype='pdf')
-print({f[3] for p in doc for f in p.get_fonts()})"
-```
-expect names containing `IBMPlex`/`SourceSerif`/`SpaceGrotesk`, not only a fallback like `DejaVu`.
-Repeat (3)-(4) with `--concurrency=4` for a harder test.
 
-**On Railway staging instead:** deploy `worker` as configured, finalise 12 invoices in quick
-succession through the UI (or one script), and check the same criteria in the worker's logs and
-that each invoice gets a `pdf_url`. Then record the result in CLAUDE.md Section 8c.
+**Repeat on x86-64 (needed before running prefork on Railway):** deploy `worker` on Railway staging with
+`--pool=prefork --concurrency=2 --max-tasks-per-child=50`, finalise 12 invoices in quick succession through
+the UI, and check the same three criteria in the worker's logs plus that each invoice gets a `pdf_url`.
+Record the result in CLAUDE.md Section 8c.
 
-**If prefork crashes on Linux:** change `railway/worker.json`'s start command to `--pool=solo`
-(or `--pool=threads --concurrency=2`), redeploy, re-test, and update Section 8c.
+**If prefork ever crashes on Linux:** the shipped default is already `--pool=solo`; nothing to change.
 
 ## Appendix B — client IP behind Railway (**NOT yet verified**)
+
+> On the interim VM + Cloudflare Tunnel setup, use **D.7** instead (same idea, different proxy). This appendix
+> applies again once the backend is on Railway.
 
 Rate limits, lockouts and the audit trail all use `core.observability.get_client_ip`, which takes
 the **last** `X-Forwarded-For` entry. That is correct if Railway's edge **appends** the real
@@ -389,11 +401,490 @@ Repeat from a second network (phone, mobile data) to confirm two clients differ.
 
 ## Appendix C — known limitations of this setup
 
-- **Docker image never built here** (no Docker on the authoring machine): the apt package
-  list comes from WeasyPrint's current Debian instructions **[D]**; the `collectstatic` build
-  step was reproduced from a clean copy without `.env` **[V]**; `apt-get`, the user/permissions
-  and the final `CMD` are **[U]** until Appendix A's `docker build` succeeds.
-- Beat state is not persisted across restarts (see 3.2).
+- **Docker image:** built and run for real on 31 October 2026 (arm64; Appendix A/D.8): `apt-get`, user and
+  permissions, `collectstatic` as `app`, and the final `CMD` all work. It has not been built on x86-64 or
+  on the 2 GiB target VM itself (build memory there is an estimate, D.5).
+- Beat state is not persisted when its container is recreated (see 3.2 and D.6).
 - `SENTRY_DSN` is read but nothing initialises Sentry: no error monitoring until someone adds
   `sentry-sdk`.
-- Railway's config-as-code is deprecated (3.2).
+- Railway's config-as-code is deprecated; dashboard settings are the source of truth (3.2).
+
+---
+
+## Appendix D — Free-VM stack (Docker Compose behind a Cloudflare Tunnel)
+
+> **[TIME-SENSITIVE — written 31 October 2026; delete or rewrite this paragraph when it stops being true.]**
+> Railway disclosed a security incident on 21 October 2026
+> (<https://railway.com/changelog/2026-10-23-october-21-security-incident>) and, per its own support
+> forum, **paused new account signups with no reopening date**. Separately, the owner wants to spend
+> **USD 0** until the product is public. So, *until public launch*, the backend runs from the same Docker
+> image on a **free, always-on rented Linux VM**, reached from the internet through a **Cloudflare Tunnel**
+> at `https://api.lanceraos.com` (the VM needs **no inbound ports**). The React app stays on Vercel at
+> `https://lanceraos.com`. At public launch the backend moves to Railway (if signups are open) or wherever
+> is then best (D.9). Sections 3-4 and Appendix B above describe that later Railway setup and still apply
+> to it.
+
+### D.0 In one paragraph
+
+`deploy/docker-compose.yml` starts seven containers from **one** image built from the repo's
+`Dockerfile`: `db` (Postgres 17), `redis` (Redis 7), `migrate` (runs once, then exits), `web` (Daphne),
+`worker` (Celery, `--pool=solo`), `beat` (Celery Beat) and optionally `cloudflared` (the tunnel). Nothing
+except `web` on the machine's own loopback address (`127.0.0.1:8000`) is reachable from outside the Docker
+network, and the tunnel reaches `web` over Docker's private network, not through a host port. The
+machine only ever makes *outbound* connections (to Cloudflare, Resend, Cloudinary, Groq...).
+
+### D.1 What is in `deploy/`
+
+| File | What it is |
+|---|---|
+| `docker-compose.yml` | The stack. Memory limits sized for a 2 GiB machine (D.5). Comments explain every non-obvious line. |
+| `env.example` | Template for `deploy/.env` (the real, secret, git-ignored file). `CHANGE_ME` placeholders only. |
+| `backup.sh` | `pg_dump` to `~/lanceraos-backups/`, keeps the newest 14, refuses to keep an unreadable dump (D.4). |
+| `make-test-env.sh` | Writes `deploy/.env.test`: throwaway secrets for a separate **test** copy of the stack (D.8). |
+| `test-seed.py` | Test-stack only: creates a user, a client and 12 finalised invoices through the app's own views (fed to `manage.py shell` on stdin). |
+
+One env file feeds both Compose and the containers, so the Postgres container's user/password/database
+are literally the same variables Django reads (`DB_USER`/`DB_PASSWORD`/`DB_NAME`) and cannot drift apart.
+`deploy/` is excluded from the Docker image (`.dockerignore`) — proven: `ls /app/deploy` inside the built
+image fails — so the secrets file can never be baked into it, and `deploy/.env*` is git-ignored
+(`deploy/env.example` stays tracked).
+
+Note: every container reads the whole env file, including `TUNNEL_TOKEN`. Anyone who could run code
+inside `web` could therefore read the tunnel token — but they could already read every other secret there,
+so splitting files would add complexity without closing a real gap.
+
+### D.2 One-time setup, start to finish
+
+Everything below happens once. Steps tagged **[U]** are written from general knowledge of AWS /
+Ubuntu / Cloudflare and were **not** executed or checked against the live console by the pass
+that wrote this — consoles move buttons around. If the screen disagrees with a step, trust the
+screen, and fix this file afterwards. Steps tagged **[D]** were checked against the provider's
+own documentation on 31 October 2026. Steps with no tag were run for real by that pass (on a
+Mac, which is why they are about Docker, not about AWS).
+
+#### Part 1 — Create the server in AWS **[U]**
+
+1. Sign in to the AWS console. In the top-right region picker choose **Asia Pacific (Mumbai)
+   `ap-south-1`** (lowest latency from Pakistan among AWS regions). **Stay on the Free plan — do
+   not click "Upgrade plan"** (see Part 1a below).
+2. EC2 -> **Launch instance**.
+   - Name: `lanceraos`.
+   - Image (AMI): **Ubuntu Server 24.04 LTS**, architecture **64-bit (Arm)**. It must be Arm,
+     because `t4g` machines are Arm (Graviton) — an x86 image will not even appear for them.
+   - Instance type: **`t4g.small`** (2 vCPU, 2 GiB RAM). The Free plan only allows
+     `t3.micro`, `t3.small`, `t4g.micro`, `t4g.small`, `c7i-flex.large`, `m7i-flex.large`;
+     `t4g.micro` has 1 GiB (not enough — see D.5), and the 4 GiB/8 GiB types burn the credit in
+     about two months.
+   - Key pair: choose **Proceed without a key pair** (we use Session Manager, below, so no
+     SSH key can leak).
+   - Network settings -> **Create security group** with **no inbound rules at all** (delete the
+     default "SSH from anywhere" rule). Outbound stays "all" — the machine dials out to
+     Cloudflare, nothing dials in. Leave "Auto-assign public IP" **enabled** (the machine needs
+     *some* route to the internet; with no inbound rule the address is unreachable anyway).
+   - Storage: **30 GiB gp3**.
+   - Advanced details -> **IAM instance profile**: create/choose a role that has the AWS-managed
+     policy **`AmazonSSMManagedInstanceCore`** (this is what lets you open a shell with no open
+     port). Advanced details -> **Credit specification: `Standard`** (see below).
+3. Launch. Wait for "2/2 checks passed".
+
+**CPU credit mode — set it to Standard. [D]** `t4g` machines are *burstable*: they earn a small
+amount of CPU "credit" every hour (20 % of one core per vCPU is the free baseline for
+`t4g.small`) and spend it when busy. AWS's documentation says T4g instances **launch in
+`unlimited` mode by default** — in that mode, if the machine averages above its baseline over
+24 hours, it keeps running full speed and AWS **charges surplus credits**. On the Free plan
+that charge comes out of your prepaid credit, silently shortening the plan. In **`standard`**
+mode the machine is simply slowed down to the baseline when credits run out (pages get slow,
+nothing is billed). For a demo that sits idle almost all day, `standard` is the safe choice. To
+change a running machine: EC2 -> select the instance -> Actions -> Instance settings -> **Change
+credit specification** -> Standard. Watch the `CPUCreditBalance` graph under the instance's
+Monitoring tab; if it sits near zero, the stack is too busy for this size (see D.5).
+
+#### Part 1a — Things on the AWS dashboard to be careful with **[U]**
+
+- **The "Upgrade plan" button** switches the account from the Free plan (which closes the
+  account when credits end, never charging your card) to a **paid plan that can bill your card**.
+  Do not click it unless you have decided to start paying. Credits expiring 30 Apr 2027 (or
+  earlier if used up) is the *intended* end of this setup — by then the product should be
+  moving to Railway or another host (D.9).
+- Set a **Budget alert** (Billing -> Budgets) at a small amount (e.g. USD 1) so any charge at all
+  e-mails you.
+- Never make the security group more open "just to test". If something cannot connect, the
+  answer is in D.7, not in an inbound rule.
+
+#### Part 2 — Open a shell on the server (no SSH, no open ports) **[U]**
+
+Options compared:
+
+| Way in | Needs an inbound port? | Weakness |
+|---|---|---|
+| SSH from "my IP only" | Yes (22) | Your home IP changes, so the rule keeps breaking; "from anywhere" invites constant attacks. |
+| EC2 Instance Connect (browser button) | Yes (22, from AWS's address range) | Still an open port; its range is wide. |
+| **SSM Session Manager (recommended)** | **No** | Needs the IAM role from Part 1; shell lives in the AWS console. |
+
+Use **Session Manager**: EC2 -> select the instance -> **Connect** -> tab **Session Manager** ->
+Connect. A terminal opens in the browser as user `ssm-user`; run `sudo -iu ubuntu` to become the
+normal `ubuntu` user for everything below. If the Session Manager tab says the instance is not
+connected, wait 5 minutes after launch, and check the IAM role is attached (Actions -> Security ->
+Modify IAM role).
+
+#### Part 3 — Prepare Ubuntu **[U]** (commands are standard; Docker's lines were checked against Docker's own docs **[D]**)
+
+```bash
+# 1. Updates
+sudo apt update && sudo apt -y upgrade
+
+# 2. Swap file (the safety net for a 2 GiB machine - see D.5 for what it does and doesn't do)
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+sudo sysctl vm.swappiness=10 && echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swap.conf
+# Redis asks for this (it forks to rewrite its log file; without it the fork can fail under memory pressure)
+echo 'vm.overcommit_memory=1' | sudo tee /etc/sysctl.d/99-redis.conf && sudo sysctl -p /etc/sysctl.d/99-redis.conf
+free -h     # should now show ~2 GiB of Swap
+
+# 3. Automatic security updates
+sudo apt -y install unattended-upgrades && sudo dpkg-reconfigure -plow unattended-upgrades   # answer Yes
+
+# 4. Docker Engine + Compose plugin from Docker's own apt repository
+sudo apt -y install ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+sudo apt update
+sudo apt -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker containerd     # start on every boot
+sudo usermod -aG docker ubuntu                    # then log out and back in (sudo -iu ubuntu again)
+docker run --rm hello-world && docker compose version
+```
+
+**Surviving a reboot:** Docker starts at boot (`systemctl enable` above) and every long-running
+service in `docker-compose.yml` has `restart: unless-stopped`, so after a reboot — or an AWS
+maintenance restart — the whole stack comes back by itself in about a minute. Prove it once:
+`sudo reboot`, wait two minutes, reopen Session Manager, run `docker compose ps` (D.3). A service
+you stopped yourself with `docker compose stop` stays stopped after a reboot, on purpose.
+
+#### Part 4 — Get the code and write the secrets file
+
+```bash
+git clone https://github.com/lanceraos/<repo-name>.git LanceraOS     # use your real repo URL
+cd LanceraOS/deploy
+cp env.example .env
+nano .env          # replace every CHANGE_ME (Ctrl+O, Enter, Ctrl+X to save)
+chmod 600 .env
+```
+
+Fill the values from your password manager. The comments at the top of `env.example` give the
+exact one-line commands that generate each secret. **Put ENCRYPTION_KEY and BLIND_INDEX_KEY in
+the password manager before you write them anywhere else** — if the machine is lost and those two
+are not saved elsewhere, every encrypted CNIC/NTN/SMTP password in any restored backup is gone
+for good. `deploy/.env` is ignored by git and by Docker's build; it exists only on this machine.
+
+#### Part 5 — Start it
+
+```bash
+cd ~/LanceraOS/deploy
+docker compose up -d --build        # first build takes 5-10 minutes on this size of machine
+docker compose ps                   # everything "Up", db/redis/web "(healthy)", migrate "Exited (0)"
+curl -s http://127.0.0.1:8000/api/health/      # {"status":"ok"}
+```
+
+If you left `COMPOSE_PROFILES=tunnel` in `.env`, the `cloudflared` container is also started;
+until Part 6 is finished it will show as *restarting* — that is harmless. Create your own
+admin login for `/admin/` (optional): `docker compose exec web python manage.py createsuperuser`.
+
+#### Part 6 — Connect it to the internet with a Cloudflare Tunnel **[U]**
+
+(The general flow — Networking -> Tunnels -> Create a tunnel -> add a published-application
+route with a service URL — matches Cloudflare's current documentation **[D]**; the exact button
+labels, and where the token appears, were **not** visible to the pass that wrote this.)
+
+1. Cloudflare dashboard -> **Zero Trust / Networking -> Tunnels -> Create a tunnel** -> type
+   *Cloudflared* -> name it `lanceraos-api`.
+2. Choose **Docker** as the environment. The page shows a command containing
+   `--token eyJ...`. **Copy only the long token** (the part after `--token`) — do **not** run
+   that command yourself; Compose runs the container for you.
+3. On the server: `nano ~/LanceraOS/deploy/.env`, set `TUNNEL_TOKEN=<the token>`, keep
+   `COMPOSE_PROFILES=tunnel`, save. Then `docker compose up -d`. The tunnel page in Cloudflare
+   should show the connector as **Healthy/Connected**.
+4. In the tunnel's **Routes / Public hostname** tab add a *published application*:
+   hostname `api` + domain `lanceraos.com`, **Service URL `http://web:8000`** (`web` is the
+   container's name on Compose's private network — *not* `localhost`).
+5. Cloudflare creates the DNS record `api` -> `<tunnel-id>.cfargotunnel.com` **proxied (orange
+   cloud) automatically** — see D.7 for why this is the one place this project deliberately
+   differs from "keep everything grey-cloud".
+6. Run the checks in D.7 (client-IP check) and the DEPLOYMENT.md section 8 smoke tests.
+
+**Never put the tunnel token in git, chat, or a screenshot.** Anyone holding it can attach their
+own connector to your tunnel. If it leaks: Cloudflare -> the tunnel -> refresh/roll the token,
+update `.env`, `docker compose up -d`.
+
+### D.3 Day to day (run these inside `~/LanceraOS/deploy`)
+
+| I want to... | Command |
+|---|---|
+| See what is running | `docker compose ps` |
+| Check the site answers | `curl -s http://127.0.0.1:8000/api/health/` |
+| Watch logs live (Ctrl+C to stop) | `docker compose logs -f --tail=50 web` (or `worker`, `beat`, `db`, `redis`, `cloudflared`) |
+| Did a PDF fail to upload? | `docker compose logs worker \| grep "render+store failed"` (see D.6: Celery still says "succeeded") |
+| Stop everything (data is kept) | `docker compose stop` |
+| Start it again | `docker compose up -d` |
+| Update to the newest code | `cd ~/LanceraOS && git pull && cd deploy && docker compose up -d --build` (then `docker compose ps`) |
+| Run a missed scheduled task by hand | `docker compose exec worker python manage.py shell -c "from apps.payments.tasks import fetch_exchange_rates; fetch_exchange_rates.delay()"` |
+| Open a Django shell | `docker compose exec web python manage.py shell` |
+| **Delete all data (!)** | `docker compose down -v` — **never** run this on the real stack; the `-v` deletes the database volume. Plain `docker compose down` is safe. |
+
+Updating briefly stops `web` while it rebuilds (a minute or two). `migrate` runs automatically
+before `web` starts. Take a backup (D.4) before any update that contains a database migration.
+
+### D.4 Backups — and getting them OFF the machine
+
+**Make one now and after every update:**
+```bash
+~/LanceraOS/deploy/backup.sh          # writes ~/lanceraos-backups/lanceraos-<date>.dump, keeps the newest 14
+```
+It checks the file is a readable archive before keeping it, and creates it readable by you only.
+Nightly automatically: `crontab -e` and add `0 3 * * * /home/ubuntu/LanceraOS/deploy/backup.sh >> /home/ubuntu/backup.log 2>&1`.
+
+**Restore** (into the running stack; replaces nothing until you decide to — this restores into a
+*new, empty* database so you can check it first):
+```bash
+cd ~/LanceraOS/deploy
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE restore_check"'
+docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d restore_check --no-owner' < ~/lanceraos-backups/<file>.dump
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d restore_check -c "select count(*) from users"'
+```
+To make a restored database the *live* one: `docker compose stop web worker beat`, then rename
+(`ALTER DATABASE lanceraos RENAME TO lanceraos_old; ALTER DATABASE restore_check RENAME TO lanceraos;`
+run from `-d postgres`), then `docker compose up -d`. The restore commands above were run and
+checked (row counts of 6 tables identical before and after) on the Mac test lab.
+
+**A backup that lives only on the VM dies with the VM.** Copy it somewhere else — pick one:
+
+1. **A private S3 bucket (recommended, no inbound port needed) [U].** Create a bucket (S3 ->
+   Create bucket; keep "Block all public access" ON). In IAM add to the instance's role a policy
+   allowing only `s3:PutObject` on that bucket. On the server: `sudo snap install aws-cli
+   --classic`, then after each backup:
+   `aws s3 cp ~/lanceraos-backups/lanceraos-<date>.dump s3://<your-bucket>/ --region ap-south-1`.
+   The bucket outlives the instance. (Check S3's pricing/limits under the Free plan in the
+   console; a few MB per day is tiny.)
+2. **A second copy of the whole disk: an EBS snapshot [U].** EC2 -> Volumes -> select the
+   volume -> Actions -> **Create snapshot**. It captures everything (database volume, `.env`,
+   backups) as it is at that instant, "crash-consistent" (Postgres recovers from that like it
+   would from a power cut). Do this before risky changes and monthly. Snapshots are stored by
+   AWS outside the instance, so they survive losing it. They are a *second layer*, not a
+   replacement for `backup.sh` (a dump is portable to Railway; a snapshot is not).
+3. **Google Drive via rclone [U].** `sudo apt install rclone`, `rclone config` (it walks you
+   through linking Drive; it needs a one-time browser sign-in), then
+   `rclone copy ~/lanceraos-backups drive:lanceraos-backups`.
+
+Whichever you pick, **test one restore from the off-machine copy** at least once, and keep
+`ENCRYPTION_KEY` / `BLIND_INDEX_KEY` in your password manager — a backup without them cannot
+decrypt CNIC/NTN/PSEB values or SMTP passwords.
+
+### D.5 How much RAM do I need? (measured, with the gaps stated)
+
+Measured on 31 October 2026 on an **arm64 Linux Docker VM with 8 GiB** (so nothing was ever short of
+memory; the numbers are what the services actually *use*), with `docker stats` sampled about once a
+second:
+
+| Service | Idle | Peak during 36 ordinary renders | Ceiling (`mem_limit`) |
+|---|---|---|---|
+| `web` (Daphne) | 89-92 MiB | 148-191 MiB (the higher figure includes a live 23-page PDF render) | 448 MiB |
+| `worker` (solo) | 100 MiB | 163-172 MiB | 576 MiB |
+| `beat` | 98-101 MiB | 98-101 MiB | 160 MiB |
+| `db` (Postgres, tuned) | 19-29 MiB | 22-38 MiB (tiny test data) | 384 MiB |
+| `redis` | 11 MiB | 11 MiB (1.8 MB of data after ~150 tasks) | 96 MiB (`--maxmemory 64mb`) |
+| `cloudflared` | not measured (needs a real tunnel); Go, small | | 96 MiB |
+| **Sum** | **~320 MiB** | **442-496 MiB** | **1.62-1.7 GiB** |
+
+Worst case seen: one **200-line-item, 23-page** invoice takes **24 s** and **366 MiB** to render in a
+fresh process. `--pool=prefork --concurrency=4` peaked at 568 MiB for the worker alone on ordinary
+invoices — one reason the stack ships `solo`.
+
+What was **not** measured (so treat as estimates **[U]**): the Ubuntu OS plus Docker's own daemon on the
+real machine (typically 300-500 MiB), Postgres once it holds real data (its cache grows toward
+`shared_buffers` = 128 MB), and the memory the first `docker compose build` needs on the small VM
+(`pip install` plus Debian packages; the build was run on a Mac).
+
+**Verdict, plainly:**
+- **1 GiB: not workable.** Measured peak (~0.5 GiB) plus the OS and Docker (~0.4 GiB) leaves no
+  headroom for one big PDF, and the image build alone is likely to run out of memory.
+- **2 GiB (`t4g.small`): fits, with a swap file** — measured peak is under half of it, so it is *not* tight
+  for a demo-sized user base. It becomes tight with several heavy PDFs at once, a large database, or a
+  prefork worker. This is the chosen size.
+- **4 GiB: comfortable**, if the 2 GiB size ever shows `CPUCreditBalance`/memory trouble — but it costs
+  roughly double the AWS credit per hour (D.2, Part 1).
+
+**Per-service ceilings.** If a container exceeds its `mem_limit` the kernel kills *that container
+only* and Docker restarts it; the others and the VM are untouched. **Verified**: with `web` squeezed to
+230 MiB and three live 23-page renders requested at once, `web` was OOM-killed (exit code 137), the three
+requests were dropped, Docker restarted it automatically within a second (restart count 0 -> 1), and
+`db`/`redis`/`worker`/`beat` stayed at 0 restarts. `docker compose logs web` shows nothing about it
+(the process is killed, not told) — look at `docker inspect -f '{{.State.OOMKilled}}' <container>` and the
+restart count in `docker ps`.
+
+**The swap file (Part 3)** gives the *whole machine* a slower overflow area on disk, so a short spike
+slows things down instead of killing something. It does **not**: add real memory, make a permanently
+too-small machine adequate (a machine living in swap is unusably slow and burns EBS IO), or stop the
+per-container limits (a container swaps before it is killed, so the kill just happens later). It is a
+safety net, not a plan.
+
+### D.6 Behaviours checked in the test lab (the ones that will confuse you later)
+
+- **A failed PDF upload looks like success to Celery.** With Cloudinary credentials missing, each render
+  task logged **two ERROR tracebacks** (`ValueError: Must supply api_key`, then "Background PDF
+  render+store failed ... pdf_url left blank"), did **not** retry, and Celery still printed `succeeded ...
+  None`. `Invoice.pdf_url` stays blank and the next fetch renders the PDF on demand. So in production,
+  *"succeeded" in the worker log does not mean the PDF was stored*: search for `render+store failed`
+  (D.3) after configuring Cloudinary.
+- **When Redis is full (64 MB, `noeviction`), the app does not lose queued work — it refuses new work.**
+  Filled to the limit: `/api/health/` returned **503**; `/api/auth/csrf/`, login and "create invoice"
+  returned **HTTP 500** (every rate-limit check writes to the cache); publishing a Celery task raised
+  `OperationalError: command not allowed when used memory > 'maxmemory'`. Already-queued tasks and the
+  running containers were unaffected, nothing crashed, and everything recovered by itself the moment
+  space was freed. At a measured 1.8 MB working set this needs a runaway cause (e.g. a flood of unique
+  cache keys), not normal use. **Do not** switch Redis to an evicting policy to "fix" it — that can
+  silently delete queued tasks.
+- **`restart: unless-stopped` restarts crashes, not manual stops.** A service you `docker stop`/`docker
+  kill`/`docker compose stop` stays stopped (including after a reboot) by design; an OOM kill or a
+  crash is restarted. Docker (documented behaviour; not exercised here) does **not** restart a container that is merely
+  *unhealthy* — a hung Daphne with a live process would stay hung; the health check only reports. If that ever bites, add an
+  "autoheal" sidecar — not done here.
+- **Beat state survives a plain restart but not a recreate.** The schedule file is `/tmp/celerybeat-schedule`
+  inside the container. `docker compose up -d --build` after a code change recreates `beat`, so its record
+  of "last run" is lost and a daily task is skipped if that moment straddles its slot. (All tasks are
+  idempotent; run any missed one by hand, D.3.) A named volume would fix this **only if** it is mounted
+  where the image already contains an `app`-owned directory: tested — a volume at a new path (`/beatdata`)
+  is created `root:root` and `app` gets *Permission denied*; a volume at `/home/app` is writable. The clean
+  fix is two lines in the `Dockerfile` (`mkdir /app/beat-data && chown app:app`) plus a volume and a
+  `--schedule` path. Not applied here, because the start command is deliberately identical to Railway's.
+- **Timezone is Pakistan time in the containers.** `datetime.now()` and `datetime.utcnow()` differ by
+  5 hours (the tzdata package is in the image); Celery's 15-minute schedule and the 08:00 daily jobs are
+  PKT.
+- **The system-font fallback.** 11 distinct templates were rendered to real PDFs in the container and
+  their embedded fonts listed: 10 of them (every `free_*` and `pro_*` one tested; only `professional`
+  / "Ledger" was exempt) declare a system font stack (`-apple-system, 'Segoe UI', Arial, sans-serif`) for
+  body text. On a Mac that resolves to a real system font; in this Debian image it resolves to **DejaVu
+  Sans** (different letter shapes and widths, so line and page breaks can differ from the gallery previews,
+  which were rendered on a Mac). The other 11 templates were not rendered to PDF in this check. Tested
+  without changing the image: adding the Debian package `fonts-liberation` makes the same templates embed
+  **Liberation Sans** (metric-compatible with Arial). One-line fix for the `Dockerfile`'s `apt-get
+  install` list; **not applied** (reported only).
+- **cloudflared pinned to `2026.10.7`**, the newest release on <https://github.com/cloudflare/cloudflared>
+  on 31 October 2026. With a deliberately invalid token the container starts, rejects it locally
+  (`Provided Tunnel token is not valid`) and restart-loops harmlessly; a *real* token was never tried.
+
+### D.7 Cloudflare proxying and the client's IP address — must be checked live
+
+**Why the tunnel hostname is proxied.** DEPLOYMENT.md section 4 says product hostnames stay
+DNS-only (grey cloud), because a proxy in front of Railway would make every user share the
+proxy's address in rate limits and the audit log. A Cloudflare Tunnel cannot be grey: its DNS
+record (`api` -> `<tunnel-id>.cfargotunnel.com`) only works proxied. That is acceptable here for
+a specific reason: Cloudflare becomes the **single trusted hop** in front of Django, and nothing
+else can reach `web` (it has no public port; its host port is loopback-only).
+
+**What this means for `get_client_ip`** (`core/observability.py`): it takes the **last**
+`X-Forwarded-For` entry. Reasoned from the code and Cloudflare's published behaviour **[U — not
+verified against a real tunnel]**: Cloudflare's edge appends the address that connected to it
+(the real visitor) to whatever `X-Forwarded-For` the visitor sent, and `cloudflared` relays
+headers to `http://web:8000` without adding an entry of its own. If both are true, the last entry
+is the real visitor, a forged leading entry is ignored, and the app keeps working as designed.
+If `cloudflared` *did* append its own container address, the last entry would be a `172.x.x.x`
+address for **everyone** — all users would share one rate-limit bucket and one audit-log IP.
+The same applies to `X-Forwarded-Proto`: Cloudflare is expected to send `https` to the origin;
+if it did not, Django would redirect every request to HTTPS forever (a redirect loop). **Both
+must be checked once, live.**
+
+**Owner procedure — do this once after the tunnel shows Connected:**
+
+1. From your own computer (not the server):
+   `curl -s -i -H 'X-Forwarded-For: 1.2.3.4' https://api.lanceraos.com/api/auth/csrf/ | head -20`
+   - Expect `HTTP/2 200` and a `strict-transport-security: max-age=3600; includeSubDomains`
+     header. A `301`/`302` loop (curl prints `Too many redirects` with `-L`) means
+     `X-Forwarded-Proto` is not reaching Django: stop and tell your developer; do not "fix" it
+     by opening ports.
+2. Find your real public address: `curl -s https://ifconfig.me`  (write it down).
+3. On the server, read what the app recorded for that request:
+   ```bash
+   cd ~/LanceraOS/deploy
+   docker compose exec -T web python manage.py shell -c "
+   from core.models import ApiRequestLog as L
+   r = L.objects.filter(path='/api/auth/csrf/').latest('created_at'); print('recorded IP:', r.ip_address)"
+   ```
+4. Compare:
+   - **Equals your real address from step 2** -> correct; nothing to do.
+   - **Equals `1.2.3.4`** -> the proxy is NOT appending; visitors can forge their address and
+     dodge rate limits. Change `get_client_ip` to read `CF-Connecting-IP` instead.
+   - **Starts with `172.` or `10.`** (a container address) -> `cloudflared` is appending its own
+     entry; everyone shares one address. Same fix: read `CF-Connecting-IP`.
+5. Repeat step 1-3 from your phone on mobile data. The recorded address must be **different**
+   from the first one (two real visitors, two addresses).
+
+### D.8 The test lab (how this was verified, and how to repeat it)
+
+Run on a MacBook (Apple silicon, Docker Desktop 29.9.2, Linux VM `aarch64`) against a throwaway copy of
+the stack: its own project name (`lanceraos-test`), its own volumes, host port **18000**, and freshly
+generated secrets in the git-ignored `deploy/.env.test`. Repeat it:
+
+```bash
+deploy/make-test-env.sh                                  # writes deploy/.env.test (leaves an existing one alone)
+alias dct='docker compose -f deploy/docker-compose.yml --env-file deploy/.env.test'
+dct up -d --build && dct ps                              # migrate exits 0, db/redis/web healthy
+curl -s http://127.0.0.1:18000/api/health/               # {"status":"ok"}
+dct exec -T web python manage.py generate_template_previews   # all 22 templates render
+dct exec -T web python manage.py shell < deploy/test-seed.py  # 12 finalised invoices via the app's own views
+dct down -v                                              # ALWAYS finish with -v: test data must not survive
+```
+
+**Never point the real stack at volumes created by a test stack** (different encryption keys make that
+data unreadable); the `-p`/`COMPOSE_PROJECT_NAME` separation keeps them apart automatically.
+
+Results of the 31 October 2026 run (all on **arm64 Linux**; see Appendix A for what that does and does not prove):
+
+| Check | Result |
+|---|---|
+| `docker build` (cold cache, Mac) | ~6 min; image 683 MB, `arm64`; `collectstatic` ran as the non-root `app` user |
+| In the image | `uid=1000(app)`; `/app` owned by `app`; no `/app/deploy`; no `/app/.env` |
+| Stack from empty volumes | healthy in ~18 s; `migrate` exit 0; **98** migrations applied |
+| `/api/health/` over plain HTTP | 200 `{"status":"ok"}` |
+| `/api/auth/csrf/`, Host `api.lanceraos.com`, no `X-Forwarded-Proto` | **301** to https |
+| same, with `X-Forwarded-Proto: https` | **200** + `Strict-Transport-Security: max-age=3600; includeSubDomains` |
+| `/static/admin/css/base.css` | 200 |
+| Host not in `ALLOWED_HOSTS` | 400 |
+| `X-Forwarded-For: 9.9.9.9, 203.0.113.77` | recorded IP `203.0.113.77` (forged leading entry ignored) |
+| 25 health probes | **0** `ApiRequestLog` rows for `/api/health/` |
+| WebSocket `ws/echo/` with `Origin: https://lanceraos.com` | 101 (opens) |
+| ... with `https://evil.example`, `http://localhost:5173`, or no Origin | 403 (refused) |
+| 22 templates through `generate_template_previews` | 22/22 rendered |
+| `docker compose down` then `up` (no `-v`) | test user and all 14 invoices still there |
+| Beat -> worker | `Scheduler: Sending due task notify-unread-comments-every-15-minutes` at 16:30:00.000, worker `received` 16:30:00.006, `succeeded` 16:30:00.029 |
+| Backup -> restore into a scratch database | row counts of `users`, `invoices`, `invoice_items`, `clients`, `api_request_logs`, `django_migrations` **identical** (1, 14, 303, 1, 34, 98); retention kept exactly 14 files |
+
+### D.9 Moving to Railway (or elsewhere) at public launch
+
+1. **Backup** on the VM (`deploy/backup.sh`) and copy the `.dump` somewhere safe (D.4).
+2. Create the Railway project as described in sections 3 and 4 above. **Copy these three secrets
+   unchanged from the VM's `deploy/.env`: `ENCRYPTION_KEY`, `BLIND_INDEX_KEY`, `SECRET_KEY`.**
+   The first two are non-negotiable (a different value makes every encrypted CNIC/NTN/PSEB and
+   SMTP password unreadable and breaks the uniqueness index). `SECRET_KEY` signs login tokens and
+   e-mail/password-reset links: keep it, or all of those stop working.
+3. Restore the dump into Railway's Postgres with `pg_restore --no-owner --clean --if-exists -d "<Railway public DB URL>" <file>.dump`
+   (run from any machine that has `pg_restore` 17; use the *public* proxy URL, not the private one).
+   Do this with `web`/`worker`/`beat` stopped or not yet deployed, then deploy `web` (its pre-deploy
+   `migrate` is a no-op on an up-to-date database).
+4. Redis is **not** moved. It only holds the task queue, cache and live-socket traffic. Anything
+   mid-flight (a pending 2FA code, a rate-limit counter, a queued PDF) is lost; scheduled tasks
+   resume from the next slot. Users may be asked to log in again if a refresh was in flight.
+5. DNS swap: in Cloudflare delete the tunnel's `api` record, create the `api` CNAME to Railway
+   (DNS-only/grey per section 4), wait for Railway to issue the certificate. Switch **before**
+   shutting the VM down; keep it stopped (not deleted) for a week as a fallback.
+6. Afterwards: the proxy topology is Railway's, not Cloudflare's, so Appendix B (client IP) applies
+   again and must be re-run. Remove the AWS resources and the Cloudflare tunnel when you are sure.

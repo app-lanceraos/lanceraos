@@ -8,6 +8,12 @@
 .env.*
 !.env.example
 
+# The Compose stack's own files, including deploy/.env (real secrets). The
+# patterns above are anchored to the build-context root, so they do NOT cover
+# deploy/.env -- without this line `COPY . .` would bake the secrets file into
+# the image. Proven in DEPLOYMENT.md Appendix D by `ls /app/deploy` failing.
+deploy/
+
 venv/
 .venv/
 env/
