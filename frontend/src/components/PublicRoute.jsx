@@ -22,6 +22,11 @@ export default function PublicRoute({ children }) {
   // (which happens before Login.jsx's own deletion_pending check) causes
   // this redirect to win the race, unmounting Login.jsx before its
   // modal ever renders.
+  //
+  // authStore.initError ("couldn't reach the server") needs no handling
+  // here on purpose: it leaves isAuthenticated false, so the form still
+  // renders for someone who genuinely needs to sign in, and if a retry
+  // (hooks/useAuthInitRetry.js) later succeeds, the redirect below fires.
   if (isAuthenticated && !deletionScheduledAt) {
     return <Navigate to="/profile" replace />
   }

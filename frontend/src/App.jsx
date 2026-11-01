@@ -6,6 +6,7 @@ import useAuthStore from '@/store/authStore'
 import PrivateRoute from '@/components/PrivateRoute'
 import PublicRoute from '@/components/PublicRoute'
 import AppShell from '@/components/AppShell'
+import useAuthInitRetry from '@/hooks/useAuthInitRetry'
 
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
@@ -44,6 +45,10 @@ export default function App() {
   useEffect(() => {
     initialize()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // If the first session check could not reach the server, retry when the
+  // browser comes back online / the tab is visible again.
+  useAuthInitRetry()
 
   return (
     <BrowserRouter>

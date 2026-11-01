@@ -1,6 +1,11 @@
 // src/lib/api.js
 import axios from 'axios'
 
+import { classifyAuthError } from '@/lib/authErrors'
+import { refreshCoordinator } from '@/lib/refreshCoordinator'
+
+const REFRESH_TIMEOUT_MS = 15000
+
 const BASE_URL = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : 'http://localhost:8000/api'
@@ -136,19 +141,46 @@ api.interceptors.response.use(
 
     originalRequest._retry = true
     isRefreshing = true
+    // Taken BEFORE waiting for the cross-tab lock: refreshCoordinator skips
+    // the POST when another tab refreshed after this moment.
+    const sawUnauthorizedAt = Date.now()
 
     try {
-      await ensureCsrfCookie()
-      const csrfToken = getCookie('csrftoken')
-      await axios.post(`${BASE_URL}/auth/token/refresh/`, {}, {
-        withCredentials: true,
-        headers: csrfToken ? { 'X-CSRFToken': csrfToken } : {},
+      await refreshCoordinator.refresh(sawUnauthorizedAt, async () => {
+        await ensureCsrfCookie()
+        const csrfToken = getCookie('csrftoken')
+        await axios.post(`${BASE_URL}/auth/token/refresh/`, {}, {
+          withCredentials: true,
+          // Bare axios has no default timeout; without one a hung refresh
+          // would hold the cross-tab lock (and block every other tab) forever.
+          timeout: REFRESH_TIMEOUT_MS,
+          headers: csrfToken ? { 'X-CSRFToken': csrfToken } : {},
+        })
       })
       flushQueue(null)
+      // Deliberately not `await`ed: a failure of the RETRY itself must
+      // reach the caller as-is, not be mistaken for a refresh failure by
+      // the catch below.
       return api(originalRequest)
     } catch (refreshError) {
       flushQueue(refreshError)
-      _forceLogout()
+      // Only the server saying 401/403 to the refresh means the session is
+      // gone. Anything else (network error, timeout, 429, 5xx) leaves the
+      // cookies as they were: reject this request so the page shows its own
+      // error, and let the next action try again. Reporting "logged out"
+      // for a flaky connection is the bug this replaces — a reload "fixed"
+      // it only because nothing had actually been cleared.
+      //
+      // The refresh POST is deliberately NOT retried automatically on a
+      // network error. From here we cannot tell "the request never reached
+      // the server" from "the server rotated the token and the response was
+      // lost". In the second case a retry would send the OLD refresh
+      // cookie, get a 401, and the server then deletes every auth cookie —
+      // worse than failing once. A retry is only safe once the backend
+      // accepts the previous refresh token for a short grace window.
+      if (classifyAuthError(refreshError) === 'definitive') {
+        _forceLogout()
+      }
       return Promise.reject(refreshError)
     } finally {
       isRefreshing = false

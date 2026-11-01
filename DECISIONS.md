@@ -15145,3 +15145,74 @@ Out-of-scope findings (reported, not fixed): `ws/echo/` still routed in producti
 logs two errors and Celery reports `succeeded`; Sentry never initialised; `frontend/viteset.config.js` dead; `.dockerignore`
 lets `apps/*/tests` and `*.md` into the image. New: `DJANGO_CELERY_BEAT_TZ_AWARE` is unset (matters only if Option B is
 ever adopted).
+
+
+---
+
+Date: 01 November 2026 (auth resilience — a bad connection must never log the user out)
+Decision: Only a 401 or 403 from the server means "logged out". A network error, timeout, 408, 429 or any 5xx never
+does. Three changes, all frontend: (1) `authStore.initialize()` retries `/auth/me/` (3 attempts, 8 s each, 1 s then 2 s
+backoff) and, if it never gets an answer, sets a new `initError: 'network'` instead of logging out — `PrivateRoute`
+then shows a "Can't reach LanceraOS right now" screen with "Try again" rather than redirecting to `/login`;
+(2) `lib/api.js` calls `_forceLogout()` only when the refresh itself comes back 401/403, otherwise it just rejects the
+original request; (3) refresh is coordinated across tabs (`lib/refreshCoordinator.js`: a Web Lock plus a non-secret
+`lanceraos_last_refresh_at` timestamp in localStorage). One shared classifier, `lib/authErrors.js`
+(`classifyAuthError` -> `definitive` / `transient` / `unexpected`), is the single rule both places use.
+What was reported: Ali (testing from Pakistan against the Sydney backend) — "sometimes I get logged out and it takes
+some time to see whether I am logged in; even when I was logged in I get sent to the login page; if I refresh the page
+I am sent to my profile and I am logged in again."
+Reason:
+- "A reload fixes it" is the evidence: the cookies were never cleared and the server never said "logged out". The app
+  decided that by itself after ONE failed request. Two code paths did exactly that: `initialize()`'s bare `catch {}`
+  set `isAuthenticated: false` for any error (so `PrivateRoute` redirected to `/login`), and the response interceptor
+  called `_forceLogout()` (clear local auth + hard navigation to `/login?session_expired=1`) whenever the silent refresh
+  failed for any reason. Requests from Pakistan take ~0.4 s warm and 1-3.5 s on a fresh connection, and at least one
+  `net::ERR_QUIC_PROTOCOL_ERROR` has been seen on a POST, so occasional single-request failures are normal there.
+- Cross-tab rotation race (real, found by reading the backend; not reproduced in a browser). `Session.rotate()`
+  overwrites `refresh_token_hash`; `Session.get_valid()` matches only the CURRENT hash; `refresh()` answers any failed
+  lookup with 401 AND `clear_auth_cookies()`. Two tabs holding the same old refresh cookie that refresh together: tab A
+  rotates, tab B is sent a 401 plus "delete the access, refresh and hint cookies". If B's response is applied after A's,
+  A's fresh cookies are erased and every tab is genuinely logged out (if B's arrives first, A's Set-Cookie wins and
+  nothing is lost — so it is order-dependent). `lib/api.js`'s `isRefreshing` is a module variable and only protects one
+  tab. The coordinator serialises refreshes across tabs: because cookies are shared by all tabs on the domain, the tab
+  that gets the lock second already holds the rotated cookie, so even without the timestamp its POST would be valid; the
+  timestamp only saves the redundant round trip. Timing precision is therefore not safety-critical (a 401 seen more than
+  2 s after another tab's refresh just does a second, valid refresh).
+- The refresh POST is deliberately NOT retried automatically on a network error. The client cannot tell "the request
+  never reached the server" from "the server rotated the token and the response was lost". In the second case a retry
+  sends the OLD refresh cookie, gets a 401, and the server deletes all auth cookies — worse than failing once. A retry is
+  only safe once the backend accepts the previous refresh token for a short grace window (open decision D1 below).
+  Also added a 15 s timeout to the refresh POST (bare axios has none; a hung refresh would otherwise hold the cross-tab
+  lock for every tab).
+- `initError` is cleared by `loginSuccess()` and `clearLocalAuth()`, so a stale "network" error can never turn a later
+  real logout into the "can't reach" screen instead of the login redirect. `PublicRoute` needed no code change: with
+  `initError` set, `isAuthenticated` is false so the login form still renders, and a successful automatic retry
+  (`hooks/useAuthInitRetry.js`, on `online` and on the tab becoming visible; no listeners or timers while `initError`
+  is null) flips it to the existing redirect to `/profile`. `clearLocalAuth()` (which wipes the cached sidebar avatar) and
+  every cookie are left alone on `initError`.
+- Verified: 76 new tests (`authStore.test.js`, `lib/api.test.js`, `lib/refreshCoordinator.test.js`,
+  `lib/authErrors.test.js`, `components/PrivateRoute.test.jsx`, `hooks/useAuthInitRetry.test.jsx`) written first and run
+  against the unchanged code (21 failed for the expected reasons; 3 files could only fail with "module not found" because
+  the modules did not exist yet), then green after. The cross-tab test (C1) simulates two tabs with a fake lock provider
+  and shared store; it was mutation-checked (turning the skip off makes it fail). NOT verified in a real browser: no
+  Playwright library is installed (adding one is a new dependency), the backend was not running, and the dev account's
+  password is not known to the session.
+Alternatives considered:
+- Retrying the refresh POST once on a network error — rejected for the reason above (lost-response case).
+- Using `lanceraos_has_session`'s presence alone to keep the user "logged in" through a failure — rejected: it proves
+  nothing (the session may have been revoked); the retry screen is honest about "unknown".
+- A BroadcastChannel to tell other tabs about a refresh — the shared cookies already carry the result; a localStorage
+  timestamp is enough and survives a tab opened later.
+Not done (open decisions, written up for Ali — none implemented, no backend file touched):
+- D1 refresh-token grace window on the backend. Without it, a lost refresh response, or a rotation race the
+  cross-tab lock cannot cover (the server's `refresh()` is not atomic, so two requests carrying the same old token can
+  both pass `get_valid` before either rotates), can still force one new login. Also unchanged: the 3-session cap evicts
+  the session with the oldest `last_used_at`, and nothing ever calls `Session.touch()`, so that is really "least recently
+  refreshed" — a fourth browser/profile/device logging in can sign out a real session, legitimately.
+- D2 the extra round trips after the 15-minute access token expires (original call 401 -> refresh -> retry = three
+  sequential round trips, 1.2-3+ s from Pakistan). Part of the same fix means it is now slow but no longer a logout.
+- D3 related findings, not fixed: `ensureCsrfCookie()` caches a FAILED `/auth/csrf/` fetch forever (the promise is never
+  reset, so every state-changing request 403s until a reload); a CSRF 403 on the refresh endpoint is classed
+  "definitive" and therefore logs the user out locally even though the session is intact; `PublicRoute`'s loading screen
+  has no "still connecting" line (only `PrivateRoute`'s does); `Login.jsx` shows "session expired" for any
+  `session_expired=1`, including a disabled account.

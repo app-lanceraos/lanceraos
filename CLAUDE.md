@@ -248,8 +248,21 @@ This is how you investigate "why didn't this happened?"
    handles silent token refresh on 401 responses via the httpOnly
    refresh cookie. Never handles raw access/refresh token strings —
    those never appear in JS-visible storage or in any response body.
-4. Auth state (user object, loading, isAuthenticated) lives in
-   src/store/authStore.js using Zustand.
+   Only a 401/403 from the server means "logged out" (one shared rule:
+   src/lib/authErrors.js, classifyAuthError). A network error, timeout,
+   408, 429 or 5xx — including from the refresh call itself — never logs
+   a user out or clears local auth; it just rejects that request. The
+   refresh POST is not auto-retried on a network error (a lost response
+   could mean the server already rotated the token). Refresh is
+   coordinated across tabs (src/lib/refreshCoordinator.js: a Web Lock
+   plus a non-secret localStorage timestamp) so two tabs never rotate the
+   same refresh cookie at once.
+4. Auth state (user object, loading, isAuthenticated, initError) lives in
+   src/store/authStore.js using Zustand. initialize() retries /auth/me/
+   (3 attempts, 8s each) and only treats 401/403 as logged out; if the
+   server cannot be reached it sets initError: 'network' (nothing is
+   cleared) and PrivateRoute shows a "Can't reach LanceraOS" screen with
+   Try again, not a redirect to /login.
 5. The AppShell layout component (src/components/AppShell.jsx)
    owns the sidebar, header, and main content frame. Page components
    render inside it via App.jsx passing them as children. Page components
