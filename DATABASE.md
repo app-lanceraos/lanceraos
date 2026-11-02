@@ -609,6 +609,58 @@ table does not record whether a caller actually used a fallback.
 
 ---
 
+## `proposals` (`Proposal`, in `apps.proposals`)
+
+A freelancer's proposal to a client, usually started from a pasted job post. Added 02 November 2026 (migration
+`proposals.0001_initial`). Field names and money arithmetic deliberately mirror `invoices` so part 2's conversion to
+an invoice is a lossless copy; `Proposal.recalculate_totals()` is pinned to `Invoice.recalculate_totals()` by a drift
+test. Part 2's fields (sent/viewed/responded timestamps, the client's answer, response IP, converted invoice, proposal
+number) are NOT here yet: they are added by the migration whose code writes them.
+
+**Schema**:
+```
+id
+user               FK, CASCADE (same as invoices.user), related_name='proposals'
+client             FK to clients.Client, nullable, SET_NULL — OPTIONAL: a proposal often exists before the client does
+client_name, client_email, client_company   blank allowed; snapshotted from `client` on create / when it changes
+title (200), tone (professional|friendly|technical)
+job_description, my_experience, body        TextField, plain text
+ai_tips            JSONField list of strings; ai_generated_at (nullable), ai_model — how the CURRENT body was produced
+currency (3), scope_sections (JSON: [{title, text}]), payment_terms
+tax_rate, discount_amount, subtotal, tax_amount, total   same Decimal types as invoices
+valid_until        DateField, nullable
+status             draft|sent|viewed|accepted|declined|withdrawn (only 'draft' reachable in part 1). Expiry is
+                   NEVER stored: Proposal.is_expired is computed on read (sent/viewed and valid_until < today)
+view_token         CharField(32), unique, indexed, generated in save(); not exposed by any part-1 serializer
+created_at, updated_at
+```
+
+1. **Mutable?** Only while `draft` (enforced server-side, 403). A sent proposal is what the client saw; part 2 locks it.
+2. **Soft deleted?** No. Only drafts can be hard-deleted; a sent/answered proposal is a record (part 2 withdraws it).
+3. **Audit trail?** Yes, `core.AuditLog`: `proposal_created`, `proposal_deleted`, `proposal_ai_generated` (ids, tone,
+   model, regenerated; never any text). None are bell notifications (the user triggers each herself).
+4. **Indexed?** `(user, status)`, `(user, created_at)`, unique indexed `view_token`.
+5. **Encrypted?** No — business text and prices; no credentials. (Contact details are stored in the clear, as on invoices.)
+6. **Cascade behavior?** `user` CASCADE (accounts are anonymised, never hard-deleted, so it does not fire in practice);
+   `client` SET_NULL (the snapshot keeps the proposal readable).
+
+---
+
+## `proposal_items` (`ProposalItem`, in `apps.proposals`)
+
+A priced line on a proposal; a field-for-field copy of `invoice_items` (`description` 300, `quantity` 8,2, `unit_price`
+10,2, `total` 12,2 computed on save, `sort_order`). Prompt 02 called the order column `position`; it is `sort_order` so
+part 2's conversion copies it unchanged.
+
+1. **Mutable?** Yes while the parent is a draft; the view replaces the whole list on update (like invoices).
+2. **Soft deleted?** No — a removed line has no record value.
+3. **Audit trail?** None per row; covered by the parent's events.
+4. **Indexed?** Implicit FK index only; always read for one proposal ordered by `sort_order`.
+5. **Encrypted?** No.
+6. **Cascade behavior?** `proposal` CASCADE.
+
+---
+
 ## `notification_reads` (`NotificationRead`, in `core`)
 
 Per-user, per-notification UI state (read/dismissed) for the notification bell — deliberately kept

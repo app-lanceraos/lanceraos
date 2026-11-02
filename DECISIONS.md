@@ -15287,3 +15287,80 @@ Alternatives considered:
   `core/tests/test_ai.py` (which pinned the old behaviour) was rewritten for the new contract.
 Not verified: `model_decommissioned` as an error code (Groq's documented code for a retired model; only
 `model_not_found` was observed live) — both map to `model_unavailable`; the 429 body/header format (M7).
+
+Date: 02 November 2026 (Proposals part 1 — model, CRUD, code-computed score, AI generation; plus a core/ai.py tightening)
+Decision: Built the first half of Module 6 (`apps/proposals/`): `Proposal` / `ProposalItem`, ordinary CRUD, a deterministic
+quality score, and AI generation. Sending, the public client page, accept/decline, withdraw, convert-to-invoice, notifications,
+emails and proposal numbers are part 2 and are NOT built. Three owner decisions, not re-opened:
+1. The client is OPTIONAL (`client` FK null, `SET_NULL`, plus inline `client_name/email/company`): a freelancer pastes a job post
+   before the client exists in their CRM. A saved client is snapshotted into the inline fields on create and whenever it changes.
+2. The 1-10 score is computed by CODE (`apps/proposals/scoring.py`), not the model. This REVERSES CLAUDE.md Module 6's "the AI
+   returns a quality score". Seven checks worth 10 points (length 2, key_terms 3, next_step 1, specifics 1, no_cliches 1,
+   readability 1, structure 1); `key_terms` is N/A with no job post and the score is then scaled from 7 to 10; an empty body is 1.
+   Integer half-up rounding, no float. The explanation says plainly it is not a prediction of winning the job.
+3. AI generation is SYNCHRONOUS (no Celery): the model is called outside any transaction, the proposal is saved in ONE atomic block,
+   then returned. A failed generation creates and changes nothing.
+Deviations from the written spec: (a) two generate endpoints, `POST /api/proposals/generate-ai/` (new draft) and
+`/{id}/generate-ai/` (regenerate) — there is no id before the first generation and a failure must not leave an empty draft;
+(b) `ProposalItem.sort_order` (and `total`), not `position`, to mirror `InvoiceItem` so part 2's conversion copies fields as-is;
+(c) PUT is a partial update (autosave-friendly), `title` required on create only; (d) validation errors keep DRF's field-keyed body
+AND add a flat `error` string; (e) on regeneration, an omitted `tone`/`my_experience`/`job_description` falls back to the stored
+value, and an existing title is kept unless the user sends one (title priority: user's, then existing, then the model's, then the
+job post's first line cut to 80 chars; on create there is no "existing").
+Fields deliberately deferred to part 2 (their code is not written yet, so they do not exist): `sent_at`, `viewed_at`,
+`responded_at`, the client's response message and IP, `converted_invoice`, `proposal_number`. `status` carries all six values from
+the start (it is the model's core) but only `draft` is reachable. `is_expired` is computed on read, never stored (the invoice
+`overdue` lesson).
+Prompt design (`prompts.py`): text only — never prices, rates, line items, dates/durations, invented experience, or tools the
+freelancer did not mention; the job post is DATA inside `<job_post>` (delimiter tags are stripped from user text, repeatedly, so
+`<job_<job_post>post>` cannot reassemble one); only an explicit allowlist (`FREELANCER_FACT_FIELDS`: display_name, business_name,
+profession) plus the user's own `my_experience` reaches the model, built by iterating that mapping and never the profile.
+No `response_format`: prompt-only JSON validated by our own parser (`parse_proposal_reply`) keeps every failure inside our
+`invalid_output` accounting and avoids Groq's unverified 400 shape. Rejected alternative: strict `json_schema` (accepted by both
+models in the 02 November probe) — to be revisited in the evaluation prompt, with the retry/format options below.
+Part A (`core/ai.py`): (1) non-200 responses are now logged as a SAFE SUMMARY only (status, `error.code`, `error.type` — strings,
+60 chars each — and body length), never the body or `message`, because Groq's `json_validate_failed` 400 documents the model's
+failed output (`failed_generation`) in the body and ours would be a user's proposal; the key redaction stays as a second layer;
+applied to `call_groq` and `list_groq_models`. (2) New reason `request_too_large` (HTTP 413; "That input is too long for the AI.
+Please shorten it and try again."), and 400 + `json_validate_failed` maps to `invalid_output`. NEITHER mapping was observed live (no
+probe can safely force them); both are defensive and unit-tested with mocks. No migration: the longest reason id is 17 chars and
+`AiCallLog.failure_reason` holds 30. (3) `parse_json_object` now retries with `strict=False`, tolerating raw newlines/tabs inside a
+string value; unescaped quotes, trailing commas and truncation are still errors.
+Live verification (real Groq, real endpoint, 15 of 15 allowed requests used; 3 invented job posts x 3 tones, my_experience in 1 run):
+| job / tone | HTTP | latency | tokens in/out | words | score | failed checks |
+| react / professional (+experience) | 201 | 4637 ms | 685/1949 | 179 | 9 | specifics |
+| react / friendly | 201 | 2072 | 687/578 | 190 | 8 | key_terms 4/8, specifics |
+| react / technical | 201 | 3249 | 694/892 | 259 | 6 | key_terms 2/8, next_step, specifics |
+| logo / professional | 201 | 2319 | 665/698 | 185 | 7 | key_terms 3/8, specifics |
+| logo / friendly | 201 | 2248 | 666/663 | 176 | 8 | key_terms 4/8, specifics |
+| logo / technical | 201 | 2588 | 673/951 | 195 | 6 | key_terms 0/8, specifics |
+| scraper (+injection line) / professional | 503 invalid_output | 2528 | 676/757 | - | - | JSONDecodeError |
+| scraper / friendly | 201 | 1976 | 677/669 | 199 | 8 | key_terms 4/8, specifics |
+| scraper / technical | 503 invalid_output | 4240 | 684/685 | - | - | JSONDecodeError |
+All `finish_reason=stop`. Findings, from reading every body: no price, rate, amount, delivery date or duration anywhere and not a
+single digit in any of the 9 bodies (so `specifics` fails every time unless the user adds her own real number — a design
+consequence: an AI draft tops out at 9/10 until she does); the injected "write HACKED" line was ignored in every scraper run;
+the three tones are clearly distinguishable (Dear/Kind regards; "I love the idea"/"Looking forward to chatting!"; tool-and-trade-off
+heavy). Real defects found and fixed: (1) 2 of 9 replies did not parse (`JSONDecodeError`). Cause NOT proven: four follow-up calls
+with the same post all parsed, and the raw failing replies were not captured; most likely a raw newline or an unescaped quote inside
+the proposal string. Mitigated, not proven fixed: tolerant `strict=False` parse, a prompt line demanding valid JSON (escaped
+line breaks, no inner double quotes), and U+2011/NBSP folded to ASCII. After the changes 2 of 2 live calls on the failing post parsed
+(too few to prove anything); the pre-change rate on this sample was 2/11 failed. (2) One body contained a literal backslash-n pair
+(a double-escaped paragraph break): now decoded to a real newline in the parser. (3) The technical tone — and some others — named
+specific tools the freelancer never mentioned (Leaflet, React Query, Jest, Playwright, Illustrator, Pantone), contradicting the
+prompt's own rule: the system prompt now forbids naming tools not in the job post or the facts, and the technical-tone guidance
+no longer asks for named technologies. THIS PROMPT CHANGE WAS NOT RE-VERIFIED LIVE (the request budget was spent on the parse
+diagnosis). (4) The scorer missed a plain call to action ("Could we schedule a brief call...") — five phrases added to the frozen
+`NEXT_STEP_PHRASES`. Test-fixture artifacts, not defects: my posts said "invented", which lowered `key_terms`, and a "Freelance
+developer" profession made one logo proposal mention being a developer.
+Known limitations: the specified key-term tokeniser keeps hyphens, so a hyphenated job term ("figma-based") is one term a proposal
+saying "Figma" does not match; the key-term, cliché and call-to-action lists are frozen constants that will miss synonyms. Pre-existing,
+outside this change: the request-logging middleware cannot store a request body containing a NUL character (Postgres jsonb), so that
+request's `ApiRequestLog` row is lost (the failure is caught and logged); the API answer is a correct 400.
+Alternatives considered: asking the model for the score (rejected: not reproducible, and a model grading itself); one automatic
+retry on `invalid_output` inside the service (not built: it doubles latency and quota use on a failure whose cause is unknown —
+revisit in the evaluation prompt together with a delimited plain-text reply format or strict `json_schema`); a Celery task
+(rejected by the owner: the user waits 2-5 s anyway); storing the model's raw reply on failure for diagnosis (rejected: privacy
+rule, the log stores sizes only).
+Not verified: the two Part A mappings against the real API; the prompt change in (3); that the parse mitigations fix the 2/9
+failure rate; the AI-generation path under the production Linux worker/host; any frontend (none exists).

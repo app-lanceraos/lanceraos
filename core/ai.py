@@ -63,6 +63,13 @@ AI_TOTAL_BUDGET_HARD_CEILING_SECONDS = 60
 # NOT observed (no retired model id could be tried safely) — see DECISIONS.md.
 _MODEL_UNAVAILABLE_CODES = frozenset({'model_not_found', 'model_decommissioned'})
 
+# Groq's documented `error.code` for "the model produced output that failed
+# the requested JSON validation" (HTTP 400). Its body carries the model's
+# failed output (`failed_generation`) — user content, so it must never be
+# logged. Mapped to `invalid_output`. NOT observed live: only reachable with
+# `response_format`, which no feature uses yet, and no probe can force it.
+_JSON_VALIDATE_FAILED_CODE = 'json_validate_failed'
+
 # `reasoning_effort` and friends are model-specific parameters: run_ai_task
 # does not default them. Features pass them explicitly (see DECISIONS.md for
 # the measured effect of each level).
@@ -76,6 +83,7 @@ AI_FAILURE_REASONS = (
     'timeout',             # per-attempt timeout or total time budget exceeded
     'model_unavailable',   # the configured model id is gone or not accessible
     'upstream_error',      # network error, 5xx, bad key, malformed response
+    'request_too_large',   # HTTP 413: the input is too long for the model/tier
     'truncated',           # finish_reason == 'length': the reply was cut off
     'invalid_output',      # the feature's parser rejected the reply
 )
@@ -91,6 +99,7 @@ AI_USER_MESSAGES = {
     'timeout': 'The AI service took too long to respond. Please try again.',
     'model_unavailable': 'The AI service is temporarily unavailable.',
     'upstream_error': 'The AI service is temporarily unavailable. Please try again later.',
+    'request_too_large': 'That input is too long for the AI. Please shorten it and try again.',
     'truncated': 'The AI reply was incomplete. Please try again.',
     'invalid_output': 'The AI reply could not be used. Please try again.',
 }
@@ -165,13 +174,36 @@ def _retry_wait_seconds(resp):
     return _RETRY_WAIT_UNPARSEABLE_SECONDS
 
 
-def _error_code(resp):
-    """Groq's `error.code` string from an error body, or '' if the body is not that shape."""
+def _error_field(resp, name):
+    """One string field (`code` / `type`) of Groq's `error` object, or '' if the body is not that shape."""
     try:
-        code = resp.json().get('error', {}).get('code', '')
+        value = resp.json().get('error', {}).get(name, '')
     except (AttributeError, ValueError, TypeError):
         return ''
-    return code if isinstance(code, str) else ''
+    return value if isinstance(value, str) else ''
+
+
+def _error_code(resp):
+    return _error_field(resp, 'code')
+
+
+def _safe_error_summary(resp, api_key=''):
+    """
+    The ONLY description of a non-200 response that may reach a log: HTTP
+    status, `error.code`, `error.type` (strings only, 60 chars each) and the
+    body LENGTH. Never the body text and never `error.message`: Groq's
+    JSON-validation failure (400 `json_validate_failed`) echoes the model's
+    failed output in the body, which for our features is a user's generated
+    document. The API key is still redacted as a second layer.
+    """
+    code = _error_field(resp, 'code')[:60]
+    err_type = _error_field(resp, 'type')[:60]
+    try:
+        body_len = len(resp.text or '')
+    except TypeError:
+        body_len = 0
+    summary = f'status={resp.status_code} code={code or "-"} type={err_type or "-"} body_len={body_len}'
+    return summary.replace(api_key, '[redacted]') if api_key else summary
 
 
 def _setting(name, override):
@@ -250,8 +282,7 @@ def call_groq(messages, model, max_tokens=1500, max_retries=DEFAULT_MAX_RETRIES,
                 raise AiError('upstream_error', 200, f'Unexpected response shape: {type(exc).__name__}',
                               attempts=attempts) from exc
 
-        # Defence in depth: the upstream body goes to the server log, so the key can never ride along in it.
-        body_text = (resp.text or '')[:500].replace(api_key, '[redacted]')
+        error_summary = _safe_error_summary(resp, api_key)
 
         if resp.status_code == 429:
             wait_s = _retry_wait_seconds(resp)
@@ -261,15 +292,20 @@ def call_groq(messages, model, max_tokens=1500, max_retries=DEFAULT_MAX_RETRIES,
                 and time.monotonic() + wait_s < deadline
             )
             if not can_retry:
-                logger.warning('Groq rate limited, not waiting (wait %.1fs, attempt %s): %s', wait_s, attempts, body_text)
+                logger.warning('Groq rate limited, not waiting (wait %.1fs, attempt %s): %s', wait_s, attempts, error_summary)
                 raise AiError('rate_limited', 429, f'Rate limited; wait of {wait_s:.1f}s not acceptable.', attempts=attempts)
             logger.warning('Groq rate limited (attempt %s/%s) — waiting %.1fs.', attempts, max_retries + 1, wait_s)
             time.sleep(wait_s)
             continue
 
-        logger.error('Groq API error %s: %s', resp.status_code, body_text)
-        if _error_code(resp) in _MODEL_UNAVAILABLE_CODES:
+        logger.error('Groq API error: %s', error_summary)
+        code = _error_code(resp)
+        if code in _MODEL_UNAVAILABLE_CODES:
             raise AiError('model_unavailable', resp.status_code, f'Model {model} is not available.', attempts=attempts)
+        if resp.status_code == 413:
+            raise AiError('request_too_large', 413, 'HTTP 413', attempts=attempts)
+        if resp.status_code == 400 and code == _JSON_VALIDATE_FAILED_CODE:
+            raise AiError('invalid_output', 400, 'HTTP 400 json_validate_failed', attempts=attempts)
         raise AiError('upstream_error', resp.status_code, f'HTTP {resp.status_code}', attempts=attempts)
 
 
@@ -295,6 +331,7 @@ def list_groq_models():
     except requests.RequestException as exc:
         raise AiError('upstream_error', detail=f'Model list failed: {type(exc).__name__}') from exc
     if resp.status_code != 200:
+        logger.error('Groq model list error: %s', _safe_error_summary(resp, api_key))
         raise AiError('upstream_error', resp.status_code, f'Model list HTTP {resp.status_code}')
     try:
         return sorted(item['id'] for item in resp.json()['data'])
@@ -320,23 +357,38 @@ def strip_model_reply_wrapper(text):
     return text.strip()
 
 
+def _loads_tolerant(text):
+    """
+    json.loads, retried with strict=False only when the strict parse fails.
+    strict=False accepts raw control characters (a literal newline or tab)
+    inside a string value — a common slip when a model writes multi-line text
+    into a JSON string, and unambiguous to repair. Everything else (unescaped
+    quotes, trailing commas, truncation) is still an error.
+    """
+    try:
+        return json.loads(text)
+    except ValueError:
+        return json.loads(text, strict=False)
+
+
 def parse_json_object(text):
     """
     Parses a model reply into a dict: strips a <think> block / code fence,
     then json.loads; if that is not valid JSON, tries the slice from the
     first '{' to the last '}' (models sometimes wrap the object in prose).
+    Raw newlines/tabs inside string values are tolerated (see _loads_tolerant).
     Raises ValueError unless the result is a JSON object — an array or a
     scalar is rejected, never "repaired". Field-level validation is the
     feature's job, layered on top of this.
     """
     cleaned = strip_model_reply_wrapper(text or '')
     try:
-        value = json.loads(cleaned)
+        value = _loads_tolerant(cleaned)
     except ValueError:
         start, end = cleaned.find('{'), cleaned.rfind('}')
         if cleaned.startswith('[') or start == -1 or end <= start:
             raise ValueError('Reply is not a JSON object.') from None
-        value = json.loads(cleaned[start:end + 1])
+        value = _loads_tolerant(cleaned[start:end + 1])
     if not isinstance(value, dict):
         raise ValueError('Reply is JSON but not an object.')
     return value

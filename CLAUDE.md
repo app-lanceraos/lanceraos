@@ -2855,19 +2855,41 @@ Key API endpoints:
 ---
 
 ### Module 6 — Proposals
-Status: [updated as built]
+Status: PART 1 BUILT (02 November 2026): data model, CRUD, the code-computed quality score, AI
+generation. Part 2 (send, public client page, accept/decline, withdraw, convert-to-invoice,
+notifications and emails, proposal numbers) is NOT built; the fields it writes (sent/viewed/
+responded timestamps, the client's answer, response IP, converted invoice, proposal number) are
+added by the prompt whose code writes them. No frontend exists yet.
 App: apps/proposals/
 
-Manual proposal creation:
-Scope sections, line items with pricing, payment terms, validity period.
-Client details auto-filled from CRM. Proposal number auto-generated.
+Manual proposal creation (built):
+Scope sections (max 10), line items with pricing (max 50), payment terms, validity date. The client
+is OPTIONAL: link a saved client (details are snapshotted into client_name/email/company, again on
+change) or type inline details, or neither while it is a draft (part 2 requires name + email at
+send time). Money arithmetic mirrors Invoice.recalculate_totals() exactly, pinned by a drift test, so
+part 2's conversion is lossless. Only drafts can be edited, regenerated or deleted (403 otherwise).
+All text fields are PLAIN TEXT, displayed escaped, never HTML.
 
-AI proposal generation:
-Freelancer pastes a job description. System sends to Groq with a
-carefully engineered prompt returning structured JSON: proposal text,
-quality score (1-10), improvement feedback, word count.
-Three tone options: Professional, Friendly, Technical.
-Generated proposals saved as drafts automatically.
+AI proposal generation (built):
+Freelancer pastes a job description (50-6000 chars). core.ai.run_ai_task (feature
+'proposal_generate', GROQ_MODEL_QUALITY, reasoning_effort 'medium', no response_format) returns JSON:
+proposal text, 2-4 job-specific tips, a title. Three tones: Professional, Friendly, Technical.
+SYNCHRONOUS (no Celery); the model is called outside any transaction, the draft is saved in one
+atomic block, and only then returned. A failed generation creates/changes nothing.
+The AI writes TEXT ONLY: never prices, rates, line items, dates or durations, never invented
+experience, and never tools the freelancer did not mention. Only display_name, business_name,
+profession and the user's own my_experience reach the model (allowlist in prompts.py).
+Quality score (1-10) is computed by CODE, not the model (apps/proposals/scoring.py): 7 deterministic,
+explainable checks. This REVERSES this section's earlier "the AI returns a quality score".
+
+Key API endpoints — built (part 1):
+- GET/POST /api/proposals/ (paginated like invoice_list; ?status= ?search=; POST = manual create)
+- GET/PUT/DELETE /api/proposals/{id}/ (PUT and DELETE: draft only; detail includes `quality`, never view_token)
+- POST /api/proposals/generate-ai/ (creates a NEW draft; deviation from the original spec, which listed
+  only the {id} form: there is no id before the first generation and a failure must leave no empty draft)
+- POST /api/proposals/{id}/generate-ai/ (regenerates a draft; a non-empty body needs "confirm_overwrite": true)
+
+PART 2, NOT BUILT (the original spec, kept as the target):
 
 Client response flow:
 Proposal sent to client via email with secure token link.
@@ -2881,10 +2903,8 @@ Convert to invoice:
 One click converts an accepted proposal to a draft invoice.
 Line items, client details, and amounts pre-populated. No re-entry.
 
-Key API endpoints:
-- CRUD /api/proposals/
+Key API endpoints — not built (part 2):
 - POST /api/proposals/{id}/send/
-- POST /api/proposals/{id}/generate-ai/
 - GET /api/proposals/public/{token}/
 - POST /api/proposals/public/{token}/respond/
 - POST /api/proposals/{id}/convert-to-invoice/
@@ -3001,7 +3021,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
-| Proposals            | -       | -        | -     | Not started |
+| Proposals            | Part 1 built (model, CRUD, code-computed score, AI generation); part 2 (send/public page/respond/convert) not built | -        | 295 passing (`apps.proposals` + `core`) | In progress |
 | Contracts            | -       | -        | -     | Not started |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | -       | -        | -     | Not started |

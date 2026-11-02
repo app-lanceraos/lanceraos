@@ -54,6 +54,12 @@ app's `prompts.py`. Never call it inside `transaction.atomic()` or while holding
 Always handle `result.ok == False` (every feature must still work with AI off or failing), and let code calculate
 every figure — the model only explains. `core.AiCallLog` stores sizes, never prompt or reply text.
 
+## Free-text fields are plain text
+
+User- or model-written prose (proposal bodies, job posts, notes) is stored and returned as PLAIN TEXT and displayed
+escaped. No serializer sanitises or strips markup because nothing downstream may treat it as markup: never render it
+with `dangerouslySetInnerHTML`, never mark it safe in a template or email, never put it in an HTML context unescaped.
+
 ## Docstrings explain WHY, not just WHAT
 
 A one-line "does X" docstring is not sufficient where a design decision or non-obvious constraint is

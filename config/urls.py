@@ -30,6 +30,7 @@ urlpatterns = [
     # app's code implements it — see views_statement.py's own docstring.
     path('api/clients/<uuid:pk>/statement/pdf/', client_statement_pdf, name='client_statement_pdf'),
     path('api/invoices/', include('apps.invoices.urls')),
+    path('api/proposals/', include('apps.proposals.urls')),
     # Lives at the root, not under api/auth/ — matches what the frontend
     # (AppShell.jsx) already calls directly via api.get('/notifications/'),
     # which resolves against the API base URL, not through /auth/.
