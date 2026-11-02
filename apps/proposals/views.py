@@ -11,6 +11,7 @@ validation failures keep DRF's field-keyed detail alongside it.
 import logging
 
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status
@@ -147,30 +148,40 @@ def proposal_detail(request, pk):
     GET: full detail incl. items, word_count and the code-computed `quality`.
     PUT: draft only (403 otherwise), partial update; returns the fresh detail.
     DELETE: draft only (403 otherwise) — a sent or answered proposal is a record.
+    PUT and DELETE re-check the status under select_for_update() inside one
+    transaction (see below).
     """
-    proposal = get_object_or_404(Proposal, pk=pk, user=request.user)
-
     if request.method == 'GET':
-        return Response(_detail(proposal))
+        return Response(_detail(get_object_or_404(Proposal, pk=pk, user=request.user)))
 
-    if not proposal.is_editable:
-        return _error(NOT_DRAFT_MESSAGE, status.HTTP_403_FORBIDDEN)
+    # PUT / DELETE: the row is locked for the whole check-then-write. Reading it,
+    # checking `draft`, and writing later with no lock would let part 2's send
+    # flip the status a millisecond before an edit lands on a now-sent proposal.
+    # select_for_update() is scoped to request.user, so another user's id is
+    # still a 404; the lock waits for a concurrent writer, then re-reads fresh.
+    deleted_id = None
+    with transaction.atomic():
+        proposal = get_object_or_404(Proposal.objects.select_for_update(), pk=pk, user=request.user)
+        if not proposal.is_editable:
+            return _error(NOT_DRAFT_MESSAGE, status.HTTP_403_FORBIDDEN)
 
-    if request.method == 'DELETE':
-        if _mutation_rate_limited('delete', request.user):
-            return _too_many('Too many delete actions. Please try again later.')
-        proposal_id = str(proposal.pk)
-        proposal.delete()
-        emit('ProposalDeleted', proposal_id=proposal_id, user_id=str(request.user.pk))
-        logger.info('[PROPOSALS] Deleted draft proposal %s.', proposal_id)
+        if request.method == 'DELETE':
+            if _mutation_rate_limited('delete', request.user):
+                return _too_many('Too many delete actions. Please try again later.')
+            deleted_id = str(proposal.pk)
+            proposal.delete()
+        else:
+            if _mutation_rate_limited('update', request.user):
+                return _too_many('Too many updates. Please try again later.')
+            serializer = ProposalSerializer(proposal, data=request.data, partial=True, context={'request': request})
+            if not serializer.is_valid():
+                return _validation_error(serializer.errors)
+            serializer.save()
+
+    if deleted_id is not None:
+        emit('ProposalDeleted', proposal_id=deleted_id, user_id=str(request.user.pk))
+        logger.info('[PROPOSALS] Deleted draft proposal %s.', deleted_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-    if _mutation_rate_limited('update', request.user):
-        return _too_many('Too many updates. Please try again later.')
-    serializer = ProposalSerializer(proposal, data=request.data, partial=True, context={'request': request})
-    if not serializer.is_valid():
-        return _validation_error(serializer.errors)
-    serializer.save()
     logger.info('[PROPOSALS] Updated proposal %s.', proposal.pk)
     return Response(_detail(proposal))
 
@@ -212,7 +223,7 @@ def proposal_generate_ai_create(request):
         return _ai_failure_response(result)
 
     proposal = save_new_proposal(
-        request.user, result.data, job_description=data['job_description'], tone=tone,
+        request.user, result.data, model=result.model, job_description=data['job_description'], tone=tone,
         my_experience=my_experience, title=data.get('title', ''), client=data.get('client'),
     )
     return Response(_detail(proposal), status=status.HTTP_201_CREATED)
@@ -258,7 +269,7 @@ def proposal_generate_ai(request, pk):
 
     try:
         proposal = apply_regeneration(
-            request.user, proposal.pk, result.data, job_description=job_description, tone=tone,
+            request.user, proposal.pk, result.data, model=result.model, job_description=job_description, tone=tone,
             my_experience=my_experience, title=data.get('title', ''),
         )
     except ProposalNotEditable:

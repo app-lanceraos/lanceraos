@@ -40,7 +40,9 @@ def get_client_ip(request):
 
 
 def get_user_agent(request):
-    return request.META.get('HTTP_USER_AGENT', '')[:500]
+    # NUL is stripped: PostgreSQL text columns cannot store it, and a header containing one would
+    # otherwise make the ApiRequestLog / AuditLog / Session write fail for that request.
+    return request.META.get('HTTP_USER_AGENT', '').replace(NUL, '')[:500]
 
 
 def normalize_user_agent(ua):
@@ -96,6 +98,10 @@ SENSITIVE_KEYS = {
 }
 REDACTED_PLACEHOLDER = '***REDACTED***'
 
+# PostgreSQL text and jsonb columns cannot store U+0000; an insert containing one raises. Every string
+# that reaches a log sink goes through here first (see redact_sensitive_fields).
+NUL = '\x00'
+
 # Key-based redaction (below) only catches sensitive values that arrive
 # under a sensitive KEY NAME. It does nothing for a secret typed into an
 # otherwise-innocuous free-text field — e.g. an admin's search query, or
@@ -110,6 +116,8 @@ _SENSITIVE_VALUE_PATTERN = re.compile(
 
 def _redact_value_content(value):
     if isinstance(value, str):
+        # Stripped BEFORE the pattern runs, so 'pass\x00word=x' cannot slip past it.
+        value = value.replace(NUL, '')
         return _SENSITIVE_VALUE_PATTERN.sub(
             lambda m: f'{m.group(1)}={REDACTED_PLACEHOLDER}', value,
         )
@@ -125,13 +133,23 @@ def redact_sensitive_fields(data):
     (log_event, below). Returns a new structure — never mutates the
     input, since request-body callers still need the original,
     un-redacted data to actually process the request.
+
+    Also removes every NUL character from string values AND dict keys (and
+    nothing else): PostgreSQL jsonb cannot store U+0000, and a request body
+    containing one used to make the ApiRequestLog insert fail, leaving that
+    request with no log row at all. This is the one shared point in front of
+    every JSON log sink (request_body, response_body, AuditLog.metadata). Keys
+    are stripped before the sensitive-key check, so a NUL cannot dodge it.
     """
     if isinstance(data, dict):
-        return {
-            key: (REDACTED_PLACEHOLDER if key.lower() in SENSITIVE_KEYS
-                  else redact_sensitive_fields(value))
-            for key, value in data.items()
-        }
+        clean = {}
+        for key, value in data.items():
+            if isinstance(key, str):
+                key = key.replace(NUL, '')
+                clean[key] = REDACTED_PLACEHOLDER if key.lower() in SENSITIVE_KEYS else redact_sensitive_fields(value)
+            else:
+                clean[key] = redact_sensitive_fields(value)
+        return clean
     if isinstance(data, list):
         return [redact_sensitive_fields(item) for item in data]
     return _redact_value_content(data)

@@ -57,6 +57,15 @@ DEFAULT_MAX_RETRIES = 2
 # a long round trip away from the Sydney server.
 AI_TOTAL_BUDGET_HARD_CEILING_SECONDS = 60
 
+# Model fallback (run_ai_task's `fallback_model`). Only these two failures can be fixed by asking a
+# DIFFERENT model: `rate_limited` (this model's allowance is exhausted — the smaller model has its own
+# per-model limits) and `model_unavailable` (this model id is gone or inaccessible). `truncated` and
+# `invalid_output` are properties of this prompt/reply, `timeout` and `upstream_error` say nothing about
+# the model — retrying those on another model would just burn the free-tier daily cap.
+AI_FALLBACK_REASONS = frozenset({'rate_limited', 'model_unavailable'})
+# A fallback needs room to finish: with less than this left of the total budget it is not attempted.
+AI_MIN_FALLBACK_BUDGET_SECONDS = 10
+
 # Groq's error `code` values meaning "this model id will never work":
 # `model_not_found` was observed live (HTTP 404, 02 November 2026);
 # `model_decommissioned` is Groq's documented code for a retired model and was
@@ -151,6 +160,10 @@ class AiResult:
     log_id: str = ''
     latency_ms: int = 0
     usage: dict = field(default_factory=dict)
+    # The model that produced the final outcome ('' when no model call was made at all, e.g. the kill
+    # switch or a plan/limit refusal) and whether that was the fallback after the first model failed.
+    model: str = ''
+    fell_back: bool = False
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -470,77 +483,54 @@ def _write_log(*, user, feature, model, ok, failure_reason, latency_ms, attempts
     return str(row.id)
 
 
-def run_ai_task(*, feature, messages, model, max_tokens, user=None, system=False, parse=None,
-                request_id=None, rate_limit_per_hour=None, timeout=None, total_budget=None,
-                temperature=None, reasoning_effort=None, response_format=None):
+@dataclass(frozen=True)
+class _Attempt:
+    """One model call and everything run_ai_task needs from it (its AiCallLog row is already written)."""
+    ok: bool
+    data: object
+    raw_text: str
+    reason: str
+    latency_ms: int
+    usage: dict
+    log_id: str
+
+
+def _attempt_model(*, feature, user, messages, model, max_tokens, parse, request_id, total_budget, call_options):
     """
-    The one function feature code calls. Always returns an AiResult; an
-    AI-side failure NEVER raises (only a programmer error — a bad `feature`,
-    or not exactly one of `user` / `system=True` — raises ValueError). Every
-    non-programmer-error path writes exactly one core.AiCallLog row (sizes
-    only, never content).
-
-    Order: kill switch -> can_use_ai(user) -> per-user hourly limit ->
-    call_groq -> truncation check (finish_reason 'length' is `truncated`: cut-
-    off JSON is useless) -> the optional `parse` callable (ValueError/KeyError/
-    TypeError, or any other exception from it, becomes `invalid_output`) ->
-    an empty reply is `invalid_output` too.
-
-    `parse` receives the raw reply text and returns the feature's data;
-    without it, AiResult.data is the raw text. Pass `response_format` /
-    `reasoning_effort` explicitly when the model supports them — they are
-    not defaulted here (see DECISIONS.md for the measured guidance: reasoning
-    tokens count against max_tokens, so leave headroom, and avoid 'high').
-
-    Never call this inside transaction.atomic() or under select_for_update().
+    ONE model call plus its post-processing (truncation check, empty reply, the feature's parser) and
+    its AiCallLog row. Never raises for an AI-side failure. run_ai_task runs this once, or twice when it
+    falls back to a second model, so both attempts are judged and logged by exactly the same rules.
     """
-    if not isinstance(feature, str) or not _FEATURE_RE.match(feature):
-        raise ValueError(f'feature must match {_FEATURE_RE.pattern!r}, got {feature!r}.')
-    if (user is None) == (system is not True):
-        raise ValueError('Pass exactly one of user=<User> or system=True.')
-
     started = time.monotonic()
     reply = None
     data = None
     reason = ''
     http_status = None
     attempts = 0
-
-    if not settings.AI_ENABLED:
-        reason = 'disabled'
-    elif user is not None and not can_use_ai(user):
-        reason = 'not_allowed'
-    elif user is not None and _user_over_limit(
-            user, feature, settings.AI_RATE_LIMIT_PER_HOUR if rate_limit_per_hour is None else rate_limit_per_hour):
-        reason = 'user_rate_limited'
+    try:
+        reply = call_groq(messages, model, max_tokens, total_budget=total_budget, **call_options)
+    except AiError as exc:
+        reason, http_status, attempts = exc.reason, exc.http_status, exc.attempts
+        logger.warning('AI call failed feature=%s model=%s reason=%s: %s', feature, model, exc.reason, exc.detail)
     else:
-        try:
-            reply = call_groq(
-                messages, model, max_tokens, timeout=timeout, total_budget=total_budget,
-                temperature=temperature, reasoning_effort=reasoning_effort, response_format=response_format,
-            )
-        except AiError as exc:
-            reason, http_status, attempts = exc.reason, exc.http_status, exc.attempts
-            logger.warning('AI call failed feature=%s model=%s reason=%s: %s', feature, model, exc.reason, exc.detail)
+        http_status, attempts = reply.http_status, reply.attempts
+        if reply.finish_reason == 'length':
+            reason = 'truncated'
+        elif not reply.content.strip():
+            reason = 'invalid_output'
+        elif parse is None:
+            data = reply.content
         else:
-            http_status, attempts = reply.http_status, reply.attempts
-            if reply.finish_reason == 'length':
-                reason = 'truncated'
-            elif not reply.content.strip():
+            try:
+                data = parse(reply.content)
+            except (ValueError, KeyError, TypeError) as exc:
                 reason = 'invalid_output'
-            elif parse is None:
-                data = reply.content
-            else:
-                try:
-                    data = parse(reply.content)
-                except (ValueError, KeyError, TypeError) as exc:
-                    reason = 'invalid_output'
-                    logger.warning('AI reply rejected by parser feature=%s: %s', feature, type(exc).__name__)
-                except Exception:
-                    # A bug in the feature's own parser must not become a 500
-                    # or a missing log row — features degrade on AI failure.
-                    reason = 'invalid_output'
-                    logger.exception('Parser for AI feature=%s raised unexpectedly.', feature)
+                logger.warning('AI reply rejected by parser feature=%s: %s', feature, type(exc).__name__)
+            except Exception:
+                # A bug in the feature's own parser must not become a 500
+                # or a missing log row — features degrade on AI failure.
+                reason = 'invalid_output'
+                logger.exception('Parser for AI feature=%s raised unexpectedly.', feature)
 
     ok = not reason
     latency_ms = reply.latency_ms if reply else int((time.monotonic() - started) * 1000)
@@ -551,7 +541,95 @@ def run_ai_task(*, feature, messages, model, max_tokens, user=None, system=False
         attempts=attempts, http_status=http_status, finish_reason=reply.finish_reason if reply else '',
         usage=usage, input_chars=_message_chars(messages), output_chars=len(raw_text), request_id=request_id,
     )
+    return _Attempt(ok=ok, data=data if ok else None, raw_text=raw_text if ok else '', reason=reason,
+                    latency_ms=latency_ms, usage=usage, log_id=log_id)
+
+
+def run_ai_task(*, feature, messages, model, max_tokens, user=None, system=False, parse=None,
+                request_id=None, rate_limit_per_hour=None, timeout=None, total_budget=None,
+                temperature=None, reasoning_effort=None, response_format=None, fallback_model=None):
+    """
+    The one function feature code calls. Always returns an AiResult; an
+    AI-side failure NEVER raises (only a programmer error — a bad `feature`,
+    or not exactly one of `user` / `system=True` — raises ValueError). Every
+    non-programmer-error path writes one core.AiCallLog row PER MODEL CALL
+    ATTEMPTED (a call refused before any model is contacted — kill switch,
+    plan gate, user limit — writes one row with attempts=0); rows hold sizes
+    only, never content.
+
+    Order: kill switch -> can_use_ai(user) -> per-user hourly limit (all three
+    checked ONCE, before the first attempt) -> call_groq -> truncation check
+    (finish_reason 'length' is `truncated`: a cut-off reply is useless) -> the
+    optional `parse` callable (ValueError/KeyError/TypeError, or any other
+    exception from it, becomes `invalid_output`) -> an empty reply is
+    `invalid_output` too.
+
+    `fallback_model` (optional): if the first model fails with `rate_limited` or
+    `model_unavailable` (AI_FALLBACK_REASONS — the only failures a different
+    model can fix) and fallback_model differs from `model` and at least
+    AI_MIN_FALLBACK_BUDGET_SECONDS of the total budget remain, the same request
+    is made once to the fallback model, with the REMAINING budget as its
+    total_budget, so the whole call stays inside AI_TOTAL_BUDGET_SECONDS. The
+    fallback does not count against the user's hourly allowance a second time.
+    The parser runs on whichever reply is used and a parse failure never
+    triggers a fallback. If both fail, the result carries the SECOND attempt's
+    reason. AiResult.model is the model that produced the final outcome and
+    AiResult.fell_back says it was the fallback; with a fallback, latency_ms is
+    the whole call's wall time (each log row keeps its own attempt's latency).
+
+    `parse` receives the raw reply text and returns the feature's data;
+    without it, AiResult.data is the raw text. Pass `response_format` /
+    `reasoning_effort` explicitly when the model supports them — they are
+    not defaulted here (see DECISIONS.md for the measured guidance: reasoning
+    tokens count against max_tokens, so leave headroom, and avoid 'high').
+    The same options are sent to the fallback model.
+
+    Never call this inside transaction.atomic() or under select_for_update().
+    """
+    if not isinstance(feature, str) or not _FEATURE_RE.match(feature):
+        raise ValueError(f'feature must match {_FEATURE_RE.pattern!r}, got {feature!r}.')
+    if (user is None) == (system is not True):
+        raise ValueError('Pass exactly one of user=<User> or system=True.')
+
+    started = time.monotonic()
+    refusal = ''
+    if not settings.AI_ENABLED:
+        refusal = 'disabled'
+    elif user is not None and not can_use_ai(user):
+        refusal = 'not_allowed'
+    elif user is not None and _user_over_limit(
+            user, feature, settings.AI_RATE_LIMIT_PER_HOUR if rate_limit_per_hour is None else rate_limit_per_hour):
+        refusal = 'user_rate_limited'
+    if refusal:
+        log_id = _write_log(
+            user=user, feature=feature, model=model, ok=False, failure_reason=refusal,
+            latency_ms=int((time.monotonic() - started) * 1000), attempts=0, http_status=None,
+            finish_reason='', usage={}, input_chars=_message_chars(messages), output_chars=0, request_id=request_id,
+        )
+        return AiResult(
+            ok=False, failure_reason=refusal, user_message=AI_USER_MESSAGES[refusal], log_id=log_id,
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    budget = min(_setting('AI_TOTAL_BUDGET_SECONDS', total_budget), AI_TOTAL_BUDGET_HARD_CEILING_SECONDS)
+    call_options = {'timeout': timeout, 'temperature': temperature, 'reasoning_effort': reasoning_effort,
+                    'response_format': response_format}
+    common = dict(feature=feature, user=user, messages=messages, max_tokens=max_tokens, parse=parse,
+                  request_id=request_id, call_options=call_options)
+
+    used_model, fell_back = model, False
+    attempt = _attempt_model(model=model, total_budget=budget, **common)
+    if (not attempt.ok and attempt.reason in AI_FALLBACK_REASONS
+            and fallback_model and fallback_model != model):
+        remaining = budget - (time.monotonic() - started)
+        if remaining >= AI_MIN_FALLBACK_BUDGET_SECONDS:
+            logger.warning('AI feature=%s falling back from %s to %s after %s.', feature, model, fallback_model, attempt.reason)
+            attempt = _attempt_model(model=fallback_model, total_budget=remaining, **common)
+            used_model, fell_back = fallback_model, True
+
     return AiResult(
-        ok=ok, data=data if ok else None, raw_text=raw_text if ok else '', failure_reason=reason,
-        user_message='' if ok else AI_USER_MESSAGES[reason], log_id=log_id, latency_ms=latency_ms, usage=usage,
+        ok=attempt.ok, data=attempt.data, raw_text=attempt.raw_text, failure_reason=attempt.reason,
+        user_message='' if attempt.ok else AI_USER_MESSAGES[attempt.reason], log_id=attempt.log_id,
+        latency_ms=int((time.monotonic() - started) * 1000) if fell_back else attempt.latency_ms,
+        usage=attempt.usage, model=used_model, fell_back=fell_back,
     )

@@ -13,17 +13,19 @@ Limits:
   payment_terms <= 1000 | scope_sections <= 10 (title <= 120, text <= 2000)
   items <= 50 (description <= 300, quantity > 0, unit_price >= 0)
   tax_rate 0-100 | discount_amount >= 0 | valid_until not in the past
+  every line total, the subtotal and subtotal + tax <= MAX_AMOUNT (the column limit)
   currency via validate_currency_code | tone one of three
 """
 from decimal import Decimal
 
+from django.db import transaction
 from rest_framework import serializers
 
 from apps.clients.models import Client
 from apps.clients.serializers import validate_currency_code
 
 from . import scoring
-from .models import TONE_CHOICES, Proposal, ProposalItem, _today
+from .models import MAX_AMOUNT, TONE_CHOICES, Proposal, ProposalItem, _today
 
 TITLE_MAX = 200
 JOB_DESCRIPTION_MAX = 6000
@@ -124,7 +126,41 @@ class ProposalSerializer(serializers.ModelSerializer):
             attrs['client_name'] = client.name
             attrs['client_email'] = client.email
             attrs['client_company'] = client.company
+        self._validate_amounts(attrs)
         return attrs
+
+    def _validate_amounts(self, attrs):
+        """
+        Rejects, as a clean 400 before anything is written, any amount the money
+        columns cannot store (max_digits=12, decimal_places=2 -> MAX_AMOUNT): each
+        line total, the subtotal, and subtotal + tax. (The final total can never
+        exceed subtotal + tax — the discount is >= 0 — so that check covers it.)
+        On a partial update the stored items / rates fill in whatever was not
+        sent; when none of items, tax_rate or discount_amount is in the request
+        there is nothing new to check. Without this a huge line crashed with
+        decimal.InvalidOperation / DataError AFTER the proposal was created.
+        """
+        if not ({'items', 'tax_rate', 'discount_amount'} & set(attrs)):
+            return
+        limit = f'{MAX_AMOUNT:,.2f}'
+        if 'items' in attrs:
+            line_totals = [(i['quantity'] * i['unit_price']).quantize(Decimal('0.01')) for i in attrs['items']]
+        elif self.instance is not None:
+            line_totals = [item.total for item in self.instance.items.all()]
+        else:
+            line_totals = []
+        for number, line_total in enumerate(line_totals, start=1):
+            if line_total > MAX_AMOUNT:
+                raise serializers.ValidationError({'items': [f'Line {number} is too large (the maximum is {limit}).']})
+        subtotal = sum(line_totals, Decimal('0'))
+        if subtotal > MAX_AMOUNT:
+            raise serializers.ValidationError({'items': [f'The subtotal is too large (the maximum is {limit}).']})
+        stored = self.instance
+        tax_rate = attrs.get('tax_rate', stored.tax_rate if stored is not None else Decimal('0'))
+        tax_amount, _total = Proposal.compute_amounts(subtotal, tax_rate, Decimal('0'))
+        if subtotal + tax_amount > MAX_AMOUNT:
+            raise serializers.ValidationError(
+                {'tax_rate': [f'The subtotal plus tax is too large (the maximum is {limit}).']})
 
     def _replace_items(self, proposal, items_data):
         proposal.items.all().delete()
@@ -133,24 +169,28 @@ class ProposalSerializer(serializers.ModelSerializer):
             ProposalItem.objects.create(proposal=proposal, **item_data)
 
     def create(self, validated_data):
+        """One transaction: a failure on any row leaves no proposal and no half-written items behind."""
         items_data = validated_data.pop('items', [])
         if 'currency' not in validated_data:
             validated_data['currency'] = self.context['request'].user.profile.default_currency
-        proposal = Proposal.objects.create(**validated_data)
-        self._replace_items(proposal, items_data)
-        proposal.recalculate_totals()
-        proposal.save(update_fields=['subtotal', 'tax_amount', 'total', 'updated_at'])
+        with transaction.atomic():
+            proposal = Proposal.objects.create(**validated_data)
+            self._replace_items(proposal, items_data)
+            proposal.recalculate_totals()
+            proposal.save(update_fields=['subtotal', 'tax_amount', 'total', 'updated_at'])
         return proposal
 
     def update(self, instance, validated_data):
+        """One transaction: a failure part-way leaves the ORIGINAL fields, items and totals untouched."""
         items_data = validated_data.pop('items', None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        instance.save()
-        if items_data is not None:
-            self._replace_items(instance, items_data)
-        instance.recalculate_totals()
-        instance.save(update_fields=['subtotal', 'tax_amount', 'total', 'updated_at'])
+        with transaction.atomic():
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
+            instance.save()
+            if items_data is not None:
+                self._replace_items(instance, items_data)
+            instance.recalculate_totals()
+            instance.save(update_fields=['subtotal', 'tax_amount', 'total', 'updated_at'])
         return instance
 
 

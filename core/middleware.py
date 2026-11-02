@@ -92,7 +92,7 @@ class RequestLoggingMiddleware:
                 request_id=request.request_id,
                 user=user,
                 method=request.method,
-                path=request.path[:500],
+                path=request.path.replace('\x00', '')[:500],
                 status_code=response.status_code,
                 ip_address=get_client_ip(request),
                 user_agent=get_user_agent(request),

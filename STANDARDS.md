@@ -54,6 +54,16 @@ app's `prompts.py`. Never call it inside `transaction.atomic()` or while holding
 Always handle `result.ok == False` (every feature must still work with AI off or failing), and let code calculate
 every figure — the model only explains. `core.AiCallLog` stores sizes, never prompt or reply text.
 
+## Multi-row writes are atomic; state-dependent edits re-check state under a lock
+
+A write that touches more than one row (a record plus its line items, a total recalculated afterwards) runs in ONE
+`transaction.atomic()` — nothing in this project sets `ATOMIC_REQUESTS`, so without it a failure part-way leaves
+half a record. An edit or delete that depends on the record's current state (`status == 'draft'`) fetches the row
+with `select_for_update()` inside that same transaction and re-checks the state there, so a concurrent state change
+cannot slip between the check and the write. Amounts are validated against the column limit BEFORE anything is
+written, so an oversize number is a 400, never a 500 after a half-created record. Emit events only after the
+transaction commits.
+
 ## Free-text fields are plain text
 
 User- or model-written prose (proposal bodies, job posts, notes) is stored and returned as PLAIN TEXT and displayed

@@ -56,6 +56,12 @@ STATUS_CHOICES = [
 AWAITING_RESPONSE_STATUSES = ('sent', 'viewed')
 
 
+# The largest value any money column here can store (max_digits=12, decimal_places=2).
+# ONE constant: the serializer's amount validation and every message that names the
+# limit read it, so the limit and the columns cannot drift apart.
+MAX_AMOUNT = Decimal('9999999999.99')
+
+
 def _today():
     """Pakistan date: USE_TZ=False and TIME_ZONE='Asia/Karachi', so naive now() IS Pakistan time."""
     return timezone.now().date()
@@ -196,10 +202,22 @@ class Proposal(models.Model):
         """
         item_total = sum((item.total for item in self.items.all()), Decimal('0')) if self.pk else Decimal('0')
         self.subtotal = item_total
-        self.tax_amount = (self.subtotal * self.tax_rate / 100).quantize(Decimal('0.01'))
-        self.total = (self.subtotal + self.tax_amount - self.discount_amount).quantize(Decimal('0.01'))
-        if self.total < Decimal('0'):
-            self.total = Decimal('0')
+        self.tax_amount, self.total = self.compute_amounts(self.subtotal, self.tax_rate, self.discount_amount)
+
+    @staticmethod
+    def compute_amounts(subtotal, tax_rate, discount_amount):
+        """
+        The ONE copy of the money arithmetic: returns (tax_amount, total). Tax is
+        computed on the subtotal BEFORE the discount, the discount is subtracted
+        last, both are quantised to cents, and the total is clamped at zero —
+        identical to Invoice.recalculate_totals(). recalculate_totals() and the
+        serializer's amount validation both call this, so the limit check can
+        never disagree with what is actually stored; the drift test pins it to
+        the invoice.
+        """
+        tax_amount = (subtotal * tax_rate / 100).quantize(Decimal('0.01'))
+        total = (subtotal + tax_amount - discount_amount).quantize(Decimal('0.01'))
+        return tax_amount, max(total, Decimal('0'))
 
 
 class ProposalItem(models.Model):

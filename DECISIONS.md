@@ -15364,3 +15364,118 @@ revisit in the evaluation prompt together with a delimited plain-text reply form
 rule, the log stores sizes only).
 Not verified: the two Part A mappings against the real API; the prompt change in (3); that the parse mitigations fix the 2/9
 failure rate; the AI-generation path under the production Linux worker/host; any frontend (none exists).
+
+Date: 02 November 2026 (Proposals hardening — atomic writes, amount limits, delimited AI reply, model fallback, NUL-safe request log)
+Decision: An independent review of Proposals part 1 (commit 2e110ad; 111 checks against the real models/serializers/views/scoring on
+SQLite, only Groq faked) passed 105 and found two real problems plus smaller items. Fixed here; no Part 2 feature was built and no model
+field or migration changed (`makemigrations --check` clean).
+Review findings. (1) `ProposalSerializer.create()/update()` did several writes with no `transaction.atomic()` and `ATOMIC_REQUESTS` is
+not set: a failure on the 2nd item left a proposal with 1 of 2 items on create, and on update DELETED the user's original items and kept
+only the first new one. Money columns are `max_digits=12`, so a huge line (999999.99 x 99999999.99, or two lines of 60000 x 99999.99)
+raised `decimal.InvalidOperation` / `DataError` (a 500) after the proposal was already created. PUT/DELETE read the row, checked `draft`
+and wrote later with no lock. (2) 2 of 9 live AI replies did not parse (cause never captured). Plus: the request log lost any request
+whose JSON body held a NUL; the scorer's `next_step` passed on the bare words "available" / "happy to".
+Part A. `create()` and `update()` each run in ONE `transaction.atomic()` (the `ProposalCreated` event is still emitted after commit).
+Amounts are validated BEFORE anything is written, in `ProposalSerializer.validate()` -> a 400 with the existing flat `error` string: each
+line total, the subtotal, and subtotal + tax must not exceed `MAX_AMOUNT = 9,999,999,999.99` (one named constant, the column limit);
+messages name the culprit ("Line 3 is too large (the maximum is 9,999,999,999.99).", "The subtotal is too large", "The subtotal plus tax
+is too large"). On a partial update the stored items / tax rate fill in whatever was not sent; a request touching none of items,
+tax_rate, discount_amount is not re-checked. The final total can never exceed subtotal + tax (the discount is >= 0), so that check covers
+it — no separate, unreachable "total" check was written. `Proposal.compute_amounts(subtotal, tax_rate, discount)` is now the ONE copy of
+the arithmetic, called by `recalculate_totals()` and by the validator, and pinned to `Invoice.recalculate_totals()` by the drift tests.
+PUT and DELETE run inside one `transaction.atomic()` that fetches the row with `select_for_update()` scoped to `request.user` (another
+user's id is still a 404), re-checks `status == 'draft'` (403, same message), then validates and writes; the AI generate views still call the
+model outside every transaction and lock, and `apply_regeneration` keeps its own lock. Known gap, NOT fixed (the owner decides): the
+`apps/invoices` serializers' create/update have the same missing-transaction structure; numeric overflow there was NOT tested.
+Part B (reopens "prompt-only JSON" from the 02 Nov entry). `proposal_generate` no longer asks for JSON. New evidence: 2 of 9 live JSON
+replies did not parse, most likely an unescaped quote in the proposal string. The model now replies in a delimited plain-text format
+(`TITLE:` / `===PROPOSAL===` / text / `===TIPS===` / `- tip` lines / `===END===`) that needs no escaping; `services.parse_proposal_reply`
+parses it (markers are whole lines, case-insensitive; exactly one PROPOSAL and one TIPS marker in that order, so a marker echoed by an
+injected job post is invalid; TITLE read only before the PROPOSAL marker; 400-8000 chars of text; 1-4 tips of at most 240 chars; wrapped
+tips continue; any other violation is a ValueError -> `invalid_output`). Every content rule in the prompt was kept; the JSON-only
+mitigations and the `\n` decoding hack are gone from this path. `core.ai.parse_json_object` is untouched for other features. Rejected:
+Groq strict `json_schema` (measured once, adds its own error cases) and an automatic retry on `invalid_output` (doubles token use against
+the free-tier daily cap).
+Decision 3 — NO second Groq API key. Groq's rate-limits page says limits "apply at the organization level, not individual users"
+(https://console.groq.com/docs/rate-limits), so a second key in the same account adds no quota; Groq's acceptable-use policy prohibits use
+beyond rate limits "including by registering multiple accounts or orchestrating usage between multiple organizations"
+(https://console.groq.com/docs/legal/ai-policy), so a key from another account risks both being cut off. Instead: fall back to the smaller
+model (Part C) and move to Groq's paid tier at public launch (not before: the owner's cost rule). Limits that page lists for both gpt-oss
+models: 30 requests/min, 1K requests/day, 8K tokens/min, 200K tokens/day — but its Free and Developer columns are not clearly separated, so
+the 200K is probable, not certain. At ~1,550 tokens per proposal that is roughly 100 proposals/day and 5/min for ALL users together. The
+local env var `GROQ_FALLBACK_API` is not read, used or documented anywhere.
+Part C (`core.ai.run_ai_task(fallback_model=None)`). Invariants, each with a test: the fallback is attempted ONLY after `rate_limited` or
+`model_unavailable` (`AI_FALLBACK_REASONS` — the two failures a different model can fix; `truncated`, `invalid_output`, `timeout`,
+`upstream_error` are properties of the prompt/reply/network, and retrying them on another model only burns the daily cap), only when given
+and different from `model`, and only when >= `AI_MIN_FALLBACK_BUDGET_SECONDS` (10) of the total budget remain; the fallback gets the
+REMAINING budget, so the whole call stays inside `AI_TOTAL_BUDGET_SECONDS` (hard cap 60); the kill switch, `can_use_ai` and the per-user hourly
+limit are checked once before the first attempt (a fallback does not count twice); one `AiCallLog` row per model call attempted, same
+feature/request_id, each with its own model and result; both fail -> the SECOND attempt's reason; the parser runs on whichever reply is
+used and a parse failure never triggers a fallback; no new setting or env var. `AiResult` gained `model` and `fell_back` (defaults, so no
+caller changes). `run_ai_task` was restructured around one internal single-attempt function so both attempts are judged identically.
+Proposals passes `fallback_model=settings.GROQ_MODEL_FAST` and stores `ai_model = result.model` (the model that actually wrote the text;
+audit metadata too).
+Part D. `redact_sensitive_fields` now removes NUL from every string value and dict key (and nothing else about redaction changes), at the
+shared point in front of `ApiRequestLog.request_body/response_body` and `AuditLog.metadata`; keys are stripped before the sensitive-key
+check and values before the value pattern, so a NUL cannot dodge redaction. Reproduced first on PostgreSQL: with no fix, a request with a NUL
+in a nested value or key, in the URL path, or in the User-Agent each left NO log row. The path (middleware) and `get_user_agent` are covered
+in the same change. The API's own answer stays the clean 400. There were no pre-existing redaction tests, so the unchanged behaviour is
+pinned by new characterization tests. Observed, NOT fixed (out of scope; `get_client_ip` also feeds the rate limits): a non-IP
+`X-Forwarded-For` value also makes the `ApiRequestLog` insert fail (inet column); behind the real proxy that header's last entry is
+proxy-set, so it is lower risk than a client-controlled NUL.
+Part E. `NEXT_STEP_PHRASES`: the bare `'available'` and `'happy to'` were replaced by specific forms ("happy to discuss/chat/jump/hop/
+answer", "available for a / to / this / next", "I am / I'm available"); every other phrase kept; the list is documented as frozen and
+conservative. Curly apostrophes are now matched like straight ones (the model writes "Let’s", "I’m"). The hyphenated-key-term behaviour is
+unchanged (known limitation).
+Live pilot (real Groq, real endpoint; 17 of 20 allowed requests: 2 header probes + 12 big-model + 3 forced-fallback; 22 s pacing; no rate
+limit hit; 3 spare unused). Six invented posts (React dispatch dashboard; bakery logo; Python scraper with the HACKED injection line; SaaS
+landing-page copy with dollar figures, percentages and a deadline; Shopify theme fix with quotes, backslashes, braces and a code snippet;
+a 59-character vague post) x professional and technical on `openai/gpt-oss-120b`; then posts 1, 3, 5 x friendly on `openai/gpt-oss-20b`
+with the real fallback path forced by faking only the FIRST HTTP response as `model_not_found`.
+| post / tone | model | latency | tokens in/out | words | score | failed checks |
+| react / professional (+experience) | 120b | 2123 ms | 820/687 | 218 | 7 | key_terms, specifics |
+| react / technical | 120b | 2639 | 844/819 | 276 | 6 | key_terms, specifics, readability |
+| bakery / professional | 120b | 2484 | 808/707 | 196 | 8 | key_terms, specifics |
+| bakery / technical | 120b | 2416 | 825/638 | 209 | 7 | key_terms, specifics |
+| scraper (injection) / professional | 120b | 2790 | 822/891 | 190 | 9 | specifics |
+| scraper (injection) / technical | 120b | 2123 | 839/659 | 231 | 7 | key_terms, specifics |
+| saas / professional | 120b | 3049 | 827/1045 | 192 | 9 | key_terms |
+| saas / technical | 120b | 3034 | 844/854 | 203 | 8 | key_terms |
+| shopify / professional | 120b | 3494 | 839/757 | 228 | 9 | specifics |
+| shopify / technical | 120b | 3385 | 856/769 | 236 | 9 | specifics |
+| vague / professional | 120b | 1755 | 750/625 | 178 | 9 | specifics |
+| vague / technical | 120b | 1966 | 767/660 | 184 | 6 | key_terms, specifics |
+| react / friendly (forced fallback) | 20b | 2432 | 828/1669 | 172 | 7 | key_terms, specifics |
+| scraper / friendly (forced fallback) | 20b | 2475 | 823/1702 | 204 | 9 | specifics |
+| shopify / friendly (forced fallback) | 20b | 3003 | 840/1131 | 205 | 9 | specifics |
+All 15: HTTP 201, `finish_reason=stop`, parsed on the FIRST attempt (12/12 big, 3/3 small), so there is no failed raw reply to quote — "why
+did 2 of 9 JSON replies fail" is still unproven, only moot for this feature. The Shopify posts (curly and straight quotes, backticks, braces,
+backslashes, a code line inside the proposal) are exactly the text most likely to break JSON and parsed 3/3. Findings from reading every
+body: no price, rate, fee, amount, delivery date or duration stated by the freelancer in any (the SaaS posts restated the CLIENT's own 2.1% /
+3.5% / "end of the quarter" and deferred rate, fee and schedule to a call; the client's $1,800, 50% upfront and 12 December were never
+repeated); no invented number, year or experience (the one run with `my_experience` only restated it); NO product or tool name the
+freelancer never mentioned in any of the 15 (the earlier Leaflet/React Query/Jest/Playwright/Illustrator/Pantone problem is gone — this
+verifies the prompt change that had not been verified live) — only generic technologies (CSS, JavaScript, HTML, RGB/CMYK, PDF); the
+injection line changed nothing in the 3 scraper runs; professional and technical are distinguishable (technical adds a trade-offs
+paragraph and "Before proceeding I need..." clarifications; professional is "I understand... Best regards"). Minor wording the rules do not
+cover: a few bodies state process the freelancer never said ("I prefer to test in a staging environment", deliverables "as a PDF and an
+editable source file") — a reason the tips and the user's own edit pass matter. Small model: accepted `reasoning_effort` and the token limit
+(HTTP 200, `stop`), text acceptable (warmer and more generic; one omitted the sign-off name) with similar scores (7/9/9) — but it spent
+1131-1702 completion tokens against 625-1045 for the big model, so a fallback proposal costs roughly 1.5-2x the tokens. Scorer note:
+`specifics` passes when a body repeats numbers from the job post (SaaS), so it does not prove the freelancer added her own detail.
+Header probe (one ~1,350-token prompt, `max_tokens` 8, to each model 2 s apart): both returned `x-ratelimit-limit-tokens: 8000`,
+`x-ratelimit-limit-requests: 1000`, and IDENTICAL `x-ratelimit-remaining-tokens: 6638`, `x-ratelimit-remaining-requests: 999`,
+`x-ratelimit-reset-tokens: 10.215s`. With one shared pool the second request would have shown about 5,500 tokens left and 998 requests.
+So the headers report a SEPARATE token and request bucket per model. They do not prove how Groq enforces the organization-level limit, say
+nothing about the 200K daily-token cap (no daily-token header exists), and I did not exhaust either bucket.
+Tests (PostgreSQL): the overflow cases above (400, nothing left behind); injected failure on the 2nd item leaves no proposal on create and
+the original items/totals on update, at the view AND at the serializer on its own; partial updates limit-checked; real-thread
+`TransactionTestCase` tests where one thread flips the proposal to `sent` while another does PUT or DELETE (403, the sent proposal is
+never changed or deleted), plus 9 simultaneous PUT/DELETEs. Mutation checks, each shown failing then restored: removing `atomic()` from
+`create` (the injected-failure tests failed); removing it from `update` did NOT fail the view-level test because the view's own new
+transaction already covers that path, so a serializer-level test was added and then failed as it should; removing the amount validation
+(8 tests errored); adding `'truncated'` to the fallback reasons (the no-second-request test failed); removing the NUL stripping (the
+middleware, redaction and audit tests failed); removing `select_for_update()` from the view (all 3 race tests failed deterministically).
+Not verified: behaviour on the production Linux host; the daily 200K-token cap; that the per-model buckets stay separate under real
+contention (header evidence only); the pilot's tool-name result beyond these 15 samples; `apps/invoices` overflow/atomicity (untested,
+see Part A); that `reasoning_effort` stays accepted by the small model over time.

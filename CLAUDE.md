@@ -115,6 +115,10 @@ Every module must follow them exactly.
    in core/ai.py. Never call the Groq API directly from views.
    Feature code calls core.ai.run_ai_task() (never raw HTTP), and never
    inside transaction.atomic() or while holding select_for_update() locks.
+   run_ai_task takes an optional fallback_model: if the first model is rate_limited or
+   model_unavailable (only those two) it retries once on the smaller model inside the same
+   time budget, one AiCallLog row per model call. There is deliberately NO second API key
+   (Groq limits are per organization; see DECISIONS.md, 02 November 2026).
 5. All prompts live in a prompts.py file inside the relevant app.
    Never hardcode prompt strings inside view functions.
 6. Sensitive fields (SMTP passwords, API keys stored per user) are
@@ -2872,8 +2876,12 @@ All text fields are PLAIN TEXT, displayed escaped, never HTML.
 
 AI proposal generation (built):
 Freelancer pastes a job description (50-6000 chars). core.ai.run_ai_task (feature
-'proposal_generate', GROQ_MODEL_QUALITY, reasoning_effort 'medium', no response_format) returns JSON:
-proposal text, 2-4 job-specific tips, a title. Three tones: Professional, Friendly, Technical.
+'proposal_generate', GROQ_MODEL_QUALITY, reasoning_effort 'medium', no response_format, falling back
+to GROQ_MODEL_FAST only on rate_limited/model_unavailable) returns a DELIMITED PLAIN-TEXT reply, not
+JSON (TITLE: line, ===PROPOSAL===, the text, ===TIPS=== with bulleted tips, ===END===; parsed by
+services.parse_proposal_reply — 2 of 9 live JSON replies had failed to parse): proposal text, 2-4
+job-specific tips, a title. Proposal.ai_model records the model that actually wrote the text.
+Three tones: Professional, Friendly, Technical.
 SYNCHRONOUS (no Celery); the model is called outside any transaction, the draft is saved in one
 atomic block, and only then returned. A failed generation creates/changes nothing.
 The AI writes TEXT ONLY: never prices, rates, line items, dates or durations, never invented
@@ -3021,7 +3029,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
-| Proposals            | Part 1 built (model, CRUD, code-computed score, AI generation); part 2 (send/public page/respond/convert) not built | -        | 295 passing (`apps.proposals` + `core`) | In progress |
+| Proposals            | Part 1 built (model, CRUD, code-computed score, AI generation); part 2 (send/public page/respond/convert) not built | -        | 372 passing (`apps.proposals` + `core`) | In progress |
 | Contracts            | -       | -        | -     | Not started |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | -       | -        | -     | Not started |

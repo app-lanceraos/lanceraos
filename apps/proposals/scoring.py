@@ -74,9 +74,15 @@ don isn aren won didn doesn wasn weren couldn shouldn wouldn haven hasn hadn etc
 """.split())
 
 # ── call to action ─────────────────────────────────────────────────
+# FROZEN and deliberately CONSERVATIVE: a phrase is here only if it is, on its own, a call to action. The
+# bare words 'available' and 'happy to' used to be on this list and passed any text containing them ("the
+# data is available from the API", "happy to say the app is fast") — they are now only matched in the
+# specific forms below. Adding a phrase changes every score, so change it deliberately (and the golden tests).
 NEXT_STEP_PHRASES = (
     "let's discuss", "let's talk", "let's schedule", "let's chat", "let's connect", "let us discuss",
-    'happy to', 'glad to', 'available', 'next step', 'look forward', 'reach out', 'get back to you',
+    'happy to discuss', 'happy to chat', 'happy to jump', 'happy to hop', 'happy to answer',
+    'available for a', 'available to', "i am available", "i'm available", 'available this', 'available next',
+    'glad to', 'next step', 'look forward', 'reach out', 'get back to you',
     'book a call', 'schedule a call', 'quick call', 'short call', 'short discussion', 'get started',
     # added after real model output was seen missing a plain call to action (02 November 2026):
     'brief call', 'could we schedule', 'convenient time', 'hop on', 'set up a call',
@@ -182,6 +188,7 @@ def _check_key_terms(proposal_tokens, job_description):
 
 
 def _check_next_step(lowered):
+    lowered = lowered.replace('\u2019', "'")  # models write curly apostrophes ("Let’s", "I’m")
     found = next((p for p in NEXT_STEP_PHRASES if p in lowered), None)
     detail = (f'Found a clear next step ("{found}").' if found else
               'No clear next step. End with one specific, low-pressure ask, e.g. "Happy to jump on a short call this week."')
