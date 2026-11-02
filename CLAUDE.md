@@ -113,6 +113,8 @@ Every module must follow them exactly.
    different operation from LanceraOS sending its own mail.)
 4. All AI calls go through a shared call_groq() utility function
    in core/ai.py. Never call the Groq API directly from views.
+   Feature code calls core.ai.run_ai_task() (never raw HTTP), and never
+   inside transaction.atomic() or while holding select_for_update() locks.
 5. All prompts live in a prompts.py file inside the relevant app.
    Never hardcode prompt strings inside view functions.
 6. Sensitive fields (SMTP passwords, API keys stored per user) are
@@ -376,8 +378,11 @@ lanceraos/                          <- Django project root
 │   ├── asgi.py                     <- ASGI config (Daphne + Channels)
 │   └── wsgi.py                     <- WSGI fallback entrypoint
 ├── core/
-│   ├── ai.py              ← Shared Groq API utility (call_groq) — built Step 9,
-│   │                         apps.invoices' AI-seeded designs is the first real consumer
+│   ├── ai.py              ← The ONLY module that talks to Groq: call_groq (hard time budget, typed
+│   │                         AiError reasons), run_ai_task (the one function features call — kill
+│   │                         switch, can_use_ai plan seam, per-user hourly limit, AiCallLog row,
+│   │                         always returns an AiResult), parse_json_object. No feature uses it
+│   │                         yet — 02 November 2026, see DECISIONS.md
 │   ├── email.py            ← Resend HTTP API sender (send_email)
 │   ├── encryption.py        ← Fernet + HMAC blind-index helpers
 │   ├── health.py              ← GET /api/health/ platform probe (no auth, no throttle, no
@@ -387,7 +392,8 @@ lanceraos/                          <- Django project root
 │   │                            DECISIONS.md, 08 August 2026)
 │   ├── money.py               ← Immutable Money value object (USD-anchored currency conversion)
 │   ├── middleware.py        ← Request ID injection + API request logging
-│   ├── models.py            ← AuditLog, ApiRequestLog
+│   ├── models.py            ← AuditLog, ApiRequestLog, NotificationRead, AiCallLog (sizes only, never content)
+│   ├── management/commands/check_ai_models.py ← verifies the configured Groq models still work
 │   ├── observability.py     ← Logging/request-metadata helpers used by all modules
 │   └── permissions.py       ← Shared DRF permission classes [not yet built]
 ├── apps/
@@ -3026,6 +3032,11 @@ GROQ_API_KEY=
 GROQ_MODEL_FAST=
 GROQ_MODEL_QUALITY=
 GROQ_MODEL_VISION=
+# Optional AI runtime limits (02 November 2026) — set none unless overriding; never leave one blank
+# (an empty AI_ENABLED reads as False). Defaults live in config/settings.py:
+# AI_ENABLED=True (kill switch), AI_REQUEST_TIMEOUT_SECONDS=25,
+# AI_TOTAL_BUDGET_SECONDS=40 (hard ceiling 60), AI_MAX_RETRY_WAIT_SECONDS=8,
+# AI_RATE_LIMIT_PER_HOUR=20 (per user, per feature)
 RESEND_API_KEY=
 DEFAULT_FROM_EMAIL=LanceraOS <noreply@lanceraos.com>
 # (RESEND_FROM_EMAIL was listed here earlier but no code ever read it — core/email.py reads

@@ -1,78 +1,310 @@
 # core/ai.py
 """
-Every AI call in LanceraOS goes through call_groq() — never call the Groq
-API directly from a view or another module (CLAUDE.md rule 4). Genuinely
-new: apps.invoices' AI-seeded design classification (apps/invoices/
-ai_design.py) is the first real consumer of this module and of
-GROQ_MODEL_VISION — GROQ_API_KEY/GROQ_MODEL_FAST/GROQ_MODEL_QUALITY have
-existed in config/settings.py since the Users/Auth build but nothing had
-called Groq for real yet.
+The ONLY module that talks to Groq. Feature code (Proposals, Dashboard
+insights, Health tips, Tax guidance, ...) calls run_ai_task() and nothing
+else; it never makes raw HTTP calls and never imports `requests` for AI
+(CLAUDE.md rule 4; core/tests/test_ai_boundaries.py enforces it).
 
-Retry-with-backoff on 429s is ported directly from the real, working POC
-(~/Downloads/invoice_template_poc/backend/main.py's call_groq) — it parses
-Groq's own "try again in Ns" message out of the real error body rather than
-guessing a fixed sleep, which matters because Groq's actual backoff window
-varies with account tier/current load.
+Layers, bottom to top:
+
+  call_groq()        One chat completion with a hard time budget. Returns a
+                     GroqReply (content + usage + finish_reason + latency) or
+                     raises AiError with a typed `reason`. Fails FAST: a 429
+                     whose wait is longer than AI_MAX_RETRY_WAIT_SECONDS is
+                     not slept on, because a web request or the single
+                     `--pool=solo` Celery slot must never nap for minutes.
+  run_ai_task()      What features call. Applies the kill switch, the plan
+                     seam (can_use_ai) and the per-user hourly limit, calls
+                     call_groq, checks for truncation, runs the feature's
+                     own parser, writes exactly one core.AiCallLog row and
+                     ALWAYS returns an AiResult — an AI-side failure never
+                     raises into the caller. Every feature must therefore
+                     degrade cleanly when result.ok is False.
+
+NEVER call run_ai_task() (or call_groq) inside `transaction.atomic()` or
+while holding `select_for_update()` locks. A call can take tens of seconds;
+it must not hold a database transaction or a row lock (the invoice payment
+endpoints hold row locks). Fetch what you need, leave the transaction, call
+the model, then open a new transaction to save the result.
+
+Design rule behind every feature prompt: AI explains, code calculates. A
+model never produces a figure the user relies on; code computes the numbers
+and the model only words them. Nothing here changes that.
+
+Retry-with-backoff on 429s is ported from the earlier proof-of-concept: it
+parses Groq's own "try again in Ns" text rather than guessing a fixed sleep.
 """
+import json
 import logging
 import re
 import time
+from dataclasses import dataclass, field
 
 import requests
 from django.conf import settings
+from django.core.cache import cache
+
+from .models import AiCallLog
 
 logger = logging.getLogger(__name__)
 
 GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'
-REQUEST_TIMEOUT_SECONDS = 90
+GROQ_MODELS_URL = 'https://api.groq.com/openai/v1/models'
 DEFAULT_MAX_RETRIES = 2
 
-_RETRY_WAIT_RE = re.compile(r'try again in ([\d.]+)s', re.IGNORECASE)
+# Absolute ceiling on one call's total wall time, whatever the settings say:
+# the production worker runs ONE task at a time on a 2 GiB host and users are
+# a long round trip away from the Sydney server.
+AI_TOTAL_BUDGET_HARD_CEILING_SECONDS = 60
+
+# Groq's error `code` values meaning "this model id will never work":
+# `model_not_found` was observed live (HTTP 404, 02 November 2026);
+# `model_decommissioned` is Groq's documented code for a retired model and was
+# NOT observed (no retired model id could be tried safely) — see DECISIONS.md.
+_MODEL_UNAVAILABLE_CODES = frozenset({'model_not_found', 'model_decommissioned'})
+
+# `reasoning_effort` and friends are model-specific parameters: run_ai_task
+# does not default them. Features pass them explicitly (see DECISIONS.md for
+# the measured effect of each level).
+
+AI_FAILURE_REASONS = (
+    'disabled',            # AI_ENABLED is False
+    'not_allowed',         # can_use_ai(user) is False (the future plan gate)
+    'user_rate_limited',   # this user used up their hourly allowance for the feature
+    'not_configured',      # no GROQ_API_KEY
+    'rate_limited',        # Groq is rate-limiting us and the wait is too long
+    'timeout',             # per-attempt timeout or total time budget exceeded
+    'model_unavailable',   # the configured model id is gone or not accessible
+    'upstream_error',      # network error, 5xx, bad key, malformed response
+    'truncated',           # finish_reason == 'length': the reply was cut off
+    'invalid_output',      # the feature's parser rejected the reply
+)
+
+# One short, safe sentence per reason. Never names a provider, never carries
+# anything from an upstream body — this is what a user may be shown.
+AI_USER_MESSAGES = {
+    'disabled': 'AI features are switched off right now.',
+    'not_allowed': 'AI features are not available for this account.',
+    'user_rate_limited': "You've reached the hourly limit for this AI feature. Please try again later.",
+    'not_configured': 'AI features are not set up yet.',
+    'rate_limited': 'The AI service is busy right now. Please try again in a few minutes.',
+    'timeout': 'The AI service took too long to respond. Please try again.',
+    'model_unavailable': 'The AI service is temporarily unavailable.',
+    'upstream_error': 'The AI service is temporarily unavailable. Please try again later.',
+    'truncated': 'The AI reply was incomplete. Please try again.',
+    'invalid_output': 'The AI reply could not be used. Please try again.',
+}
+
+_FEATURE_RE = re.compile(r'^[a-z][a-z0-9_]{2,59}$')
+
+# Matches Groq's own wait text: "try again in 3.5s", "850ms", "2m3.5s".
+_RETRY_WAIT_RE = re.compile(r'try again in\s+(?:(\d+)m)?\s*([\d.]+)\s*(ms|s)\b', re.IGNORECASE)
+_RETRY_WAIT_BUFFER_SECONDS = 1.0
+_RETRY_WAIT_UNPARSEABLE_SECONDS = 15.0
 
 
-def call_groq(messages, model, max_tokens=1500, max_retries=DEFAULT_MAX_RETRIES):
+class AiError(RuntimeError):
     """
-    One chat-completion call against Groq. Returns the raw string content of
-    the model's reply. Raises RuntimeError with a clear, specific message on
-    any failure (missing key, exhausted retries, non-200 response) — callers
-    decide how to translate that into a user-facing error; this function
-    itself never swallows a failure into a silent None/False the way
-    core.email.send_email() does, since a design/document AI call has no
-    safe "just skip it" fallback the way a notification email does.
+    A typed AI failure. `reason` is one of AI_FAILURE_REASONS, `http_status`
+    the upstream status when there was one, `detail` internal text (at most
+    500 chars) for the logger ONLY — never show it to a user, it may carry
+    part of an upstream body. Use AI_USER_MESSAGES[reason] for user text.
+    """
+
+    def __init__(self, reason, http_status=None, detail='', attempts=0):
+        self.reason = reason
+        self.http_status = http_status
+        self.detail = (detail or '')[:500]
+        self.attempts = attempts
+        super().__init__(f'{reason}: {self.detail}' if self.detail else reason)
+
+
+@dataclass(frozen=True)
+class GroqReply:
+    """One successful chat completion. `usage` is Groq's raw dict (may be empty)."""
+    content: str
+    model: str
+    finish_reason: str
+    usage: dict
+    latency_ms: int
+    attempts: int
+    http_status: int
+
+
+@dataclass(frozen=True)
+class AiResult:
+    """What run_ai_task returns — always, for every AI-side outcome."""
+    ok: bool
+    data: object = None
+    raw_text: str = ''
+    failure_reason: str = ''
+    user_message: str = ''
+    log_id: str = ''
+    latency_ms: int = 0
+    usage: dict = field(default_factory=dict)
+
+
+# ══════════════════════════════════════════════════════════════════
+# LOW LEVEL — one Groq call
+# ══════════════════════════════════════════════════════════════════
+
+def _retry_wait_seconds(resp):
+    """Seconds to wait before retrying a 429: Retry-After header, else Groq's own text, else a default."""
+    try:
+        header = resp.headers.get('retry-after')
+        if header is not None:
+            return float(header) + _RETRY_WAIT_BUFFER_SECONDS
+    except (AttributeError, TypeError, ValueError):
+        pass
+    match = _RETRY_WAIT_RE.search(resp.text or '')
+    if match:
+        minutes, amount, unit = match.groups()
+        seconds = float(amount) / 1000.0 if unit.lower() == 'ms' else float(amount)
+        seconds += 60.0 * int(minutes) if minutes else 0.0
+        return seconds + _RETRY_WAIT_BUFFER_SECONDS
+    return _RETRY_WAIT_UNPARSEABLE_SECONDS
+
+
+def _error_code(resp):
+    """Groq's `error.code` string from an error body, or '' if the body is not that shape."""
+    try:
+        code = resp.json().get('error', {}).get('code', '')
+    except (AttributeError, ValueError, TypeError):
+        return ''
+    return code if isinstance(code, str) else ''
+
+
+def _setting(name, override):
+    return getattr(settings, name) if override is None else override
+
+
+def call_groq(messages, model, max_tokens=1500, max_retries=DEFAULT_MAX_RETRIES, *,
+              timeout=None, total_budget=None, max_retry_wait=None,
+              temperature=None, reasoning_effort=None, response_format=None):
+    """
+    One chat completion against Groq, bounded by a single monotonic deadline
+    that covers every attempt and every rate-limit wait. Returns a GroqReply;
+    raises AiError(reason) on any failure. Feature code should call
+    run_ai_task() instead — it adds the kill switch, limits, logging and a
+    never-raises result.
+
+    `None` for timeout/total_budget/max_retry_wait means "read the setting at
+    call time" (so override_settings works). Optional payload keys are only
+    sent when not None. A 429 is retried only while retries remain AND the
+    wait fits both max_retry_wait and the remaining budget; otherwise it
+    raises rate_limited immediately instead of sleeping. A reply with
+    finish_reason 'length' is returned as-is — run_ai_task decides what that
+    means for the feature.
     """
     api_key = getattr(settings, 'GROQ_API_KEY', '')
     if not api_key:
-        raise RuntimeError('GROQ_API_KEY is not configured.')
+        raise AiError('not_configured', detail='GROQ_API_KEY is not set.')
 
-    attempt = 0
+    timeout = _setting('AI_REQUEST_TIMEOUT_SECONDS', timeout)
+    budget = min(_setting('AI_TOTAL_BUDGET_SECONDS', total_budget), AI_TOTAL_BUDGET_HARD_CEILING_SECONDS)
+    max_retry_wait = _setting('AI_MAX_RETRY_WAIT_SECONDS', max_retry_wait)
+
+    payload = {'model': model, 'messages': messages, 'max_tokens': max_tokens}
+    for key, value in (('temperature', temperature), ('reasoning_effort', reasoning_effort),
+                       ('response_format', response_format)):
+        if value is not None:
+            payload[key] = value
+
+    started = time.monotonic()
+    deadline = started + budget
+    attempts = 0
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AiError('timeout', detail=f'Time budget of {budget}s exhausted.', attempts=attempts)
+
+        attempts += 1
         try:
             resp = requests.post(
                 GROQ_URL,
                 headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                json={'model': model, 'messages': messages, 'max_tokens': max_tokens},
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                json=payload,
+                timeout=min(timeout, remaining),
             )
+        except requests.Timeout as exc:
+            raise AiError('timeout', detail=f'Request timed out: {type(exc).__name__}', attempts=attempts) from exc
         except requests.RequestException as exc:
-            raise RuntimeError(f'Groq API request failed: {exc}') from exc
+            raise AiError('upstream_error', detail=f'Request failed: {type(exc).__name__}', attempts=attempts) from exc
 
         if resp.status_code == 200:
             try:
-                return resp.json()['choices'][0]['message']['content']
-            except (KeyError, IndexError, ValueError) as exc:
-                raise RuntimeError(f'Groq API returned an unexpected response shape: {exc}') from exc
+                body = resp.json()
+                choice = body['choices'][0]
+                content = choice['message'].get('content') or ''
+                usage = body.get('usage')
+                return GroqReply(
+                    content=content,
+                    model=body.get('model') or model,
+                    finish_reason=choice.get('finish_reason') or '',
+                    usage=usage if isinstance(usage, dict) else {},
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    attempts=attempts,
+                    http_status=200,
+                )
+            except (KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
+                raise AiError('upstream_error', 200, f'Unexpected response shape: {type(exc).__name__}',
+                              attempts=attempts) from exc
 
-        if resp.status_code == 429 and attempt < max_retries:
-            match = _RETRY_WAIT_RE.search(resp.text)
-            wait_s = float(match.group(1)) + 1.0 if match else 15.0
-            logger.warning('Groq API rate-limited (attempt %s/%s) — waiting %.1fs.', attempt + 1, max_retries, wait_s)
+        # Defence in depth: the upstream body goes to the server log, so the key can never ride along in it.
+        body_text = (resp.text or '')[:500].replace(api_key, '[redacted]')
+
+        if resp.status_code == 429:
+            wait_s = _retry_wait_seconds(resp)
+            can_retry = (
+                attempts <= max_retries
+                and wait_s <= max_retry_wait
+                and time.monotonic() + wait_s < deadline
+            )
+            if not can_retry:
+                logger.warning('Groq rate limited, not waiting (wait %.1fs, attempt %s): %s', wait_s, attempts, body_text)
+                raise AiError('rate_limited', 429, f'Rate limited; wait of {wait_s:.1f}s not acceptable.', attempts=attempts)
+            logger.warning('Groq rate limited (attempt %s/%s) — waiting %.1fs.', attempts, max_retries + 1, wait_s)
             time.sleep(wait_s)
-            attempt += 1
             continue
 
-        logger.error('Groq API error %s: %s', resp.status_code, resp.text[:500])
-        raise RuntimeError(f'Groq API error {resp.status_code}: {resp.text[:500]}')
+        logger.error('Groq API error %s: %s', resp.status_code, body_text)
+        if _error_code(resp) in _MODEL_UNAVAILABLE_CODES:
+            raise AiError('model_unavailable', resp.status_code, f'Model {model} is not available.', attempts=attempts)
+        raise AiError('upstream_error', resp.status_code, f'HTTP {resp.status_code}', attempts=attempts)
 
+
+def list_groq_models():
+    """
+    The ids Groq currently lists for this key (GET /openai/v1/models, verified
+    live 02 November 2026: an OpenAI-style {"object": "list", "data": [...]}).
+    Not an AI completion, so it does not break the "all AI goes through
+    call_groq" rule; it exists so check_ai_models can tell "model removed from
+    the catalog" from "model temporarily failing". Raises AiError on failure.
+    """
+    api_key = getattr(settings, 'GROQ_API_KEY', '')
+    if not api_key:
+        raise AiError('not_configured', detail='GROQ_API_KEY is not set.')
+    try:
+        resp = requests.get(
+            GROQ_MODELS_URL,
+            headers={'Authorization': f'Bearer {api_key}'},
+            timeout=settings.AI_REQUEST_TIMEOUT_SECONDS,
+        )
+    except requests.Timeout as exc:
+        raise AiError('timeout', detail='Model list timed out.') from exc
+    except requests.RequestException as exc:
+        raise AiError('upstream_error', detail=f'Model list failed: {type(exc).__name__}') from exc
+    if resp.status_code != 200:
+        raise AiError('upstream_error', resp.status_code, f'Model list HTTP {resp.status_code}')
+    try:
+        return sorted(item['id'] for item in resp.json()['data'])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AiError('upstream_error', 200, 'Model list had an unexpected shape.') from exc
+
+
+# ══════════════════════════════════════════════════════════════════
+# PARSING HELPERS
+# ══════════════════════════════════════════════════════════════════
 
 def strip_model_reply_wrapper(text):
     """
@@ -86,3 +318,188 @@ def strip_model_reply_wrapper(text):
     text = re.sub(r'^```(json|html)?\s*', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```\s*$', '', text)
     return text.strip()
+
+
+def parse_json_object(text):
+    """
+    Parses a model reply into a dict: strips a <think> block / code fence,
+    then json.loads; if that is not valid JSON, tries the slice from the
+    first '{' to the last '}' (models sometimes wrap the object in prose).
+    Raises ValueError unless the result is a JSON object — an array or a
+    scalar is rejected, never "repaired". Field-level validation is the
+    feature's job, layered on top of this.
+    """
+    cleaned = strip_model_reply_wrapper(text or '')
+    try:
+        value = json.loads(cleaned)
+    except ValueError:
+        start, end = cleaned.find('{'), cleaned.rfind('}')
+        if cleaned.startswith('[') or start == -1 or end <= start:
+            raise ValueError('Reply is not a JSON object.') from None
+        value = json.loads(cleaned[start:end + 1])
+    if not isinstance(value, dict):
+        raise ValueError('Reply is JSON but not an object.')
+    return value
+
+
+# ══════════════════════════════════════════════════════════════════
+# THE FEATURE-FACING ENTRY POINT
+# ══════════════════════════════════════════════════════════════════
+
+def can_use_ai(user):
+    """
+    True only for an authenticated, active user. This is the SINGLE seam where
+    the Subscriptions module adds its Free/Pro check later; no plan logic
+    exists yet, deliberately.
+    """
+    return bool(getattr(user, 'is_authenticated', False) and getattr(user, 'is_active', False))
+
+
+def _user_over_limit(user, feature, limit):
+    """
+    Counts this attempt and reports whether the user is past their hourly
+    allowance for the feature. The count is taken BEFORE the call, so failed
+    calls count too (they burn the shared free-tier quota just the same).
+    Atomic: cache.add creates the window once, cache.incr is one Redis INCR —
+    unlike the get-then-set pattern of apps.invoices' _check_moderate_rate_limit,
+    two concurrent calls can never both read the same count. A fixed one-hour
+    window from the first call, not a sliding one. If the cache itself fails
+    this fails OPEN (logged): the limiter protects a quota, it must not turn a
+    cache outage into an AI outage — Groq's own 429 fast-fail still applies.
+    """
+    key = f'ai_rate_{feature}_{user.pk}'
+    try:
+        cache.add(key, 0, timeout=3600)
+        try:
+            count = cache.incr(key)
+        except ValueError:  # the window expired between add and incr
+            cache.add(key, 1, timeout=3600)
+            count = 1
+    except Exception:
+        logger.exception('AI rate-limit cache failed for feature=%s; allowing the call.', feature)
+        return False
+    return count > limit
+
+
+def _message_chars(messages):
+    """Total characters of text in the prompt (image parts and the like are not counted)."""
+    total = 0
+    for message in messages:
+        content = message.get('content') if isinstance(message, dict) else None
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            total += sum(len(part.get('text', '')) for part in content
+                         if isinstance(part, dict) and isinstance(part.get('text'), str))
+    return total
+
+
+def _token_count(usage, key):
+    value = usage.get(key) if isinstance(usage, dict) else None
+    return value if isinstance(value, int) and value >= 0 else None
+
+
+def _write_log(*, user, feature, model, ok, failure_reason, latency_ms, attempts, http_status,
+               finish_reason, usage, input_chars, output_chars, request_id):
+    """Writes the one AiCallLog row. Never raises (same pattern as core.observability.log_event)."""
+    try:
+        row = AiCallLog.objects.create(
+            user=user, feature=feature, model=(model or '')[:100], ok=ok, failure_reason=failure_reason,
+            latency_ms=latency_ms, attempts=attempts, http_status=http_status,
+            finish_reason=(finish_reason or '')[:20],
+            prompt_tokens=_token_count(usage, 'prompt_tokens'),
+            completion_tokens=_token_count(usage, 'completion_tokens'),
+            total_tokens=_token_count(usage, 'total_tokens'),
+            input_chars=input_chars, output_chars=output_chars, request_id=(request_id or '')[:36],
+        )
+    except Exception:
+        logger.exception('Failed to write AiCallLog for feature=%s model=%s', feature, model)
+        return ''
+    return str(row.id)
+
+
+def run_ai_task(*, feature, messages, model, max_tokens, user=None, system=False, parse=None,
+                request_id=None, rate_limit_per_hour=None, timeout=None, total_budget=None,
+                temperature=None, reasoning_effort=None, response_format=None):
+    """
+    The one function feature code calls. Always returns an AiResult; an
+    AI-side failure NEVER raises (only a programmer error — a bad `feature`,
+    or not exactly one of `user` / `system=True` — raises ValueError). Every
+    non-programmer-error path writes exactly one core.AiCallLog row (sizes
+    only, never content).
+
+    Order: kill switch -> can_use_ai(user) -> per-user hourly limit ->
+    call_groq -> truncation check (finish_reason 'length' is `truncated`: cut-
+    off JSON is useless) -> the optional `parse` callable (ValueError/KeyError/
+    TypeError, or any other exception from it, becomes `invalid_output`) ->
+    an empty reply is `invalid_output` too.
+
+    `parse` receives the raw reply text and returns the feature's data;
+    without it, AiResult.data is the raw text. Pass `response_format` /
+    `reasoning_effort` explicitly when the model supports them — they are
+    not defaulted here (see DECISIONS.md for the measured guidance: reasoning
+    tokens count against max_tokens, so leave headroom, and avoid 'high').
+
+    Never call this inside transaction.atomic() or under select_for_update().
+    """
+    if not isinstance(feature, str) or not _FEATURE_RE.match(feature):
+        raise ValueError(f'feature must match {_FEATURE_RE.pattern!r}, got {feature!r}.')
+    if (user is None) == (system is not True):
+        raise ValueError('Pass exactly one of user=<User> or system=True.')
+
+    started = time.monotonic()
+    reply = None
+    data = None
+    reason = ''
+    http_status = None
+    attempts = 0
+
+    if not settings.AI_ENABLED:
+        reason = 'disabled'
+    elif user is not None and not can_use_ai(user):
+        reason = 'not_allowed'
+    elif user is not None and _user_over_limit(
+            user, feature, settings.AI_RATE_LIMIT_PER_HOUR if rate_limit_per_hour is None else rate_limit_per_hour):
+        reason = 'user_rate_limited'
+    else:
+        try:
+            reply = call_groq(
+                messages, model, max_tokens, timeout=timeout, total_budget=total_budget,
+                temperature=temperature, reasoning_effort=reasoning_effort, response_format=response_format,
+            )
+        except AiError as exc:
+            reason, http_status, attempts = exc.reason, exc.http_status, exc.attempts
+            logger.warning('AI call failed feature=%s model=%s reason=%s: %s', feature, model, exc.reason, exc.detail)
+        else:
+            http_status, attempts = reply.http_status, reply.attempts
+            if reply.finish_reason == 'length':
+                reason = 'truncated'
+            elif not reply.content.strip():
+                reason = 'invalid_output'
+            elif parse is None:
+                data = reply.content
+            else:
+                try:
+                    data = parse(reply.content)
+                except (ValueError, KeyError, TypeError) as exc:
+                    reason = 'invalid_output'
+                    logger.warning('AI reply rejected by parser feature=%s: %s', feature, type(exc).__name__)
+                except Exception:
+                    # A bug in the feature's own parser must not become a 500
+                    # or a missing log row — features degrade on AI failure.
+                    reason = 'invalid_output'
+                    logger.exception('Parser for AI feature=%s raised unexpectedly.', feature)
+
+    ok = not reason
+    latency_ms = reply.latency_ms if reply else int((time.monotonic() - started) * 1000)
+    usage = reply.usage if reply else {}
+    raw_text = reply.content if reply else ''
+    log_id = _write_log(
+        user=user, feature=feature, model=model, ok=ok, failure_reason=reason, latency_ms=latency_ms,
+        attempts=attempts, http_status=http_status, finish_reason=reply.finish_reason if reply else '',
+        usage=usage, input_chars=_message_chars(messages), output_chars=len(raw_text), request_id=request_id,
+    )
+    return AiResult(
+        ok=ok, data=data if ok else None, raw_text=raw_text if ok else '', failure_reason=reason,
+        user_message='' if ok else AI_USER_MESSAGES[reason], log_id=log_id, latency_ms=latency_ms, usage=usage,
+    )

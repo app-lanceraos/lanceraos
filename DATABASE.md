@@ -570,6 +570,45 @@ created_at
 
 ---
 
+## `ai_call_logs` (`AiCallLog`, in `core`)
+
+One row per `core.ai.run_ai_task()` call — successful or not, including calls that never reached Groq (kill
+switch, plan gate, per-user limit). Written only by `core/ai.py`, and never allowed to raise into the caller.
+Exists so a dead model id, a rate-limit problem or a runaway feature shows up in data (not found by luck), and as
+measured evidence for the project report. **It stores sizes, never content**: no prompt text, no model output, no
+job descriptions, no client data (users' business data). Added 02 November 2026 (migration `core.0006_aicalllog`).
+
+**Schema**:
+```
+id
+user               FK, nullable, SET_NULL  — null for system calls (e.g. the model check)
+feature            CharField(60)   — snake_case id, e.g. proposal_generate
+model              CharField(100)  — the model id requested
+ok                 BooleanField
+failure_reason     CharField(30), blank when ok — one of core.ai.AI_FAILURE_REASONS
+latency_ms, attempts (HTTP attempts; 0 if Groq was never called), http_status (nullable)
+finish_reason      CharField(20), blank
+prompt_tokens, completion_tokens, total_tokens   nullable — from Groq's `usage`
+input_chars, output_chars                        sizes only
+request_id         CharField(36), blank — ties the call to the HTTP request that caused it
+created_at
+```
+
+1. **Mutable?** No — append-only, written once after the call finishes.
+2. **Soft deleted?** No — operational telemetry with no financial or legal significance. **No retention policy
+   yet** (same as `api_request_logs`); rows are small, add a cleanup task before volume matters.
+3. **Audit trail?** This table *is* the trail for AI calls. It is not also written to `AuditLog` (an AI call is
+   not a state change).
+4. **Indexed?** `(feature, created_at)`, `(user, created_at)`, `created_at`.
+5. **Encrypted?** No — nothing sensitive is stored, by rule: do not add a column that holds prompt or reply text.
+6. **Cascade behavior?** `SET_NULL` on `user` — deleting or anonymizing an account must not erase usage
+   statistics, and the row holds no content.
+
+"Fallback rate" in the project evaluation is the share of calls with `ok = False` for features that degrade; the
+table does not record whether a caller actually used a fallback.
+
+---
+
 ## `notification_reads` (`NotificationRead`, in `core`)
 
 Per-user, per-notification UI state (read/dismissed) for the notification bell — deliberately kept

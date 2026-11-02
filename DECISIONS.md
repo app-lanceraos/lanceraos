@@ -15216,3 +15216,74 @@ Not done (open decisions, written up for Ali — none implemented, no backend fi
   "definitive" and therefore logs the user out locally even though the session is intact; `PublicRoute`'s loading screen
   has no "still connecting" line (only `PrivateRoute`'s does); `Login.jsx` shows "session expired" for any
   `session_expired=1`, including a disabled account.
+
+Date: 02 November 2026 (AI foundation — core/ai.py, core.AiCallLog, run_ai_task, check_ai_models)
+Decision: Nothing in the product calls Groq today (the only earlier consumer, the AI-seeded design classifier, left
+with the canvas editor on 12 September 2026). Before the first AI feature (Proposals) is built, `core/ai.py` became a
+foundation every feature reuses, and no feature or frontend was built.
+- `call_groq()` returns a `GroqReply` (content, model, finish_reason, raw `usage`, latency_ms, attempts) instead of a
+  string and fails with a typed `AiError(reason)`. One monotonic deadline covers every attempt; a 429 whose
+  "try again in" wait (or `Retry-After`) is longer than `AI_MAX_RETRY_WAIT_SECONDS`, or would pass the deadline, is NOT
+  slept on — it raises `rate_limited` at once. Worst case went from ~5 minutes (90 s x 3 attempts + sleeps) to a hard
+  ceiling of 60 s (`AI_TOTAL_BUDGET_SECONDS`, default 40, clamped in settings AND again in `call_groq`).
+- `run_ai_task()` is the one function features call: kill switch (`AI_ENABLED`) -> `can_use_ai(user)` (the single seam
+  where Subscriptions adds its plan check later; nothing plan-related built) -> per-user, per-feature hourly limit ->
+  `call_groq` -> `finish_reason == 'length'` is `truncated` -> the feature's `parse` -> empty reply is `invalid_output`.
+  It never raises for an AI-side failure and always returns an `AiResult`; only programmer errors raise `ValueError`.
+  Ten closed failure reasons (`AI_FAILURE_REASONS`), each with a safe user sentence (`AI_USER_MESSAGES`).
+- `core.AiCallLog` (migration `core.0006_aicalllog`, table `ai_call_logs`): one row per call, written for EVERY outcome
+  including the ones that never reach Groq, and a failing log write is swallowed (`logger.exception`) like
+  `log_event`. It stores SIZES, never content — no prompts, no replies (users' business data). See DATABASE.md.
+- `manage.py check_ai_models`: checks the FAST and QUALITY ids against Groq's live catalog and makes one tiny real
+  completion each; exits non-zero on any failure; prints VISION but does not call it.
+- `core/tests/test_ai_boundaries.py` fails if any `.py` under `apps/` or `core/` (tests and `core/ai.py` aside)
+  contains `api.groq.com` or `GROQ_API_KEY`.
+- Rule (also in CLAUDE.md/STANDARDS.md): never call `run_ai_task` inside `transaction.atomic()` or under
+  `select_for_update()` — a tens-of-seconds HTTP call must not hold a transaction or a row lock.
+Reason: Four problems, all found by reading the code before changing it. (1) `call_groq` returned only a string — no
+token counts, latency or `finish_reason`, so truncation (the failure that once broke the vision call) was invisible.
+(2) Its worst case suits neither a web request nor the single `--pool=solo` Celery slot on a 2 GiB host. (3) Failures
+were an untyped `RuntimeError`, so a view could not tell rate limiting from a removed model from a bad key.
+(4) Nothing was logged: `GROQ_MODEL_QUALITY` was dead for three weeks (16 August -> 6 September) and found by luck.
+Live measurements, free tier, 02 November 2026 (21 live requests used in total; no secret recorded):
+| ID | Result |
+| M1 `GET /openai/v1/models` | 200, `{"object":"list","data":[...]}`, 11 models; FAST, QUALITY and VISION ids all listed. Sends NO `x-ratelimit-*` headers. |
+| M2 nonexistent model | HTTP 404, `error.type = invalid_request_error`, `error.code = model_not_found`, message "The model `...` does not exist or you do not have access to it." This is the shape `model_unavailable` keys on. |
+| M3 tiny completion, both models | 200 in ~1 s. `choices[0].message` keys: `content`, `reasoning`, `role` (reasoning is a SEPARATE field; `<think>` never appeared in `content`). Top-level also `usage_breakdown`, `x_groq`. `usage` has `prompt_tokens`, `completion_tokens`, `total_tokens`, queue/prompt/completion/total times and `completion_tokens_details.reasoning_tokens` (~80 of ~90 completion tokens on a trivial prompt). |
+| M4 `response_format` | `json_object` and strict `json_schema` both ACCEPTED by both models; both returned `{"ok":true}`. Not used by default (see below). |
+| M5 proposal-sized JSON task, `max_tokens` 3000, 120b | `reasoning_effort` accepted. low: 1.8-3.2 s, 466-475 tokens, parsed 2/2. medium: 1.9-2.3 s, 608-688 tokens, parsed 2/2. **high: 6.7-7.2 s, `finish_reason=length`, 2998 of 3000 tokens spent on reasoning, JSON cut off, 0/2 parsed.** 20b at its default: 4.0 s / 2688 tokens (2271 reasoning) and 2.4 s / 1185 tokens, parsed 2/2. |
+| M6 rate-limit headers | `x-ratelimit-limit-requests: 1000` (per day: reset advances ~86 s per request), `x-ratelimit-limit-tokens: 8000` (per minute). A request with `max_tokens=12000` (above the 8000/min limit) was not rejected, so the limit is not checked against `max_tokens` up front. No `retry-after` header was seen (only sent on a 429). |
+| M7 429 body / `retry-after` | NOT OBSERVED — no 429 occurred in any probe. The parser accepts a `Retry-After` header, then Groq's "try again in 3.5s / 850ms / 1m2.5s" text, then falls back to 15 s (which exceeds the default max wait, so it fails fast). Unit-tested with mocks only. |
+Defaults chosen: `AI_REQUEST_TIMEOUT_SECONDS=25` (the slowest 3000-token completion measured was 7 s, so 3x headroom),
+`AI_TOTAL_BUDGET_SECONDS=40` (ceiling 60), `AI_MAX_RETRY_WAIT_SECONDS=8`, `AI_RATE_LIMIT_PER_HOUR=20`.
+`run_ai_task` does NOT default `reasoning_effort` or `response_format`: they are model-specific parameters (a vision
+model may reject them) and the foundation stays model-agnostic. Guidance for feature prompts, from M5: reasoning
+tokens are billed against `max_tokens`, so leave generous headroom; pass `reasoning_effort='low'` for extraction/JSON
+and `'medium'` for writing; never use `'high'` with a limit under several thousand tokens; treat `truncated` as a
+normal, handled outcome.
+Alternatives considered:
+- Writing AI calls to `ApiRequestLog` or `AuditLog` instead of a new table — rejected: `ApiRequestLog` is one row per
+  HTTP request and an AI call can come from a Celery task with no request; `AuditLog` is a security-event trail and
+  an AI call is not a state change. The needed columns (model, tokens, latency, reason) fit neither.
+- Keeping `call_groq` returning `str` and passing usage through a side channel (a global or a callback) — rejected:
+  hidden state, and it breaks under concurrency.
+- Raising on AI failure from `run_ai_task` — rejected: every feature must degrade cleanly with AI off or failing, so
+  the failure is a normal return value the caller is forced to look at (`result.ok`), not an exception someone forgets
+  to catch in one view. (A parser that raises something other than ValueError/KeyError/TypeError is also turned into
+  `invalid_output` and logged with a traceback, so a feature's own bug cannot become a 500 or a missing log row.)
+- Storing prompts or outputs in the log — rejected: they hold users' business and client data; sizes are enough for
+  the evaluation.
+- A non-atomic limiter (copying `_check_moderate_rate_limit`'s get-then-set) — rejected: two concurrent calls can
+  both read the same count and both pass. `run_ai_task` uses `cache.add` + `cache.incr` (one atomic Redis INCR). It
+  fails OPEN if the cache itself errors (logged): the limiter protects a quota and must not turn a cache outage into
+  an AI outage. Fixed one-hour window from the first call, not sliding.
+- A global (all-users) limiter — NOT built: Groq's own 429 plus the fast-fail path covers it for now; revisit if real
+  traffic ever approaches 8000 tokens/minute.
+- A retention task for `ai_call_logs` — NOT built, recorded as a known limit (same as `api_request_logs`).
+- An evaluation harness — deliberately NOT built here; it will be built together with the first real feature
+  (Proposals) so it is shaped by real use. "Fallback rate" in the evaluation = share of calls with `ok = False` for
+  features that degrade; the log does not claim to know whether a caller used a fallback.
+- Dropping the old `RuntimeError`/string API with a compatibility shim — rejected: no code called it, and
+  `core/tests/test_ai.py` (which pinned the old behaviour) was rewritten for the new contract.
+Not verified: `model_decommissioned` as an error code (Groq's documented code for a retired model; only
+`model_not_found` was observed live) — both map to `model_unavailable`; the 429 body/header format (M7).

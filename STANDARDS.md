@@ -46,6 +46,14 @@ in every module going forward, including ones written before this convention (re
 Use `logging.getLogger(__name__)`. Established in `core/observability.py`'s `log_event()` and followed
 throughout — e.g. a failed `AuditLog` write logs via `logger.exception(...)`, never `print()`.
 
+## AI calls
+
+Feature code calls `core.ai.run_ai_task()` — never raw HTTP, never `requests` for AI, never a Groq URL or key
+(`core/tests/test_ai_boundaries.py` fails the build if it finds one outside `core/ai.py`). Prompts live in the
+app's `prompts.py`. Never call it inside `transaction.atomic()` or while holding `select_for_update()` locks.
+Always handle `result.ok == False` (every feature must still work with AI off or failing), and let code calculate
+every figure — the model only explains. `core.AiCallLog` stores sizes, never prompt or reply text.
+
 ## Docstrings explain WHY, not just WHAT
 
 A one-line "does X" docstring is not sufficient where a design decision or non-obvious constraint is

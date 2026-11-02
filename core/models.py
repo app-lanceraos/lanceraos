@@ -154,3 +154,73 @@ class NotificationRead(models.Model):
     class Meta:
         db_table = 'notification_reads'
         unique_together = [['user', 'audit_log'], ['client', 'audit_log']]
+
+class AiCallLog(models.Model):
+    """
+    One row per core.ai.run_ai_task() call — successful or not, including
+    the calls that never reached Groq (kill switch, plan gate, per-user rate
+    limit). Written by core.ai only. It exists so a dead model id, a rate-
+    limit problem or a runaway feature shows up in data instead of being
+    found by luck (GROQ_MODEL_QUALITY was dead for three weeks before it was
+    noticed — see DECISIONS.md), and as measured evidence for the project
+    report (latency, token use, failure rate per feature).
+
+    PRIVACY RULE: this table stores SIZES, never CONTENT. No prompt text, no
+    model output, no job descriptions, no client data — those are users'
+    business data. `input_chars`/`output_chars` and token counts are all it
+    keeps. Do not add a field that holds text from a prompt or a reply.
+
+    The 6 questions (CLAUDE.md, Database Design Rules):
+      1. MUTABLE? No. Append-only; written once after the call finishes.
+      2. SOFT DELETED? No. Operational telemetry, no financial or legal
+         significance; hard delete is safe.
+      3. AUDIT TRAIL? This table IS the trail for AI calls; it is not itself
+         written to core.AuditLog (an AI call is not a state change).
+      4. INDEXED? (feature, created_at) for per-feature rates, (user,
+         created_at) for per-user questions, created_at for date ranges.
+      5. ENCRYPTED? No — nothing sensitive is stored (see the privacy rule).
+      6. CASCADE? user is SET_NULL: deleting or anonymizing an account must
+         not erase the usage statistics, and the row holds no content.
+
+    No retention policy yet (same as ApiRequestLog). Rows are small, so this
+    is a known limit, not a bug; add a cleanup task before volume matters.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='ai_call_logs',
+        help_text='Null for system calls (run_ai_task(system=True)), e.g. the model check.',
+    )
+    feature = models.CharField(max_length=60, help_text='Snake_case feature id, e.g. proposal_generate.')
+    model = models.CharField(max_length=100)
+    ok = models.BooleanField()
+    failure_reason = models.CharField(
+        max_length=30, blank=True,
+        help_text='One of core.ai.AI_FAILURE_REASONS; blank when ok.',
+    )
+    latency_ms = models.PositiveIntegerField(default=0)
+    attempts = models.PositiveSmallIntegerField(default=0, help_text='HTTP attempts made; 0 if Groq was never called.')
+    http_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    finish_reason = models.CharField(max_length=20, blank=True)
+    prompt_tokens = models.PositiveIntegerField(null=True, blank=True)
+    completion_tokens = models.PositiveIntegerField(null=True, blank=True)
+    total_tokens = models.PositiveIntegerField(null=True, blank=True)
+    input_chars = models.PositiveIntegerField(default=0)
+    output_chars = models.PositiveIntegerField(default=0)
+    request_id = models.CharField(max_length=36, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ai_call_logs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['feature', 'created_at']),
+            models.Index(fields=['user', 'created_at']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        outcome = 'ok' if self.ok else f'failed:{self.failure_reason}'
+        return f'{self.feature} [{self.model}] {outcome} {self.latency_ms}ms'

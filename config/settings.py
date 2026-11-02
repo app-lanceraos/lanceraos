@@ -420,50 +420,52 @@ cloudinary.config(
 )
 
 # ══════════════════════════════════════════════════════════════════
-# AI (Groq) — not used by apps.users, read here for when other modules need it
+# AI (Groq) — only core/ai.py talks to Groq; features call core.ai.run_ai_task
 # ══════════════════════════════════════════════════════════════════
+# No product feature calls Groq yet (the only earlier consumer, the AI-seeded
+# invoice design classifier, was removed with the free-canvas editor on
+# 12 September 2026). core/ai.py is the foundation the upcoming features
+# (Proposals, Dashboard insights, Health tips, Tax guidance, Contracts, Help)
+# will reuse — see DECISIONS.md, 02 November 2026.
 
 GROQ_API_KEY = env('GROQ_API_KEY', default='')
-# Phase 0 (06 September 2026): all three model ids are now env-readable,
-# fixing a real asymmetry this comment used to flag — FAST/QUALITY were
-# plain hardcoded strings while only VISION was env()-read, despite a
-# model id being exactly the kind of value Groq can deprecate out from
-# under a hardcoded string with no code change possible. All three now
-# follow the same pattern: env-overridable, with the current best-known-
-# live model as the default.
+# Phase 0 (06 September 2026): all three model ids are env-readable, fixing a
+# real asymmetry (FAST/QUALITY were hardcoded while only VISION was env()-read)
+# — a model id is exactly the kind of value Groq can deprecate out from under
+# a hardcoded string with no code change possible. Each is env-overridable,
+# with the current best-known-live model as the default.
 #
-# GROQ_MODEL_QUALITY's default changed in this same pass — its old
-# hardcoded value, 'llama-3.3-70b-versatile', was found to already be
-# DEAD (Groq shut it down 16 August 2026, per console.groq.com/docs/
-# deprecations, discovered by checking live GroqCloud status directly
-# rather than trusting this file's own prior claim — see DECISIONS.md).
-# Every apps.proposals/apps.tax AI call routed through GROQ_MODEL_QUALITY
-# has been silently failing since that date. Replaced with
-# 'openai/gpt-oss-120b' — Groq's own listed migration target for that
-# exact deprecation, confirmed live/active, and a genuinely strong
-# general-purpose reasoning model for complex writing tasks (131K context,
-# variable reasoning effort, not vision-specific like the qwen options
-# also listed as alternates).
+# GROQ_MODEL_QUALITY's default changed in that pass — its old hardcoded
+# value, 'llama-3.3-70b-versatile', was already DEAD (Groq shut it down
+# 16 August 2026, per console.groq.com/docs/deprecations, found by checking
+# live GroqCloud status rather than trusting this file's own prior claim —
+# see DECISIONS.md). Replaced with 'openai/gpt-oss-120b', Groq's own listed
+# migration target for that deprecation. Run `manage.py check_ai_models` after
+# any Groq deprecation notice to catch this class of failure early.
 GROQ_MODEL_FAST = env('GROQ_MODEL_FAST', default='openai/gpt-oss-20b')
 GROQ_MODEL_QUALITY = env('GROQ_MODEL_QUALITY', default='openai/gpt-oss-120b')
-# apps.invoices' AI-seeded design classification (Step 9, core/ai.py +
-# apps/invoices/ai_design.py) is the first real Groq consumer in this
-# project. GROQ_MODEL_VISION's default changed in this same Phase 0 pass:
-# 'qwen/qwen3.6-27b' is being decommissioned by Groq on 14 September 2026
-# (requests auto-route to 'qwen3.8-27b' after that date). Rather than
-# accept the automatic reroute, 'qwen/qwen3.8-27b' is set explicitly here
-# — evaluated deliberately, not just because it's the default migration
-# target: as of this writing it is one of only two vision-capable models
-# on GroqCloud at all (the other being qwen3.6-27b itself); Meta's Llama 4
-# Scout/Maverick, the only other multimodal models Groq has ever hosted,
-# are BOTH already decommissioned (07/17/26 and 03/09/26 respectively).
-# Live-tested directly against the real Groq API (see DECISIONS.md) —
-# qwen3.8-27b reliably returned clean, immediately-parseable JSON with no
-# <think> reasoning block across 9 real calls (3 distinct reference
-# images x 3 max_tokens values), unlike qwen3.6-27b, which was reproduced
-# live in this same test run genuinely overrunning a 2000-token budget
-# mid-thought on the exact same image.
+# GROQ_MODEL_VISION is used by NO feature today. It is kept because the env
+# var and the docs reference it and it is the one vision-capable model that
+# was live-tested (06 September 2026, see DECISIONS.md): 'qwen/qwen3.8-27b'
+# replaced 'qwen/qwen3.6-27b', which Groq decommissions on 14 September 2026.
 GROQ_MODEL_VISION = env('GROQ_MODEL_VISION', default='qwen/qwen3.8-27b')
+
+# Runtime limits for core/ai.py (02 November 2026). Defaults come from live
+# measurements on the free tier (DECISIONS.md): a 3000-token completion takes
+# about 7 s, so a 25 s per-attempt timeout is generous, and the production
+# worker is `--pool=solo` (ONE Celery task at a time), so the whole call —
+# every attempt plus every rate-limit wait — is bounded by a hard budget.
+# AI_ENABLED is the kill switch: False means no network call, ever.
+AI_ENABLED = env.bool('AI_ENABLED', default=True)
+AI_REQUEST_TIMEOUT_SECONDS = env.int('AI_REQUEST_TIMEOUT_SECONDS', default=25)
+# Hard ceiling of 60 s, enforced here AND again inside core.ai.call_groq so an
+# env typo or an override_settings cannot exceed it.
+AI_TOTAL_BUDGET_SECONDS = min(env.int('AI_TOTAL_BUDGET_SECONDS', default=40), 60)
+# A 429 whose "try again in" wait is longer than this fails immediately
+# (rate_limited) instead of sleeping inside a request or a worker slot.
+AI_MAX_RETRY_WAIT_SECONDS = env.int('AI_MAX_RETRY_WAIT_SECONDS', default=8)
+# Per user, per feature, per hour — protects the shared free-tier quota.
+AI_RATE_LIMIT_PER_HOUR = env.int('AI_RATE_LIMIT_PER_HOUR', default=20)
 
 # ══════════════════════════════════════════════════════════════════
 # CELERY / CHANNELS
