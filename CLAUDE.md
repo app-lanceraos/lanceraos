@@ -2859,19 +2859,19 @@ Key API endpoints:
 ---
 
 ### Module 6 — Proposals
-Status: PART 1 BUILT (02 November 2026): data model, CRUD, the code-computed quality score, AI
-generation. Part 2 (send, public client page, accept/decline, withdraw, convert-to-invoice,
-notifications and emails, proposal numbers) is NOT built; the fields it writes (sent/viewed/
-responded timestamps, the client's answer, response IP, converted invoice, proposal number) are
-added by the prompt whose code writes them. No frontend exists yet.
+Status: BACKEND COMPLETE (02 November 2026): part 1 (data model, CRUD, the code-computed quality
+score, AI generation) and part 2 (send, public client page, accept/decline, withdraw, duplicate,
+convert to a draft invoice, audit trail, notifications and emails, proposal numbers). NO FRONTEND
+exists yet (Prompt 05): until it ships nothing calls these endpoints, so no real client can receive a
+link — do not enable for real clients before then.
 App: apps/proposals/
 
 Manual proposal creation (built):
 Scope sections (max 10), line items with pricing (max 50), payment terms, validity date. The client
 is OPTIONAL: link a saved client (details are snapshotted into client_name/email/company, again on
-change) or type inline details, or neither while it is a draft (part 2 requires name + email at
-send time). Money arithmetic mirrors Invoice.recalculate_totals() exactly, pinned by a drift test, so
-part 2's conversion is lossless. Only drafts can be edited, regenerated or deleted (403 otherwise).
+change) or type inline details, or neither while it is a draft (sending by email needs a valid
+client email; sending as a link needs neither). Money arithmetic mirrors Invoice.recalculate_totals() exactly, pinned by a drift test, so
+the conversion to an invoice is lossless. Only drafts can be edited, regenerated or deleted (403 otherwise).
 All text fields are PLAIN TEXT, displayed escaped, never HTML.
 
 AI proposal generation (built):
@@ -2897,25 +2897,50 @@ Key API endpoints — built (part 1):
   only the {id} form: there is no id before the first generation and a failure must leave no empty draft)
 - POST /api/proposals/{id}/generate-ai/ (regenerates a draft; a non-empty body needs "confirm_overwrite": true)
 
-PART 2, NOT BUILT (the original spec, kept as the target):
+Part 2 (built, backend only):
 
-Client response flow:
-Proposal sent to client via email with secure token link.
-Client views proposal on public page (no account needed).
-Client accepts or declines with optional message.
-Client IP address and timestamp recorded on response.
-Freelancer receives immediate in-app + email notification.
-Proposal expiry date: client cannot accept after expiry.
+Send: POST /api/proposals/{id}/send/ with {"method": "email"|"link", "confirm": true} moves a draft
+to `sent`. By email goes through core.email.send_client_facing_email (the user's verified custom SMTP
+when configured, else Resend, with fallback; reply_to = the freelancer); as a link, nothing is sent and
+the freelancer pastes `public_url` (FRONTEND_URL/proposal/<view_token>) into WhatsApp, Upwork, etc.
+Needs body, a valid-until date that is today or later, and (email only) a valid client email.
+The row lock is held while the email is sent (a double click cannot email the client twice), status
+changes only if the email succeeded (502 otherwise, the draft untouched, no number consumed), and the
+number PRO-YYYY-NNNN (sequential per user per year, under the User-row lock) is assigned after the email
+and is not in it. 10 sends/hour per user. Lock order is proposal row -> user row.
 
-Convert to invoice:
-One click converts an accepted proposal to a draft invoice.
-Line items, client details, and amounts pre-populated. No re-entry.
+Public client page (apps/proposals/views_public.py, no login): GET /api/proposals/public/{view_token}/
+and POST .../respond/ {"decision": "accept"|"decline", "message": optional, <= 1000 chars}. Rules: no
+authentication classes (a stale freelancer cookie cannot 401 it); an unknown/over-long token and a draft
+return the identical 404; an ALLOWLIST payload (PublicProposalSerializer, never exclude — no job_description,
+my_experience, ai_tips, client_email, IP, ids, token, ...); `Cache-Control: no-store` on every response;
+GET 120/hour and respond 10/hour per IP (explicit cache counters, DRF's AnonRateThrottle switched off on these
+views); the owner opening their own link sees `preview: true`, changes nothing and cannot answer (403) —
+apps.clients.portal.is_freelancer_previewing_portal could not be reused, see DECISIONS.md. The first non-owner
+view flips sent -> viewed with one conditional UPDATE (race-free, one audit row). Answering takes a row lock and
+checks, in order: owner 403 -> withdrawn 409 -> already answered 409 -> expired 409 -> apply; the client's
+validated IP and browser string are stored only with the answer, never returned by any API. A withdrawn proposal
+shows only its state.
 
-Key API endpoints — not built (part 2):
-- POST /api/proposals/{id}/send/
-- GET /api/proposals/public/{token}/
-- POST /api/proposals/public/{token}/respond/
-- POST /api/proposals/{id}/convert-to-invoice/
+Withdraw: POST /api/proposals/{id}/withdraw/ {"confirm": true} (sent/viewed only, even if expired; the client
+is not emailed). Duplicate: POST /api/proposals/{id}/duplicate/ (any status -> a new draft without valid_until,
+number, timestamps or the client's answer). Convert: POST /api/proposals/{id}/convert-to-invoice/
+{"save_client": false} (accepted only; creates a DRAFT invoice with identical totals, never sent; idempotent —
+a second call returns the same invoice; a linked client is used, else a one-time client or, with save_client,
+an existing client matched by email or a new one).
+
+Emails (apps/proposals/emails.py; every interpolated value HTML-escaped, subjects single-line): the proposal
+to the client; "Proposal accepted" / "Proposal declined" to the freelancer. See EMAILS.md.
+Audit + bell: every transition writes a core.AuditLog row regardless of any toggle (proposal_sent/_viewed/
+_accepted/_declined/_withdrawn/_converted, ids and counts only); the bell row + email on an answer
+(proposal_accepted_notice / proposal_declined_notice) are gated by the existing "Client Messages" toggle.
+Edits, regenerate and delete remain draft-only (403 for every other status).
+
+Key API endpoints — built (part 2):
+- POST /api/proposals/{id}/send/ + /withdraw/ + /duplicate/ + /convert-to-invoice/
+- GET /api/proposals/public/{view_token}/ + POST /api/proposals/public/{view_token}/respond/
+
+Not built: a "resend" action, expiry reminders, the React screens, promoting the email HTML wrapper to core/.
 
 ---
 
@@ -3029,7 +3054,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
-| Proposals            | Part 1 built (model, CRUD, code-computed score, AI generation); part 2 (send/public page/respond/convert) not built | -        | 372 passing (`apps.proposals` + `core`) | In progress |
+| Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Not built (Prompt 05) | 479 passing (`apps.proposals` 298 + `core` 181) | Backend complete; no frontend |
 | Contracts            | -       | -        | -     | Not started |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | -       | -        | -     | Not started |

@@ -15479,3 +15479,79 @@ middleware, redaction and audit tests failed); removing `select_for_update()` fr
 Not verified: behaviour on the production Linux host; the daily 200K-token cap; that the per-model buckets stay separate under real
 contention (header evidence only); the pilot's tool-name result beyond these 15 samples; `apps/invoices` overflow/atomicity (untested,
 see Part A); that `reasoning_effort` stays accepted by the small model over time.
+
+
+Date: 02 November 2026 (Proposals part 2 — send, public client page, accept/decline, withdraw, duplicate, convert to invoice; backend only)
+Decision: Proposals can now leave `draft`. Built: `POST /api/proposals/{id}/send/` (email or link), the public no-login page
+`GET /api/proposals/public/{view_token}/` + `POST .../respond/`, withdraw, duplicate, and an idempotent convert-to-DRAFT-invoice, with an
+audit row for every transition and a bell + email to the freelancer when the client answers. One migration, `proposals.0002_proposal_part2_fields`
+(10 nullable/blank columns + `unique_together (user, proposal_number)`). No frontend (Prompt 05): until it ships nothing calls these endpoints, so
+no real client can receive a link, and it must not be enabled for real clients before then.
+The owner's decisions, implemented as given:
+- D1. Send holds the proposal row lock WHILE the email is sent. Rejected: send first, lock later (a double click would email the client twice).
+  Accepted cost: one database connection held for the email call (worst case about 25 s: custom SMTP 15 s timeout, then the Resend fallback 10 s);
+  it blocks only that proposal's own edits. Status changes ONLY if the email succeeded; on failure it stays `draft` and consumes no number (502).
+- D2. The proposal number (`PRO-YYYY-NNNN`, per user per year) is assigned AFTER the email, in the same transaction, under the User-row lock
+  (the `_finalise_invoice` pattern), and is NOT in the email. That keeps the User lock to a few milliseconds instead of the whole email call.
+  Lock order everywhere is proposal row -> user row; nothing takes them the other way round. Each number attempt is a savepoint with a bounded
+  IntegrityError retry as defence in depth; the lock is the real mechanism.
+- D3. The owner opening their own link is not a client view and cannot answer. FINDING: `apps.clients.portal.is_freelancer_previewing_portal`
+  cannot be reused — I read it: it returns True only when the browser holds BOTH a freelancer session AND a client-portal session, and a proposal
+  link never creates a portal session, so it would always say False. A small `request_is_owner` in `views_public.py` reads the freelancer cookie
+  instead. It uses a subclass of `CookieJWTAuthentication` with `enforce_csrf` turned off: the parent enforces CSRF inside `authenticate()`, and on
+  the POST /respond/ path a missing CSRF token would raise, be swallowed by the try/except, and make the OWNER look like an ordinary client — able
+  to answer their own proposal. Identifying a cookie cannot be forged into an action, so no CSRF check is needed to read it (a test runs the owner's
+  POST with CSRF enforcement on and still gets 403). A different logged-in freelancer is an ordinary client.
+- D4. Accepted/declined notifications are gated by the existing "Client Messages" toggle (`notif_client_messages`); no new setting. The state change
+  is ALWAYS audit-logged: the audit rows (`proposal_accepted`/`proposal_declined`) and the toggle-gated bell rows (`proposal_accepted_notice`/
+  `proposal_declined_notice`) have different event names precisely so switching the toggle off removes the bell entry and email but never the audit
+  row. Invoices once had a whole class of lifecycle events with no audit row (finding INV-002); an audit row must not depend on a notification toggle.
+- D5. No email to the client on withdraw, accept or decline; the public page shows the current state.
+- D6. The client's IP and browser string are stored ONLY when they answer, never on a plain view, and are never returned by any serializer. The first
+  view stores a timestamp only. NUANCE the owner should know: `core.ApiRequestLog` (the generic middleware, rule 11) still records the IP of EVERY API
+  request, public proposal GETs included; D6 holds for the proposal row and its audit rows, not for that table.
+- D7. Convert is idempotent: the second call returns 200 with the same invoice (`created: false`); a row lock makes 6 simultaneous calls produce one
+  invoice. If the draft invoice is later deleted, `converted_invoice` goes NULL (SET_NULL) and the proposal can be converted again — chosen over
+  blocking, because a deleted draft should not strand an accepted proposal.
+Other decisions, with what was rejected:
+- Public payload is an ALLOWLIST (`PublicProposalSerializer`, plain `Serializer`, every field declared by name), never a ModelSerializer or `exclude`;
+  a sentinel test fills every private field and asserts none appears anywhere in the JSON. A withdrawn proposal returns only `{state, title, sender}`.
+- Unknown token, over-long token and `draft` all return the identical 404 body. Every public response (errors and DRF's 405 included) carries
+  `Cache-Control: no-store` via a decorator. `@authentication_classes([])` so a stale freelancer cookie cannot make a public page 401.
+- DRF's blanket `AnonRateThrottle` (100/hour) is switched off on the two public views (`@throttle_classes([])`): it would silently cap GET at 100
+  and make the documented 120/hour limit fiction. The explicit cache limits (GET 120/h/IP, respond 10/h/IP, send 10/h/user) are the real ones.
+- First view = ONE conditional `UPDATE ... WHERE status='sent'`; only the request that changed a row emits `ProposalViewed`. Race-free without a
+  lock (8 simultaneous first views -> one `viewed_at`, one audit row). Rejected: read-then-write.
+- `safe_ip`: `get_client_ip` returns whatever the last `X-Forwarded-For` entry is; a non-IP value makes any PostgreSQL `inet` insert fail, and inside a
+  transaction that poisons the whole transaction. The answer must never fail because of a header, so the value is validated with `ipaddress` (a scoped
+  IPv6 literal like `fe80::1%eth0` is also treated as invalid) and stored as NULL when it is not an IP.
+- Respond takes `select_for_update(of=('self',))` with no `select_related` (PostgreSQL refuses FOR UPDATE on the nullable side of an outer join).
+  Order inside the lock: 404 -> owner 403 -> withdrawn 409 -> already answered 409 -> expired 409 (today is still answerable) -> apply.
+- Respond enforces no CSRF: it carries no ambient credential (authentication is off, the URL token is the secret), so a cross-site forgery gains
+  nothing a direct request would not.
+- Convert creates rows with the models directly (the `_duplicate_invoice_core` way); no `apps.invoices` view or serializer is called and no underscore-
+  private helper is imported. The invoice carries items, currency, tax and discount (totals identical, pinned by a test), the proposal's payment terms
+  as `terms`, and ONE note line naming the proposal — none of the proposal body. A saved client's CURRENT details are copied onto the invoice;
+  `save_client` reuses an existing client by case-insensitive email (even an archived one: neither restored nor edited) or creates one.
+- Duplicate copies content, pricing and AI provenance but not `valid_until` (an old date is a trap), status, token, number, timestamps, the client's
+  answer or `converted_invoice`; the title gets " (copy)" and is truncated to stay within 200 characters.
+- The rate-limit helper moved to `apps/proposals/ratelimit.py` (`rate_limited(key, limit, timeout)`); `_mutation_rate_limited` is a thin wrapper, so
+  every part-1 test passed unchanged.
+FINDING (unescaped invoice emails): the existing builders in `apps/invoices/email_service.py` interpolate names, titles and client notes into HTML with
+no escaping (e.g. `build_payment_claim_submitted_email` puts `claim.client_note` straight into the body — text a client types on a public page — and the
+invoice emails do the same with names and numbers). Not touched here (`apps/invoices` is out of scope). The new `apps/proposals/emails.py` escapes every
+interpolated value (`django.utils.html.escape`) and collapses whitespace/control characters in subjects. It keeps a local copy of the small branded HTML
+wrapper because the one in `email_service.py` is private to that app.
+Known limits (accepted, not fixed): (1) if the database write after a successful email fails, the client has the email while the proposal is still a
+draft, and a retry emails them again — the window is one UPDATE under a lock; an outbox would be out of proportion. (2) Creating a Client in convert has
+the same check-then-create race as `ClientSerializer.validate_email` (no database uniqueness on user+email); a constraint belongs to `apps.clients`.
+(3) A pre-existing middleware gap: a junk `X-Forwarded-For` makes the `ApiRequestLog` insert fail (a lost log row, caught and logged) — `core/` was not
+changed. (4) Expiry is computed, not stored, and nothing emails anyone when a proposal expires.
+Follow-ups, NOT built: promote the email HTML wrapper to `core/`; escape the invoice email builders; a "resend" action; expiry reminders; the React screens
+(Prompt 05).
+Tests (PostgreSQL; the files are untracked by design): `test_send.py`, `test_public.py`, `test_convert.py`, `test_emails.py`,
+`test_lifecycle_concurrency.py` (real threads, `TransactionTestCase`), `core/tests/test_proposal_notifications.py` (includes a proof that every existing
+event's `_action_url` is unchanged). Mutation checks, each shown failing and then restored: removing `select_for_update()` from send, the owner guard,
+the conditional first-view UPDATE, an `escape()`, an extra field in the public serializer, the respond status checks, the convert idempotency check, and
+the `safe_ip` validation. The migration was run forward and backward on a scratch PostgreSQL database with draft rows present (the dev database was not
+touched). Not verified: behaviour on the production host; a real SMTP or Resend delivery; real browser behaviour; anything needing the React pages.

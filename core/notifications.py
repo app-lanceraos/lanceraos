@@ -61,6 +61,11 @@ NOTIFICATION_EVENTS = {
     # address/country) via the portal's My Details screen. This app's
     # first-ever entry in this allowlist — see apps/clients/notifications.py.
     'client_details_change_requested',
+    # apps/proposals, part 2 — a client accepted / declined a proposal. These
+    # are the toggle-gated BELL rows; the always-written audit rows are
+    # separately named (proposal_accepted / proposal_declined) and deliberately
+    # NOT listed here — see apps/proposals/notifications.py.
+    'proposal_accepted_notice', 'proposal_declined_notice',
 }
 
 EVENT_TITLES = {
@@ -82,6 +87,8 @@ EVENT_TITLES = {
     'recurring_generation_paused': 'Recurring invoices paused',
     'stale_drafts_digest': 'Unsent drafts waiting',
     'client_details_change_requested': 'Client details change requested',
+    'proposal_accepted_notice': 'Proposal accepted',
+    'proposal_declined_notice': 'Proposal declined',
 }
 
 # Where clicking each notification type navigates. Compulsory — every
@@ -143,6 +150,9 @@ EVENT_ACTION_URLS = {
     # (ClientDetailPanel.jsx's own `initialAction='requests'` handling),
     # not just the client's default Invoices tab.
     'client_details_change_requested': '/clients?client={id}&tab=requests',
+    # {id} here is a PROPOSAL id (see _action_url's last fallback).
+    'proposal_accepted_notice': '/proposals?proposal={id}',
+    'proposal_declined_notice': '/proposals?proposal={id}',
 }
 
 
@@ -163,11 +173,15 @@ def _action_url(log):
     first (unchanged behavior for every pre-existing event, all of which
     always set it) and falls back to client_id only when invoice_id is
     absent, so no existing event's resolution can change.
+
+    EXTENDED, Proposals part 2: proposal_id is the LAST fallback, after
+    invoice_id and client_id, for the same reason — an event carrying either
+    earlier key resolves exactly as before (pinned by a regression test).
     """
     template = EVENT_ACTION_URLS.get(log.event)
     if template and '{id}' in template:
         metadata = log.metadata or {}
-        entity_id = metadata.get('invoice_id') or metadata.get('client_id')
+        entity_id = metadata.get('invoice_id') or metadata.get('client_id') or metadata.get('proposal_id')
         if entity_id:
             return template.replace('{id}', entity_id)
     return template
@@ -219,6 +233,12 @@ def _describe(log):
     if log.event == 'client_details_change_requested':
         client = log.metadata.get('client_name') or 'A client'
         return f'{client} would like to update their details on file with you.'
+    if log.event in ('proposal_accepted_notice', 'proposal_declined_notice'):
+        client = log.metadata.get('client_name') or 'Your client'
+        number = log.metadata.get('proposal_number')
+        subject = f'your proposal {number}' if number else 'your proposal'
+        verb = 'accepted' if log.event == 'proposal_accepted_notice' else 'declined'
+        return f'{client} {verb} {subject}.'
     return ''
 
 

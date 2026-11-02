@@ -1,8 +1,8 @@
 # apps/proposals/models.py
 """
-Proposals, part 1 (02 November 2026): the data model. A freelancer pastes a
-client's job post, gets an AI-written draft, edits it, prices it, and (part 2,
-a later build) sends it to the client for an accept/decline answer.
+Proposals (02 November 2026): the data model. A freelancer pastes a client's
+job post, gets an AI-written draft, edits it, prices it, sends it to the client
+(part 2) and the client accepts or declines it on a public page.
 
 Field names and the money arithmetic deliberately MIRROR apps.invoices
 (Invoice / InvoiceItem: client_name/client_email/client_company, currency,
@@ -10,11 +10,9 @@ subtotal/tax_rate/tax_amount/discount_amount/total, notes-as-payment_terms,
 view_token, item description/quantity/unit_price/total/sort_order) so part 2's
 "convert an accepted proposal to a draft invoice" is a lossless field copy.
 
-Only fields that code in this build actually reads or writes exist. Sending,
-the public client page, accept/decline and conversion are part 2, and so are
-the fields they need (sent/viewed/responded timestamps, the client's answer,
-the response IP, the converted invoice, the proposal number): they are added
-by the prompt whose code writes them.
+Only fields that code actually reads or writes exist. Part 2 added the ones its
+endpoints write: proposal_number, sent_via, the sent/viewed/responded/withdrawn
+timestamps, the client's answer (message, IP, user agent) and converted_invoice.
 
 `currency` is a CharField(3) with no `choices=`, same reasoning as
 Invoice.currency: validation against the live exchange-rate snapshot lives in
@@ -39,9 +37,8 @@ TONE_CHOICES = [
     ('technical', 'Technical'),
 ]
 
-# All six are part of the model from the start because the status field is its
-# core; only 'draft' is reachable in part 1 (sent/viewed/accepted/declined/
-# withdrawn are written by part 2's endpoints).
+# draft -> sent -> viewed -> accepted | declined, and sent/viewed -> withdrawn.
+# `expired` is NOT a status: it is computed on read (Proposal.is_expired).
 STATUS_CHOICES = [
     ('draft', 'Draft'),
     ('sent', 'Sent'),
@@ -49,6 +46,11 @@ STATUS_CHOICES = [
     ('accepted', 'Accepted'),
     ('declined', 'Declined'),
     ('withdrawn', 'Withdrawn'),
+]
+
+SENT_VIA_CHOICES = [
+    ('email', 'Email'),
+    ('link', 'Link'),
 ]
 
 # Statuses in which a proposal is waiting on the client, so a passed
@@ -70,24 +72,36 @@ def _today():
 class Proposal(models.Model):
     """
     6-question framework:
-    1. Mutable? Only while `draft`. A sent proposal is exactly what the client
-       saw, so part 2 locks it; every edit/regenerate/delete endpoint here
-       refuses anything but a draft (403), enforced server-side.
+    1. Mutable? Content only while `draft`. A sent proposal is exactly what the
+       client saw, so every edit/regenerate/delete endpoint refuses anything but
+       a draft (403), enforced server-side. After the draft stage only the
+       lifecycle fields change (status, the timestamps, the client's answer,
+       converted_invoice, and `client` when a conversion saves the client):
+       sent/viewed/answered/withdrawn proposals are records.
     2. Soft deleted? No. Only drafts can be deleted (hard delete — a draft has
        no record-keeping value). A proposal that was sent or answered is a
-       record: part 2 withdraws it, it is never deleted.
-    3. Audit trail? Yes, via core.AuditLog: proposal_created / proposal_deleted
-       / proposal_ai_generated (ids, tone, model — never the text), written by
-       the handlers in notifications.py. Part 2's lifecycle events follow.
-    4. Indexed? (user, status), (user, created_at), and the unique indexed
-       view_token. Everything is queried scoped to one user.
+       record: it is withdrawn, never deleted.
+    3. Audit trail? Yes, every transition, via core.AuditLog (ids, tone, model,
+       method — never the text): proposal_created / _deleted / _ai_generated /
+       _sent / _viewed / _accepted / _declined / _withdrawn / _converted,
+       written by the handlers in notifications.py regardless of any
+       notification toggle.
+    4. Indexed? (user, status), (user, created_at), the unique indexed
+       view_token, unique (user, proposal_number) and the implicit FK indexes.
+       Everything is queried scoped to one user, except the public page, which
+       looks up by view_token.
     5. Encrypted? No — business text and prices, no credentials or PII beyond
        the client contact details Invoice already stores in the clear.
+       `response_ip` / `response_user_agent` are the CLIENT's own data, stored
+       only when they accept or decline (evidence of who answered), never on a
+       plain view, and never returned by any API.
     6. Cascade behavior? `user` CASCADE, same as Invoice.user (a proposal has
        no meaning once its owner row is gone; accounts are anonymised, never
        hard-deleted, so this does not fire in practice). `client` SET_NULL:
        the client_* snapshot fields keep the proposal readable if the CRM
-       record is ever removed.
+       record is ever removed. `converted_invoice` SET_NULL: deleting the draft
+       invoice a conversion made leaves the accepted proposal intact (and
+       lets it be converted again); an invoice never owns its proposal.
 
     `body` is the proposal text (AI-written or typed). `job_description` and
     `my_experience` are kept so a regeneration can start from them; they are
@@ -130,12 +144,30 @@ class Proposal(models.Model):
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='draft')
     view_token = models.CharField(max_length=32, unique=True, db_index=True, blank=True)
 
+    # ── Sending / the client's answer (part 2) ─────────────────────
+    # Assigned at send, AFTER the email succeeded, under the User-row lock.
+    # NULL while a draft (NULLs are distinct in PostgreSQL, so drafts never
+    # collide on the unique constraint).
+    proposal_number = models.CharField(max_length=30, null=True, blank=True)
+    sent_via = models.CharField(max_length=10, blank=True, choices=SENT_VIA_CHOICES)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    viewed_at = models.DateTimeField(null=True, blank=True, help_text='The FIRST client view only.')
+    responded_at = models.DateTimeField(null=True, blank=True)
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    response_message = models.TextField(blank=True, help_text='The client\'s optional note. Plain text, at most 1000 characters.')
+    response_ip = models.GenericIPAddressField(null=True, blank=True)
+    response_user_agent = models.CharField(max_length=500, blank=True)
+    converted_invoice = models.ForeignKey(
+        'invoices.Invoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='source_proposals',
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'proposals'
         ordering = ['-created_at']
+        unique_together = [('user', 'proposal_number')]
         indexes = [
             models.Index(fields=['user', 'status']),
             models.Index(fields=['user', 'created_at']),
@@ -157,7 +189,38 @@ class Proposal(models.Model):
             if not cls.objects.filter(view_token=token).exists():
                 return token
 
+    @classmethod
+    def generate_proposal_number(cls, user):
+        """
+        PRO-YYYY-NNNN, sequential per user per year — Invoice.generate_invoice_number's
+        twin. MUST be called while holding the User-row lock
+        (`User.objects.select_for_update().get(pk=user.pk)`) inside the same
+        transaction that saves the number: two concurrent calls for one user
+        would otherwise read the same "last" number, and the unique
+        (user, proposal_number) constraint would turn the race into an
+        IntegrityError instead of preventing it (see _finalise_invoice's long
+        docstring for the invoice version of this exact problem).
+        """
+        year = timezone.now().year
+        prefix = f'PRO-{year}-'
+        last = cls.objects.filter(
+            user=user, proposal_number__startswith=prefix,
+        ).order_by('-proposal_number').first()
+        if last:
+            try:
+                next_num = int(last.proposal_number.split('-')[-1]) + 1
+            except ValueError:
+                next_num = 1
+        else:
+            next_num = 1
+        return f'{prefix}{str(next_num).zfill(4)}'
+
     # ── Computed properties (never stored) ─────────────────────────
+
+    @property
+    def public_url(self):
+        """The client-facing link (the frontend's own /proposal/<token> page), same style as Invoice.portal_view_url."""
+        return f'{settings.FRONTEND_URL}/proposal/{self.view_token}'
 
     @property
     def is_editable(self):

@@ -612,10 +612,9 @@ table does not record whether a caller actually used a fallback.
 ## `proposals` (`Proposal`, in `apps.proposals`)
 
 A freelancer's proposal to a client, usually started from a pasted job post. Added 02 November 2026 (migration
-`proposals.0001_initial`). Field names and money arithmetic deliberately mirror `invoices` so part 2's conversion to
-an invoice is a lossless copy; `Proposal.recalculate_totals()` is pinned to `Invoice.recalculate_totals()` by a drift
-test. Part 2's fields (sent/viewed/responded timestamps, the client's answer, response IP, converted invoice, proposal
-number) are NOT here yet: they are added by the migration whose code writes them.
+`proposals.0001_initial`; part 2's columns in `proposals.0002_proposal_part2_fields`). Field names and money arithmetic
+deliberately mirror `invoices` so the conversion to an invoice is a lossless copy; `Proposal.recalculate_totals()` is
+pinned to `Invoice.recalculate_totals()` by a drift test.
 
 **Schema**:
 ```
@@ -629,20 +628,44 @@ ai_tips            JSONField list of strings; ai_generated_at (nullable), ai_mod
 currency (3), scope_sections (JSON: [{title, text}]), payment_terms
 tax_rate, discount_amount, subtotal, tax_amount, total   same Decimal types as invoices
 valid_until        DateField, nullable
-status             draft|sent|viewed|accepted|declined|withdrawn (only 'draft' reachable in part 1). Expiry is
-                   NEVER stored: Proposal.is_expired is computed on read (sent/viewed and valid_until < today)
-view_token         CharField(32), unique, indexed, generated in save(); not exposed by any part-1 serializer
+status             draft|sent|viewed|accepted|declined|withdrawn. Expiry is NEVER stored: Proposal.is_expired is
+                   computed on read (sent/viewed and valid_until < today)
+view_token         CharField(32), unique, indexed, generated in save(); never a key in any owner serializer — the
+                   owner's detail carries it only inside `public_url` (None for a draft)
+-- added in 0002 (part 2), all nullable/blank so existing draft rows migrate with no data step --
+proposal_number    CharField(30), nullable; PRO-YYYY-NNNN, assigned at send under the User-row lock;
+                   UNIQUE (user, proposal_number) — NULLs are distinct in PostgreSQL, so drafts do not collide
+sent_via           CharField(10) email|link, blank until sent
+sent_at, viewed_at, responded_at, withdrawn_at   DateTimeField, nullable; viewed_at = the FIRST client view only
+response_message   TextField, blank; the client's optional note, plain text, at most 1000 characters (serializer)
+response_ip        GenericIPAddressField, nullable; validated IP only (anything else is stored as NULL)
+response_user_agent CharField(500), blank
+converted_invoice  FK to invoices.Invoice, nullable, SET_NULL, related_name='source_proposals'
 created_at, updated_at
 ```
 
-1. **Mutable?** Only while `draft` (enforced server-side, 403). A sent proposal is what the client saw; part 2 locks it.
-2. **Soft deleted?** No. Only drafts can be hard-deleted; a sent/answered proposal is a record (part 2 withdraws it).
-3. **Audit trail?** Yes, `core.AuditLog`: `proposal_created`, `proposal_deleted`, `proposal_ai_generated` (ids, tone,
-   model, regenerated; never any text). None are bell notifications (the user triggers each herself).
-4. **Indexed?** `(user, status)`, `(user, created_at)`, unique indexed `view_token`.
+`response_ip` and `response_user_agent` hold the CLIENT's data (evidence of who accepted/declined). They are written
+only when the client answers — never on a plain view — and are never returned by any API. (`core.ApiRequestLog` records
+every request's IP generically; that is a separate table.)
+
+1. **Mutable?** Content only while `draft` (enforced server-side, 403). After that only the lifecycle fields change
+   (status, the timestamps, the client's answer, `converted_invoice`, and `client` when a conversion saves the client).
+2. **Soft deleted?** No. Only drafts can be hard-deleted; a sent/answered proposal is a record (it is withdrawn, never deleted).
+3. **Audit trail?** Yes, every transition, in `core.AuditLog`: `proposal_created` (+ `duplicated_from`), `proposal_deleted`,
+   `proposal_ai_generated`, `proposal_sent`, `proposal_viewed`, `proposal_accepted`, `proposal_declined` (these two with the
+   client's IP and user agent as the row's request metadata), `proposal_withdrawn`, `proposal_converted` — ids, numbers,
+   method and counts only, never any text. Always written, whatever the notification toggles. The bell rows are separate:
+   `proposal_accepted_notice` / `proposal_declined_notice`, written only when `notif_client_messages` is on.
+4. **Indexed?** `(user, status)`, `(user, created_at)`, unique indexed `view_token`, unique `(user, proposal_number)`, and the
+   implicit index on `converted_invoice`.
 5. **Encrypted?** No — business text and prices; no credentials. (Contact details are stored in the clear, as on invoices.)
 6. **Cascade behavior?** `user` CASCADE (accounts are anonymised, never hard-deleted, so it does not fire in practice);
-   `client` SET_NULL (the snapshot keeps the proposal readable).
+   `client` SET_NULL (the snapshot keeps the proposal readable); `converted_invoice` SET_NULL (deleting the draft invoice
+   leaves the accepted proposal intact and lets it be converted again).
+
+**Migration `proposals.0002_proposal_part2_fields`** (02 November 2026): ten `ADD COLUMN`s (all NULL or with a blank default),
+one `UNIQUE (user_id, proposal_number)` constraint, one FK index. Run forward and backward on PostgreSQL with draft rows
+present: rows preserved both ways, new columns NULL/blank after the forward step.
 
 ---
 

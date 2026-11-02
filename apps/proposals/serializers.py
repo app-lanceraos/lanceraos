@@ -195,14 +195,18 @@ class ProposalSerializer(serializers.ModelSerializer):
 
 
 class ProposalListSerializer(serializers.ModelSerializer):
-    """Light list row. view_token is never exposed (part 2 puts it on the public link, not in the app's own API)."""
+    """Light list row. `view_token` is never a key here; the sanctioned exposure is the detail's `public_url`."""
     is_expired = serializers.BooleanField(read_only=True)
     ai_generated = serializers.BooleanField(read_only=True)
+    has_invoice = serializers.SerializerMethodField()
 
     class Meta:
         model = Proposal
-        fields = ['id', 'title', 'client_name', 'status', 'total', 'currency', 'valid_until',
-                  'is_expired', 'ai_generated', 'updated_at']
+        fields = ['id', 'proposal_number', 'title', 'client_name', 'status', 'total', 'currency', 'valid_until',
+                  'is_expired', 'ai_generated', 'sent_at', 'viewed_at', 'responded_at', 'has_invoice', 'updated_at']
+
+    def get_has_invoice(self, obj):
+        return obj.converted_invoice_id is not None
 
 
 class ProposalDetailSerializer(serializers.ModelSerializer):
@@ -210,6 +214,11 @@ class ProposalDetailSerializer(serializers.ModelSerializer):
     Full read representation, including the code-computed quality score
     (apps/proposals/scoring.py) — computed on every read, never stored, so it
     can never go stale against an edited body.
+
+    Owner-only. `view_token` itself is never a key; the client link is exposed
+    as `public_url` (None for a draft, which has no public page). The client's
+    IP address and user agent (`response_ip`, `response_user_agent`) are never
+    exposed by any serializer.
     """
     items = ProposalItemSerializer(many=True, read_only=True)
     is_editable = serializers.BooleanField(read_only=True)
@@ -217,20 +226,26 @@ class ProposalDetailSerializer(serializers.ModelSerializer):
     ai_generated = serializers.BooleanField(read_only=True)
     word_count = serializers.IntegerField(read_only=True)
     quality = serializers.SerializerMethodField()
+    converted_invoice = serializers.UUIDField(source='converted_invoice_id', read_only=True)
+    public_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Proposal
         fields = [
-            'id', 'client', 'client_name', 'client_email', 'client_company', 'title', 'tone',
+            'id', 'proposal_number', 'client', 'client_name', 'client_email', 'client_company', 'title', 'tone',
             'job_description', 'my_experience', 'body', 'ai_tips', 'ai_generated', 'ai_generated_at', 'ai_model',
             'currency', 'scope_sections', 'payment_terms', 'tax_rate', 'discount_amount', 'subtotal',
             'tax_amount', 'total', 'valid_until', 'status', 'is_editable', 'is_expired', 'items',
-            'word_count', 'quality', 'created_at', 'updated_at',
+            'word_count', 'quality', 'sent_via', 'sent_at', 'viewed_at', 'responded_at', 'withdrawn_at',
+            'response_message', 'converted_invoice', 'public_url', 'created_at', 'updated_at',
         ]
         read_only_fields = fields
 
     def get_quality(self, obj):
         return scoring.score_proposal(obj.body, obj.job_description)
+
+    def get_public_url(self, obj):
+        return None if obj.status == 'draft' else obj.public_url
 
 
 class GenerateRequestSerializer(serializers.Serializer):
@@ -253,3 +268,134 @@ class GenerateRequestSerializer(serializers.Serializer):
             request = self.context['request']
             self.fields['client'] = serializers.PrimaryKeyRelatedField(
                 queryset=Client.objects.filter(user=request.user), required=False, allow_null=True)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Part 2: request bodies
+# ══════════════════════════════════════════════════════════════════
+
+RESPONSE_MESSAGE_MAX = 1000
+
+
+class SendRequestSerializer(serializers.Serializer):
+    method = serializers.ChoiceField(choices=['email', 'link'])
+    confirm = serializers.BooleanField(default=False)
+
+
+class ConfirmSerializer(serializers.Serializer):
+    confirm = serializers.BooleanField(default=False)
+
+
+class ConvertRequestSerializer(serializers.Serializer):
+    save_client = serializers.BooleanField(default=False)
+
+
+class RespondRequestSerializer(serializers.Serializer):
+    """
+    The client's answer. CharField already refuses NUL characters (PostgreSQL
+    text columns cannot store one), and trims surrounding whitespace.
+    """
+    decision = serializers.ChoiceField(choices=['accept', 'decline'])
+    message = serializers.CharField(max_length=RESPONSE_MESSAGE_MAX, required=False, allow_blank=True, default='')
+
+
+# ══════════════════════════════════════════════════════════════════
+# Part 2: the public (client-facing) payload — an ALLOWLIST
+# ══════════════════════════════════════════════════════════════════
+#
+# Explicit serializers.Serializer classes with every field declared by name —
+# NOT a ModelSerializer and never `exclude`. A field added to Proposal later
+# is invisible to the public page until someone adds it here on purpose.
+# Never present (tested by sentinel values): job_description, my_experience,
+# ai_tips, ai_model, tone, id, view_token, client_email, client_company,
+# response_ip, response_user_agent, any user id/email, any profile field other
+# than the two in `sender`.
+
+class PublicItemSerializer(serializers.Serializer):
+    description = serializers.CharField(read_only=True)
+    quantity = serializers.DecimalField(max_digits=8, decimal_places=2, read_only=True)
+    unit_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+
+
+class PublicScopeSectionSerializer(serializers.Serializer):
+    title = serializers.CharField(read_only=True)
+    text = serializers.CharField(read_only=True)
+
+
+def public_state(proposal):
+    """'open' | 'expired' | 'accepted' | 'declined' | 'withdrawn' (a draft never reaches the public page)."""
+    if proposal.status in ('accepted', 'declined', 'withdrawn'):
+        return proposal.status
+    return 'expired' if proposal.is_expired else 'open'
+
+
+def public_sender(proposal):
+    """The ONLY two profile-derived values the public page may show: a display name and the logo URL."""
+    from core.email import sender_display_name
+
+    user = proposal.user
+    profile = getattr(user, 'profile', None)
+    return {
+        'name': sender_display_name(user, profile),
+        'logo_url': (profile.logo if profile is not None else '') or '',
+    }
+
+
+class PublicProposalSerializer(serializers.Serializer):
+    """
+    What a client may see of an open/expired/answered proposal. Context:
+    `preview` (bool) — True only for the owner opening their own link.
+    """
+    state = serializers.SerializerMethodField()
+    can_respond = serializers.SerializerMethodField()
+    preview = serializers.SerializerMethodField()
+    proposal_number = serializers.CharField(read_only=True)
+    title = serializers.CharField(read_only=True)
+    client_name = serializers.CharField(read_only=True)
+    body = serializers.CharField(read_only=True)
+    scope_sections = PublicScopeSectionSerializer(many=True, read_only=True)
+    items = PublicItemSerializer(many=True, read_only=True)
+    currency = serializers.CharField(read_only=True)
+    subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    tax_rate = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    tax_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    payment_terms = serializers.CharField(read_only=True)
+    valid_until = serializers.DateField(read_only=True)
+    responded_at = serializers.DateTimeField(read_only=True)
+    response_message = serializers.CharField(read_only=True)
+    sender = serializers.SerializerMethodField()
+
+    def get_state(self, obj):
+        return public_state(obj)
+
+    def get_preview(self, obj):
+        return bool(self.context.get('preview', False))
+
+    def get_can_respond(self, obj):
+        return public_state(obj) == 'open' and not self.get_preview(obj)
+
+    def get_sender(self, obj):
+        return public_sender(obj)
+
+
+class PublicWithdrawnSerializer(serializers.Serializer):
+    """A withdrawn proposal shows the client nothing but that fact."""
+    state = serializers.SerializerMethodField()
+    title = serializers.CharField(read_only=True)
+    sender = serializers.SerializerMethodField()
+
+    def get_state(self, obj):
+        return 'withdrawn'
+
+    def get_sender(self, obj):
+        return public_sender(obj)
+
+
+def public_payload(proposal, preview=False):
+    """The one place that picks the public representation for a proposal."""
+    if proposal.status == 'withdrawn':
+        return PublicWithdrawnSerializer(proposal).data
+    return PublicProposalSerializer(proposal, context={'preview': preview}).data

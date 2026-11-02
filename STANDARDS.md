@@ -378,3 +378,27 @@ ungated: scrollbar thumbs (desktop-only), a `:hover` that changes nothing visibl
 `ComponentName.test.jsx` sits in a `__tests__/` folder alongside `ComponentName.jsx`, not in one
 project-wide test directory. Section components under `pages/settings/` have their own
 `pages/settings/__tests__/` folder for the same reason.
+
+## Public (token) endpoints
+
+A public endpoint is reachable by anyone holding a URL token (an invoice's or proposal's `view_token`), with no login. Rules,
+first applied to `apps/proposals/views_public.py`:
+
+- `@authentication_classes([])` plus `@permission_classes([AllowAny])`. Otherwise a stale freelancer cookie in the browser makes DRF
+  answer 401 on a public page. If the view must know whether a cookie belongs to the owner, read it with a probe that never
+  raises and never enforces CSRF.
+- An unknown token, an over-long token and a not-yet-published record (a draft) return the SAME 404 body, so nobody can tell
+  "draft" from "does not exist".
+- The response is an ALLOWLIST: a plain `serializers.Serializer` with every field declared by name — never a `ModelSerializer`,
+  never `exclude`. A field added to the model later stays invisible until someone adds it on purpose. Prove it with a sentinel test
+  that fills every private field and searches the whole JSON text.
+- `Cache-Control: no-store` on EVERY response, errors and DRF's own 405 included (a decorator outside `@api_view`).
+- Rate limit by client IP with an atomic cache counter (`cache.add` + `cache.incr`), and switch DRF's blanket `AnonRateThrottle`
+  off on the view (`@throttle_classes([])`) so the documented limit is the real one. Rate limit BEFORE the lookup so token
+  guessing is limited too.
+- Validate any client IP with `ipaddress` before storing it; store NULL when it is not an IP. `get_client_ip` returns whatever the last
+  `X-Forwarded-For` entry is, and a non-IP value makes a PostgreSQL `inet` insert fail and poisons the surrounding transaction.
+- A state change takes a row lock (`select_for_update`) and re-checks the status inside it; a read-only "first view" marker is
+  one conditional `UPDATE ... WHERE status=...`, emitting only if it changed a row.
+- Escape every interpolated value (`django.utils.html.escape`) in HTML email, and collapse whitespace in subjects. A client's
+  free text and a freelancer's titles can both contain markup.
