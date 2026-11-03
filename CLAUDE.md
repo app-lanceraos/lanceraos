@@ -454,6 +454,10 @@ lanceraos/                          <- Django project root
 │   │   │   │                          implementation, see rule 5
 │   │   │   ├── PrivateRoute.jsx    <- Redirects to /login if not authenticated
 │   │   │   ├── ClientTable.jsx     <- Desktop client list table (Clients.jsx); mirrors InvoiceTable.jsx
+│   │   │   ├── ProposalTable.jsx, ProposalStatusBadge.jsx, ProposalClientFields.jsx, ProposalFields.jsx,
+│   │   │   │   ProposalItemsEditor.jsx, ProposalScopeEditor.jsx, ProposalScoreCard.jsx, ProposalTipsCard.jsx,
+│   │   │   │   ProposalSaveIndicator.jsx, ProposalColumns.jsx, ProposalReadOnlyView.jsx
+│   │   │   │                          <- Proposals frontend part A (flat, `Proposal` prefix, like InvoiceTable/ClientTable)
 │   │   │   ├── listTableStyles.js  <- Shared th/td/wrapper/row-hover styles for InvoiceTable + ClientTable
 │   │   │   ├── PublicRoute.jsx     <- Redirects logged-in users away from Login/Register
 │   │   │   ├── Card.jsx, FormField.jsx, FormSelect.jsx,
@@ -462,7 +466,8 @@ lanceraos/                          <- Django project root
 │   │   │   └── AuthField.jsx, AuthButton.jsx, AuthAlert.jsx,
 │   │   │       AuthSelect.jsx, AuthLayout.jsx  <- Auth-page-only equivalents
 │   │   │       (fixed orbit palette, never theme-responsive — see DESIGN.md)
-│   │   ├── pages/                  <- One file per module page
+│   │   ├── pages/                  <- One file per module page (Proposals.jsx, ProposalNew.jsx, ProposalEditor.jsx +
+│   │   │                              proposalHelpers.js — routed pages /proposals, /proposals/new, /proposals/:id)
 │   │   │   └── settings/           <- Settings page's 7 sections, one file each,
 │   │   │       plus validators.js  <- imported by Settings.jsx as a thin shell
 │   │   ├── store/
@@ -472,6 +477,7 @@ lanceraos/                          <- Django project root
 │   │   │   └── hoverProps.js       <- Touch-safe props for JS-driven hover effects (replaces onMouseEnter/Leave)
 │   │   ├── hooks/
 │   │   │   ├── useWebSocket.js     <- Shared WebSocket hook
+│   │   │   ├── useProposalAutosave.js <- Proposal draft autosave: diff-only, 1.5 s debounce, one request in flight, back-off
 │   │   │   └── useAppTooltip.js    <- The one delegated tooltip controller (installTooltipController, called once in main.jsx)
 │   │   └── styles/
 │   │       └── theme.css           <- All CSS custom properties
@@ -2861,9 +2867,11 @@ Key API endpoints:
 ### Module 6 — Proposals
 Status: BACKEND COMPLETE (02 November 2026): part 1 (data model, CRUD, the code-computed quality
 score, AI generation) and part 2 (send, public client page, accept/decline, withdraw, duplicate,
-convert to a draft invoice, audit trail, notifications and emails, proposal numbers). NO FRONTEND
-exists yet (Prompt 05): until it ships nothing calls these endpoints, so no real client can receive a
-link — do not enable for real clients before then.
+convert to a draft invoice, audit trail, notifications and emails, proposal numbers). FRONTEND PART A
+BUILT (03 November 2026, Prompt 05): list, create (AI or blank), draft editor with autosave, score and
+tips — see "Frontend part A" below. Part B (Prompt 06: the Send action, the public client page,
+withdraw, convert-to-invoice, the status timeline) is NOT built, so the app still cannot send a
+proposal and no real client can receive a link — do not enable for real clients before then.
 App: apps/proposals/
 
 Manual proposal creation (built):
@@ -2892,7 +2900,10 @@ explainable checks. This REVERSES this section's earlier "the AI returns a quali
 
 Key API endpoints — built (part 1):
 - GET/POST /api/proposals/ (paginated like invoice_list; ?status= ?search=; POST = manual create)
-- GET/PUT/DELETE /api/proposals/{id}/ (PUT and DELETE: draft only; detail includes `quality`, never view_token)
+- GET/PUT/DELETE /api/proposals/{id}/ (PUT and DELETE: draft only; detail includes `quality`, never view_token).
+  Rate limits per user per hour: PUT 600 (`UPDATES_PER_HOUR` — the editor autosaves, raised from 30 on
+  03 November 2026), every other mutation (create, delete, duplicate, withdraw, convert) 30
+  (`MUTATIONS_PER_HOUR`), send 10 (`SENDS_PER_HOUR`)
 - POST /api/proposals/generate-ai/ (creates a NEW draft; deviation from the original spec, which listed
   only the {id} form: there is no id before the first generation and a failure must leave no empty draft)
 - POST /api/proposals/{id}/generate-ai/ (regenerates a draft; a non-empty body needs "confirm_overwrite": true)
@@ -2940,7 +2951,22 @@ Key API endpoints — built (part 2):
 - POST /api/proposals/{id}/send/ + /withdraw/ + /duplicate/ + /convert-to-invoice/
 - GET /api/proposals/public/{view_token}/ + POST /api/proposals/public/{view_token}/respond/
 
-Not built: a "resend" action, expiry reminders, the React screens, promoting the email HTML wrapper to core/.
+Not built: a "resend" action, expiry reminders, the React screens for sending / the public page / withdraw /
+convert / the timeline (Prompt 06), promoting the email HTML wrapper to core/.
+
+Frontend part A (built 03 November 2026 — DECISIONS.md D1-D7): ROUTED pages inside AppShell, not a
+slide-in panel (a proposal is a long document): `/proposals` (list: search, status pills, 20/page like
+Invoices; `?proposal=<id>` from notification/email links redirects to the editor), `/proposals/new`
+(paste a job post -> Generate with AI, or Start from a blank proposal; the AI call has a 75 s client
+timeout and a create call that ends with no answer says the proposal MAY have been created and links to
+the list — never a plain "failed, try again"), `/proposals/:id` (draft: client, job post & AI with
+regenerate-behind-a-confirm, text, scope sections, pricing with exact half-even totals, terms & validity,
+the server-computed score and tips; anything not a draft renders read-only with Duplicate only).
+The editor AUTOSAVES (no Save button): `useProposalAutosave` sends only changed fields, withholds invalid
+or server-refused ones, never more than one PUT in flight, backs off on network errors, pauses on 429,
+and the server's reply never overwrites typed text. The score is displayed exactly as returned (never
+computed in JavaScript). Money arithmetic lives in `proposalHelpers.js` (BigInt, half-even, golden-tested
+against the backend). No Send, public page, withdraw, convert or timeline UI yet (Prompt 06).
 
 ---
 
@@ -3054,7 +3080,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
-| Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Not built (Prompt 05) | 479 passing (`apps.proposals` 298 + `core` 181) | Backend complete; no frontend |
+| Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A — list, create (AI/blank), draft editor with autosave, score/tips, read-only view for non-drafts (03 Nov 2026); part B (send, public page, withdraw, convert, timeline) not built (Prompt 06) | backend 479 passing (`apps.proposals` 299 incl. the 03 Nov PUT-limit tests + `core` 181); frontend 816 of 817 passing (188 new for Proposals; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Backend complete; frontend part A done, part B pending |
 | Contracts            | -       | -        | -     | Not started |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | -       | -        | -     | Not started |

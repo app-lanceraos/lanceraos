@@ -72,6 +72,18 @@ const PAGE_TITLES = {
   '/skill-gap': 'Skill Analyzer',
 }
 
+// PAGE_TITLES is an exact-pathname lookup, which cannot title a route with a
+// variable segment. Proposals is the first module with routed sub-pages
+// (/proposals/new, /proposals/<id>), so those two are resolved here; every
+// other path — including ones with no PAGE_TITLES entry, which keep the
+// generic title — behaves exactly as before.
+function pageTitleFor(pathname) {
+  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname]
+  if (pathname === '/proposals/new') return 'New Proposal'
+  if (pathname.startsWith('/proposals/')) return 'Proposal'
+  return 'LanceraOS'
+}
+
 // ── Nav groups — matches v1's structure exactly. Items for modules
 // that don't exist yet will 404-redirect harmlessly until built. ──
 // Footer Refinement pass (15 September 2026) — full NAV_GROUPS end:true
@@ -91,7 +103,12 @@ const PAGE_TITLES = {
 //   /dashboard   — end:false already, but /dashboard has no route in
 //                  App.jsx at all yet (Module 9 not started) — moot
 //                  either way until it's built.
-//   /payments, /expenses, /pnl, /tax, /proposals, /contracts, /health,
+//   /proposals   — end:false (03 November 2026, Proposals frontend part A).
+//                  Real routes now exist: /proposals, /proposals/new and
+//                  /proposals/:id, so end:true would leave the pill
+//                  inactive on the two sub-pages — the same bug /invoices
+//                  had. Locked in by AppShell.test.jsx.
+//   /payments, /expenses, /pnl, /tax, /contracts, /health,
 //   /income-certificate, /skill-gap — all end:true, but NONE of these
 //                  have any real route in App.jsx yet (every one of
 //                  those modules is "Not started" per CLAUDE.md's own
@@ -121,7 +138,7 @@ const NAV_GROUPS = [
   {
     label: 'Docs',
     items: [
-      { to: '/proposals', label: 'Proposals', tip: 'Proposals', Icon: FileText, end: true },
+      { to: '/proposals', label: 'Proposals', tip: 'Proposals', Icon: FileText, end: false },
       { to: '/contracts', label: 'Contracts', tip: 'Contracts', Icon: FileText, end: true },
     ],
   },
@@ -613,7 +630,7 @@ export default function AppShell({ children }) {
 
   const avatarSrc = user?.profile_logo || profileLogo
   const displayName = user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user?.username || ''
-  const pageTitle = PAGE_TITLES[location.pathname] || 'LanceraOS'
+  const pageTitle = pageTitleFor(location.pathname)
 
   const mainLeft = isMobile ? 0 : (collapsed ? 'var(--sidebar-collapsed)' : 'var(--sidebar-w)')
   const mainRight = isMobile ? 0 : 16

@@ -633,6 +633,18 @@ Do NOT define a new keyframe name for spinners. Always use `spin`.
 Add to CSS: `@keyframes toast-in { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }`
 Auto-dismiss after 4000ms. No exit animation — instant unmount.
 
+### Autosave state line (added 03 November 2026, Proposals editor)
+A page that autosaves has no Save button to relabel, so one line under the header is the ONLY place a person learns
+whether their text is safe — it must be honest. Reference: `components/ProposalSaveIndicator.jsx`.
+- Always visible text, never icon-only and never colour-only: `Saving…` (spinner), `Saved` (`CheckCircle2`, green),
+  `Unsaved changes` (`Clock`, muted), `Not saved — fix the highlighted fields` (`AlertTriangle`, red), `Couldn't save —
+  retrying…` (spinner, amber), `Not saved` / paused-by-rate-limit (amber/red) with a ghost `Retry now` button.
+- `role="status" aria-live="polite"`, fixed `min-height: 20px` so it never shifts the layout when it appears or clears.
+- `Saved` is shown only when nothing is pending, refused or failed: a field withheld for a validation error is "Not
+  saved", never "Saved".
+- Transient success/error messages elsewhere on such a page stay inline `FosAlert` + `useTimedMessage` — this app has no
+  floating toast (the `toast-in` keyframe above is documented but not defined in theme.css).
+
 ---
 
 ## 8. Animation and Transitions

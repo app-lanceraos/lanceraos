@@ -46,6 +46,10 @@ from .services import ProposalNotEditable, apply_regeneration, run_generation, s
 logger = logging.getLogger(__name__)
 
 MUTATIONS_PER_HOUR = 30
+# The draft editor autosaves, so PUT needs headroom: 600/hour is one save every six seconds sustained,
+# which no human typing reaches, and it still bounds abuse. Only PUT uses it; delete, create, duplicate,
+# withdraw and convert stay at MUTATIONS_PER_HOUR.
+UPDATES_PER_HOUR = 600
 # A send emails a third party, so it gets a tighter limit than the other mutations.
 SENDS_PER_HOUR = 10
 _NUMBER_MAX_ATTEMPTS = 5
@@ -60,7 +64,7 @@ _AI_FAILURE_STATUS = {
 
 
 def _mutation_rate_limited(action, user, limit=MUTATIONS_PER_HOUR):
-    """`limit` mutations/hour per user per action (30 unless a caller passes its own); see ratelimit.rate_limited."""
+    """`limit` mutations/hour per user per action (MUTATIONS_PER_HOUR unless a caller passes its own); see ratelimit.rate_limited."""
     return rate_limited(f'ratelimit_proposals_{action}_{user.pk}', limit)
 
 
@@ -149,6 +153,8 @@ def proposal_detail(request, pk):
     """
     GET: full detail incl. items, word_count and the code-computed `quality`.
     PUT: draft only (403 otherwise), partial update; returns the fresh detail.
+    Autosave-friendly: 600/hour per user (UPDATES_PER_HOUR), not the 30/hour
+    every other mutation gets.
     DELETE: draft only (403 otherwise) — a sent or answered proposal is a record.
     PUT and DELETE re-check the status under select_for_update() inside one
     transaction (see below).
@@ -173,7 +179,7 @@ def proposal_detail(request, pk):
             deleted_id = str(proposal.pk)
             proposal.delete()
         else:
-            if _mutation_rate_limited('update', request.user):
+            if _mutation_rate_limited('update', request.user, UPDATES_PER_HOUR):
                 return _too_many('Too many updates. Please try again later.')
             serializer = ProposalSerializer(proposal, data=request.data, partial=True, context={'request': request})
             if not serializer.is_valid():

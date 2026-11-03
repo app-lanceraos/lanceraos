@@ -25,6 +25,9 @@ import Clients from '@/pages/Clients'
 import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
 import TemplateGallery from '@/pages/TemplateGallery'
+import Proposals from '@/pages/Proposals'
+import ProposalNew from '@/pages/ProposalNew'
+import ProposalEditor from '@/pages/ProposalEditor'
 import Onboarding from '@/pages/Onboarding'
 import PrivacyPolicy from '@/pages/PrivacyPolicy'
 import TermsOfService from '@/pages/TermsOfService'
@@ -190,6 +193,23 @@ export default function App() {
         <Route
           path="/invoices/analytics"
           element={<PrivateRoute><AppShell><InvoiceAnalytics /></AppShell></PrivateRoute>}
+        />
+
+        {/* Proposals (03 November 2026, frontend part A) — routed pages, not a
+            slide-in panel: a proposal is a long document (DECISIONS.md D1).
+            /proposals/new must stay before /proposals/:id so "new" is never
+            read as an id. */}
+        <Route
+          path="/proposals"
+          element={<PrivateRoute><AppShell><Proposals /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/proposals/new"
+          element={<PrivateRoute><AppShell><ProposalNew /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/proposals/:id"
+          element={<PrivateRoute><AppShell><ProposalEditor /></AppShell></PrivateRoute>}
         />
 
         {/* No dedicated landing page yet (separate future work) — send

@@ -15555,3 +15555,107 @@ event's `_action_url` is unchanged). Mutation checks, each shown failing and the
 the conditional first-view UPDATE, an `escape()`, an extra field in the public serializer, the respond status checks, the convert idempotency check, and
 the `safe_ip` validation. The migration was run forward and backward on a scratch PostgreSQL database with draft rows present (the dev database was not
 touched). Not verified: behaviour on the production host; a real SMTP or Resend delivery; real browser behaviour; anything needing the React pages.
+
+
+Date: 03 November 2026 (Proposals frontend part A — list, create with AI or blank, draft editor with autosave, quality score)
+Scope: `frontend/` (Proposals.jsx, ProposalNew.jsx, ProposalEditor.jsx, proposalHelpers.js, useProposalAutosave.js and the `Proposal*` components) plus ONE backend
+change (the PUT rate limit). Not built, on purpose: Send, the public client page, withdraw, convert to invoice and the status timeline (Prompt 06) — no buttons,
+stubs or "coming soon" text for them. Decisions D1-D7 were delegated to the architect by the owner ("whatever you think is the best approach"); they are
+recorded with the reasons so a later change can be judged against them.
+
+D1. ROUTED PAGES, not a slide-in panel. Invoices and Clients open a 600px side panel. A proposal is a long document (a job post up to 6000 characters, text up
+to 8000, scope sections, pricing, a score and tips); writing that in 600px is cramped. So `/proposals`, `/proposals/new` and `/proposals/:id` are real pages
+inside AppShell: bookmarkable, Back works, two columns fit on desktop. Cost: it differs from the Invoices/Clients panel pattern. The backend already ships
+notification and email links of the form `/proposals?proposal=<id>`, so the list redirects that to `/proposals/<id>` BEFORE requesting the list (no flash of
+the list); a value that is not a UUID is ignored rather than redirected to a guaranteed 404. AppShell: the Proposals nav item went from `end: true` to `end: false`
+(the same bug `/invoices` once had — the pill went inactive on sub-pages) and the header title now resolves `/proposals/new` ("New Proposal") and
+`/proposals/<id>` ("Proposal"); every other path's title is unchanged (asserted for /invoices, /clients, /settings, /profile, /invoices/analytics and an unknown
+path). Alternatives rejected: a slide-in panel (the reason above); a modal wizard.
+
+D2. ONE create page, two actions ("Generate with AI" and "Start from a blank proposal"). The AI path is a single network call; splitting one paste-and-click
+across wizard steps adds friction and nothing else. The AI endpoint accepts a saved-client id and nothing else about the client, so the create page's client
+field is PICK-ONLY (search saved clients, or clear) and says "Not in your clients yet? Add their details on the next screen" — typed-but-unsaved details would
+otherwise be silently dropped. The editor's client card is the full form (name doubling as search, email, company). A blank proposal keeps the pasted job post
+and experience too, because the score's key-term check reads the job post.
+
+D3. AUTOSAVE, not a Save button — and a backend limit change. The invoice draft editor autosaves and a proposal is a long writing task; a Save button invites
+lost work, and `BrowserRouter` is a non-data router so `useBlocker` is not available — sidebar navigation cannot be intercepted to warn about unsaved text.
+Cost: PUT was limited to 30/hour per user (the shared `MUTATIONS_PER_HOUR`), which normal typing would exhaust in minutes, and the part-1 docstring even called
+PUT "autosave-friendly" while the limit contradicted it — an oversight in part 1. Fix: a separate `UPDATES_PER_HOUR = 600` for PUT only (one save every six
+seconds sustained, which no person typing reaches, and still a bound on abuse). Delete, create, duplicate, withdraw and convert stay at 30; send stays at 10.
+`test_api.py` was updated (600 PUTs succeed, the 601st is 429 with the flat `error`; another user's counter and this user's delete counter are unaffected;
+delete still limits at 30). The hook also backs off gracefully on a 429 (below). Alternatives rejected: a Save button plus `useBlocker` (impossible under
+BrowserRouter); raising the shared limit (would loosen delete/create/duplicate for no reason); no limit on PUT.
+The hook (`useProposalAutosave`): diff-only (only changed top-level fields, `items`/`scope_sections` whole); an invalid field is WITHHELD — not sent, marked
+inline — while the other changed fields still save; a completely empty item row is simply not sent; 1.5 s debounce with a 10 s max wait (continuous typing
+still saves — verified live: a first save at exactly 10 s while typing at 30 ms/key); never more than one PUT in flight, ONE follow-up with the then-current
+diff (the lesson `useInvoiceAutosave` records: aborting a superseded request only stops the CLIENT acting on its response, the server can still apply it after
+the newer one); 400 -> the server's message on the field, that exact value is not re-sent, the remaining fields are (a serializer rejects the whole request, so
+they were not saved either); 429 -> `paused`, retry after 60 s (or `Retry-After`) or "Retry now"; 403 -> the proposal is no longer a draft: stop, reload it,
+say the edits were not saved; 404 -> not-found state; network/timeout/5xx -> retries after 2, 5 and 15 s, then settles in `error` with a manual Retry and the
+unsaved flag still set. `flushNow()` (before regenerate and duplicate), `pause()/resume()`, a `beforeunload` warning only while something is unsaved, and a
+best-effort final save on unmount; correct under StrictMode's double effects. The server's reply is NEVER merged into the form: `onSaved(data, sent)` hands it to
+the page, which takes only server-computed values (score, word count, totals, timestamps, status) — adopting the echoed text would eat keystrokes typed while
+the request was in flight.
+
+D4. The score is NEVER computed in JavaScript. The backend computes the 7-check score on every GET/PUT (`apps/proposals/scoring.py`); the UI displays `quality`
+exactly as returned and says "Based on your last saved text" while a body or job-post edit is pending. A second implementation would drift. It is described as
+how many of 7 simple checks pass, never as a chance of winning (the backend's `explanation` string says so and is shown).
+
+D5. AI calls get an EXPLICIT 75 s client timeout, and an ambiguous ending never invites a blind retry. The create endpoint saves the proposal AFTER the model
+answers. The shared Axios default is 15 s but a healthy call can take 30 s (the server's own ceiling is 60 s); a browser that gave up at 15 s while the server
+finished at 30 s would let the user retry and create a duplicate. So both AI calls pass `timeout: 75000`. And when a create ends with no response — network drop,
+timeout, 408/502/504, or a 5xx with no `reason` — the page says "We couldn't confirm whether your proposal was created. Check your proposals list before trying
+again." with a link, never "failed, try again". Definite failures (400, 403, 429, a 503 that carries a `reason`) keep every field exactly as typed with the button
+available again. Regenerate has the matching ambiguous case ("the new text may have been saved — reload"), with a Reload action.
+
+D6. MONEY DISPLAY IS EXACT. Totals are shown live while typing, so the UI uses the same arithmetic as `Proposal.compute_amounts` / `ProposalItem.save`: a line is
+(quantity x price) rounded to cents with BANKER'S rounding (Python `Decimal.quantize`'s default, ROUND_HALF_EVEN), tax = subtotal x rate / 100 rounded
+half-even, total = subtotal + tax - discount clamped at 0, the discount subtracted last. Integer (BigInt) arithmetic, never floating point. Asserted against 17
+golden cases generated from the real backend, including the cases where half-up gives a different answer. Money is typed as TEXT (`inputMode="decimal"`), not
+`type=number`, which swallows "1." mid-typing. `formatMoney` in clientHelpers shows 0 decimals (right for invoice lists, wrong here) and was left untouched
+(invoices depend on it); `formatProposalMoney` always shows 2. If a save ever returns totals that differ from the local ones, the server's are shown and the
+mismatch is `console.warn`ed once — the server is the authority. Client-side validation mirrors the serializer's limits, including the 9,999,999,999.99 amount
+ceiling and the max-digits of each column, so a value that cannot be stored is caught before a wasted request; the server's 400 is still displayed, never assumed
+impossible.
+
+D7. HONEST COPY about AI. The create page and the editor say, once and plainly, that the AI sees only the job post, the experience notes, and the user's display
+name, business name and profession (`prompts.FREELANCER_FACT_FIELDS`). Any AI-assisted proposal carries one reminder under its text: AI drafts can say things you
+never told it — read it through and correct anything untrue. The tips say they were written by AI from the job post and to check them against what is true. No
+copy claims privacy, accuracy or a win rate.
+
+Other decisions: (a) timestamps are shown AS WRITTEN — the API's `sent_at`/`updated_at` are naive Pakistan time (`USE_TZ=False`), and building a `Date` from them
+would shift them for a viewer outside Pakistan; dates (`valid_until`) are never put through `Date` either (a bare YYYY-MM-DD parses as UTC midnight and shows the
+previous day west of Greenwich). Tested under three TZ values. NOTE: this means `FreelancerProfile.timezone` (CLAUDE.md: used for frontend display formatting) is
+not applied to these timestamps; PKT is shown as-is. (b) The list rows are real links (`<Link>` in the title cell; the whole row is a convenience), so they are
+keyboard-operable — unlike InvoiceTable/ClientTable, whose rows are not (a known gap; not changed here). (c) The editor has Delete and Duplicate under a "More"
+menu for a draft, Duplicate only for anything else. Delete and regenerate use a confirm dialog (role="dialog", aria-modal, named, Escape closes it only when
+nothing is running — closing would hide a pending action the person cannot cancel); a failed delete closes the dialog so the error is not hidden behind its
+overlay. (d) Dialogs are written inside the feature file per DESIGN.md Section 12 (no shared Modal); `ProposalFields.jsx` exists because FormField cannot carry
+`inputMode`, `min`, a counter or a multi-line variant, and was not modified (it is used pervasively).
+
+Findings in the existing code (surfaced, not silently fixed): (1) `npm run lint` cannot run — there is NO ESLint config in the repo (no `eslint.config.js`, not
+tracked, not on disk; ESLint 9 refuses to start). The three earlier "npm run lint before and after" mentions in this file cannot have used one from this checkout.
+The new files were linted with a throwaway flat config (eslint recommended + react-hooks recommended + react-refresh) kept OUTSIDE the repo: clean. (2) The local dev
+database was missing migration `proposals.0002_proposal_part2_fields` (committed in f96b747), so every `/api/proposals/` request was a 500 `ProgrammingError`
+until it was applied (done for this verification: additive columns only). (3) The part-2 entry above says "the dev database was not touched" — correct, and is
+why (2) was unnoticed. (4) The cross-origin dev setup
+cannot read a `Retry-After` header (not CORS-exposed) and the backend does not send one on its own 429s, so the hook's 60 s fallback is what actually applies.
+(5) Pre-existing failing test: `SecuritySection.test.jsx` ("states before the click that completing the reset signs the account out everywhere") fails on the
+untouched tree — 628 passed / 1 failed before this change, 816 / 1 after.
+
+Known limits (accepted, not fixed): (1) Two tabs editing one draft are last-write-wins per FIELD; diff-only saves reduce clobbering, they do not remove it.
+(2) The final save on unmount, and the one before sidebar navigation, depend on the browser letting the request finish; a closed tab may lose the last edits
+(the `beforeunload` prompt is the guard). (3) The sidebar-navigation flush is best-effort — there is no blocking prompt (no `useBlocker`). (4) A save in flight
+when the server is slow shows "Saving…" for as long as it takes; there is no per-request cancel (cancelling would not stop the server applying it).
+(5) The score can lag the text by up to the debounce, by design, and says so.
+
+Tests (frontend tests and backend test directories are untracked by design): `proposalHelpers.test.js` (63 — every golden case, validation, payload/diff,
+TZ-independence), `useProposalAutosave.test.jsx` (36, fake timers — debounce, max wait, single flight + one follow-up, 400/429/403/404/network/5xx paths,
+flush, pause/resume, unmount, StrictMode, beforeunload), `Proposals.test.jsx` (14), `ProposalNew.test.jsx` (20), `ProposalEditor.test.jsx` (41),
+14 new in `AppShell.test.jsx`. Mutation checks, each shown failing and then restored: remove `timeout: 75000`; send the whole form instead of the diff; let the
+server echo overwrite the body; round half-up; drop `confirm_overwrite`; retry a 429 immediately; revert the nav `end` flag. Real browser (Playwright +
+Chromium against the running dev servers, seeded `screenshot-demo@example.com`): 375/768/1280/1920 px light and dark; typing 435 characters at 30 ms/key across a
+PUT slowed to 2.5 s lost nothing (textarea and server both equal what was typed), at most one PUT was ever in flight, and every PUT carried only `body`; a 429
+paused saving, kept the text, and recovered 62 s later; one live Groq generation (route slowed 20 s) outlived the old 15 s timeout, finished at ~23 s, and created
+a score-9 draft with 3 tips. Not verified: behaviour on the production host; touch-screen keyboards; screen readers; two-tab conflicts.
