@@ -56,7 +56,7 @@ export default function ProposalScoreCard({ quality, pending = false }) {
                     </span>
                   )}
                 </div>
-                <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{check.detail}</p>
+                <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: 'var(--text-secondary)', lineHeight: 1.5, overflowWrap: 'anywhere' }}>{check.detail}</p>
               </div>
             </li>
           )

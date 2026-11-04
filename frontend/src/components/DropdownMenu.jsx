@@ -17,6 +17,15 @@
 // browser window the flip/clamp math measured against. A portaled fixed
 // panel has no such ancestor left, so its only constraint is the real
 // viewport — which is exactly what the placement math below measures.
+//
+// Keyboard and focus contract (Proposals close-out, D6): opening moves focus
+// to the first enabled item; the items are tabIndex -1 and focus roves by code
+// (ArrowDown/ArrowUp wrap, Home/End jump). Escape and Tab close the menu and
+// hand focus back to the trigger (Tab without preventDefault, so the browser's
+// Tab then leaves the trigger). Choosing an item closes the menu, focuses the
+// trigger, THEN runs onClick, so a dialog opened by the item (useFocusTrap
+// remembers document.activeElement) returns focus to the trigger, not <body>.
+// An outside click, scroll or resize only closes — focus is left where it is.
 import { hoverProps } from '@/lib/hoverProps'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -29,6 +38,8 @@ export default function DropdownMenu({ trigger, triggerLabel, items, align = 'ri
   const [open, setOpen] = useState(false)
   const rootRef = useRef(null)
   const panelRef = useRef(null)
+  const triggerRef = useRef(null)
+  const focusedOnOpen = useRef(false)
   // Real viewport coordinates for the portaled panel, { top, left,
   // maxHeight } — null until measured. The panel first renders
   // `visibility: hidden` at 0,0 so its natural size can be measured, then
@@ -46,7 +57,11 @@ export default function DropdownMenu({ trigger, triggerLabel, items, align = 'ri
       if (rootRef.current?.contains(e.target) || panelRef.current?.contains(e.target)) return
       setOpen(false)
     }
-    const escHandler = (e) => { if (e.key === 'Escape') setOpen(false) }
+    const escHandler = (e) => {
+      if (e.key !== 'Escape') return
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
     // Scroll/resize-while-open: CLOSE the menu rather than re-tracking the
     // trigger. A fixed-position panel doesn't move with its trigger, and
     // re-tracking can't tell when the trigger itself has been scrolled out
@@ -113,9 +128,50 @@ export default function DropdownMenu({ trigger, triggerLabel, items, align = 'ri
     setCoords({ top, left, maxHeight })
   }, [open, placement, align])
 
+  // Focus the first enabled item once the panel is positioned (it is visibility:hidden until then,
+  // and a hidden element cannot take focus).
+  useEffect(() => {
+    if (!open) { focusedOnOpen.current = false; return }
+    if (coords && !focusedOnOpen.current) {
+      focusedOnOpen.current = true
+      enabledItems()[0]?.focus()
+    }
+  }, [open, coords])
+
+  function enabledItems() {
+    return [...(panelRef.current?.querySelectorAll('[role="menuitem"]:not(:disabled)') || [])]
+  }
+
+  function handlePanelKeyDown(e) {
+    if (e.key === 'Tab') {
+      setOpen(false)
+      triggerRef.current?.focus()
+      return
+    }
+    const items = enabledItems()
+    if (items.length === 0) return
+    const index = items.indexOf(document.activeElement)
+    let next = null
+    if (e.key === 'ArrowDown') next = items[(index + 1) % items.length]
+    else if (e.key === 'ArrowUp') next = items[(index <= 0 ? items.length : index) - 1]
+    else if (e.key === 'Home') next = items[0]
+    else if (e.key === 'End') next = items[items.length - 1]
+    if (!next) return
+    e.preventDefault()
+    next.focus()
+  }
+
+  function choose(item) {
+    setOpen(false)
+    const trigger = triggerRef.current
+    if (trigger?.isConnected) trigger.focus()
+    item.onClick?.()
+  }
+
   return (
     <div ref={rootRef} style={{ position: 'relative', display: 'inline-flex' }}>
       <button
+        ref={triggerRef}
         onClick={() => setOpen((v) => !v)}
         aria-label={triggerLabel}
         aria-haspopup="menu"
@@ -144,6 +200,8 @@ export default function DropdownMenu({ trigger, triggerLabel, items, align = 'ri
         <div
           ref={panelRef}
           role="menu"
+          aria-label={triggerLabel}
+          onKeyDown={handlePanelKeyDown}
           style={{
             position: 'fixed',
             top: coords ? coords.top : 0,
@@ -167,8 +225,9 @@ export default function DropdownMenu({ trigger, triggerLabel, items, align = 'ri
             <button
               key={item.key}
               role="menuitem"
+              tabIndex={-1}
               disabled={item.disabled}
-              onClick={() => { setOpen(false); item.onClick?.() }}
+              onClick={() => choose(item)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10,
                 padding: '8px 12px', borderRadius: 9,

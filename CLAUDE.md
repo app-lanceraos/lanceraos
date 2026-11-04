@@ -401,6 +401,9 @@ lanceraos/                          <- Django project root
 │   ├── middleware.py        ← Request ID injection + API request logging
 │   ├── models.py            ← AuditLog, ApiRequestLog, NotificationRead, AiCallLog (sizes only, never content)
 │   ├── management/commands/check_ai_models.py ← verifies the configured Groq models still work
+│   │                         (apps/proposals/management/commands/: evaluate_proposal_ai — dry-run-by-default AI
+│   │                         evaluation, see AI_EVALUATION.md; export_proposal_send_cases — regenerates the
+│   │                         frontend send pre-flight fixture from the real backend rule)
 │   ├── observability.py     ← Logging/request-metadata helpers used by all modules
 │   └── permissions.py       ← Shared DRF permission classes [not yet built]
 ├── apps/
@@ -3005,10 +3008,13 @@ Frontend part B (built 04 November 2026 — DECISIONS.md "Proposals frontend par
   (the sender's bell/email depend on their own settings). It uses the bare `publicApi` instance, imports
   neither the auth store nor the shared `api`, and reads no cookie or storage.
 - Withdraw (does NOT email the client), Convert to invoice ("save as client" defaults on only when no saved
-  client but a name and email), the Activity timeline, the Client link card (warns not to open it yourself),
+  client but a name and email), the Activity timeline, the Client link card (says that opening the link signed in is a preview, and signed out or elsewhere counts as a view),
   the client's answer card, and an in-app Preview (`ProposalPreviewModal.jsx`, renders the same
   `ProposalDocument` the public page uses, no side-effecting request). The UI never offers "open the public page":
-  the backend recognises the owner only from the 15-minute login cookie (DECISIONS.md part B, limit 3).
+  the owner is recognised while signed in: `request_is_owner` (`apps/proposals/views_public.py`) tries the access
+  cookie, then falls back to a strictly read-only look at the refresh cookie
+  (`apps/users/authentication.py: identify_user_from_refresh_cookie`), so the preview survives the 15-minute
+  access cookie (DECISIONS.md "Proposals close-out").
 - Shared pieces: `ProposalDialog.jsx` (frame), `ProposalHeader.jsx`, `useProposalActions.js`,
   `useFocusTrap.js` (every Proposals dialog traps and restores focus), `useFlashMessage.js` (Duplicate's success
   message was silently lost before), `usePublicPageMeta.js` (noindex + no-referrer while the public page is mounted).
@@ -3018,6 +3024,13 @@ Frontend part B (built 04 November 2026 — DECISIONS.md "Proposals frontend par
   (the Preview's business name and logo — read-only).
 - Tests: frontend 1037 of 1038 passing (221 new; the 1 failure is the pre-existing `SecuritySection.test.jsx`);
   `src/test-fixtures/proposals/` is tracked on purpose (the `*.test.*` files are gitignored).
+
+Close-out (04 November 2026, DECISIONS.md "Proposals close-out"): owner recognition via the refresh cookie (see above),
+the AI evaluation harness (`python manage.py evaluate_proposal_ai`, a dry run without `--yes`; results and method in
+`AI_EVALUATION.md`; re-run after any prompt or Groq-model change), the client page's recovered-answer wording and
+Back-button focus, `DropdownMenu` keyboard support and focus return, " PKT" labels on freelancer-side timestamps, and
+`export_proposal_send_cases` for the send pre-flight fixture. Module 6 is ready to deploy; run DEPLOYMENT.md Section 8's
+items 12-16 (and the new 13a/13b) against the real deployment.
 
 ---
 

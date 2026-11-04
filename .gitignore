@@ -87,3 +87,5 @@ frontend/**/*.test.js
 
 qa_invoice_pdfs/
 qa_invoices/
+# Proposals AI evaluation output (generated text from invented cases; never committed)
+eval_runs/

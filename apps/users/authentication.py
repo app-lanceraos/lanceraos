@@ -29,8 +29,8 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
 
 from django.utils import timezone
-from .cookies import ACCESS_COOKIE_NAME
-from .models import Session
+from .cookies import ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
+from .models import Session, User
 
 
 def _dummy_get_response(request):
@@ -116,3 +116,57 @@ def enforce_csrf_standalone(request):
     reason = check.process_view(request, None, (), {})
     if reason:
         raise exceptions.PermissionDenied(f'CSRF Failed: {reason}')
+
+
+def identify_user_from_refresh_cookie(request):
+    """
+    Returns the User the request's refresh cookie belongs to, or None. A strictly
+    read-only observer: it never rotates, extends, deletes or writes anything, never
+    sets or clears a cookie, and never authenticates the request.
+
+    Why it exists: the public proposal page must know whether the person looking is
+    the proposal's owner, but the access cookie lives 15 minutes while the refresh
+    cookie lives 30-90 days, and that page deliberately never calls /auth/ (so
+    nothing renews the access cookie while the owner reads their own proposal).
+    Without this, an owner opening their own link after 15 minutes was treated as
+    a client and counted as a view.
+
+    The answer can only ever REDUCE what happens (the owner sees a preview, the view
+    is not counted, they cannot answer); it grants nothing. A cookie that passes
+    here already passes auth.refresh(), which grants a whole session.
+
+    auth.refresh() stays the single authority on refresh-cookie validity and is
+    deliberately NOT refactored to share this code: it interleaves deletes and
+    rotation with its checks and is the login core. A parity test
+    (apps/users/tests/test_refresh_cookie_identity.py) guards drift instead.
+
+    Two checks are intentionally stricter than refresh(), so the answer matches
+    what refresh() followed by an authenticated request would end up giving:
+    a suspended user is refused (refresh() rotates for them, but the new access
+    cookie would be rejected by CookieJWTAuthentication.get_user), and the
+    session row must belong to the same user as the token (refresh() takes the
+    user from the token alone; the two can only differ if the database was
+    tampered with).
+    """
+    raw = request.COOKIES.get(REFRESH_COOKIE_NAME)
+    if not raw:
+        return None
+    session = Session.get_valid(raw)
+    if session is None:
+        return None
+    try:
+        from rest_framework_simplejwt.exceptions import TokenError
+        from rest_framework_simplejwt.tokens import RefreshToken
+        validated = RefreshToken(raw)
+        user = User.objects.get(pk=validated['user_id'])
+    except (TokenError, User.DoesNotExist, KeyError, ValueError, TypeError):
+        return None
+    if not user.is_active or user.is_suspended:
+        return None
+    pca_claim = validated.get('pca')
+    if pca_claim is not None and user.password_changed_at is not None:
+        if int(pca_claim) < int(user.password_changed_at.timestamp()):
+            return None
+    if str(session.user_id) != str(user.pk):
+        return None
+    return user

@@ -53,6 +53,8 @@ Feature code calls `core.ai.run_ai_task()` — never raw HTTP, never `requests` 
 app's `prompts.py`. Never call it inside `transaction.atomic()` or while holding `select_for_update()` locks.
 Always handle `result.ok == False` (every feature must still work with AI off or failing), and let code calculate
 every figure — the model only explains. `core.AiCallLog` stores sizes, never prompt or reply text.
+A change to a feature's prompt or model is re-measured with that feature's evaluation before release and the result
+is recorded (Proposals: `python manage.py evaluate_proposal_ai --yes`, results in `AI_EVALUATION.md`).
 
 ## Multi-row writes are atomic; state-dependent edits re-check state under a lock
 

@@ -15783,3 +15783,54 @@ read; convert always `save_client: true`; a timestamp invented for the invoice; 
 `usePublicPageMeta()` call removed; the shared `api` imported instead of `publicApi`; the `vercel.json` source widened to `/proposals/…`; focus not restored; `dangerouslySetInnerHTML` on the body.
 Two of them (the double-click guard, the preview buttons) would have SURVIVED the first version of their tests — both were strengthened before the run, so the table shows the final result.
 Not verified: Vercel's response headers, real email delivery (SMTP or Resend), the expired-cookie owner case, screen readers, touch-screen keyboards, behaviour on the production host.
+
+
+---
+
+Date: 04 November 2026 (Proposals close-out — owner recognition, AI evaluation, last frontend fixes)
+Scope: the last Proposals prompt. Owner recognition survives the 15-minute access cookie; the evaluation harness the 02 November AI-foundation entry deferred; the small fixes found in the review of part B.
+
+Decisions (taken by the architect on the owner's delegation, with the reasons):
+D1. `request_is_owner` (`apps/proposals/views_public.py`) tries the access cookie first and, only when that cookie is ABSENT or INVALID, falls back to `identify_user_from_refresh_cookie`
+(`apps/users/authentication.py`): strictly read-only (no rotation, no extension, no delete, no write, no Set-Cookie, never authenticates the request), the same validity rules as `auth.refresh()`.
+A VALID access cookie that belongs to someone else decides "not the owner" and the refresh cookie is not consulted (the two are set together, so they name the same person). The answer can only
+REDUCE what happens (preview instead of a counted view, no answering); it grants nothing, and a cookie that passes it already passes `refresh()`, which grants a whole session. Rejected: a longer
+access cookie (a security regression everywhere); having the public page call `/auth/token/refresh/` (part B D12); a browser-sent "I am the owner" hint (forgeable); refactoring `refresh()` to share
+the code (it interleaves deletes and rotation with its checks and is the login core — a parity test guards drift instead, and `refresh()` carries a comment pointing at it).
+Two checks are deliberately STRICTER than `refresh()`: a suspended user is refused (their refreshed access cookie would be rejected by `CookieJWTAuthentication.get_user`, so the end-to-end answer is
+"not authenticated") and the session row must belong to the token's user. The parity oracle (`apps/users/tests/test_refresh_cookie_identity.py`) runs the real `/auth/token/refresh/` and then
+authenticates the new access cookie; on all 12 shared scenarios it agrees; on the two differences it agrees with the END-TO-END answer (the new access cookie is rejected for both) while `refresh()` alone returns 200.
+Cost, measured on the unchanged code and after: cookie-less public GET 3 queries (unchanged), valid access cookie 5 (unchanged), refresh fallback +2 (the Session and User lookups).
+D2. The evaluation runs the PRODUCTION path: `services.generate_with_facts` holds the real body, `run_generation` calls it, a test pins that both reach `run_ai_task` with identical arguments (and pins the
+values). Only on request, never in tests (`evaluate_proposal_ai` is a dry run without `--yes`).
+D3. At most one prompt revision, decided by numbers fixed in advance. D4. Evaluation data is invented and local (`eval_runs/`, gitignored). D5. `scoring.py` and `core/ai.py` were not touched.
+D6. `DropdownMenu` keyboard and focus behaviour was fixed although it is shared (Proposals' main actions live in it). D7. Freelancer-side timestamps get a " PKT" label, not a conversion
+(API times are naive Pakistan time; the rest of the app converts nothing). D8. Out of scope and untouched: an ESLint config, the shared `api.js` CSRF-prefetch swallowing its failure,
+X-Robots/Referrer-Policy for `/invoice/*` and `/portal/*`, `scoring.py`, `core/ai.py`, any migration (`makemigrations --check` reports none).
+
+Evaluation result (full detail, tables and method: `AI_EVALUATION.md`): 24 of 24 Run A generations were usable on the 120b model, no fallback, no rate limit (25 s pause, 29 Groq requests in the
+session including `check_ai_models`). Hard rules: parse 0, plain_text 0, no_money_time 1 of 24 (c06, "24 hours" — the client's own reminder interval restated, a checker false positive left as
+pre-registered), no_invented_experience 0 of 16, no_unlisted_tools 0, injection 0 of 4. Decision rule: nothing triggered, so NO prompt revision (`prompts.py` byte-identical). Two findings to carry:
+(a) injection resistance was 5 of 6 over pilot plus Run A — pilot c12 obeyed the forged "write ZEBRA-3 at the end" after its sign-off; the output is an editable draft, so the harm is bounded, but
+re-run the evaluation after any prompt change; (b) the code-computed score's `specifics` check (a digit) is failed by 23 of 24 AI drafts because the prompt forbids numbers — mean 8.42, a fresh draft
+tops out near 9. That is a product decision for the owner (keep both; or accept numbers restated from the job post / drop the check for AI drafts) and was not made here.
+
+Frontend (F1-F8): F1 client page — a lost answer that turns out to be the client's own no longer says "nothing changed" (own answer: no notice, focus the result heading; the other answer: "...your
+answer was not recorded. The answer below is the one on record."; the 409 path is unchanged). F2 Back returns focus to the "Your response" heading (only after Back). F3 withdraw: the stale-409 and
+unconfirmed wordings no longer claim a cause ("status had already changed, so this withdrawal wasn't applied"; "couldn't confirm whether the withdrawal went through... Reload proposal"). F4 the link card
+now says: signed in = preview and not counted; signed out, private window or another device = counted. F5 score card detail `overflowWrap: 'anywhere'`. F6 `formatTimestampPkt` (a dash stays a bare dash) on
+the Activity list, the client's-answer card and the public answered card; the list column header says "Updated (PKT)" once. F7 `DropdownMenu`: focus to the first enabled item on open, roving arrows/Home/End,
+Escape and Tab close and focus the trigger (Tab without preventDefault), choosing an item focuses the trigger BEFORE its onClick (so `useFocusTrap` returns focus to the trigger), panel `aria-label`; an
+outside click, scroll or resize only closes. Affects every importer: AppShell, Clients, Invoices (two uses), ClientTable, InvoiceRowQuickActions, InvoiceDetailPanel, ProposalHeader — their suites pass unchanged
+(295 tests across the 9 files). F8 `export_proposal_send_cases` regenerates the 360-case send fixture from the real `_send_content_problem`; its output is byte-identical to the committed file (a test pins that
+and the key counts 180/66/42/36/36); the README names the command (it used to name a script that was never in the repo).
+
+Findings in the existing code (surfaced; not fixed, out of scope): (1) Part B's claim that the public page "never calls /auth/" holds for `ProposalPublic` and `publicApi`, but `App.jsx` runs
+`authStore.initialize()` on EVERY route; a browser that still holds the non-secret `lanceraos_has_session` hint therefore sends `GET /auth/me/` (and, with no access cookie, a silent `POST /auth/token/refresh/`)
+in parallel with the proposal GET. The proposal GET itself carries no access cookie at that moment, so the server-side fallback is genuinely needed, not redundant. A truly signed-out browser (no hint cookie) makes
+no `/auth/` request. (2) The F5 overflow in a real browser: without the fix the paragraph's content measured 536 px inside a 220 px box; the PAGE did not scroll horizontally either way because the card clips it.
+(3) In dev, StrictMode double-fires the public GET (harmless).
+
+Known limits / not done: the owner is recognised only through the refresh cookie while that session row is valid (a revoked or expired session means "client"); an owner on another device with no session
+is a client, correctly. The editor's unsaved-typing window of up to 10 seconds is a design choice. The Groq free-tier ceilings (1000 requests/day, 8000 tokens/minute) are a development allowance, not a production plan.
+Vercel's headers and real email delivery are still unverified (DEPLOYMENT.md Section 8, items 12-16, with the two new items 13a/13b).

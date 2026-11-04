@@ -3,10 +3,9 @@
 // In-app preview of a proposal as the client will see it (decision D9). It
 // renders the same ProposalDocument the public page does, from the editor form
 // (a draft — including text not saved yet) or from the detail (anything else),
-// and makes NO call that has side effects: opening the real public link as the
-// owner is only recognised while the 15-minute login cookie is alive, so it can
-// count as the client viewing the proposal. The only request here is the
-// read-only GET /auth/profile/ for the business name and logo.
+// and makes NO call that has side effects (the real public link, opened signed
+// out or elsewhere, would count as the client viewing it). The only request here
+// is the read-only GET /auth/profile/ for the business name and logo.
 //
 // z-index 500, not the usual 200 for modals: this overlay covers the whole
 // viewport, and the shell's own sidebar (250) and header (350) sit above 200

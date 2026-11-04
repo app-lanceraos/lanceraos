@@ -276,6 +276,9 @@ account, check that same setting before launch**, and confirm with the PDF smoke
   slash, e.g. `https://lanceraos.com`): every link a client receives — the proposal email and the
   copyable link — is built from it, and a wrong value sends clients to a page that does not exist.
 - **Run `python manage.py check_ai_models`** from a `web` shell and confirm every configured model answers.
+- **No new environment variable and no migration beyond the three above** in the close-out release (owner
+  recognition through the refresh cookie, the PKT labels, the menu keyboard support). `evaluate_proposal_ai` is a
+  development tool that spends Groq requests; it is not a deploy step.
 
 1. **Health:** `curl -i https://api.lanceraos.com/api/health/` -> `200 {"status":"ok"}`. Plain
    `curl -i http://api.lanceraos.com/api/auth/csrf/` -> `301` to https; the health URL over
@@ -315,9 +318,17 @@ account, check that same setting before launch**, and confirm with the PDF smoke
 13. **Proposals — the client's page:** open that link in a **private window you control** — the page
     loads with no redirect to `/login`. In DevTools -> Network select the page document and check the
     response headers for `X-Robots-Tag: noindex, nofollow, noarchive` and `Referrer-Policy: no-referrer`
-    (these come from `frontend/vercel.json`; they cannot be checked locally). **Do not open the link in the
-    browser you are logged in with** — use *Preview* there: opening it yourself counts as your client
-    viewing it, and once your 15-minute login cookie has expired you are treated as a client.
+    (these come from `frontend/vercel.json`; they cannot be checked locally). Use the private window for the
+    client view: opened while you are signed in, the link shows you a preview and does not count as a view
+    (even after the 15-minute access cookie has expired, because the long-lived refresh cookie identifies you);
+    opened signed out, in a private window or on another device, it counts as your client viewing it.
+13a. **Proposals — your own link stays a preview:** in the browser you are signed in with, open your own
+    sent proposal's link: the blue preview banner shows. Wait 16 minutes, or delete only the `lanceraos_access`
+    cookie in DevTools -> Application -> Cookies, and reload: still the preview banner, and in the app the
+    proposal is still *Sent*, not *Viewed*. The refresh cookie must reach the API host (`COOKIE_DOMAIN`, as
+    already required for login); if sign-in works, this works.
+13b. **Proposals — a private window counts:** open the same link in a private window: no banner, Accept and
+    Decline are offered, and in the app the proposal becomes *Viewed*.
 14. **Proposals — email:** send a second proposal **by email** to an inbox you own. It arrives (from your
     custom SMTP if configured, else `noreply@lanceraos.com`) with a link beginning with the frontend
     origin and *not* containing the proposal text; replying goes to your own account email.

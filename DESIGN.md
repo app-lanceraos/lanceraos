@@ -652,6 +652,23 @@ whether their text is safe — it must be honest. Reference: `components/Proposa
 
 ---
 
+### Dropdown menu (`DropdownMenu.jsx`) — keyboard and focus (04 November 2026)
+
+The open panel is portaled to `document.body`. Opening moves focus to the first enabled item; items are
+`tabIndex={-1}` and focus roves by code (ArrowDown/ArrowUp wrap, Home/End jump, `preventDefault` so the page does
+not scroll). Escape closes and focuses the trigger; Tab and Shift+Tab close and focus the trigger without
+`preventDefault`, so the browser's Tab then leaves the trigger. Choosing an item closes the menu, focuses the
+trigger, and only then runs `onClick`, so a dialog opened by the item (`useFocusTrap` remembers
+`document.activeElement`) returns focus to the trigger instead of `<body>`. An outside click, scroll or resize only
+closes the menu and leaves focus alone. The panel is labelled with the trigger's `aria-label`.
+
+### Times
+
+API timestamps are naive Pakistan time and are shown as written (`formatTimestamp`, never `new Date()`).
+Freelancer-side displays label them: `formatTimestampPkt` appends " PKT" (a list column says it once in its header,
+e.g. "Updated (PKT)"). The public client page already labels its times PKT. Converting to the profile's timezone is
+a separate, platform-wide decision, not made here.
+
 ## 8. Animation and Transitions
 
 ### Timing tokens

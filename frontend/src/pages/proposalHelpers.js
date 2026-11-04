@@ -217,6 +217,14 @@ export function formatTimestamp(naiveIso) {
   return `${Number(match[3])} ${MONTHS[Number(match[2]) - 1]} ${match[1]}, ${match[4]}:${match[5]}`
 }
 
+// Freelancer-side times carry an explicit zone label: the API's timestamps are
+// naive Pakistan time shown as written (see above), and a viewer elsewhere
+// should not have to guess. An unparsable value stays a bare dash.
+export function formatTimestampPkt(naiveIso) {
+  const text = formatTimestamp(naiveIso)
+  return text === '—' ? text : `${text} PKT`
+}
+
 export function wordCount(text) {
   const trimmed = (text || '').trim()
   return trimmed ? trimmed.split(/\s+/).length : 0

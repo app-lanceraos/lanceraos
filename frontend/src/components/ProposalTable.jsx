@@ -28,7 +28,7 @@ export default function ProposalTable({ proposals, onOpen }) {
             <th style={th}>Status</th>
             <th style={th}>Total</th>
             <th style={th}>Valid until</th>
-            <th style={th}>Updated</th>
+            <th style={th}>Updated (PKT)</th>
           </tr>
         </thead>
         <tbody>

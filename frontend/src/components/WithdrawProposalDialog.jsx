@@ -44,7 +44,7 @@ export default function WithdrawProposalDialog({ proposalId, onWithdrawn, onStal
         return
       }
       if (failure.status === 409) {
-        onStale("This proposal already changed, so it wasn't withdrawn. Here is its current state.")
+        onStale("This proposal's status had already changed, so this withdrawal wasn't applied. Here is its current state.")
         return
       }
       setProblem(errorMessage(error, "We couldn't withdraw this proposal. Please try again.").message)
@@ -56,10 +56,10 @@ export default function WithdrawProposalDialog({ proposalId, onWithdrawn, onStal
     <ProposalDialog title="Withdraw this proposal?" busy={busy} onClose={onClose}>
       {unconfirmed ? (
         <>
-          <FosAlert type="warning" style={{ marginBottom: 16 }}>We couldn&apos;t confirm the withdrawal. Please check the proposal&apos;s status.</FosAlert>
+          <FosAlert type="warning" style={{ marginBottom: 16 }}>We couldn&apos;t confirm whether the withdrawal went through. Reload to see the proposal&apos;s current status before trying again.</FosAlert>
           <DialogButtons
             busy={false} onClose={onClose} cancelLabel="Close"
-            confirm={<button type="button" className="fos-btn fos-btn-accent" onClick={onReload}>Reload</button>}
+            confirm={<button type="button" className="fos-btn fos-btn-accent" onClick={onReload}>Reload proposal</button>}
           />
         </>
       ) : (

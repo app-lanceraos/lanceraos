@@ -128,17 +128,30 @@ def build_freelancer_facts(user):
 
 def run_generation(user, *, job_description, tone, my_experience, request_id=None):
     """The model call. Returns core.ai.AiResult; touches the database only for the AiCallLog row."""
-    messages = build_generation_messages(
-        facts=build_freelancer_facts(user), my_experience=my_experience,
-        job_description=job_description, tone=tone,
+    return generate_with_facts(
+        facts=build_freelancer_facts(user), job_description=job_description, tone=tone,
+        my_experience=my_experience, user=user, request_id=request_id,
     )
+
+
+def generate_with_facts(*, facts, job_description, tone, my_experience, user=None, system=False, request_id=None):
+    """
+    The one place the generation request is built and sent. run_generation (production) and the evaluation
+    harness (apps/proposals/evaluation, `system=True`, invented facts) both call THIS, so what is measured is
+    exactly what users get; a test pins that both reach run_ai_task with the same arguments. `system` is
+    forwarded only when true, so production's call to run_ai_task is unchanged.
+    """
+    messages = build_generation_messages(
+        facts=facts, my_experience=my_experience, job_description=job_description, tone=tone,
+    )
+    extra = {'system': True} if system else {}
     return run_ai_task(
         feature=AI_FEATURE, user=user, model=settings.GROQ_MODEL_QUALITY, messages=messages,
         max_tokens=AI_MAX_TOKENS, reasoning_effort=AI_REASONING_EFFORT,
         parse=parse_proposal_reply, request_id=request_id,
         # Falls back to the smaller model ONLY when the big one is rate-limited or gone (core.ai
         # AI_FALLBACK_REASONS). There is deliberately no second API key: see DECISIONS.md, 02 Nov 2026.
-        fallback_model=settings.GROQ_MODEL_FAST,
+        fallback_model=settings.GROQ_MODEL_FAST, **extra,
     )
 
 

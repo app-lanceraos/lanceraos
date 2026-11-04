@@ -28,7 +28,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from apps.users.authentication import CookieJWTAuthentication
+from apps.users.authentication import CookieJWTAuthentication, identify_user_from_refresh_cookie
 from core.events import emit
 from core.observability import get_client_ip, get_user_agent
 
@@ -82,6 +82,17 @@ def request_is_owner(request, owner_user_id):
     someone else's link is an ordinary client for this purpose. Never raises: any
     failure (no cookie, expired, revoked, malformed) means "not the owner".
 
+    The access cookie decides first. If it is absent or invalid (it lives only 15
+    minutes), the refresh cookie is consulted read-only
+    (identify_user_from_refresh_cookie), so the owner stays recognised for as
+    long as they are signed in. A VALID access cookie that belongs to someone
+    else does not fall through to the refresh cookie: the two are set together
+    and name the same person, so a different user's access cookie means a
+    different person is signed in.
+
+    Either answer can only reduce what happens (the owner sees a preview, the
+    view is not counted, they cannot answer); it grants no access to anything.
+
     apps.clients.portal.is_freelancer_previewing_portal cannot be reused: it
     returns True only when the browser holds BOTH a freelancer session AND a
     client-portal session, and a proposal link never creates a portal session,
@@ -90,10 +101,14 @@ def request_is_owner(request, owner_user_id):
     try:
         result = _OwnerProbe().authenticate(request)
     except Exception:
+        result = None
+    if result is not None:
+        return str(result[0].pk) == str(owner_user_id)
+    try:
+        user = identify_user_from_refresh_cookie(request)
+    except Exception:
         return False
-    if result is None:
-        return False
-    return str(result[0].pk) == str(owner_user_id)
+    return user is not None and str(user.pk) == str(owner_user_id)
 
 
 def safe_ip(request):

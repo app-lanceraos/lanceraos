@@ -24,7 +24,7 @@ import { publicApi } from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
 import usePublicPageMeta from '@/hooks/usePublicPageMeta'
 import ProposalDocument from '@/components/ProposalDocument'
-import { charCount, formatDate, formatTimestamp } from './proposalHelpers'
+import { charCount, formatDate, formatTimestampPkt } from './proposalHelpers'
 import { classifySendFailure } from './proposalLifecycle'
 
 const MESSAGE_MAX = 1000
@@ -67,6 +67,7 @@ export const COPY = {
     withdrawn: 'This proposal was withdrawn before your answer was recorded.',
     expired: 'This proposal expired before your answer was recorded.',
     owner: "You own this proposal, so you can't answer it.",
+    answered_differently: 'This proposal had already been answered, so your answer was not recorded. The answer below is the one on record.',
   },
   answer429: 'Too many attempts. Please wait a few minutes and try again.',
   answerAmbiguous: "We couldn't record your answer. Please try again.",
@@ -137,6 +138,8 @@ export default function ProposalPublic() {
   const submittingRef = useRef(false)
   const requestRef = useRef(null)
   const confirmHeadingRef = useRef(null)
+  const responseHeadingRef = useRef(null)
+  const backPressed = useRef(false)
   const resultHeadingRef = useRef(null)
   const justAnswered = useRef(false)
 
@@ -184,6 +187,14 @@ export default function ProposalPublic() {
   }
 
   useEffect(() => { if (step === 'confirm') confirmHeadingRef.current?.focus() }, [step])
+  // Back unmounts the confirm section that held focus; hand it to the "Your response" heading, only
+  // after Back (never on first load or after a refetch).
+  useEffect(() => {
+    if (step === 'choose' && backPressed.current) {
+      backPressed.current = false
+      responseHeadingRef.current?.focus()
+    }
+  }, [step])
   useEffect(() => {
     if (justAnswered.current && (data?.state === 'accepted' || data?.state === 'declined')) {
       justAnswered.current = false
@@ -221,8 +232,11 @@ export default function ProposalPublic() {
         const result = await fetchProposal()
         if (result.aborted) return
         if (result.ok && (result.data.state === 'accepted' || result.data.state === 'declined')) {
+          // The recovered answer is either this client's own (the reply was lost) or someone else's.
+          const own = result.data.state === (decision === 'accept' ? 'accepted' : 'declined')
+          justAnswered.current = true
           setData(result.data)
-          setNotice(COPY.race.already_answered)
+          setNotice(own ? null : COPY.race.answered_differently)
           setStep('choose')
         } else {
           setAnswerError(COPY.answerAmbiguous)
@@ -303,7 +317,7 @@ export default function ProposalPublic() {
 
       {canRespond && step === 'choose' && (
         <section className="proposal-public-noprint" style={{ marginTop: 28, paddingTop: 22, borderTop: `1px solid ${BORDER}` }}>
-          <h2 style={{ margin: '0 0 6px', fontSize: '1.05rem', fontWeight: 700, color: NAVY }}>{COPY.responseHeading}</h2>
+          <h2 ref={responseHeadingRef} tabIndex={-1} style={{ margin: '0 0 6px', fontSize: '1.05rem', fontWeight: 700, color: NAVY, outline: 'none' }}>{COPY.responseHeading}</h2>
           <p style={{ margin: '0 0 14px', fontSize: '0.9rem', color: MUTED, lineHeight: 1.55 }}>{COPY.responseText}</p>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button type="button" style={primaryButton} onClick={() => choose('accept')}>{COPY.accept}</button>
@@ -334,7 +348,7 @@ export default function ProposalPublic() {
             <button type="button" style={{ ...primaryButton, opacity: submitting || over > 0 ? 0.6 : 1 }} disabled={submitting || over > 0} onClick={submit}>
               {submitting ? COPY.busy : COPY.confirm[decision]}
             </button>
-            <button type="button" style={outlineButton} disabled={submitting} onClick={() => { setStep('choose'); setAnswerError(null) }}>{COPY.back}</button>
+            <button type="button" style={outlineButton} disabled={submitting} onClick={() => { backPressed.current = true; setStep('choose'); setAnswerError(null) }}>{COPY.back}</button>
           </div>
         </section>
       )}
@@ -352,7 +366,7 @@ export default function ProposalPublic() {
             {data.state === 'accepted' ? <CheckCircle2 size={19} aria-hidden="true" style={{ color: '#15803d' }} /> : <XCircle size={19} aria-hidden="true" style={{ color: MUTED }} />}
             {COPY.resultHeading[data.state]}
           </h2>
-          <p style={{ margin: '0 0 2px', fontSize: '0.88rem', color: MUTED }}>{formatTimestamp(data.responded_at)} PKT</p>
+          <p style={{ margin: '0 0 2px', fontSize: '0.88rem', color: MUTED }}>{formatTimestampPkt(data.responded_at)}</p>
           <p style={{ margin: 0, fontSize: '0.92rem', color: TEXT }}>{COPY.recorded}</p>
           {data.response_message && (
             <p style={{ margin: '12px 0 0', fontSize: '0.92rem', color: TEXT, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>

@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom'
 import { CheckCircle2, FileText, XCircle } from 'lucide-react'
 
 import Card from '@/components/Card'
-import { formatTimestamp } from '@/pages/proposalHelpers'
+import { formatTimestampPkt } from '@/pages/proposalHelpers'
 
 export default function ProposalAnswerCard({ detail }) {
   const accepted = detail.status === 'accepted'
@@ -17,7 +17,7 @@ export default function ProposalAnswerCard({ detail }) {
     <Card title="Your client's answer">
       <p style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', fontWeight: 700, color: accepted ? 'var(--status-green-text)' : 'var(--status-red-text)' }}>
         <Icon size={17} aria-hidden="true" />
-        {accepted ? 'Accepted' : 'Declined'} on {formatTimestamp(detail.responded_at)}
+        {accepted ? 'Accepted' : 'Declined'} on {formatTimestampPkt(detail.responded_at)}
       </p>
       <p style={{ margin: '14px 0 4px', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-tertiary)' }}>
         Message from your client

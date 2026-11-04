@@ -2,9 +2,10 @@
 //
 // The permanent home of the client's link on a sent proposal: a read-only field
 // with a Copy button. The warning matters — the backend recognises the owner
-// only while their 15-minute login cookie is alive, so opening this link
-// yourself later counts as the client viewing it (DECISIONS.md part B, D9).
-// That is why the UI offers Preview and never "Open the public page".
+// while they are signed in (access cookie, else the refresh cookie, read-only:
+// DECISIONS.md "Proposals close-out"), so the same link opened signed out, in a
+// private window or on another device counts as the client viewing it. The UI
+// still offers Preview and never "Open the public page".
 import { useEffect, useRef, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 
@@ -51,7 +52,7 @@ export default function ProposalLinkCard({ url }) {
       </div>
       {state === 'failed' && <p className="fos-hint" style={{ margin: '8px 0 0' }}>Press Ctrl+C (or long-press) to copy.</p>}
       <p style={{ margin: '10px 0 0', fontSize: '0.76rem', color: 'var(--status-amber-text)', lineHeight: 1.5 }}>
-        Don&apos;t open this link yourself to test it. Use Preview. Opening it counts as your client viewing it.
+        While you&apos;re signed in, opening this link shows you a preview and doesn&apos;t count as a view. Opened signed out, in a private window or on another device, it counts as your client viewing it.
       </p>
     </Card>
   )

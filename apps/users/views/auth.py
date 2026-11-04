@@ -470,6 +470,8 @@ def logout(request):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def refresh(request):
+    # If you change the validity rules here, change identify_user_from_refresh_cookie
+    # (apps/users/authentication.py) and its parity test in apps/users/tests/ too.
     """
     Rotates the access/refresh pair using the refresh cookie. Must work
     even when the access-token cookie has expired (that's the whole
