@@ -19,6 +19,23 @@ const api = axios.create({
   withCredentials: true,
 })
 
+// A bare instance for PUBLIC pages that need no CSRF and no session refresh
+// (the client's proposal page, /proposal/:token). It has NO interceptors on
+// purpose: the shared instance above prefetches GET /auth/csrf/ and reads
+// document.cookie before any non-GET request, and its 401 handler can redirect
+// to /login — none of which a person who has never used LanceraOS should ever
+// trigger just by pressing Accept. The two public proposal endpoints are
+// CSRF-exempt (they carry no ambient credential) and never answer 401, so this
+// makes "the page cannot call /auth/ or force a logout" structural, not a
+// convention. withCredentials stays true: the backend recognises the owner only
+// from the login cookie, and without it every owner visit would count as a
+// client view.
+export const publicApi = axios.create({
+  baseURL: BASE_URL,
+  timeout: 15000,
+  withCredentials: true,
+})
+
 // ══════════════════════════════════════════════════════════════════
 // CSRF
 // ══════════════════════════════════════════════════════════════════

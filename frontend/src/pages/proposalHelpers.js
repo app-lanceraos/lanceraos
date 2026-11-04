@@ -374,7 +374,7 @@ export function diffPayload(current, lastSaved, errors = {}, rejected = {}) {
 
 // ── Validation (client-side mirror of the serializer) ─────────────────
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 // Code points, not UTF-16 units: the server counts Python characters, and an
 // emoji is 2 in JS `.length` but 1 there.

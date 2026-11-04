@@ -15659,3 +15659,127 @@ Chromium against the running dev servers, seeded `screenshot-demo@example.com`):
 PUT slowed to 2.5 s lost nothing (textarea and server both equal what was typed), at most one PUT was ever in flight, and every PUT carried only `body`; a 429
 paused saving, kept the text, and recovered 62 s later; one live Groq generation (route slowed 20 s) outlived the old 15 s timeout, finished at ~23 s, and created
 a score-9 draft with 3 tips. Not verified: behaviour on the production host; touch-screen keyboards; screen readers; two-tab conflicts.
+
+
+Date: 04 November 2026 (Proposals frontend part B — Send, the client's public page, withdraw, convert to invoice, timeline, Preview)
+Scope: `frontend/` only. NO backend change (`git diff --stat -- apps core config` is empty); the backend finished in 2e110ad / ba55461 / f96b747. This closes the
+module's frontend: before it, no real client could open a sent proposal (the emailed link `/proposal/<token>` hit a blank redirect). Decisions D1-D12 were delegated
+to the architect by the owner; they are recorded with the reasons and the rejected alternatives so a later change can be judged against them.
+
+D1. SEND IS ONE DIALOG WITH PHASES; THE PAGE CHANGES UNDER IT. Click Send -> flush autosave and pass the readiness gate (D4) -> a dialog shows a pre-flight checklist
+(D3), the method, a plain "once sent you can't edit it" -> on confirm the dialog LOCKS (no close, no Escape, `beforeunload` guard, 45 s timeout) -> on success it closes and
+the page swaps to the sent view with a success banner. The success state is a banner plus the permanent "Client link" card, never a screen inside the dialog, because the
+editor (and the dialog inside it) unmounts the instant the status is no longer `draft`. Rejected: a separate send page (a dialog is enough for three choices);
+one-click Send (an email to a third party cannot be recalled, and Withdraw does not recall it).
+
+D2. AN AMBIGUOUS ENDING IS ANSWERED WITH A CHECK, NEVER "TRY AGAIN". The send endpoint holds the proposal's row lock WHILE the email goes out (worst case ~25 s: custom SMTP
+15 s, then the Resend fallback 10 s) and marks it sent only if the email succeeded, so "no answer" can mean sent, not sent, or still running. `classifySendFailure` splits
+DEFINITE (the body is an object with a non-empty string `error` — our app answered; this includes the send view's OWN 502 "…It is still a draft.", so a bare 502 is not
+automatically ambiguous here, unlike the AI endpoints in part A) from AMBIGUOUS (no response, a timeout, a gateway page, a 5xx without our shape). Ambiguous -> `GET
+/proposals/<id>/` at once and every 4 s for 36 s (one window = the server's worst case plus margin); the first answer with `status !== 'draft'` ends it as success ("The
+connection dropped, but the proposal was sent."); still a draft after the window -> "We couldn't confirm that it was sent… If your client says they received an email,
+don't send again." with Check again and Close; a check that cannot reach the server says so. Withdraw uses a single read-back, Convert is idempotent so its retry is safe.
+
+D3. THE PRE-FLIGHT MIRRORS THE SERVER, IS ADVISORY, AND READS THE SAVED SNAPSHOT. The server decides (`_send_content_problem`: empty body, no valid-until, valid-until before today in
+Pakistan, and for `email` only an invalid client email — first wins). The dialog computes the same checks from `autosave.getSnapshot()` (what the server holds after the
+flush) and `todayInPlatformTimezone()`. A blocking row disables confirm and offers Fix; warnings never block (zero total, AI text, the score line). The rule "the client is
+never stricter than the server" is a TEST over 360 cases GENERATED FROM THE REAL FUNCTION (`src/test-fixtures/proposals/send_preflight_cases.json`; counts body 180, null 66,
+client_email 42, valid_until_missing 36, valid_until_past 36 — exactly as expected, so the backend had not drifted). One known, allowed divergence: `EMAIL_RE` accepts
+`x@y.z.w`, Django refuses a one-letter top-level domain; the server's 400 is still shown if that ever happens.
+
+D4. A SEPARATE READINESS CHECK. `flushNow()` resolves `true` when there is nothing LEFT IT CAN TRY — including when a field is withheld as invalid — which is right for its
+callers (regenerate, the unmount save) and wrong as a gate for Send. `useProposalAutosave.readiness()` reads refs (so it is correct inside an async handler right after the
+flush) and returns `{ ready, unsaved, withheld, stopped }`. Send AND Duplicate require `await flushNow(); readiness().ready` (Duplicate used to silently copy the server's older
+value of a field still held invalid). Rejected: changing `flushNow()`'s return value (regenerate and duplicate already depend on it).
+
+D5. THE EDITOR IS LOCKED WHILE A SEND RUNS. The dialog being open counts as `busy` (every field and action disabled) and autosave is `pause()`d for the whole time, `resume()`d
+only on cancel or a definite failure. On success nothing resumes: a paused hook does not fire its final save on unmount, and a save on a sent proposal is a guaranteed 403.
+
+D6. WITHDRAW IS HONEST ABOUT WHAT IT DOES NOT DO: the client's link shows "withdrawn" and they can no longer answer; the client is NOT emailed; an email already sent cannot be
+recalled; it cannot be undone; duplicate to send a revised one. Offered for sent and viewed, including EXPIRED (the backend allows it).
+
+D7. CONVERT: "SAVE AS CLIENT" DEFAULTS ON ONLY WHEN THERE IS NO SAVED CLIENT BUT BOTH A NAME AND AN EMAIL. Honest tradeoff: ON saves a step and matches the usual intent (you just
+won this client); OFF never adds CRM records unasked. ON was chosen because the checkbox is explicit and the backend reuses an existing client with the same email. A saved
+client -> no checkbox; no items -> no confirm button, only a link to /invoices; success navigates to `/invoices?invoice=<id>` (a draft opens in the wizard).
+
+D8. THE CLIENT'S PAGE IS A THREE-STEP ANSWER, AND ITS COPY NEVER OVER-CLAIMS. Choose -> confirm (optional message, <= 1000 code points, "Your answer is final") -> recorded. It says
+"Your answer has been recorded." and NEVER that the sender was notified — their bell and email are gated by their own Client Messages setting and by delivery, so it could be
+false — and makes no claim of legal effect (a button on a web page is not a signature). A test scans the page's `COPY` object for `notif|signed|signature|legally|binding|contract`.
+The primary button is navy, not `#00c896` (white on it is ~2:1).
+
+D9. PREVIEW HAPPENS IN THE APP; THE UI NEVER OFFERS "OPEN THE PUBLIC PAGE". A draft has no public page, and the backend's owner check on the public endpoints reads ONLY the
+15-minute access cookie — an owner who opens their own link later is counted as a client (the proposal flips to Viewed, and in a private window they can accept their own
+proposal). So there is Preview (same `ProposalDocument`, no side-effecting request) and Copy link, whose text warns not to open it. NOT fixed here; the fix is named in limit 3.
+
+D10. KEEP THE PUBLIC PAGE OUT OF SEARCH ENGINES AND REFERER HEADERS: `<meta name="robots" content="noindex,nofollow,noarchive">` and `<meta name="referrer" content="no-referrer">`
+while mounted, plus `vercel.json` response headers for `/proposal/(.*)` ONLY. Follow-up: the same two headers are sensible for `/invoice/*` and `/portal/*`; deliberately not
+changed (they make credentialed API calls; a Referer-policy change there needs its own verification).
+
+D11. CARRY-FORWARD FIXES FROM PART A: (a) the Duplicate success message was lost — `ProposalEditor` navigated with `state.flash` but only `Proposals.jsx` read it -> one
+`useFlashMessage` hook used by both; (b) dialogs had no focus trap and no focus restore -> `useFocusTrap`, applied to every Proposals dialog (a hook, not a shared Modal —
+DESIGN.md Section 12 stands); (c) the public page's own Axios instance (D12); (d) the Settings > Notifications "Client Messages" hint now says it also covers proposal answers (true
+today: `ProposalAnswered` notices are gated by `notif_client_messages`); (e) the Duplicate readiness gate (D4).
+
+D12. THE PUBLIC PAGE USES A BARE `publicApi`, NOT THE SHARED `api`. The shared instance's request interceptor, for every non-GET request without a `csrftoken` cookie, first calls
+`GET /auth/csrf/` and reads `document.cookie`; its response interceptor can redirect to `/login` on a failed refresh. A client who has never used LanceraOS would trigger an `/auth/`
+request and receive a cookie from us just to press Accept. The two public endpoints are CSRF-exempt on purpose and never answer 401, so `publicApi = axios.create({ baseURL,
+timeout: 15000, withCredentials: true })` has NO interceptors: "the page cannot call /auth/ or force a logout" is structural, not a convention. `withCredentials` stays true on
+purpose (owner recognition needs the cookie). Rejected: adding `/proposals/public/` to `SKIP_REFRESH_URLS` (fixes the redirect only; the CSRF prefetch and cookie read remain);
+special-casing the CSRF interceptor (a second place that must know about one page).
+
+Known limits, stated plainly:
+(1) The send endpoint holds a database row lock for the whole email call (worst case ~25 s), and EVERY send attempt counts against the 10/hour limit, failures included.
+(2) An ambiguous send is resolved by checking, never by retrying; and if the database write fails AFTER a successful email, the client has the email while the proposal is still a
+draft (backend; not fixable in the frontend).
+(3) Owner detection on the public endpoints reads only the 15-minute login cookie, so an owner who opens their own link later is counted as a client. The fix (backend, not done):
+identify the owner from the refresh cookie as a read-only fallback, validated against the `Session` row. The expired-cookie case was NOT tested in a browser.
+(4) Withdraw does not email the client, and an email already sent cannot be recalled.
+(5) The answer page does not claim the sender was notified and makes no legal claim.
+(6) `X-Robots-Tag` / `Referrer-Policy` were added for `/proposal/*` only; `/invoice/*` and `/portal/*` deliberately not (see D10) — a follow-up for the deployment chat.
+(7) Vercel's header behaviour was NOT run locally; the document response from Vite carries neither header (verified: both null), only the `<meta>` tags.
+
+Deviations from the prompt, with evidence: (a) the Preview overlay is z-index 500, not 200 — at 200 the shell's sidebar (250) and header (350) (DESIGN.md Section 5) sit above it and clipped
+its title bar (screenshot-proven); centered dialogs stay at 200, the app-wide norm. (b) A first attempt at a portal for `ProposalDialog` was REVERTED: it rested on an unproven
+"contained by an ancestor" theory — measured: no ancestor has a transform/filter/containment. (c) The pinned tables live in tracked `src/test-fixtures/proposals/contract.js` instead of
+being copied into each test (the `*.test.*` files are gitignored; the data is not). (d) Two part-A assertions were updated because this prompt deliberately changes them: a sent
+proposal's menu is now Preview/Duplicate/Withdraw (was Duplicate only), and the word "Expired" now also appears in the Activity list. (e) The Duplicate-blocked message is the prompt's
+new sentence ("…so nothing was copied."). (f) Extra small files beyond the prompt: `ProposalBanners.jsx`, `ProposalSentPage.jsx`, `sentBanner()` in `proposalLifecycle.js` — to keep
+`ProposalEditor.jsx` shorter than its old 628 lines (it is 580).
+
+Findings in the existing code (surfaced, not silently fixed): (1) `npm run lint` still cannot run — there is no ESLint config in the repo: "ESLint couldn't find an eslint.config.(js|mjs|cjs)
+file." (2) The shared client's CSRF prefetch swallows its own failure by design, so when that prefetch is throttled the POST goes out with no token and the user sees an opaque 403 "CSRF
+Failed: CSRF cookie not set." — hit for real in the verification when the dev server's DRF throttles (anon 100/h, user 1000/h) were exhausted; `/auth/me/` then answers 429 and the app
+shows "Can't reach LanceraOS". (3) Part A's score card lets an unbroken long key term overflow its card ("Missing: jjjj…", seen with a seeded 120-character job post). (4) `DropdownMenu`
+does not return focus to its trigger, so a dialog opened from "More actions" (Withdraw, Duplicate, Delete, Preview) has nothing to restore focus to — only dialogs opened from a
+standing button (Send, Create invoice) restore it. (5) Modals at z-index 200 sit under the sidebar/header by the documented scale, so an `aria-modal` dialog leaves the sidebar mouse-clickable.
+(6) In dev, StrictMode runs the public page's first GET twice; harmless (the first view flips once). (7) Search for other `state: { flash` navigations (section 5, item 3): exactly two in
+source — Duplicate -> `/proposals/<id>` and Delete -> `/proposals` — plus one test fixture; both targets now read it through `useFlashMessage`. (8) Logo field: `FreelancerProfile.logo`
+(GET `/auth/profile/` returns `logo`; the existing `useProfileAssets` reads the same). (9) The tests' `fireEvent.click` on a button that a re-render removes never reaches React — two
+"single-flight" tests only caught the missing guard once both clicks were put inside one `act()`.
+
+Real-browser verification (Playwright + Chromium against the running dev servers, seeded demo account, every proposal titled "PB-VERIFY …"; no real email was ever sent, no key read):
+- Real link send end to end: sent, numbered, banner and link card shown, ZERO requests (no PUT) in the 7 s afterwards. Real answer lost AFTER the server processed it (route.fetch then
+  abort): "Checking whether it was sent…" then the recovered banner, exactly ONE send POST (backend log: 1 POST, 1 check GET). Real answer lost BEFORE the server saw it: unconfirmed after 37 s
+  with 10 checks, Check again works, still exactly one POST. Real 20 s slow send: counter counted, Escape and the Close button did nothing, the browser's `beforeunload` dialog appeared.
+- Email method: MOCKED routes only (a definite 502 "…It is still a draft." then a 200) — real mail is never sent from here; the real backend's 502 path was therefore NOT exercised.
+- Client page from a fresh cookie-less context: the first view flipped sent -> viewed (checked via the freelancer), Accept with a message, reload still shows it, the freelancer sees Accepted +
+  the message; Decline on another; expired, withdrawn, unknown token, 429 and 500+Try again (the last two MOCKED). Every API request the page made was `…/proposals/public/…` — none to `/auth/`,
+  no Set-Cookie. Owner (logged in, fresh access cookie): preview banner, no buttons, status unchanged; the expired-cookie case was NOT tested.
+- 375 px: `scrollWidth == innerWidth` on the public page and every sent view; public buttons measured 44 px (textarea 142 px). Keyboard: Tab order Print -> table scroller -> Accept -> Decline with
+  3 px focus rings; focus lands on the confirm heading, then the result heading. The public page stayed light under an OS dark scheme (`rgb(248,250,252)`). Print emulation: no buttons, banners,
+  response area, shadow or border; readable. Console: zero errors/warnings in every freelancer flow; the only console lines on the public page were the browser's own "Failed to load resource" for
+  the deliberately triggered 404/429/500 states.
+- The real browser found two defects unit tests could not: the Preview overlay clipped under the shell header (z-index, above), and after Escape focus ended on `<body>` instead of the Send button
+  (the Send button is disabled while a send prepares, a browser drops focus when the focused button is disabled, so the dialog's focus trap had nothing to remember) — fixed by capturing the opener at
+  click time; verified before (`BODY`) and after (`BUTTON:Send`). jsdom does NOT reproduce that blur, so its unit test cannot discriminate (stated in the test); the browser run is the evidence.
+
+Tests (frontend tests are gitignored; the data is not): 1037 passing of 1038 (221 new). The one failure is the pre-existing `SecuritySection.test.jsx` ("states before the click that completing
+the reset signs the account out everywhere"), failing identically on the untouched tree. `proposalLifecycle.test.js` (51, incl. the 360-case oracle, green under TZ=UTC, Pacific/Auckland and
+America/Los_Angeles), `SendProposalDialog.test.jsx`, `ProposalDialogs.test.jsx`, `ProposalEditor.partB.test.jsx`, `ProposalPublic.test.jsx` (51), `ProposalPreviewModal.test.jsx`, the hook tests,
+`publicApi.test.js`, `vercelConfig.test.js`, `App.proposalRoutes.test.jsx`, `NotificationsSection.test.jsx`. 24 mutation checks, each shown failing and then restored byte-for-byte (sha256 compared):
+send offered for a sent proposal; withdraw dropped when expired; today counted as past; email not trimmed; link blocking on a missing email; a string-error 502 treated as ambiguous; "no response"
+treated as definite; single-flight guard removed; `timeout: 45000` removed; polling stopped after one check; polling not stopped on unmount; `readiness()` skipped; `pause()` removed; the flash not
+read; convert always `save_client: true`; a timestamp invented for the invoice; message counted with `.length`; buttons shown when `preview` is true; "The sender has been notified."; the
+`usePublicPageMeta()` call removed; the shared `api` imported instead of `publicApi`; the `vercel.json` source widened to `/proposals/…`; focus not restored; `dangerouslySetInnerHTML` on the body.
+Two of them (the double-click guard, the preview buttons) would have SURVIVED the first version of their tests — both were strengthened before the run, so the table shows the final result.
+Not verified: Vercel's response headers, real email delivery (SMTP or Resend), the expired-cookie owner case, screen readers, touch-screen keyboards, behaviour on the production host.

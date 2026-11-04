@@ -19,6 +19,12 @@
 // client-side validation error, or one the server already refused at this
 // exact value, is WITHHELD — the other changed fields still save.
 //
+// `flushNow()` resolves true when there is nothing LEFT IT CAN TRY — including
+// when a field is being withheld because it is invalid. That is right for its
+// callers (regenerate, the unmount save) and wrong as a gate for an action that
+// must not run on stale server data (Send, Duplicate). Those use `readiness()`
+// after the flush: it says whether the server holds everything the person sees.
+//
 // What is never done here: the form is never written to. The server's reply
 // reaches the page through `onSaved(data, sentPayload)` and the page merges
 // only server-computed values; adopting the echoed text would overwrite
@@ -376,6 +382,20 @@ export default function useProposalAutosave({
   // A ref read, for async code that must not carry on after such a verdict.
   const isStopped = useCallback(() => stoppedRef.current !== null, [])
 
+  // Is everything the person sees also what the server holds? Reads refs, so it
+  // is correct inside an async handler right after `await flushNow()`, where the
+  // render-time `withheld` / `dirtyKeys` are stale. `unsaved` = fields that
+  // differ from the server and could still be sent; `withheld` = fields held
+  // back because they are invalid or the server refused them at this value.
+  const readiness = useCallback(() => {
+    const { payload, withheld: held } = computeNow()
+    const unsaved = Object.keys(payload)
+    const stoppedNow = stoppedRef.current
+    return { ready: unsaved.length === 0 && held.length === 0 && stoppedNow === null, unsaved, withheld: held, stopped: stoppedNow }
+    // Reads only refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const pause = useCallback(() => {
     manualPauseRef.current = true
     clearTimers()
@@ -396,6 +416,6 @@ export default function useProposalAutosave({
     dirty, dirtyKeys, withheld: diff.withheld,
     validation: validation.errors, serverErrors: visibleServerErrors,
     lastSaved,
-    flushNow, retry, pause, resume, commitSnapshot, resetSnapshot, getSnapshot, isStopped,
+    flushNow, retry, pause, resume, commitSnapshot, resetSnapshot, getSnapshot, isStopped, readiness,
   }
 }

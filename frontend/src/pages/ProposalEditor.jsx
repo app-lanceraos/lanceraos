@@ -13,34 +13,40 @@
 //   * Money shown while typing is computed with the exact arithmetic the
 //     server uses (D6); if a save ever comes back with different totals, the
 //     server's are shown and the mismatch is logged once.
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Copy, FileX, MoreHorizontal, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { ArrowLeft, FileX, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
 
 import api from '@/lib/api'
+import useFlashMessage from '@/hooks/useFlashMessage'
 import useTitle from '@/hooks/useTitle'
-import useTimedMessage from '@/hooks/useTimedMessage'
+import useAuthStore from '@/store/authStore'
+import useProposalActions from '@/hooks/useProposalActions'
 import useProposalAutosave from '@/hooks/useProposalAutosave'
 import Card from '@/components/Card'
-import DropdownMenu from '@/components/DropdownMenu'
 import FormSelect from '@/components/FormSelect'
 import FosAlert from '@/components/FosAlert'
 import ProposalClientFields from '@/components/ProposalClientFields'
+import ProposalBanners from '@/components/ProposalBanners'
 import ProposalColumns from '@/components/ProposalColumns'
+import { DialogButtons, ProposalDialog, dialogText } from '@/components/ProposalDialog'
+import ProposalHeader from '@/components/ProposalHeader'
 import { ProposalCounter, ProposalTextArea, ProposalTextField } from '@/components/ProposalFields'
 import ProposalItemsEditor from '@/components/ProposalItemsEditor'
-import ProposalReadOnlyView from '@/components/ProposalReadOnlyView'
+import ProposalPreviewModal from '@/components/ProposalPreviewModal'
+import ProposalSentPage from '@/components/ProposalSentPage'
 import ProposalSaveIndicator from '@/components/ProposalSaveIndicator'
 import ProposalScopeEditor from '@/components/ProposalScopeEditor'
 import ProposalScoreCard from '@/components/ProposalScoreCard'
-import ProposalStatusBadge from '@/components/ProposalStatusBadge'
 import ProposalTipsCard from '@/components/ProposalTipsCard'
+import SendProposalDialog from '@/components/SendProposalDialog'
 import { CURRENCY_OPTIONS } from './clientHelpers'
 import { todayInPlatformTimezone } from './invoiceHelpers'
 import {
   AI_REQUEST_TIMEOUT_MS, LIMITS, TONE_OPTIONS, buildSavePayload, charCount, computeProposalTotals, errorMessage,
   formatProposalMoney, proposalToForm, wordCount,
 } from './proposalHelpers'
+import { sentBanner } from './proposalLifecycle'
 
 const NOT_DRAFT_NOTICE = 'This proposal was sent or changed from another window, so your latest edits were not saved. Here is its current state.'
 
@@ -59,7 +65,8 @@ function ProposalLoader({ id }) {
   const [view, setView] = useState({ status: 'loading', detail: null })
   const [version, setVersion] = useState(0)
   const [reloadToken, setReloadToken] = useState(0)
-  const [notice, setNotice] = useState(null)
+  const [notice, setNotice] = useState(null) // { type, text } | null
+  const [flash, dismissFlash] = useFlashMessage()
 
   // Every change of `reloadToken` (a retry, or the server saying this is no
   // longer a draft) fetches again; a response that arrives after the effect
@@ -87,9 +94,16 @@ function ProposalLoader({ id }) {
 
   // The server said this is no longer a draft (sent from another window, or a
   // draft-only action was refused): reload what it actually is and say why.
-  const handleNotDraft = useCallback(() => {
-    setNotice(NOT_DRAFT_NOTICE)
+  const handleNotDraft = useCallback((text) => {
+    setNotice({ type: 'info', text: typeof text === 'string' ? text : NOT_DRAFT_NOTICE })
     setReloadToken((t) => t + 1)
+  }, [])
+  // A fresh detail the page already holds (just sent, just withdrawn): show it
+  // without another request, remount the right view, and say what happened.
+  const applyDetail = useCallback((data, nextNotice) => {
+    setView({ status: 'ready', detail: data })
+    setVersion((v) => v + 1)
+    setNotice(nextNotice || null)
   }, [])
   const handleNotFound = useCallback(() => setView({ status: 'notfound', detail: null }), [])
 
@@ -117,10 +131,10 @@ function ProposalLoader({ id }) {
     )
   }
 
-  const shared = { notice, onDismissNotice: () => setNotice(null), onNotDraft: handleNotDraft }
+  const banners = { flash, onDismissFlash: dismissFlash, notice, onDismissNotice: () => setNotice(null) }
   return view.detail.is_editable
-    ? <DraftEditor key={version} detail={view.detail} onNotFound={handleNotFound} onReload={retry} {...shared} />
-    : <SentProposal key={version} detail={view.detail} {...shared} />
+    ? <DraftEditor key={version} detail={view.detail} banners={banners} onNotDraft={handleNotDraft} onNotFound={handleNotFound} onReload={retry} onApplyDetail={applyDetail} />
+    : <ProposalSentPage key={version} detail={view.detail} banners={banners} onNotDraft={handleNotDraft} onApplyDetail={applyDetail} onReload={retry} />
 }
 
 function EditorSkeleton() {
@@ -137,105 +151,6 @@ function EditorSkeleton() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Shared header actions: Duplicate (any status), Delete (drafts)
-// ══════════════════════════════════════════════════════════════════
-
-function useProposalActions({ detail, onNotDraft, beforeDuplicate, pauseSaving, resumeSaving }) {
-  const navigate = useNavigate()
-  const { message, show, clear } = useTimedMessage()
-  const [busy, setBusy] = useState(null) // null | 'duplicate' | 'delete'
-
-  function failed(error, fallback) {
-    const { message: text, status } = errorMessage(error, fallback)
-    // A draft-only action refused because the proposal is no longer a draft.
-    if (status === 403) onNotDraft()
-    else show('error', text)
-  }
-
-  async function duplicate() {
-    setBusy('duplicate')
-    clear()
-    try {
-      if (beforeDuplicate && !(await beforeDuplicate())) {
-        show('error', "We couldn't save your latest changes first, so nothing was copied. Please try again.")
-        return
-      }
-      const { data } = await api.post(`/proposals/${detail.id}/duplicate/`)
-      navigate(`/proposals/${data.id}`, { state: { flash: 'Copied as a new draft. Set a new valid-until date before sending.' } })
-    } catch (error) {
-      failed(error, "We couldn't copy this proposal. Please try again.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function remove() {
-    setBusy('delete')
-    clear()
-    // A save landing on a proposal that is about to be deleted would 404.
-    pauseSaving?.()
-    try {
-      await api.delete(`/proposals/${detail.id}/`)
-      navigate('/proposals', { state: { flash: 'Proposal deleted.' } })
-      return true
-    } catch (error) {
-      resumeSaving?.()
-      failed(error, "We couldn't delete this proposal. Please try again.")
-      setBusy(null)
-      return false
-    }
-  }
-
-  return { busy, message, clear, show, duplicate, remove, failed }
-}
-
-function ProposalHeader({ detail, titleField, saveIndicator, onDuplicate, onDelete, busy }) {
-  const items = [{ key: 'duplicate', label: 'Duplicate', Icon: Copy, onClick: onDuplicate, disabled: busy !== null }]
-  if (onDelete) items.push({ key: 'delete', label: 'Delete', Icon: Trash2, onClick: onDelete, danger: true, disabled: busy !== null })
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <Link to="/proposals" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 12, fontSize: '0.82rem', color: 'var(--text-secondary)', textDecoration: 'none' }}>
-        <ArrowLeft size={14} /> Proposals
-      </Link>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 280px', minWidth: 0 }}>{titleField}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minHeight: 40 }}>
-          <ProposalStatusBadge status={detail.status} expired={detail.is_expired} />
-          {detail.proposal_number && <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>{detail.proposal_number}</span>}
-          <DropdownMenu
-            trigger={<MoreHorizontal size={17} />} triggerLabel="More actions" bareTrigger
-            triggerStyle={{ width: 40, height: 40, borderRadius: 'var(--radius-md)', color: 'var(--text-secondary)', border: '1.5px solid var(--border-subtle)' }}
-            items={items}
-          />
-        </div>
-      </div>
-      {saveIndicator && <div style={{ marginTop: 8 }}>{saveIndicator}</div>}
-    </div>
-  )
-}
-
-// ══════════════════════════════════════════════════════════════════
-// A proposal that is no longer a draft
-// ══════════════════════════════════════════════════════════════════
-
-function SentProposal({ detail, notice, onDismissNotice, onNotDraft }) {
-  const actions = useProposalActions({ detail, onNotDraft })
-  return (
-    <div style={{ maxWidth: 1180 }}>
-      {notice && <FosAlert type="info" onDismiss={onDismissNotice} style={{ marginBottom: 16 }}>{notice}</FosAlert>}
-      {actions.message && (
-        <FosAlert type={actions.message.type} onDismiss={actions.clear} style={{ marginBottom: 16 }}>{actions.message.text}</FosAlert>
-      )}
-      <ProposalHeader
-        detail={detail} busy={actions.busy} onDuplicate={actions.duplicate}
-        titleField={<h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{detail.title}</h1>}
-      />
-      <ProposalReadOnlyView detail={detail} />
-    </div>
-  )
-}
-
-// ══════════════════════════════════════════════════════════════════
 // The draft editor
 // ══════════════════════════════════════════════════════════════════
 
@@ -247,9 +162,11 @@ function serverValuesOf(detail) {
   }
 }
 
+const FIELD_IDS = { body: 'proposal-field-body', valid_until: 'proposal-field-valid-until', client_email: 'proposal-field-client-email' }
+
 const pricingSignature = (payload) => JSON.stringify([payload.items, payload.tax_rate, payload.discount_amount])
 
-function DraftEditor({ detail, notice, onDismissNotice, onNotDraft, onNotFound, onReload }) {
+function DraftEditor({ detail, banners, onNotDraft, onNotFound, onReload, onApplyDetail }) {
   const [initial] = useState(() => {
     const form = proposalToForm(detail)
     return { form, snapshot: buildSavePayload(form) }
@@ -257,7 +174,11 @@ function DraftEditor({ detail, notice, onDismissNotice, onNotDraft, onNotFound, 
   const [form, setForm] = useState(initial.form)
   const [server, setServer] = useState(() => serverValuesOf(detail))
   const [serverPricing, setServerPricing] = useState(null)
-  const [dialog, setDialog] = useState(null) // null | 'delete' | 'regenerate'
+  const [dialog, setDialog] = useState(null) // null | 'delete' | 'regenerate' | 'send' | 'preview'
+  const [preparing, setPreparing] = useState(false)
+  const [focusTarget, setFocusTarget] = useState(null) // an element, or a field id
+  const openerRef = useRef(null)
+  const userEmail = useAuthStore((s) => s.user?.email)
   const [regen, setRegen] = useState({ busy: false, elapsed: 0, error: null, ambiguous: false })
   const mismatchWarnedRef = useRef(false)
 
@@ -289,8 +210,16 @@ function DraftEditor({ detail, notice, onDismissNotice, onNotDraft, onNotFound, 
     onSaved: handleSaved, onNotDraft, onNotFound,
   })
 
+  // Duplicate copies what the SERVER holds, so everything the person sees must
+  // be saved first (flushNow() alone says true even for a field held invalid).
+  const duplicateGate = async () => {
+    await autosave.flushNow()
+    if (autosave.isStopped()) return null
+    return autosave.readiness().ready
+  }
+
   const actions = useProposalActions({
-    detail, onNotDraft, beforeDuplicate: autosave.flushNow, pauseSaving: autosave.pause, resumeSaving: autosave.resume,
+    detail, onNotDraft, beforeDuplicate: duplicateGate, pauseSaving: autosave.pause, resumeSaving: autosave.resume,
   })
 
   // ── Regeneration ──
@@ -357,6 +286,67 @@ function DraftEditor({ detail, notice, onDismissNotice, onNotDraft, onNotFound, 
     if (!(await actions.remove())) setDialog(null)
   }
 
+  // ── Send ──
+  // flushNow() resolves true even when a field is held back as invalid, so the
+  // gate is readiness() read AFTER the flush (D4). Only a fully saved draft
+  // opens the dialog, and autosave stays paused until it closes.
+  async function startSend() {
+    // The Send button is disabled while this prepares, and a browser drops focus
+    // to <body> when the focused button is disabled — so by the time the dialog
+    // mounts there is nothing left for its focus trap to remember. Keep it here.
+    openerRef.current = document.activeElement
+    actions.clear()
+    setPreparing(true)
+    try {
+      await autosave.flushNow()
+      if (autosave.isStopped()) return // the page is already reloading
+      const state = autosave.readiness()
+      if (!state.ready) {
+        if (state.withheld.length) {
+          actions.show('error', "Some fields have problems and haven't been saved. Fix the highlighted fields, then send.")
+          document.querySelector('[aria-invalid="true"]')?.scrollIntoView({ block: 'center' })
+        } else {
+          actions.show('error', "We couldn't save your latest changes, so nothing was sent. Check your connection and try again.")
+        }
+        return
+      }
+      autosave.pause()
+      setDialog('send')
+    } finally {
+      setPreparing(false)
+    }
+  }
+
+  const closeSend = () => { setDialog(null); autosave.resume(); setFocusTarget(openerRef.current) }
+  const fixField = (field) => {
+    setDialog(null)
+    autosave.resume()
+    setFocusTarget(FIELD_IDS[field] || null)
+  }
+  const handleSent = (data, { method, recovered }) => {
+    // Nothing resumes autosave: a paused hook does not fire its final save on
+    // unmount, and a save on a sent proposal is a guaranteed 403.
+    onApplyDetail(data, { type: 'success', text: sentBanner(data, method, recovered) })
+  }
+
+  // Runs after the dialog (and its focus restore) has unmounted.
+  useEffect(() => {
+    if (!focusTarget) return
+    const element = typeof focusTarget === 'string' ? document.getElementById(focusTarget) : focusTarget
+    if (element && element !== document.body && document.contains(element)) {
+      element.focus()
+      if (typeof focusTarget === 'string') element.scrollIntoView({ block: 'center' })
+    }
+    setFocusTarget(null)
+  }, [focusTarget])
+
+  function handleAction(key) {
+    if (key === 'send') startSend()
+    else if (key === 'duplicate') actions.duplicate()
+    else if (key === 'delete') setDialog('delete')
+    else if (key === 'preview') setDialog('preview')
+  }
+
   const startRegenerate = () => {
     if (form.body.trim()) setDialog('regenerate')
     else regenerate()
@@ -367,7 +357,7 @@ function DraftEditor({ detail, notice, onDismissNotice, onNotDraft, onNotFound, 
   const totals = useMemo(() => computeProposalTotals(form.items, form.tax_rate, form.discount_amount), [form.items, form.tax_rate, form.discount_amount])
   const shownTotals = serverPricing && serverPricing.signature === pricingSignature(payload) ? serverPricing : totals
 
-  const busy = regen.busy || actions.busy !== null
+  const busy = regen.busy || actions.busy !== null || dialog === 'send'
   const errors = autosave.validation
   const serverErrors = autosave.serverErrors
   const fieldError = (key) => errors[key] || serverErrors[key]
@@ -438,7 +428,7 @@ function DraftEditor({ detail, notice, onDismissNotice, onNotDraft, onNotFound, 
         ) : null}
       >
         <ProposalTextArea
-          label="What you'll say to the client" rows={14} value={form.body} disabled={busy}
+          id={FIELD_IDS.body} label="What you'll say to the client" rows={14} value={form.body} disabled={busy}
           onChange={(text) => patchForm({ body: text })}
           error={fieldError('body')}
           counter={<ProposalCounter count={charCount(form.body)} max={LIMITS.body} />}
@@ -499,7 +489,7 @@ function DraftEditor({ detail, notice, onDismissNotice, onNotDraft, onNotFound, 
           />
           <div style={{ maxWidth: 240 }}>
             <ProposalTextField
-              label="Valid until" type="date" value={form.valid_until} disabled={busy}
+              id={FIELD_IDS.valid_until} label="Valid until" type="date" value={form.valid_until} disabled={busy}
               min={todayInPlatformTimezone()} onChange={(text) => patchForm({ valid_until: text })}
               error={fieldError('valid_until')} hint="Required before the proposal can be sent"
             />
@@ -518,14 +508,10 @@ function DraftEditor({ detail, notice, onDismissNotice, onNotDraft, onNotFound, 
 
   return (
     <div style={{ maxWidth: 1180 }}>
-      {notice && <FosAlert type="info" onDismiss={onDismissNotice} style={{ marginBottom: 16 }}>{notice}</FosAlert>}
-      {actions.message && (
-        <FosAlert type={actions.message.type} onDismiss={actions.clear} style={{ marginBottom: 16 }}>{actions.message.text}</FosAlert>
-      )}
+      <ProposalBanners {...banners} message={actions.message} onDismissMessage={actions.clear} />
 
       <ProposalHeader
-        detail={{ ...detail, status: server.status }} busy={actions.busy}
-        onDuplicate={actions.duplicate} onDelete={() => setDialog('delete')}
+        detail={{ ...detail, status: server.status }} disabled={busy} preparing={preparing} onAction={handleAction}
         titleField={(
           <ProposalTextField
             label="Title" value={form.title} disabled={busy} required
@@ -542,6 +528,15 @@ function DraftEditor({ detail, notice, onDismissNotice, onNotDraft, onNotFound, 
       />
 
       <ProposalColumns main={main} aside={aside} />
+
+      {dialog === 'send' && (
+        <SendProposalDialog
+          proposalId={detail.id} snapshot={autosave.getSnapshot()} quality={server.quality} aiGenerated={server.ai_generated}
+          userEmail={userEmail} onSent={handleSent} onClose={closeSend} onFix={fixField} onNotDraft={onNotDraft}
+        />
+      )}
+
+      {dialog === 'preview' && <ProposalPreviewModal kind="form" source={form} onClose={() => setDialog(null)} />}
 
       {dialog === 'delete' && (
         <ProposalDialog title="Delete this proposal?" busy={actions.busy === 'delete'} onClose={() => setDialog(null)}>
@@ -580,49 +575,6 @@ function TotalRow({ label, value, bold }) {
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: bold ? '0.95rem' : '0.8rem', fontWeight: bold ? 700 : 400, color: 'var(--text-primary)' }}>
       <span style={{ color: bold ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{label}</span>
       <span style={{ fontVariantNumeric: 'tabular-nums' }}>{value}</span>
-    </div>
-  )
-}
-
-// ── Dialogs (DESIGN.md "Centered modal" recipe). Written here rather than as a
-// shared Modal on purpose (DESIGN.md Section 12). Escape and the close button
-// do nothing while a request is running: closing would hide a pending action
-// the person cannot then cancel. ──
-const dialogText = { margin: '0 0 20px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }
-
-function ProposalDialog({ title, busy, onClose, children }) {
-  const titleId = useId()
-  const dialogRef = useRef(null)
-
-  useEffect(() => { dialogRef.current?.focus() }, [])
-
-  useEffect(() => {
-    const onKeyDown = (event) => { if (event.key === 'Escape' && !busy) onClose() }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [busy, onClose])
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div
-        ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
-        style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '24px 28px', width: '100%', maxWidth: 440, maxHeight: '90vh', overflowY: 'auto', outline: 'none', animation: 'modal-in 0.2s cubic-bezier(0.22,1,0.36,1)' }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <h3 id={titleId} style={{ margin: 0, fontSize: '1.02rem', fontWeight: 700, color: 'var(--text-primary)' }}>{title}</h3>
-          <button type="button" onClick={onClose} disabled={busy} aria-label="Close" className="fos-btn fos-btn-ghost" style={{ padding: 6 }}><X size={16} /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function DialogButtons({ busy, onClose, confirm }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-      <button type="button" className="fos-btn fos-btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
-      {confirm}
     </div>
   )
 }

@@ -1,17 +1,20 @@
 // src/components/ProposalReadOnlyView.jsx
 //
-// A proposal that is no longer a draft (sent, viewed, answered or withdrawn —
-// reachable by a notification link or the API even though nothing in this part
-// of the app can send one yet). The same cards as the draft editor, but plain
-// text and a plain money table: no inputs, no autosave, nothing to save. The
-// only action is Duplicate, which lives in the page header.
+// A proposal that is no longer a draft (sent, viewed, answered or withdrawn).
+// The same cards as the draft editor, but plain text and a plain money table:
+// no inputs, no autosave, nothing to save. The actions live in the page header;
+// this view adds what only a sent proposal has — the client's answer, the
+// expired warning, the activity timeline and the client link.
 //
 // Everything shown is the server's own value — money is the server's strings,
 // not recomputed.
 import Card from './Card'
 import FosAlert from './FosAlert'
+import ProposalAnswerCard from './ProposalAnswerCard'
 import ProposalColumns from './ProposalColumns'
+import ProposalLinkCard from './ProposalLinkCard'
 import ProposalScoreCard from './ProposalScoreCard'
+import ProposalTimeline from './ProposalTimeline'
 import ProposalTipsCard from './ProposalTipsCard'
 import { formatDate, formatProposalMoney } from '@/pages/proposalHelpers'
 
@@ -42,10 +45,23 @@ export default function ProposalReadOnlyView({ detail }) {
   const hasClient = detail.client_name || detail.client_email || detail.client_company
   const taxRate = Number(detail.tax_rate)
   const discount = Number(detail.discount_amount)
+  const answeredOrWithdrawnForRevision = detail.status === 'declined' || detail.status === 'withdrawn'
 
   const main = (
     <>
-      <FosAlert type="info" style={{ marginBottom: 16 }}>Sent proposals can&apos;t be edited. Duplicate it to make changes.</FosAlert>
+      <FosAlert type="info" style={{ marginBottom: 16 }}>{
+        answeredOrWithdrawnForRevision
+          ? 'Duplicate it to send a revised proposal.'
+          : "Sent proposals can't be edited. Duplicate it to make changes."
+      }</FosAlert>
+
+      {detail.is_expired && (
+        <FosAlert type="warning" style={{ marginBottom: 16 }}>
+          This proposal expired on {formatDate(detail.valid_until)}. Your client can still read it but can no longer accept or decline. Withdraw it, or duplicate it to send a fresh one.
+        </FosAlert>
+      )}
+
+      {(detail.status === 'accepted' || detail.status === 'declined') && <ProposalAnswerCard detail={detail} />}
 
       <Card title="Client">
         {hasClient ? (
@@ -121,6 +137,8 @@ export default function ProposalReadOnlyView({ detail }) {
 
   const aside = (
     <>
+      <ProposalTimeline detail={detail} />
+      {detail.public_url && ['sent', 'viewed', 'accepted'].includes(detail.status) && <ProposalLinkCard url={detail.public_url} />}
       <ProposalScoreCard quality={detail.quality} />
       <ProposalTipsCard tips={detail.ai_tips} />
     </>

@@ -43,9 +43,10 @@ export function ProposalCounter({ count, max, min }) {
 
 export function ProposalTextField({
   label, value, onChange, type = 'text', inputMode, placeholder, disabled = false, error, hint, required = false,
-  min, counter, autoComplete, style,
+  min, counter, autoComplete, style, id: idProp,
 }) {
-  const id = useId()
+  const generatedId = useId()
+  const id = idProp || generatedId
   return (
     <FieldShell id={id} label={label} required={required} error={error} hint={hint} counter={counter}>
       <input
@@ -61,9 +62,10 @@ export function ProposalTextField({
 }
 
 export function ProposalTextArea({
-  label, value, onChange, rows = 4, placeholder, disabled = false, error, hint, required = false, counter, minHeight,
+  label, value, onChange, rows = 4, placeholder, disabled = false, error, hint, required = false, counter, minHeight, id: idProp,
 }) {
-  const id = useId()
+  const generatedId = useId()
+  const id = idProp || generatedId
   return (
     <FieldShell id={id} label={label} required={required} error={error} hint={hint} counter={counter}>
       <textarea

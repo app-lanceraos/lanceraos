@@ -585,6 +585,11 @@ Add to CSS file: `@keyframes panel-slide-in { from { transform: translateX(12px)
 ```
 Add to CSS: `@keyframes modal-in { from { transform: scale(0.95) translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }`
 
+Every Proposals dialog (`ProposalDialog.jsx`) traps keyboard focus and gives it back to what opened it
+(`useFocusTrap.js`, 04 November 2026); Section 12's "no generic Modal" rule stands — a hook, not a shared component.
+The one full-viewport overlay in Proposals, the in-app Preview, is z-index 500 (the scale's next value), because
+the shell's sidebar (250) and header (350) sit above a 200 overlay and would clip its title bar.
+
 ### Skeleton / loading pulse
 Add to CSS: `@keyframes skeleton-pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.4 } }`
 ```jsx
@@ -782,6 +787,22 @@ Divider:          rgba(0,0,0,.07)
 These pages do NOT use `var(--*)` tokens from theme.css.
 They are self-contained with hardcoded values from this palette only.
 Never introduce a fifth navy hex — use `#1e3a5f` or `#2e5987` only.
+
+**Proposal page (`/proposal/:token`, `ProposalPublic.jsx` — added 04 November 2026).** The client's page follows
+this section exactly (fixed light palette, no AppShell, no theme tokens, stays light under an OS dark scheme —
+verified). Specifics:
+- Layout: one centred card, max-width 760, padding 28/24 (20/16 below 560px), font `'DM Sans'`; the document
+  (`ProposalDocument.jsx`) is shared with the freelancer's in-app Preview so what they preview is what the client sees.
+- Answering is a **three-step flow, not a one-click button**: choose Accept / Decline, then a confirm step (heading,
+  an optional message with an `n / 1000` counter counted in code points, "Your answer is final"), then a recorded
+  block. Focus moves to the confirm heading, then to the result heading.
+- **The primary button is navy `#1e3a5f` with white text, not accent `#00c896`**: white on `#00c896` is about 2:1
+  contrast. Tap targets are at least 44px tall; focus rings are visible (3px `#2e5987`).
+- Print: `@media print` hides the print button, banners and the response area, drops the page background, card
+  border and shadow, and avoids breaking table rows and sections across pages.
+- Wording never claims the sender was notified, and never claims legal effect (a button on a web page is not a
+  signature); a test scans the page's `COPY` object for `notif|signed|signature|legally|binding|contract`.
+- It is kept out of search engines and Referer headers (`<meta>` tags while mounted, plus `vercel.json` headers).
 
 ### 10a. Client Portal — light AND dark, self-contained, portal-only
 

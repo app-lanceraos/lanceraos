@@ -15,11 +15,12 @@
 // redirected to /proposals/<id> before the list is even requested.
 import { hoverProps } from '@/lib/hoverProps'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { FileText, Plus, Search, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
+import useFlashMessage from '@/hooks/useFlashMessage'
 import usePageHeaderActions from '@/hooks/usePageHeaderActions'
 import useFilterOverflow from '@/hooks/useFilterOverflow'
 import FilterPill from '@/components/FilterPill'
@@ -46,7 +47,6 @@ export default function Proposals() {
 function ProposalList() {
   useTitle('LanceraOS | Proposals')
   const navigate = useNavigate()
-  const location = useLocation()
 
   const [proposals, setProposals] = useState([])
   const [total, setTotal] = useState(0)
@@ -55,18 +55,11 @@ function ProposalList() {
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-  // A one-shot message from delete / duplicate, handed over in history state.
-  const [flash, setFlash] = useState(() => location.state?.flash || null)
+  // A one-shot message from delete, handed over in history state.
+  const [flash, dismissFlash] = useFlashMessage()
 
   const searchTimer = useRef(null)
   const latestRequestId = useRef(0)
-
-  // The flash is shown once: take it out of history state so a reload or Back
-  // does not bring it back.
-  useEffect(() => {
-    if (location.state?.flash) navigate(`${location.pathname}${location.search}`, { replace: true, state: null })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   useEffect(() => () => {
     clearTimeout(searchTimer.current)
@@ -151,7 +144,7 @@ function ProposalList() {
 
   return (
     <>
-      {flash && <FosAlert type="success" onDismiss={() => setFlash(null)} style={{ marginBottom: 16 }}>{flash}</FosAlert>}
+      {flash && <FosAlert type="success" onDismiss={dismissFlash} style={{ marginBottom: 16 }}>{flash}</FosAlert>}
 
       <div style={{ position: 'relative', marginBottom: 14 }}>
         <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />

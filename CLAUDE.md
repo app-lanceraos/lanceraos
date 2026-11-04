@@ -262,7 +262,10 @@ This is how you investigate "why didn't this happened?"
    could mean the server already rotated the token). Refresh is
    coordinated across tabs (src/lib/refreshCoordinator.js: a Web Lock
    plus a non-secret localStorage timestamp) so two tabs never rotate the
-   same refresh cookie at once.
+   same refresh cookie at once. Public pages that need no CSRF and no
+   refresh (the client's proposal page, /proposal/:token) use the bare
+   `publicApi` export from the same file instead: no interceptors, so they
+   can never trigger the /auth/csrf/ prefetch or a forced logout.
 4. Auth state (user object, loading, isAuthenticated, initError) lives in
    src/store/authStore.js using Zustand. initialize() retries /auth/me/
    (3 attempts, 8s each) and only treats 401/403 as logged out; if the
@@ -458,6 +461,11 @@ lanceraos/                          <- Django project root
 │   │   │   │   ProposalItemsEditor.jsx, ProposalScopeEditor.jsx, ProposalScoreCard.jsx, ProposalTipsCard.jsx,
 │   │   │   │   ProposalSaveIndicator.jsx, ProposalColumns.jsx, ProposalReadOnlyView.jsx
 │   │   │   │                          <- Proposals frontend part A (flat, `Proposal` prefix, like InvoiceTable/ClientTable)
+│   │   │   ├── ProposalDialog.jsx, ProposalHeader.jsx, ProposalBanners.jsx, ProposalSentPage.jsx,
+│   │   │   │   SendProposalDialog.jsx, WithdrawProposalDialog.jsx, ConvertProposalDialog.jsx,
+│   │   │   │   ProposalTimeline.jsx, ProposalLinkCard.jsx, ProposalAnswerCard.jsx,
+│   │   │   │   ProposalDocument.jsx, ProposalPreviewModal.jsx
+│   │   │   │                          <- Proposals frontend part B (send, sent view, the document the client reads, preview)
 │   │   │   ├── listTableStyles.js  <- Shared th/td/wrapper/row-hover styles for InvoiceTable + ClientTable
 │   │   │   ├── PublicRoute.jsx     <- Redirects logged-in users away from Login/Register
 │   │   │   ├── Card.jsx, FormField.jsx, FormSelect.jsx,
@@ -467,18 +475,24 @@ lanceraos/                          <- Django project root
 │   │   │       AuthSelect.jsx, AuthLayout.jsx  <- Auth-page-only equivalents
 │   │   │       (fixed orbit palette, never theme-responsive — see DESIGN.md)
 │   │   ├── pages/                  <- One file per module page (Proposals.jsx, ProposalNew.jsx, ProposalEditor.jsx +
-│   │   │                              proposalHelpers.js — routed pages /proposals, /proposals/new, /proposals/:id)
+│   │   │                              proposalHelpers.js — routed pages /proposals, /proposals/new, /proposals/:id;
+│   │   │                              ProposalPublic.jsx — the PUBLIC route /proposal/:token, no login, no AppShell;
+│   │   │                              proposalLifecycle.js — pure logic: actions per status, timeline, pre-send checklist)
 │   │   │   └── settings/           <- Settings page's 7 sections, one file each,
 │   │   │       plus validators.js  <- imported by Settings.jsx as a thin shell
 │   │   ├── store/
 │   │   │   └── authStore.js        <- Zustand auth state
 │   │   ├── lib/
-│   │   │   ├── api.js              <- Shared Axios instance
+│   │   │   ├── api.js              <- Shared Axios instance (+ the bare `publicApi` export for public pages)
 │   │   │   └── hoverProps.js       <- Touch-safe props for JS-driven hover effects (replaces onMouseEnter/Leave)
 │   │   ├── hooks/
 │   │   │   ├── useWebSocket.js     <- Shared WebSocket hook
-│   │   │   ├── useProposalAutosave.js <- Proposal draft autosave: diff-only, 1.5 s debounce, one request in flight, back-off
+│   │   │   ├── useProposalAutosave.js <- Proposal draft autosave: diff-only, 1.5 s debounce, one request in flight, back-off;
+│   │   │   │                              `readiness()` says whether the server holds everything the person sees
+│   │   │   ├── useProposalActions.js, useFocusTrap.js, useFlashMessage.js, usePublicPageMeta.js  <- Proposals part B
 │   │   │   └── useAppTooltip.js    <- The one delegated tooltip controller (installTooltipController, called once in main.jsx)
+│   │   ├── test-fixtures/proposals/ <- TRACKED test data (the *.test.* files are gitignored): the 360-case send
+│   │   │                              pre-flight oracle generated from the real backend, and the pinned lifecycle/public tables
 │   │   └── styles/
 │   │       └── theme.css           <- All CSS custom properties
 │   └── index.html
@@ -651,7 +665,9 @@ client submitting a payment claim via the portal for the freelancer to
 review (PaymentClaimSubmitted) — not any payment being recorded, by
 anyone. Client Messages gates a client-authored portal comment
 (comment_posted) — the freelancer's own comments never self-notify,
-same self-trigger-exclusion reasoning.
+same self-trigger-exclusion reasoning. It also gates the bell and email when
+a client accepts or declines a proposal (the Settings > Notifications hint
+says so, 04 November 2026).
 
 Account deletion: password -> OTP -> confirm -> 30-day recovery window
 -> anonymize (never hard-delete) -> financial records (future modules)
@@ -2865,13 +2881,15 @@ Key API endpoints:
 ---
 
 ### Module 6 — Proposals
-Status: BACKEND COMPLETE (02 November 2026): part 1 (data model, CRUD, the code-computed quality
-score, AI generation) and part 2 (send, public client page, accept/decline, withdraw, duplicate,
-convert to a draft invoice, audit trail, notifications and emails, proposal numbers). FRONTEND PART A
-BUILT (03 November 2026, Prompt 05): list, create (AI or blank), draft editor with autosave, score and
-tips — see "Frontend part A" below. Part B (Prompt 06: the Send action, the public client page,
-withdraw, convert-to-invoice, the status timeline) is NOT built, so the app still cannot send a
-proposal and no real client can receive a link — do not enable for real clients before then.
+Status: COMPLETE (04 November 2026). Backend (02 November): part 1 (data model, CRUD, the code-computed
+quality score, AI generation) and part 2 (send, public client page, accept/decline, withdraw, duplicate,
+convert to a draft invoice, audit trail, notifications and emails, proposal numbers). Frontend part A
+(03 November): list, create (AI or blank), draft editor with autosave, score and tips. Frontend part B
+(04 November): the Send dialog, the client's public page at `/proposal/:token`, withdraw, convert to
+invoice, the activity timeline, the client's answer, the client link card and an in-app Preview — see
+"Frontend part B" below. Before enabling Proposals for real clients, run DEPLOYMENT.md Section 8's
+"Proposals release" notes and smoke tests 12-16 against the real deployment; Vercel's response headers
+for `/proposal/*` and real email delivery have not been exercised.
 App: apps/proposals/
 
 Manual proposal creation (built):
@@ -2951,8 +2969,8 @@ Key API endpoints — built (part 2):
 - POST /api/proposals/{id}/send/ + /withdraw/ + /duplicate/ + /convert-to-invoice/
 - GET /api/proposals/public/{view_token}/ + POST /api/proposals/public/{view_token}/respond/
 
-Not built: a "resend" action, expiry reminders, the React screens for sending / the public page / withdraw /
-convert / the timeline (Prompt 06), promoting the email HTML wrapper to core/.
+Not built: a "resend" action, expiry reminders, promoting the email HTML wrapper to core/. (The React screens
+for sending / the public page / withdraw / convert / the timeline are built — Frontend part B below.)
 
 Frontend part A (built 03 November 2026 — DECISIONS.md D1-D7): ROUTED pages inside AppShell, not a
 slide-in panel (a proposal is a long document): `/proposals` (list: search, status pills, 20/page like
@@ -2966,7 +2984,40 @@ The editor AUTOSAVES (no Save button): `useProposalAutosave` sends only changed 
 or server-refused ones, never more than one PUT in flight, backs off on network errors, pauses on 429,
 and the server's reply never overwrites typed text. The score is displayed exactly as returned (never
 computed in JavaScript). Money arithmetic lives in `proposalHelpers.js` (BigInt, half-even, golden-tested
-against the backend). No Send, public page, withdraw, convert or timeline UI yet (Prompt 06).
+against the backend). (Part A shipped without Send, the public page, withdraw, convert or the timeline — part B below.)
+
+Frontend part B (built 04 November 2026 — DECISIONS.md "Proposals frontend part B", D1-D12):
+- Header actions come from ONE table, `availableActions(detail)` in `src/pages/proposalLifecycle.js`, pinned by
+  tests to the HTTP status the real endpoints answer per proposal status — the UI never offers an action the
+  backend refuses (draft: Send, Preview, Duplicate, Delete; sent/viewed: Copy link, Preview, Duplicate,
+  Withdraw, also when expired; accepted: Create invoice / Open invoice, Copy link, Preview, Duplicate;
+  declined/withdrawn: Duplicate, Copy link, Preview).
+- Send (`SendProposalDialog.jsx`): flush autosave, then `autosave.readiness()` (NOT `flushNow()`, which says
+  true even for a field held back as invalid), then a dialog with a pre-flight checklist that mirrors the
+  backend's `_send_content_problem` (360 cases generated from the real function,
+  `src/test-fixtures/proposals/`), the method (email / just create the link), and a single-flight request with
+  a 45 s timeout. A lost answer is NEVER met with "try again": `classifySendFailure` separates definite
+  failures (our app answered with an `error` string, including the send view's own 502) from ambiguous ones,
+  and an ambiguous one is resolved by CHECKING (`GET /proposals/<id>/` at once and every 4 s for 36 s).
+- The client's page (`ProposalPublic.jsx`, route `/proposal/:token`): public, shell-less, fixed light palette
+  (DESIGN.md Section 10). View, then a three-step answer (choose, confirm with an optional message counted in
+  code points, recorded). Its wording never claims the sender was notified or that anything is legally binding
+  (the sender's bell/email depend on their own settings). It uses the bare `publicApi` instance, imports
+  neither the auth store nor the shared `api`, and reads no cookie or storage.
+- Withdraw (does NOT email the client), Convert to invoice ("save as client" defaults on only when no saved
+  client but a name and email), the Activity timeline, the Client link card (warns not to open it yourself),
+  the client's answer card, and an in-app Preview (`ProposalPreviewModal.jsx`, renders the same
+  `ProposalDocument` the public page uses, no side-effecting request). The UI never offers "open the public page":
+  the backend recognises the owner only from the 15-minute login cookie (DECISIONS.md part B, limit 3).
+- Shared pieces: `ProposalDialog.jsx` (frame), `ProposalHeader.jsx`, `useProposalActions.js`,
+  `useFocusTrap.js` (every Proposals dialog traps and restores focus), `useFlashMessage.js` (Duplicate's success
+  message was silently lost before), `usePublicPageMeta.js` (noindex + no-referrer while the public page is mounted).
+- Endpoints the frontend now uses (all pre-existing, no backend change): POST /api/proposals/{id}/send/ +
+  /withdraw/ + /convert-to-invoice/ + /duplicate/, GET /api/proposals/{id}/ (also the send/withdraw verification
+  read), GET /api/proposals/public/{view_token}/ and POST .../respond/ (public, via `publicApi`), GET /api/auth/profile/
+  (the Preview's business name and logo — read-only).
+- Tests: frontend 1037 of 1038 passing (221 new; the 1 failure is the pre-existing `SecuritySection.test.jsx`);
+  `src/test-fixtures/proposals/` is tracked on purpose (the `*.test.*` files are gitignored).
 
 ---
 
@@ -3080,7 +3131,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Payments + Expenses  | -       | -        | -     | Not started |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
-| Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A — list, create (AI/blank), draft editor with autosave, score/tips, read-only view for non-drafts (03 Nov 2026); part B (send, public page, withdraw, convert, timeline) not built (Prompt 06) | backend 479 passing (`apps.proposals` 299 incl. the 03 Nov PUT-limit tests + `core` 181); frontend 816 of 817 passing (188 new for Proposals; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Backend complete; frontend part A done, part B pending |
+| Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A (list, create, autosaving draft editor, score/tips) and part B (Send dialog with pre-flight and verify-by-checking, the client's public page `/proposal/:token`, withdraw, convert to invoice, activity timeline, client link, client's answer, in-app Preview) — 04 Nov 2026 | backend 479 passing (`apps.proposals` 299 + `core` 181; untouched by part B); frontend 1037 of 1038 passing (221 new for part B; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Complete; real-deployment smoke tests (DEPLOYMENT.md Section 8, items 12-16) still to run |
 | Contracts            | -       | -        | -     | Not started |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | -       | -        | -     | Not started |

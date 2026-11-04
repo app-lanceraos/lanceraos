@@ -263,6 +263,20 @@ account, check that same setting before launch**, and confirm with the PDF smoke
 
 ## 8. Smoke tests (run in order; stop at the first failure)
 
+**Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals
+(the AI writer, Send, the client's public page, accept/decline, withdraw, convert to invoice):
+
+- **Back up first:** run `deploy/backup.sh` (or Railway's own backup) *before* migrating.
+- **Migrations in this release:** `core.0006_aicalllog`, `proposals.0001_initial`,
+  `proposals.0002_proposal_part2_fields`. All additive; the `web` pre-deploy `migrate` applies them.
+- **`GROQ_API_KEY` must be set on the `web` AND the `worker` services.** Proposal generation itself runs
+  synchronously inside the request on `web`; the `worker` is given the same key so any AI call that is
+  ever moved to a background task does not silently fail. No other new variable.
+- **`FRONTEND_URL` must equal the public frontend origin exactly** (scheme + host, no trailing
+  slash, e.g. `https://lanceraos.com`): every link a client receives — the proposal email and the
+  copyable link — is built from it, and a wrong value sends clients to a page that does not exist.
+- **Run `python manage.py check_ai_models`** from a `web` shell and confirm every configured model answers.
+
 1. **Health:** `curl -i https://api.lanceraos.com/api/health/` -> `200 {"status":"ok"}`. Plain
    `curl -i http://api.lanceraos.com/api/auth/csrf/` -> `301` to https; the health URL over
    plain http -> `200` (exempt on purpose).
@@ -294,6 +308,24 @@ account, check that same setting before launch**, and confirm with the PDF smoke
     -> the two values differ by exactly 5 hours. If they're equal, `tzdata` is missing from the
     image and every due-date/overdue calculation is wrong for 5 hours a day.
 11. **Probe doesn't spam the log:** after 10 minutes, `ApiRequestLog.objects.filter(path='/api/health/').count()` is `0`.
+12. **Proposals — create a link:** create a proposal with AI (paste a real job post of 50+ characters),
+    set a valid-until date in the future, **Send** -> *Just create the link*. The proposal becomes *Sent*,
+    gets a number (`PRO-YYYY-NNNN`), and a link beginning with your frontend origin appears under
+    *Client link*.
+13. **Proposals — the client's page:** open that link in a **private window you control** — the page
+    loads with no redirect to `/login`. In DevTools -> Network select the page document and check the
+    response headers for `X-Robots-Tag: noindex, nofollow, noarchive` and `Referrer-Policy: no-referrer`
+    (these come from `frontend/vercel.json`; they cannot be checked locally). **Do not open the link in the
+    browser you are logged in with** — use *Preview* there: opening it yourself counts as your client
+    viewing it, and once your 15-minute login cookie has expired you are treated as a client.
+14. **Proposals — email:** send a second proposal **by email** to an inbox you own. It arrives (from your
+    custom SMTP if configured, else `noreply@lanceraos.com`) with a link beginning with the frontend
+    origin and *not* containing the proposal text; replying goes to your own account email.
+15. **Proposals — accept and convert:** in the private window, *Accept* with a short message. The page
+    says *Your answer has been recorded.* In the app the proposal shows *Accepted*, the message and the
+    time; **Create invoice** opens a draft invoice with the same items and totals.
+16. **Proposals — withdraw:** withdraw a third proposal (*More actions* -> *Withdraw*). Its link, reloaded
+    in the private window, shows *This proposal was withdrawn*.
 
 ## 9. Rollback
 

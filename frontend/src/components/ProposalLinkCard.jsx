@@ -1,0 +1,58 @@
+// src/components/ProposalLinkCard.jsx
+//
+// The permanent home of the client's link on a sent proposal: a read-only field
+// with a Copy button. The warning matters — the backend recognises the owner
+// only while their 15-minute login cookie is alive, so opening this link
+// yourself later counts as the client viewing it (DECISIONS.md part B, D9).
+// That is why the UI offers Preview and never "Open the public page".
+import { useEffect, useRef, useState } from 'react'
+import { Check, Copy } from 'lucide-react'
+
+import Card from '@/components/Card'
+
+const COPIED_RESET_MS = 2000
+
+export default function ProposalLinkCard({ url }) {
+  const [state, setState] = useState('idle') // idle | copied | failed
+  const inputRef = useRef(null)
+  const timer = useRef(null)
+
+  useEffect(() => () => clearTimeout(timer.current), [])
+
+  async function copy() {
+    clearTimeout(timer.current)
+    try {
+      await navigator.clipboard.writeText(url)
+      setState('copied')
+      timer.current = setTimeout(() => setState('idle'), COPIED_RESET_MS)
+    } catch {
+      // No clipboard (insecure context, denied permission): select the text so
+      // the person can copy it by hand.
+      inputRef.current?.focus()
+      inputRef.current?.select()
+      setState('failed')
+    }
+  }
+
+  return (
+    <Card title="Client link">
+      <p style={{ margin: '0 0 10px', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+        Your client opens this link. No login is needed, and anyone who has the link can read this proposal.
+      </p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          ref={inputRef} readOnly value={url} aria-label="Client link" className="fos-input"
+          onFocus={(e) => e.target.select()} style={{ flex: 1, minWidth: 0, fontSize: '0.78rem' }}
+        />
+        <button type="button" className="fos-btn fos-btn-ghost" onClick={copy}>
+          {state === 'copied' ? <Check size={14} /> : <Copy size={14} />}
+          <span role="status">{state === 'copied' ? 'Copied' : 'Copy'}</span>
+        </button>
+      </div>
+      {state === 'failed' && <p className="fos-hint" style={{ margin: '8px 0 0' }}>Press Ctrl+C (or long-press) to copy.</p>}
+      <p style={{ margin: '10px 0 0', fontSize: '0.76rem', color: 'var(--status-amber-text)', lineHeight: 1.5 }}>
+        Don&apos;t open this link yourself to test it. Use Preview. Opening it counts as your client viewing it.
+      </p>
+    </Card>
+  )
+}

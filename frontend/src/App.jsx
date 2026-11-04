@@ -40,6 +40,7 @@ import PortalPayments from '@/pages/portal/PortalPayments'
 import PortalThemeRoot from '@/pages/portal/PortalThemeRoot'
 import InvoiceView from '@/pages/InvoiceView'
 import PaymentDetails from '@/pages/PaymentDetails'
+import ProposalPublic from '@/pages/ProposalPublic'
 import InvoicePreviewPdf from '@/pages/InvoicePreviewPdf'
 
 export default function App() {
@@ -142,6 +143,12 @@ export default function App() {
             payment methods and has no view-tracking side effects — see
             PaymentDetails.jsx's own header comment. */}
         <Route path="/invoice/:token/pay" element={<PaymentDetails />} />
+
+        {/* The client's proposal page (Proposals frontend part B) — public,
+            shell-less and outside every guard: the token in the URL is the
+            credential. It uses the bare publicApi instance, never the shared
+            one (see ProposalPublic.jsx and lib/api.js). */}
+        <Route path="/proposal/:token" element={<ProposalPublic />} />
 
         {/* Private — require an active session */}
         {/* NewInvoiceWizard.jsx's "Preview PDF" action — real bug fix,

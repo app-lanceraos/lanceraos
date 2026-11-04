@@ -156,7 +156,7 @@ export default function ProposalClientFields({ value, onChange, errors = {}, dis
           {dropdown}
         </div>
         <ProposalTextField
-          label="Client email" type="email" value={value.client_email} disabled={disabled} error={errors.client_email}
+          id="proposal-field-client-email" label="Client email" type="email" value={value.client_email} disabled={disabled} error={errors.client_email}
           onChange={(text) => onChange({ client_email: text, client: null })}
           hint="Needed to send the proposal by email"
         />
