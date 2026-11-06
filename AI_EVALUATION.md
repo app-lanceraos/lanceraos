@@ -192,3 +192,13 @@ python manage.py evaluate_proposal_ai --rescore eval_runs/<run>/results.jsonl   
 Re-run after **any change to `apps/proposals/prompts.py`** and after **any change to the Groq models**
 (`GROQ_MODEL_QUALITY` / `GROQ_MODEL_FAST`), and record the result here. A full pass is 24 requests and takes about
 12 minutes at a 25-second pause.
+
+## 13. Decisions (owner, 04 November 2026)
+
+1. **Injection resistance (1 violation in 6 canary checks): accepted as a documented known limit.** The output is a
+   draft that the freelancer reads and edits before anything is sent; the model has no tools and no data beyond what
+   is in the prompt, so an obeyed injection can at worst change the wording of a draft the owner sees. It will be
+   re-measured before public launch on the paid tier, and after any prompt change (Section 12).
+2. **`specifics` score: kept as is.** AI drafts top out near 9/10 because the check awards its point only for a number
+   written with digits, and the score card already tells the freelancer to add a real figure. `scoring.py` stays
+   frozen; revisit only if the product wants it.

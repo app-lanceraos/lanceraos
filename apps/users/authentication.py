@@ -126,10 +126,28 @@ def identify_user_from_refresh_cookie(request):
 
     Why it exists: the public proposal page must know whether the person looking is
     the proposal's owner, but the access cookie lives 15 minutes while the refresh
-    cookie lives 30-90 days, and that page deliberately never calls /auth/ (so
-    nothing renews the access cookie while the owner reads their own proposal).
-    Without this, an owner opening their own link after 15 minutes was treated as
-    a client and counted as a view.
+    cookie lives 30-90 days. ProposalPublic itself makes no /auth/ request, but
+    App.jsx runs authStore.initialize() on every route, so a browser holding the
+    non-secret lanceraos_has_session hint sends GET /auth/me/ alongside the proposal
+    GET and, with the access cookie expired (the browser no longer sends it), a
+    silent POST /auth/token/refresh/ after that 401. The proposal GET therefore
+    arrives with no access cookie, which is why this fallback is needed. Without it,
+    an owner opening their own link after 15 minutes was treated as a client and
+    counted as a view.
+
+    Known race (it can still happen): refresh() rotates the Session row IN PLACE
+    (Session.rotate overwrites the one stored hash) and nothing accepts the previous
+    refresh token, so there is no grace period. If that rotation has committed
+    before the proposal request is looked at, the old refresh cookie the proposal
+    request carries no longer matches any row, Session.get_valid() is None, and the
+    owner is treated as a client: the proposal flips sent -> viewed once and one
+    proposal_viewed audit row is written. The refresh POST is only sent after
+    /auth/me/ has come back 401, i.e. at least one full round trip after the
+    proposal GET was sent, so it needs a slow proposal response to happen. Nothing
+    is lost or granted: the owner just sees the client view for that load, and a
+    reload (which then carries the rotated cookie) is recognised correctly. A
+    pinned test (test_owner_recognition.py, OwnerRecognitionRotationRaceTests)
+    documents this on purpose.
 
     The answer can only ever REDUCE what happens (the owner sees a preview, the view
     is not counted, they cannot answer); it grants nothing. A cookie that passes

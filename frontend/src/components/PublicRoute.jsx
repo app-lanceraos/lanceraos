@@ -28,7 +28,7 @@ export default function PublicRoute({ children }) {
   // renders for someone who genuinely needs to sign in, and if a retry
   // (hooks/useAuthInitRetry.js) later succeeds, the redirect below fires.
   if (isAuthenticated && !deletionScheduledAt) {
-    return <Navigate to="/profile" replace />
+    return <Navigate to="/dashboard" replace />
   }
 
   return children

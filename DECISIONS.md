@@ -15834,3 +15834,57 @@ no `/auth/` request. (2) The F5 overflow in a real browser: without the fix the 
 Known limits / not done: the owner is recognised only through the refresh cookie while that session row is valid (a revoked or expired session means "client"); an owner on another device with no session
 is a client, correctly. The editor's unsaved-typing window of up to 10 seconds is a design choice. The Groq free-tier ceilings (1000 requests/day, 8000 tokens/minute) are a development allowance, not a production plan.
 Vercel's headers and real email delivery are still unverified (DEPLOYMENT.md Section 8, items 12-16, with the two new items 13a/13b).
+
+Known limit added 04 November 2026 (Dashboard prompt, Part 0.1 — the exact statement): the owner can still be counted as a client for one load. `auth.refresh()` rotates the Session row IN PLACE
+(`Session.rotate` overwrites the single stored hash; `Session.get_valid` matches only that hash), and nothing accepts the previous refresh token, so there is NO grace period. A signed-in browser with
+an expired access cookie sends `GET /auth/me/` (App.jsx `initialize()`), gets a 401, and only then sends the silent `POST /auth/token/refresh/`, i.e. at least one full round trip after the
+proposal GET was sent. If that rotation has committed before the proposal request is looked at, the proposal request's (old) refresh cookie matches no row, `identify_user_from_refresh_cookie`
+returns None, and the owner is treated as a client: the proposal flips sent -> viewed once and one `proposal_viewed` audit row is written, no preview banner. Nothing is granted or lost, and a reload carries
+the rotated cookie and is recognised. Two concurrent refreshes with the same cookie are not serialised either (the check and the rotation are separate statements), but that is the login core and untouched.
+Pinned by `OwnerRecognitionRotationRaceTests`. The comments in `apps/users/authentication.py` and `ProposalLinkCard.jsx` that implied the public page never causes `/auth/` traffic were corrected the same day
+(the page's own code makes none; the app shell around it does).
+
+---
+
+Date: 04 November 2026 (owner decisions recorded after the Proposals close-out)
+Decision 1 — injection resistance. The 1 violation in 6 canary checks (`AI_EVALUATION.md` Sections 3 and 4) is accepted as a documented known limit. Reason: the proposal text is a draft the freelancer reads and edits before
+sending; the model has no tools and no data beyond the prompt, so the worst an obeyed injection can do is change the wording of a draft the owner is looking at. It will be re-measured before public launch on the paid
+tier and after any change to `apps/proposals/prompts.py` or the Groq models.
+Decision 2 — the `specifics` score. Kept as is. Reason: AI drafts top out near 9/10 because the check awards its point only for a number written with digits, and the score card already tells the freelancer to add a
+real figure. `apps/proposals/scoring.py` stays frozen; revisit only if the product wants it.
+Alternatives considered: tightening the prompt now (rejected for 1 — a prompt change forces a full re-evaluation, 24 requests, for a risk the output review already contains); loosening the check to accept number
+words (rejected for 2 — it changes a frozen, tested scoring contract for a cosmetic gain).
+
+---
+
+Date: 04 November 2026 (Module 9 — Dashboard, without AI)
+Scope: `apps/dashboard` (data) and the `/dashboard` page, plus the extraction of the invoice KPI maths into `apps/invoices/kpis.py`, plus three small follow-ups from the Proposals close-out. The AI insights card is a separate, later prompt that plugs into this page.
+
+Decisions (taken by the architect on the owner's delegation, with the reasons):
+D1. A thin `apps/dashboard/` app (`apps.py`, `services.py`, `views.py`, `urls.py`; no models, no migration). CLAUDE.md used to say the dashboard is "not a separate app"; that line is superseded. Reason: the aggregation needs a home with its own URLs and tests, and putting it in
+`apps/invoices` would make Invoices import Proposals and Clients (CLAUDE.md already forbids `apps.clients` importing `apps.invoices`). The dashboard sits at the TOP of the dependency tree: it may import models and shared helpers; no other app may import it; it never imports another app's `views*`
+modules. Enforced by AST tests (`test_import_direction.py`, which also asserts its own walker sees the dashboard's real imports so it cannot pass vacuously). Rule recorded in STANDARDS.md.
+D2. One aggregate endpoint with per-section isolation. One round trip, one consistent moment, one loading state; each section has its own builder and an unexpected exception in one is logged (`logger.exception`) and that section becomes `{"available": false}` while the others still return (200). Rejected: the page fanning
+out to six endpoints (six spinners, per-endpoint currency inconsistencies — the existing analytics trend is USD-only — and `needs_attention` needs new endpoints anyway). The try/except lives in the VIEW (the loop over `services.SECTION_BUILDERS`), so a new section is one line in the table and cannot forget it.
+D3. No second copy of any invoice rule. `apps/invoices/kpis.py` now holds `ACTIVE_STATUSES`, `kpi_period_window`, `outstanding_invoices(user, start, end)`, `overdue_narrowing`, `sum_outstanding_amount`, `collected_amount`, `all_time_collected_amount` and `month_over_month_collected`; `invoice_summary` is a thin wrapper and the dashboard
+calls the same functions. Verified byte-identical: 7 seeded scenarios (empty; USD-only; mixed USD+PKR with frozen rates and a snapshot; a NULL-rate EUR row; partially-paid and overdue; payments on the last day of last month and the first of this month; a refunded paid invoice) x 4 periods x 4 currency variants captured before and after — an empty `diff -r`. `ACTIVE_STATUSES` is
+re-exported from `apps.invoices.views` because `views_portal.py` and the client-status drift test import it from there. The income trend is `collected_amount()` once per calendar month, so the last bar equals "Paid this month" by construction (tested, including across a year boundary).
+THE TRAP (why the dashboard cannot just call `invoice_summary`): with the default `?period=this_month`, Outstanding and Overdue are scoped to invoices ISSUED in the current month — a different question from "what is owed to me today". The dashboard's Outstanding takes no window; "Paid this month" is the payment-date-windowed Collected figure. A test (`test_the_this_month_outstanding_trap_is_real_and_the_dashboard_avoids_it`) pins both.
+D4. Currency convention = the app's existing one: the user's `default_currency`; frozen rate into USD, today's rate out. Consequence the owner must know: for a user who invoices in USD and displays PKR, past months' PKR bars move with today's rate. The "historical rate" decision belongs to the Payments module and is not decided here; the chart says "shown in PKR at today's exchange rate".
+Anything that cannot be honestly converted is counted in `unconverted_count` and the card says so, never guessed, never silently dropped.
+D5. Widgets: greeting; 4 KPI cards; 6-month income chart; Needs attention; Upcoming recurring (next 7 days); Recent activity; exchange rates. NOT built, no placeholder rendered: the Financial Health widget (the Health Score module adds it) and AI insights (the next prompt). "Live" exchange rates are a DAILY snapshot; the card says "Daily rate · updated <date>", never "live", and shows an amber note when the snapshot is older than three days.
+D6. Recent activity is built from the domain tables, not `core.AuditLog` (audit rows are forensic, lack numbers and names, and nothing is audited for "a client viewed your invoice"). Last 14 days; each source contributes at most its 8 newest rows; merge, newest first (ties: kind, then id — two stable sorts), keep 8. A view or a client message appears once per invoice (its latest). `InvoicePartialPayment` has only a calendar
+`payment_date` (which can be backdated), so a payment's activity time is `recorded_at` — when it was recorded, which is what "activity" means.
+D7. Times are naive Pakistan time shown as written with a PKT label; no relative times (they would be wrong for a browser outside PKT). The greeting alone uses the device clock (05:00-11:59 morning, 12:00-16:59 afternoon, otherwise evening; no "Good night").
+D8. `/dashboard` is the landing page: `/` and `PublicRoute` redirect to it (Login's `getRedirectPath()` already defaulted to `/dashboard`, which until now fell through the catch-all to `/profile`). Left pointing at `/profile` on purpose: Onboarding's completion navigate, ChangeEmail, ActivateEmail, DeletionReview (cancel and token-missing), AppShell's own profile links, and the page-title map.
+D9. Out of scope and untouched: `scoring.py` (both), `core/ai.py`, any AI call, the Health Score, Payments, migrations, new dependencies, an ESLint config.
+
+Decisions the prompt left open (and what was chosen): KPI tiles link to the plain `/invoices` and `/clients` because `Invoices.jsx` reads only `invoice`, `new_for_client` and `tab`, and `Clients.jsx` only `client` and `tab` — no filter params exist to link to, and none were added. Greeting, links and wording live in `pages/dashboardHelpers.js` (pure, tested) rather than in
+`Dashboard.jsx`. Dates use `en-GB` so day-month-year order does not depend on the browser's locale. An error with data already on screen keeps the data and shows the alert with Retry above it.
+
+Part 0 follow-ups: (0.1) two comments (`identify_user_from_refresh_cookie`'s docstring, `ProposalLinkCard.jsx`) wrongly implied the public proposal page never causes `/auth/` traffic; corrected, and the exact race is recorded under "Known limit added 04 November 2026" in the Proposals close-out entry above. (0.2) Two prompt-07 mutations did not fail in their literal form;
+tests added so each fails (another user's valid access cookie must not even consult the refresh cookie; the helper must neither write to nor delete the session row, tested on the helper itself with every refusal reason). (0.3) The owner's two Proposals decisions are recorded in the entry directly above and in AI_EVALUATION.md Section 13.
+
+Known limits, stated plainly: refunds are not netted from "Paid this month" (a refund has no per-transaction date; same gap as the Invoices KPI strip); the display-currency history moves with today's rate (D4); rates are a daily snapshot; no Financial Health widget and no AI insights yet; `rate_limited` is imported from `apps.proposals.ratelimit` (promoting it to `core/` is a later chore); the endpoint costs 45 queries per request
+(measured; identical with 1 and with 25 rows of every kind, pinned by a test) — acceptable for one page load, worth revisiting only if the dashboard becomes a polling target.
+

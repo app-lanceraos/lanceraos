@@ -21,6 +21,7 @@ import AddPassword from '@/pages/AddPassword'
 import DeletionReview from '@/pages/DeletionReview'
 import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
+import Dashboard from '@/pages/Dashboard'
 import Clients from '@/pages/Clients'
 import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
@@ -180,6 +181,11 @@ export default function App() {
           path="/settings"
           element={<PrivateRoute><AppShell><Settings /></AppShell></PrivateRoute>}
         />
+        {/* Module 9 — the landing page. `/` and PublicRoute both send a signed-in person here. */}
+        <Route
+          path="/dashboard"
+          element={<PrivateRoute><AppShell><Dashboard /></AppShell></PrivateRoute>}
+        />
         <Route
           path="/clients"
           element={<PrivateRoute><AppShell><Clients /></AppShell></PrivateRoute>}
@@ -219,10 +225,9 @@ export default function App() {
           element={<PrivateRoute><AppShell><ProposalEditor /></AppShell></PrivateRoute>}
         />
 
-        {/* No dedicated landing page yet (separate future work) — send
-            the root straight to Profile; PrivateRoute bounces to /login
-            if there's no active session. */}
-        <Route path="/" element={<Navigate to="/profile" replace />} />
+        {/* The root is the Dashboard; PrivateRoute bounces to /login if
+            there's no active session. */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

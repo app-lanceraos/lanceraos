@@ -669,6 +669,26 @@ Freelancer-side displays label them: `formatTimestampPkt` appends " PKT" (a list
 e.g. "Updated (PKT)"). The public client page already labels its times PKT. Converting to the profile's timezone is
 a separate, platform-wide decision, not made here.
 
+### Dashboard layout (`/dashboard`, 04 November 2026)
+
+Header: `h1` greeting ("Good morning, Ali") plus the device-local date. The greeting is the ONE thing on the page that uses
+the device clock: 05:00-11:59 "Good morning", 12:00-16:59 "Good afternoon", otherwise "Good evening" (never "Good night", it is
+a farewell). Name = first name, else username, else none. Everything else is naive Pakistan time shown as written with a PKT
+label; no relative times.
+
+Desktop (a CSS grid with named areas, 16px gap): a row of four KPI tiles; then `chart chart attention` / `activity activity
+upcoming` / `activity activity rates`. At <= 768px it is one column in the order **greeting, KPIs (2 x 2), Needs attention,
+chart, Upcoming, Activity, Rates** — what needs action comes before history (the grid items carry `order`). Nothing may scroll
+horizontally at 320px.
+
+Pieces: every section is a `DashboardCard` (the standard card recipe, a real `h2`, a `<section>` landmark). KPI tiles are real
+`<Link>`s (never clickable divs) with the `InvoiceKPIStrip` look. A section the server could not build shows "Couldn't load
+this section." and a Reload button inside its own card; the others render normally. Loading is a grey skeleton in the final
+layout (`skeleton-pulse`); a refetch dims the page (opacity .6) instead of unmounting it. The chart is one series, no legend,
+colours from the `--chart-series-collected` pair mirrored as hex, `role="img"` with a one-sentence label, plus a
+visually-hidden table of the six values next to it. Rates are labelled "Daily rate · updated <date>", never "live".
+Keyboard: every link shows a `:focus-visible` ring (`.dash-link`, 2px accent outline).
+
 ## 8. Animation and Transitions
 
 ### Timing tokens

@@ -6,6 +6,14 @@
 // DECISIONS.md "Proposals close-out"), so the same link opened signed out, in a
 // private window or on another device counts as the client viewing it. The UI
 // still offers Preview and never "Open the public page".
+//
+// Note: ProposalPublic itself makes no /auth/ request, but App.jsx runs
+// authStore.initialize() on every route, so a signed-in browser also sends
+// /auth/me/ (and, with the access cookie expired, a silent /auth/token/refresh/)
+// next to the proposal request. If that refresh commits before the proposal
+// request is handled, the old refresh cookie it carries is already rotated away
+// (no grace period) and the owner is counted as a client for that one load.
+// Rare, harmless, self-correcting on reload; see apps/users/authentication.py.
 import { useEffect, useRef, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 

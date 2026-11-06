@@ -337,6 +337,10 @@ account, check that same setting before launch**, and confirm with the PDF smoke
     time; **Create invoice** opens a draft invoice with the same items and totals.
 16. **Proposals — withdraw:** withdraw a third proposal (*More actions* -> *Withdraw*). Its link, reloaded
     in the private window, shows *This proposal was withdrawn*.
+17. **Dashboard (Module 9):** log in: you land on `/dashboard` (and `/` redirects there). *Outstanding* equals the Invoices
+    page KPI strip set to **All Time**; *Paid this month* equals it set to **This Month**; the *Exchange rates* card shows
+    today's date (a stale note means the 8:00 AM rate fetch missed days). Dashboard needs **no new environment variable and
+    no migration** — deploying it is a code-only release (`python manage.py makemigrations --check --dry-run` reports none).
 
 ## 9. Rollback
 

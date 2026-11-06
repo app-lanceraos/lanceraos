@@ -1,0 +1,198 @@
+{
+  "currency": "PKR",
+  "generated_at": "2026-11-04T10:15:00.000000",
+  "kpis": {
+    "available": true,
+    "outstanding": { "total": "412500.00", "count": 5, "unconverted_count": 0 },
+    "overdue": { "total": "96000.00", "count": 2, "unconverted_count": 0 },
+    "paid_this_month": {
+      "total": "250000.00",
+      "count": 3,
+      "unconverted_count": 0,
+      "previous_month_total": "200000.00",
+      "pct_change": 25.0
+    },
+    "active_clients": { "count": 7 }
+  },
+  "income_trend": {
+    "available": true,
+    "months": [
+      { "month": "2026-06", "collected": "120000.00" },
+      { "month": "2026-07", "collected": "185000.00" },
+      { "month": "2026-08", "collected": "90000.00" },
+      { "month": "2026-09", "collected": "310000.00" },
+      { "month": "2026-10", "collected": "200000.00" },
+      { "month": "2026-11", "collected": "250000.00" }
+    ],
+    "total": "1155000.00",
+    "unconverted_count": 0
+  },
+  "needs_attention": {
+    "available": true,
+    "overdue_invoices": {
+      "total_count": 7,
+      "items": [
+        {
+          "id": "0b9d6a3e-7f4a-4a52-9a0e-2f8d6c1e0a11",
+          "invoice_number": "INV-2026-0012",
+          "client_name": "Northwind Studio",
+          "days_overdue": 31,
+          "outstanding": "1200.00",
+          "currency": "USD"
+        },
+        {
+          "id": "6c1f3d52-0a2b-47c8-8e5f-4a1b7d9c2e22",
+          "invoice_number": "INV-2026-0015",
+          "client_name": "Lumen Labs",
+          "days_overdue": 9,
+          "outstanding": "45000.00",
+          "currency": "PKR"
+        }
+      ]
+    },
+    "unread_messages": {
+      "total_count": 3,
+      "invoice_count": 2,
+      "items": [
+        {
+          "invoice_id": "0b9d6a3e-7f4a-4a52-9a0e-2f8d6c1e0a11",
+          "invoice_number": "INV-2026-0012",
+          "client_name": "Northwind Studio",
+          "unread_count": 2,
+          "latest_at": "2026-11-04T08:30:00"
+        },
+        {
+          "invoice_id": "9e2a7b44-3c15-4d6e-b8a0-5f7c1d3e4b33",
+          "invoice_number": "INV-2026-0018",
+          "client_name": "Fable & Co",
+          "unread_count": 1,
+          "latest_at": "2026-11-02T16:05:00"
+        }
+      ]
+    },
+    "proposals_awaiting": {
+      "total_count": 2,
+      "items": [
+        {
+          "id": "3a8c5e17-9b2d-4f60-a1c4-7e9d0b2f5a44",
+          "proposal_number": "PRO-2026-0004",
+          "title": "Brand site rebuild",
+          "client_name": "Orchard Goods",
+          "status": "viewed",
+          "sent_at": "2026-10-20T11:00:00",
+          "valid_until": "2026-11-20",
+          "is_expired": false
+        },
+        {
+          "id": "d41e6f08-2a7c-4b93-8c15-0e3a9f6b7c55",
+          "proposal_number": "PRO-2026-0006",
+          "title": "Mobile app audit",
+          "client_name": "Harbor Logistics",
+          "status": "sent",
+          "sent_at": "2026-10-29T09:40:00",
+          "valid_until": "2026-11-01",
+          "is_expired": true
+        }
+      ]
+    }
+  },
+  "upcoming_recurring": {
+    "available": true,
+    "total_count": 2,
+    "items": [
+      {
+        "invoice_id": "b7e0c2a9-5d31-4e8f-96a2-1c4d8e0f3a66",
+        "invoice_number": "INV-2026-0003",
+        "client_name": "Retainer Co",
+        "next_date": "2026-11-06",
+        "amount": "800.00",
+        "currency": "USD",
+        "auto_send": true
+      },
+      {
+        "invoice_id": "f2d9a4c1-8e63-4b07-a5d9-3e6b0c7a1d77",
+        "invoice_number": "INV-2026-0009",
+        "client_name": "Monthly Media",
+        "next_date": "2026-11-10",
+        "amount": "55000.00",
+        "currency": "PKR",
+        "auto_send": false
+      }
+    ]
+  },
+  "recent_activity": {
+    "available": true,
+    "items": [
+      {
+        "kind": "payment_received",
+        "at": "2026-11-04T09:12:00",
+        "invoice_id": "0b9d6a3e-7f4a-4a52-9a0e-2f8d6c1e0a11",
+        "number": "INV-2026-0012",
+        "client_name": "Northwind Studio",
+        "amount": "300.00",
+        "currency": "USD"
+      },
+      {
+        "kind": "client_message",
+        "at": "2026-11-04T08:30:00",
+        "invoice_id": "0b9d6a3e-7f4a-4a52-9a0e-2f8d6c1e0a11",
+        "number": "INV-2026-0012",
+        "client_name": "Northwind Studio"
+      },
+      {
+        "kind": "invoice_viewed",
+        "at": "2026-11-03T17:45:00",
+        "invoice_id": "6c1f3d52-0a2b-47c8-8e5f-4a1b7d9c2e22",
+        "number": "INV-2026-0015",
+        "client_name": "Lumen Labs"
+      },
+      {
+        "kind": "invoice_sent",
+        "at": "2026-11-03T10:00:00",
+        "invoice_id": "9e2a7b44-3c15-4d6e-b8a0-5f7c1d3e4b33",
+        "number": "INV-2026-0018",
+        "client_name": "Fable & Co",
+        "amount": "2500.00",
+        "currency": "USD"
+      },
+      {
+        "kind": "proposal_accepted",
+        "at": "2026-11-02T13:20:00",
+        "proposal_id": "3a8c5e17-9b2d-4f60-a1c4-7e9d0b2f5a44",
+        "number": "PRO-2026-0004",
+        "client_name": "Orchard Goods"
+      },
+      {
+        "kind": "proposal_declined",
+        "at": "2026-11-01T15:10:00",
+        "proposal_id": "d41e6f08-2a7c-4b93-8c15-0e3a9f6b7c55",
+        "number": "PRO-2026-0006",
+        "client_name": "Harbor Logistics"
+      },
+      {
+        "kind": "proposal_viewed",
+        "at": "2026-10-31T12:00:00",
+        "proposal_id": "3a8c5e17-9b2d-4f60-a1c4-7e9d0b2f5a44",
+        "number": "PRO-2026-0004",
+        "client_name": "Orchard Goods"
+      },
+      {
+        "kind": "proposal_sent",
+        "at": "2026-10-30T09:40:00",
+        "proposal_id": "d41e6f08-2a7c-4b93-8c15-0e3a9f6b7c55",
+        "number": "PRO-2026-0006",
+        "client_name": "Harbor Logistics"
+      }
+    ]
+  },
+  "exchange_rates": {
+    "available": true,
+    "date": "2026-11-04",
+    "stale": false,
+    "pairs": [
+      { "from": "USD", "to": "PKR", "rate": "281.50" },
+      { "from": "EUR", "to": "PKR", "rate": "305.20" },
+      { "from": "GBP", "to": "PKR", "rate": "352.80" }
+    ]
+  }
+}

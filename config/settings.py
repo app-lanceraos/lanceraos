@@ -113,10 +113,11 @@ INSTALLED_APPS = [
     'apps.clients',
     'apps.invoices',
     'apps.proposals',
+    'apps.dashboard',
     # Future modules join this list as their own chats build them:
     # 'apps.tax', 'apps.health',
     # 'apps.contracts', 'apps.subscriptions',
-    # 'apps.dashboard', 'apps.insights', 'apps.assistant',
+    # 'apps.insights', 'apps.assistant',
 ]
 
 MIDDLEWARE = [

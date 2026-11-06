@@ -421,7 +421,8 @@ lanceraos/                          <- Django project root
 │   │   ├── views_users.py                  <- Search/detail/sessions/suspend/reactivate/grant/revoke
 │   │   ├── views_audit.py                   <- Audit log viewer (filterable)
 │   │   └── views_deletion.py                 <- Deletion-queue management
-│   ├── invoices/                   <- BUILT: models.py (10 tables — Invoice/InvoiceItem/
+│   ├── invoices/                   <- BUILT (kpis.py, 04 Nov 2026: the Outstanding/Overdue/Collected/month-over-month
+│   │                                  maths, shared by invoice_summary and the Dashboard): models.py (10 tables — Invoice/InvoiceItem/
 │   │                                  InvoicePartialPayment/InvoiceReminder/InvoiceViewEvent/
 │   │                                  InvoiceComment/PaymentClaim/InvoiceDesign/InvoicePreset/
 │   │                                  InvoicePresetItem) + serializers.py/views.py/urls.py
@@ -449,6 +450,12 @@ lanceraos/                          <- Django project root
 │   │                                  expenses, P&L, CSV import — NOT YET BUILT.
 │   ├── tax/                        <- FBR tax, SRO 586, income certificate
 │   ├── health/                     <- Financial health score
+│   ├── dashboard/                  <- Dashboard — BUILT (04 November 2026). No models, no migration:
+│   │                                  services.py (one builder per section), views.py (GET
+│   │                                  /api/dashboard/summary/, per-section isolation), urls.py.
+│   │                                  Sits at the TOP of the dependency tree: imports models and
+│   │                                  shared helpers (apps.invoices.kpis, core.*) from other apps;
+│   │                                  NO other app may import it (AST-tested).
 │   ├── proposals/                  <- Proposals + AI writer
 │   ├── contracts/                  <- Contracts + digital signing
 │   └── subscriptions/              <- Free/Pro plans and enforcement
@@ -460,6 +467,10 @@ lanceraos/                          <- Django project root
 │   │   │   │                          implementation, see rule 5
 │   │   │   ├── PrivateRoute.jsx    <- Redirects to /login if not authenticated
 │   │   │   ├── ClientTable.jsx     <- Desktop client list table (Clients.jsx); mirrors InvoiceTable.jsx
+│   │   │   ├── DashboardCard.jsx, DashboardKpiCard.jsx, DashboardIncomeChart.jsx, DashboardAttentionCard.jsx,
+│   │   │   │   DashboardUpcomingCard.jsx, DashboardActivityCard.jsx, DashboardRatesCard.jsx, DashboardUnavailable.jsx
+│   │   │   │                          <- Dashboard cards (pages/Dashboard.jsx + pages/dashboardHelpers.js — the /dashboard
+│   │   │   │                             landing page; all wording, links and greeting rules live in the helpers)
 │   │   │   ├── ProposalTable.jsx, ProposalStatusBadge.jsx, ProposalClientFields.jsx, ProposalFields.jsx,
 │   │   │   │   ProposalItemsEditor.jsx, ProposalScopeEditor.jsx, ProposalScoreCard.jsx, ProposalTipsCard.jsx,
 │   │   │   │   ProposalSaveIndicator.jsx, ProposalColumns.jsx, ProposalReadOnlyView.jsx
@@ -3083,24 +3094,50 @@ Key API endpoints:
 ---
 
 ### Module 9 — Dashboard
-Status: [updated as built]
-Not a separate app - aggregates data from all other apps.
+Status: BUILT without AI (04 November 2026). The AI income insights card is a separate, later prompt that plugs into
+this page; the Financial Health widget arrives with the Health Score module. Neither is rendered as a placeholder.
+App: apps/dashboard/ — a thin app: `services.py` (one builder per section), `views.py`, `urls.py`; no models, no
+migration. (This section used to say "not a separate app"; superseded — the aggregation needs its own URLs and tests, and
+putting it in apps/invoices would make Invoices import Proposals and Clients. DECISIONS.md, 04 November 2026.)
 
-Contents:
-- Time-aware greeting
-- 4 KPI cards: Outstanding, Paid this month, Overdue, Active clients
-- Income trend bar chart (last 6 months, PKR) via Recharts
-- Financial health mini widget
-- AI income insights (3 specific insights, cached 24 hours)
-- Upcoming recurring invoices (next 7 days)
-- Recent activity feed
-- Live exchange rates (USD/EUR/GBP to PKR)
-- Needs attention section (overdue invoices, unread messages,
-  unanswered proposals)
+Dependency direction: the dashboard sits at the TOP of the tree. It may import models and shared helpers from any app
+(`apps.invoices.kpis`, `core.*`); no other app may import `apps.dashboard`; it never imports another app's `views*`
+modules. `apps/dashboard/tests/test_import_direction.py` enforces both with the AST.
+
+One aggregate endpoint, `GET /api/dashboard/summary/` (IsAuthenticated, 240 reads/hour/user, `Cache-Control: no-store`).
+Each section is built by its own function; an unexpected exception in one is logged and that section becomes
+`{"available": false}` while the others still return (status 200). Sections: `kpis`, `income_trend`, `needs_attention`,
+`upcoming_recurring`, `recent_activity`, `exchange_rates`. Measured cost: 45 queries per request, identical with 1 and
+with 25 rows of every kind (a test pins that they do not grow).
+
+No second copy of any invoice rule: the money figures come from `apps/invoices/kpis.py` — the functions `invoice_summary`
+calls. Trap avoided on purpose: the Invoices page's default `period=this_month` scopes Outstanding/Overdue to invoices
+ISSUED in that window; the Dashboard's Outstanding is everything outstanding today (no window), and "Paid this month" is
+the payment-date-windowed Collected figure. The income trend is `collected_amount()` once per calendar month, so the last
+bar equals "Paid this month" by construction (a test pins it, including across a year boundary).
+
+Widgets built: time-aware greeting (the one thing that uses the device clock: 05:00-11:59 morning, 12:00-16:59 afternoon,
+otherwise evening); 4 KPI cards (Outstanding, Overdue, Paid this month with an arrow + percent only when there is a previous
+month, Active clients); 6-month income bar chart; Needs attention (overdue invoices, unread client messages, proposals
+awaiting an answer — top 5 each with "and N more"); Upcoming recurring invoices (next 7 days, both ends inclusive);
+Recent activity (last 14 days, built from the domain tables, not core.AuditLog); Exchange rates (USD/EUR/GBP to PKR, a
+DAILY snapshot labelled "Daily rate · updated <date>", never "live"). Times are naive Pakistan time shown as written with a
+PKT label; there are no relative times. Landing page: `/` and `PublicRoute` now go to `/dashboard`.
+
+Currency convention (the app's existing one): the user's `default_currency`; frozen rate into USD, TODAY's rate out. So for
+a user who invoices in USD and displays PKR, past months' bars move with today's rate — the "historical rate" decision
+belongs to the Payments module. Anything that cannot be honestly converted is counted in `unconverted_count`, never
+guessed and never dropped silently. Known gaps, stated: refunds are not netted from "Paid this month" (a refund has no
+per-transaction date), no Financial Health widget yet, AI insights still to come.
 
 Key API endpoints:
-- GET /api/dashboard/summary/
-- GET /api/dashboard/insights/
+- GET /api/dashboard/summary/ (built)
+- GET /api/dashboard/insights/ (not built — the AI insights prompt)
+
+Tests: backend `apps/dashboard/tests/` (54: every section rule and boundary, tenant isolation, per-section failure
+isolation, parity with `invoice_summary`, constant query count, the contract test against
+`frontend/src/test-fixtures/dashboard/summary.sample.json`, the import-direction AST tests); frontend `Dashboard.test.jsx`,
+`dashboardHelpers.test.js`, `App.dashboard.test.jsx` and a Dashboard case in `AppShell.test.jsx`.
 
 ---
 
@@ -3147,7 +3184,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A (list, create, autosaving draft editor, score/tips) and part B (Send dialog with pre-flight and verify-by-checking, the client's public page `/proposal/:token`, withdraw, convert to invoice, activity timeline, client link, client's answer, in-app Preview) — 04 Nov 2026 | backend 479 passing (`apps.proposals` 299 + `core` 181; untouched by part B); frontend 1037 of 1038 passing (221 new for part B; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Complete; real-deployment smoke tests (DEPLOYMENT.md Section 8, items 12-16) still to run |
 | Contracts            | -       | -        | -     | Not started |
 | Subscriptions        | -       | -        | -     | Not started |
-| Dashboard            | -       | -        | -     | Not started |
+| Dashboard            | Built: apps/dashboard (no models, no migration) — GET /api/dashboard/summary/ with per-section isolation; the invoice KPI maths extracted to apps/invoices/kpis.py (invoice_summary output byte-identical) | Built: `/dashboard` (greeting, 4 KPI cards, 6-month chart, Needs attention, Upcoming recurring, Recent activity, Exchange rates), now the landing page | backend 54 new (`apps.dashboard`); frontend 77 new (Dashboard, dashboardHelpers, App routing, AppShell pill) | Built without AI (04 Nov 2026); AI insights + Financial Health widget still to come |
 | Help / AI Assistant  | -       | -        | -     | Not started |
 
 ---

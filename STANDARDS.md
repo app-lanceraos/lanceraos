@@ -381,6 +381,21 @@ ungated: scrollbar thumbs (desktop-only), a `:hover` that changes nothing visibl
 project-wide test directory. Section components under `pages/settings/` have their own
 `pages/settings/__tests__/` folder for the same reason.
 
+## Dependency direction between apps
+
+Apps form a tree, and imports only go down it. `apps.dashboard` (Module 9) is the TOP: it aggregates everything, so it may
+import models and shared helpers (`apps.invoices.kpis`, `core.*`) from any other app, but
+
+- **no other app may import `apps.dashboard`**, and
+- the dashboard never imports another app's `views*` modules (a view is an HTTP boundary, not a library; share the logic by
+  moving it to a pure module the way `apps/invoices/kpis.py` was extracted from `invoice_summary`).
+
+Both rules are enforced by `apps/dashboard/tests/test_import_direction.py`, which parses the real source with `ast`. The same
+rule family already holds lower down (`apps.clients` never imports `apps.invoices`; `core/` imports no app).
+
+When two screens need the same number, extract the rule into a request-free module and call it from both. A second copy of
+an invoice rule is how the Dashboard and the Invoices page end up disagreeing.
+
 ## Public (token) endpoints
 
 A public endpoint is reachable by anyone holding a URL token (an invoice's or proposal's `view_token`), with no login. Rules,

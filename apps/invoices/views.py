@@ -46,11 +46,15 @@ from apps.payments.models import ExchangeRateSnapshot
 from apps.users.models import FreelancerProfile, User
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
 
-from . import template_manifest
+from . import kpis, template_manifest
 from .comments import broadcast_comment, broadcast_read_state, upload_comment_attachment
 from .email_service import (
     build_formal_notice_email, build_invoice_send_email, fetch_invoice_pdf_bytes, send_invoice_related_email,
 )
+# ACTIVE_STATUSES moved to kpis.py (the Dashboard needs the same set). It is re-exported here on purpose:
+# views_portal.py and the client-status drift test import it from this module, and editing them would
+# touch unrelated code for no behaviour change.
+from .kpis import ACTIVE_STATUSES  # noqa: F401
 from .models import (
     NON_OVERDUE_STATUSES, Invoice, InvoiceComment, InvoiceItem,
     InvoicePartialPayment, InvoicePreset, InvoiceReminder, PaymentClaim, _today,
@@ -68,12 +72,6 @@ from .signature_tool import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Invoices delivered to a client and not yet fully resolved — the shared
-# eligibility set for "Outstanding"/"Past-Due" dashboard KPIs.
-# Deliberately excludes draft/created (never delivered) as well as every
-# terminal status.
-ACTIVE_STATUSES = ('sent', 'viewed', 'partially_paid')
 
 # invoice_summary's KPI period selector (List/Table restructure pass —
 # see DECISIONS.md). 'all_time' is the only period with no window at
@@ -185,55 +183,6 @@ def _parse_date_param(raw, default=None):
     if parsed is None:
         return None, Response({'error': 'Invalid date — use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
     return parsed, None
-
-
-def _kpi_period_window(period, today):
-    """
-    (start, end) inclusive-inclusive date bounds for invoice_summary's KPI
-    period selector, or (None, None) for 'all_time' (no window at all).
-    Outstanding/Overdue scope to issue_date within this window; Collected
-    scopes to payment_date within it instead — same window shape, two
-    different date fields, per DECISIONS.md's issue-date-vs-payment-date
-    definition for this feature.
-    """
-    if period == 'this_month':
-        return today.replace(day=1), today
-    if period == 'last_6_months':
-        return today - relativedelta(months=6), today
-    if period == 'this_year':
-        return today.replace(month=1, day=1), today
-    return None, None  # all_time
-
-
-def _collected_amount(user, start, end, target_currency, snapshot):
-    """
-    Real payment-date-scoped 'money that actually arrived' — sums
-    InvoicePartialPayment rows (never Invoice.amount_paid, a cumulative
-    field with no per-payment date) whose payment_date falls in [start,
-    end]. Every real payment-recording call site (add-payment, mark-paid,
-    claim-confirm) creates one of these rows, so this is a real,
-    complete ledger, not an approximation. Returns (total, count,
-    unconverted_count) — count is the number of DISTINCT invoices with a
-    qualifying payment in-window, matching the KPI card's existing
-    "N invoices" sub-label wording.
-
-    Deliberately does NOT net out refunds here — a refund has no
-    per-transaction date in this data model (Invoice.refunded_amount is
-    cumulative, not a dated ledger row), so there is no window to scope a
-    refund into. This is a real, flagged gap (see DECISIONS.md): a
-    period-scoped Collected figure can overstate money actually kept if
-    a refund landed in the same window. All Time avoids this entirely by
-    using the older, exact amount_paid-minus-refunded_amount calculation
-    instead of this helper — see invoice_summary.
-    """
-    qs = InvoicePartialPayment.objects.filter(invoice__user=user)
-    if start is not None:
-        qs = qs.filter(payment_date__gte=start, payment_date__lte=end)
-    total, unconverted = unify_amounts_to_currency(
-        ((p.amount, p.currency, p.rate_to_usd) for p in qs), target_currency, snapshot,
-    )
-    count = qs.values('invoice_id').distinct().count()
-    return total, count, unconverted
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -2021,55 +1970,27 @@ def invoice_summary(request):
 
     snapshot = _get_latest_snapshot()
     today = timezone.now().date()
-    start, end = _kpi_period_window(period, today)
+    start, end = kpis.kpi_period_window(period, today)
 
-    qs = Invoice.objects.filter(user=request.user).exclude(status__in=('draft', 'created'))
+    outstanding_qs = kpis.outstanding_invoices(request.user, start, end)
+    outstanding_total, outstanding_unconverted = kpis.sum_outstanding_amount(outstanding_qs, target_currency, snapshot)
 
-    outstanding_qs = qs.filter(status__in=ACTIVE_STATUSES)
-    if start is not None:
-        outstanding_qs = outstanding_qs.filter(issue_date__gte=start, issue_date__lte=end)
-    outstanding_total, outstanding_unconverted = unify_amounts_to_currency(
-        ((inv.outstanding_amount, inv.currency, inv.rate_to_usd_at_issue) for inv in outstanding_qs),
-        target_currency, snapshot,
-    )
-
-    past_due_qs = outstanding_qs.filter(due_date__lt=today)
-    past_due_total, past_due_unconverted = unify_amounts_to_currency(
-        ((inv.outstanding_amount, inv.currency, inv.rate_to_usd_at_issue) for inv in past_due_qs),
-        target_currency, snapshot,
-    )
+    past_due_qs = kpis.overdue_narrowing(outstanding_qs, today)
+    past_due_total, past_due_unconverted = kpis.sum_outstanding_amount(past_due_qs, target_currency, snapshot)
 
     if period == 'all_time':
-        # Exact pre-existing calculation, unchanged — amount_paid is a
-        # cumulative field, so "all time" is the one case where it's
-        # still the right source (and the only case with a real refund
-        # netting, since refunded_amount is itself a cumulative,
-        # undated field with no period to scope it into).
-        paid_qs = qs.filter(amount_paid__gt=0)
-        collected_total, collected_unconverted = unify_amounts_to_currency(
-            ((inv.amount_paid - inv.refunded_amount, inv.currency, inv.rate_to_usd_at_issue) for inv in paid_qs),
-            target_currency, snapshot,
+        collected_total, collected_count, collected_unconverted = kpis.all_time_collected_amount(
+            request.user, target_currency, snapshot,
         )
-        collected_count = paid_qs.count()
     else:
-        collected_total, collected_count, collected_unconverted = _collected_amount(
+        collected_total, collected_count, collected_unconverted = kpis.collected_amount(
             request.user, start, end, target_currency, snapshot,
         )
 
-    # Delta — always this-calendar-month vs last-calendar-month, via
-    # _collected_amount, independent of `period` (see docstring above).
-    this_month_start = today.replace(day=1)
-    last_month_end = this_month_start - timedelta(days=1)
-    last_month_start = last_month_end.replace(day=1)
-    current_month_total, _current_count, _current_unconverted = _collected_amount(
-        request.user, this_month_start, today, target_currency, snapshot,
+    # Delta — always this-calendar-month vs last-calendar-month, independent of `period` (see docstring above).
+    current_month_total, previous_month_total, pct_change = kpis.month_over_month_collected(
+        request.user, today, target_currency, snapshot,
     )
-    previous_month_total, _previous_count, _previous_unconverted = _collected_amount(
-        request.user, last_month_start, last_month_end, target_currency, snapshot,
-    )
-    pct_change = None
-    if previous_month_total > 0:
-        pct_change = float((current_month_total - previous_month_total) / previous_month_total * 100)
 
     return Response({
         'currency': target_currency,
