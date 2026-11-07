@@ -191,3 +191,20 @@ export function autoSendText(autoSend) {
 export function rateRowText(pair) {
   return `1 ${pair.from} = ${pair.to} ${Number(pair.rate).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
+
+// ── Insights card (Prompt 09) ─────────────────────────────────────────────────────────────────
+export const INSIGHTS_FOOTER = 'Written by AI from your own figures. Check them against your invoices before acting.'
+
+// Shown only when the server says some of the text was written by the model. A result made entirely of the fixed
+// sentences ("template") carries no footer: nothing in it was written by AI.
+export function showAiFooter(source) {
+  return source === 'ai' || source === 'mixed'
+}
+
+// Used only if the server sends an empty status without its own hint.
+export const INSIGHTS_EMPTY_FALLBACK = 'Insights appear once you have payments recorded in at least two months, or a few paid invoices and answered proposals.'
+
+// The model can take several seconds (the server's own ceiling is AI_TOTAL_BUDGET_SECONDS, at most 60), so this request
+// is given longer than the shared Axios instance's 15 s default.
+export const INSIGHTS_TIMEOUT_MS = 65000
+export const INSIGHTS_SKELETON_ROWS = 3

@@ -689,6 +689,16 @@ colours from the `--chart-series-collected` pair mirrored as hex, `role="img"` w
 visually-hidden table of the six values next to it. Rates are labelled "Daily rate · updated <date>", never "live".
 Keyboard: every link shows a `:focus-visible` ring (`.dash-link`, 2px accent outline).
 
+**Insights card (06 November 2026).** A `DashboardCard` titled "Insights" ("From your own numbers"), a FULL-WIDTH row between the
+chart/attention row and the activity row (`"chart chart attention" "insights insights insights" "activity activity upcoming" "activity
+activity rates"`); on mobile the order is attention, chart, insights, upcoming, activity, rates. It owns its own request and is always
+rendered, so there is no layout jump: loading is three skeleton tiles of the ready tiles' height. Ready: up to three tiles in a grid
+`repeat(auto-fit, minmax(240px, 1fr))`, each a `Lightbulb` icon, the observation in primary text and the suggestion below it in
+secondary text, both plain React text nodes (escaped, never HTML). Empty: a quiet `BarChart3` message with the server's hint. Error:
+`DashboardUnavailable` whose Reload refetches the insights only. Footer (`Sparkles` + "Written by AI from your own figures. Check them
+against your invoices before acting.") ONLY for `source` `ai` or `mixed`, never for the fixed-sentence `template`. No focusable
+element inside the ready card (the tiles are not links). 320px: no horizontal scroll.
+
 ## 8. Animation and Transitions
 
 ### Timing tokens

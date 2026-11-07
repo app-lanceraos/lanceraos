@@ -468,6 +468,12 @@ AI_TOTAL_BUDGET_SECONDS = min(env.int('AI_TOTAL_BUDGET_SECONDS', default=40), 60
 AI_MAX_RETRY_WAIT_SECONDS = env.int('AI_MAX_RETRY_WAIT_SECONDS', default=8)
 # Per user, per feature, per hour — protects the shared free-tier quota.
 AI_RATE_LIMIT_PER_HOUR = env.int('AI_RATE_LIMIT_PER_HOUR', default=20)
+# Per-feature kill switch (Prompt 09): False switches ONLY the Dashboard insights card's model calls off (the card
+# still shows its fixed sentences) without touching Proposals. The global AI_ENABLED above overrides it: if either is
+# off, the insights endpoint makes no model call and writes no AiCallLog row.
+# DEFAULT IS False: the pre-registered live evaluation (AI_EVALUATION.md section 14) did not clear its "no claim the facts
+# do not support" read for either model, so the owner decides. Set DASHBOARD_INSIGHTS_AI_ENABLED=True to turn it on.
+DASHBOARD_INSIGHTS_AI_ENABLED = env.bool('DASHBOARD_INSIGHTS_AI_ENABLED', default=False)
 
 # ══════════════════════════════════════════════════════════════════
 # CELERY / CHANNELS

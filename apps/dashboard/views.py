@@ -16,12 +16,15 @@ from rest_framework.response import Response
 # core/ is a later chore (DECISIONS.md, Dashboard entry), not part of this change.
 from apps.proposals.ratelimit import rate_limited
 
-from . import services
+from . import insights, services
 
 logger = logging.getLogger(__name__)
 
 # Generous tier (read-only): a page that refetches on Retry and on every visit stays far under this.
 READS_PER_HOUR = 240
+# The insights endpoint is also a read (a cache hit is free; a miss costs one model call, which core.ai limits per user
+# per hour on its own), so it gets a generous limit of its own that a page visit never approaches.
+INSIGHTS_READS_PER_HOUR = 120
 
 
 @api_view(['GET'])
@@ -43,6 +46,24 @@ def dashboard_summary(request):
             logger.exception('[DASHBOARD] Section %s failed for user %s; returning it as unavailable.', name, request.user.pk)
             payload[name] = {'available': False}
 
+    response = Response(payload)
+    response['Cache-Control'] = 'no-store'
+    return response
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def dashboard_insights(request):
+    """
+    The Insights card's payload: up to three facts calculated by code, each with an observation and a suggestion (model
+    text that passed the number guard, else fixed sentences). A SEPARATE endpoint so the summary never waits for a
+    model. There is deliberately no try/except around get_insights: an AI failure never raises (it becomes fixed
+    sentences), so an exception here is a real bug and should surface as a 500 and be logged. `no-store` as for the
+    summary: it carries financial figures.
+    """
+    if rate_limited(f'dashboard_insights:{request.user.pk}', INSIGHTS_READS_PER_HOUR):
+        return Response({'error': 'Too many requests. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    payload = insights.get_insights(request.user, request_id=getattr(request, 'request_id', None))
     response = Response(payload)
     response['Cache-Control'] = 'no-store'
     return response

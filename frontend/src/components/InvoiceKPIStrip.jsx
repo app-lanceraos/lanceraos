@@ -27,7 +27,7 @@
 // Collected card's delta line also drops to just the arrow + percentage
 // (no "vs last month" / amount text) — the fuller text still fits fine
 // at tablet width and above, so it's kept there.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 
 import api from '@/lib/api'
@@ -46,14 +46,22 @@ export default function InvoiceKPIStrip() {
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  // Only the LATEST request may touch state: a slow response for an older period/currency used to overwrite the
+  // newer one (and its `.finally` turned `loading` off while the newer request was still running). The effect's
+  // cleanup bumps the id, so it also covers a change of period/currency and unmount.
+  const latestRequestId = useRef(0)
+
   useEffect(() => {
+    const requestId = ++latestRequestId.current
+    const isLatest = () => requestId === latestRequestId.current
     setLoading(true)
     const params = { period }
     if (currency) params.currency = currency
     api.get('/invoices/summary/', { params })
-      .then(({ data }) => { setSummary(data); if (!currency) setCurrency(data.currency) })
-      .catch(() => setSummary(null))
-      .finally(() => setLoading(false))
+      .then(({ data }) => { if (!isLatest()) return; setSummary(data); if (!currency) setCurrency(data.currency) })
+      .catch(() => { if (isLatest()) setSummary(null) })
+      .finally(() => { if (isLatest()) setLoading(false) })
+    return () => { latestRequestId.current += 1 }
   }, [period, currency]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const cards = [

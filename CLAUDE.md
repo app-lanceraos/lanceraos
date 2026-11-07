@@ -119,6 +119,9 @@ Every module must follow them exactly.
    model_unavailable (only those two) it retries once on the smaller model inside the same
    time budget, one AiCallLog row per model call. There is deliberately NO second API key
    (Groq limits are per organization; see DECISIONS.md, 02 November 2026).
+   AI features so far: Proposals (the first) and the Dashboard insights card (the second, 06 November 2026 —
+   facts and numbers computed by code, model text number-checked before it is shown, a per-feature kill switch
+   DASHBOARD_INSIGHTS_AI_ENABLED that DEFAULTS TO OFF after its evaluation, see DECISIONS.md and AI_EVALUATION.md section 14).
 5. All prompts live in a prompts.py file inside the relevant app.
    Never hardcode prompt strings inside view functions.
 6. Sensitive fields (SMTP passwords, API keys stored per user) are
@@ -453,6 +456,9 @@ lanceraos/                          <- Django project root
 │   ├── dashboard/                  <- Dashboard — BUILT (04 November 2026). No models, no migration:
 │   │                                  services.py (one builder per section), views.py (GET
 │   │                                  /api/dashboard/summary/, per-section isolation), urls.py.
+│   │                                  AI insights card (06 Nov 2026): prompts.py, insight_facts.py (the four facts),
+│   │                                  insights.py (parser, number guard, cache, generate_insight_texts), GET
+│   │                                  /api/dashboard/insights/, evaluation.py + evaluate_dashboard_insights command.
 │   │                                  Sits at the TOP of the dependency tree: imports models and
 │   │                                  shared helpers (apps.invoices.kpis, core.*) from other apps;
 │   │                                  NO other app may import it (AST-tested).
@@ -3094,8 +3100,8 @@ Key API endpoints:
 ---
 
 ### Module 9 — Dashboard
-Status: BUILT without AI (04 November 2026). The AI income insights card is a separate, later prompt that plugs into
-this page; the Financial Health widget arrives with the Health Score module. Neither is rendered as a placeholder.
+Status: BUILT (04 November 2026); AI Insights card added 06 November 2026 (Prompt 09, below). The Financial Health widget
+arrives with the Health Score module and is not rendered as a placeholder.
 App: apps/dashboard/ — a thin app: `services.py` (one builder per section), `views.py`, `urls.py`; no models, no
 migration. (This section used to say "not a separate app"; superseded — the aggregation needs its own URLs and tests, and
 putting it in apps/invoices would make Invoices import Proposals and Clients. DECISIONS.md, 04 November 2026.)
@@ -3130,14 +3136,29 @@ belongs to the Payments module. Anything that cannot be honestly converted is co
 guessed and never dropped silently. Known gaps, stated: refunds are not netted from "Paid this month" (a refund has no
 per-transaction date), no Financial Health widget yet, AI insights still to come.
 
+**Insights card (06 November 2026, Prompt 09).** Up to three short observations + suggestions. THE RULE: code calculates, the AI
+only words it. Code picks up to three facts (priority: `month_vs_previous`, `client_concentration`, `days_to_pay`,
+`proposal_acceptance`; each with a minimum-sample rule) and computes every number; the model receives only the fact sentences
+(no names, emails, invoice/proposal numbers, titles, user or business name — a privacy test pins it) and writes one observation and
+one suggestion per fact; code then checks the text (per-fact number guard incl. spelled numbers, direction check, banned words) and
+replaces a rejected fact's text with fixed sentences from the same fact. `source` is `ai`, `mixed` or `template`. Cached in Redis per
+user, valid only while the facts' fingerprint (prompt version + currency + every statement) is unchanged: 24 h with any AI text, 15
+min template-only. Model: GROQ_MODEL_FAST, QUALITY as the rate-limit fallback, 6 calls/user/hour. Kill switches: the global
+AI_ENABLED and DASHBOARD_INSIGHTS_AI_ENABLED, either off = no model call, no AiCallLog row. **That per-feature switch DEFAULTS TO
+OFF**: the pre-registered evaluation (AI_EVALUATION.md section 14) did not clear its manual read for either model, so the owner decides
+(set it to True to turn the model text on; with it off the card shows the fixed sentences). Aggregate income figures are sent to
+Groq when it is on (privacy policy + Groq terms to check before public launch). The card owns its own request, is always rendered, and
+shows "Written by AI from your own figures. Check them against your invoices before acting." only when `source` is `ai` or `mixed`.
+
 Key API endpoints:
 - GET /api/dashboard/summary/ (built)
-- GET /api/dashboard/insights/ (not built — the AI insights prompt)
+- GET /api/dashboard/insights/ (built, Prompt 09)
 
-Tests: backend `apps/dashboard/tests/` (54: every section rule and boundary, tenant isolation, per-section failure
-isolation, parity with `invoice_summary`, constant query count, the contract test against
-`frontend/src/test-fixtures/dashboard/summary.sample.json`, the import-direction AST tests); frontend `Dashboard.test.jsx`,
-`dashboardHelpers.test.js`, `App.dashboard.test.jsx` and a Dashboard case in `AppShell.test.jsx`.
+Tests: backend `apps/dashboard/tests/` (150: the 54 summary tests plus 96 for insights — every fact's boundaries, the guard, the
+parser, orchestration/cache/switches, privacy, the endpoint, both contract tests against the tracked fixtures, the evaluation
+command; `InsightTestCase` makes any live model call fail the test); frontend `Dashboard.test.jsx`, `DashboardInsightsCard.test.jsx`,
+`dashboardHelpers.test.js`, `App.dashboard.test.jsx`, a Dashboard case in `AppShell.test.jsx`, and the `InvoiceKPIStrip.test.jsx`
+stale-response tests.
 
 ---
 

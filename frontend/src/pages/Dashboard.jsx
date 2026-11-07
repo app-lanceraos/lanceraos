@@ -4,12 +4,15 @@
 // state and shows one consistent moment. Each section arrives with its own `available` flag: if the server could not
 // build one section, only that card says so (with a Reload) and the rest render normally.
 //
-// Not built here on purpose, and no placeholder rendered: the Financial Health widget (the Health Score module adds it)
-// and the AI income insights (a later prompt plugs into this page).
+// The Insights card (Prompt 09) is the one exception to "one request": it owns its OWN request to
+// GET /api/dashboard/insights/ because a model can take several seconds and the summary must never wait for it. It is always
+// rendered in its grid slot (even while the summary is loading or has failed), so it never blinks in or collapses.
 //
-// Layout: desktop is a 3-column grid (chart 2/3 + needs-attention 1/3, then activity 2/3 beside upcoming + rates). At
-// <=768px it is one column in the order that puts what needs action BEFORE history: greeting, KPIs, needs attention,
-// chart, upcoming, activity, rates.
+// Not built here on purpose, and no placeholder rendered: the Financial Health widget (the Health Score module adds it).
+//
+// Layout: desktop is a 3-column grid (chart 2/3 + needs-attention 1/3, then a full-width Insights row, then activity 2/3
+// beside upcoming + rates). At <=768px it is one column in the order that puts what needs action BEFORE history:
+// greeting, KPIs, needs attention, chart, insights, upcoming, activity, rates.
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Clock, RefreshCw, Users, Wallet } from 'lucide-react'
 
@@ -20,6 +23,7 @@ import FosAlert from '@/components/FosAlert'
 import DashboardActivityCard from '@/components/DashboardActivityCard'
 import DashboardAttentionCard from '@/components/DashboardAttentionCard'
 import DashboardIncomeChart from '@/components/DashboardIncomeChart'
+import DashboardInsightsCard from '@/components/DashboardInsightsCard'
 import DashboardKpiCard from '@/components/DashboardKpiCard'
 import DashboardRatesCard from '@/components/DashboardRatesCard'
 import DashboardUnavailable from '@/components/DashboardUnavailable'
@@ -31,9 +35,9 @@ import {
 
 const LAYOUT_CSS = `
   .dash-layout { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-areas: "chart chart attention" "activity activity upcoming" "activity activity rates"; }
+    grid-template-areas: "chart chart attention" "insights insights insights" "activity activity upcoming" "activity activity rates"; }
   .dash-area-chart { grid-area: chart; } .dash-area-attention { grid-area: attention; }
-  .dash-area-activity { grid-area: activity; } .dash-area-upcoming { grid-area: upcoming; } .dash-area-rates { grid-area: rates; }
+  .dash-area-insights { grid-area: insights; } .dash-area-activity { grid-area: activity; } .dash-area-upcoming { grid-area: upcoming; } .dash-area-rates { grid-area: rates; }
   .dash-kpis { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
   .dash-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (hover: hover) {
@@ -43,8 +47,8 @@ const LAYOUT_CSS = `
   @media (max-width: 768px) {
     .dash-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; }
     .dash-layout > * { grid-area: auto !important; }
-    .dash-area-attention { order: 1; } .dash-area-chart { order: 2; } .dash-area-upcoming { order: 3; }
-    .dash-area-activity { order: 4; } .dash-area-rates { order: 5; }
+    .dash-area-attention { order: 1; } .dash-area-chart { order: 2; } .dash-area-insights { order: 3; }
+    .dash-area-upcoming { order: 4; } .dash-area-activity { order: 5; } .dash-area-rates { order: 6; }
     .dash-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   }
   /* Two tiles side by side leave ~130px for the figure at phone width: shrink it so "PKR 1,442,372" stays on one line. */
@@ -109,20 +113,23 @@ export default function Dashboard() {
         </FosAlert>
       )}
 
-      {showSkeleton ? (
-        <DashboardSkeleton />
-      ) : data ? (
-        <>
-          <KpiRow kpis={data.kpis} currency={data.currency} onReload={load} />
-          <div className="dash-layout">
-            <DashboardIncomeChart className="dash-area-chart" trend={data.income_trend} currency={data.currency} onReload={load} />
-            <DashboardAttentionCard className="dash-area-attention" attention={data.needs_attention} onReload={load} />
-            <DashboardActivityCard className="dash-area-activity" activity={data.recent_activity} onReload={load} />
-            <DashboardUpcomingCard className="dash-area-upcoming" upcoming={data.upcoming_recurring} onReload={load} />
-            <DashboardRatesCard className="dash-area-rates" rates={data.exchange_rates} onReload={load} />
-          </div>
-        </>
-      ) : null}
+      {showSkeleton ? <KpiSkeleton /> : data ? <KpiRow kpis={data.kpis} currency={data.currency} onReload={load} /> : null}
+
+      {/* One grid for every state, so the Insights card (which owns its own request) keeps its slot, and stays MOUNTED,
+          while the summary loads, succeeds or fails. */}
+      <div className="dash-layout">
+        {data ? <DashboardIncomeChart className="dash-area-chart" trend={data.income_trend} currency={data.currency} onReload={load} />
+          : showSkeleton ? <SkeletonCard className="dash-area-chart" rows={1} height={220} /> : null}
+        {data ? <DashboardAttentionCard className="dash-area-attention" attention={data.needs_attention} onReload={load} />
+          : showSkeleton ? <SkeletonCard className="dash-area-attention" rows={4} /> : null}
+        <DashboardInsightsCard className="dash-area-insights" />
+        {data ? <DashboardActivityCard className="dash-area-activity" activity={data.recent_activity} onReload={load} />
+          : showSkeleton ? <SkeletonCard className="dash-area-activity" rows={5} /> : null}
+        {data ? <DashboardUpcomingCard className="dash-area-upcoming" upcoming={data.upcoming_recurring} onReload={load} />
+          : showSkeleton ? <SkeletonCard className="dash-area-upcoming" rows={2} /> : null}
+        {data ? <DashboardRatesCard className="dash-area-rates" rates={data.exchange_rates} onReload={load} />
+          : showSkeleton ? <SkeletonCard className="dash-area-rates" rows={3} height={24} /> : null}
+      </div>
     </div>
   )
 }
@@ -177,26 +184,17 @@ function SkeletonCard({ className, rows = 3, height = 34 }) {
   )
 }
 
-// The final layout, drawn in grey, so nothing jumps when the data arrives.
-function DashboardSkeleton() {
+// The KPI row drawn in grey (the cards below it have their own SkeletonCard in the same grid slots), so nothing jumps.
+function KpiSkeleton() {
   return (
-    <div role="status" aria-label="Loading your dashboard">
-      <div className="dash-kpis">
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: '14px 16px' }}>
-            <Bone height={10} width="50%" style={{ marginBottom: 12 }} />
-            <Bone height={24} width="70%" style={{ marginBottom: 8 }} />
-            <Bone height={10} width="35%" />
-          </div>
-        ))}
-      </div>
-      <div className="dash-layout">
-        <SkeletonCard className="dash-area-chart" rows={1} height={220} />
-        <SkeletonCard className="dash-area-attention" rows={4} />
-        <SkeletonCard className="dash-area-activity" rows={5} />
-        <SkeletonCard className="dash-area-upcoming" rows={2} />
-        <SkeletonCard className="dash-area-rates" rows={3} height={24} />
-      </div>
+    <div role="status" aria-label="Loading your dashboard" className="dash-kpis">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', padding: '14px 16px' }}>
+          <Bone height={10} width="50%" style={{ marginBottom: 12 }} />
+          <Bone height={24} width="70%" style={{ marginBottom: 8 }} />
+          <Bone height={10} width="35%" />
+        </div>
+      ))}
     </div>
   )
 }

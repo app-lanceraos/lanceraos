@@ -341,6 +341,14 @@ account, check that same setting before launch**, and confirm with the PDF smoke
     page KPI strip set to **All Time**; *Paid this month* equals it set to **This Month**; the *Exchange rates* card shows
     today's date (a stale note means the 8:00 AM rate fetch missed days). Dashboard needs **no new environment variable and
     no migration** — deploying it is a code-only release (`python manage.py makemigrations --check --dry-run` reports none).
+18. **Dashboard insights (Prompt 09):** one new OPTIONAL environment variable, `DASHBOARD_INSIGHTS_AI_ENABLED` (a boolean; **default
+    False**, so deploying changes nothing about AI until you set it to `True`; it is independent of `AI_ENABLED` and of Proposals). No
+    migration. Insights use Redis for their per-user cache (already required). Smoke test: open `/dashboard` with the variable **True**
+    and enough data (payments in two months, or 3 paid invoices): the Insights card shows a skeleton and then up to three tiles, with a
+    "Written by AI" footer when any text is model-written; reload, it appears at once and `ai_call_logs` gets NO new
+    `dashboard_insights` row; with `DASHBOARD_INSIGHTS_AI_ENABLED` unset (or `AI_ENABLED=false`) the card still shows sentences
+    (no footer) and no row is written. Before enabling it for real users: the privacy policy must say aggregated income figures are
+    processed by an AI provider, and Groq's current data-handling terms must be checked (DECISIONS.md, 06 November 2026).
 
 ## 9. Rollback
 

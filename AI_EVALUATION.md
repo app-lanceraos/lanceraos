@@ -193,6 +193,17 @@ Re-run after **any change to `apps/proposals/prompts.py`** and after **any chang
 (`GROQ_MODEL_QUALITY` / `GROQ_MODEL_FAST`), and record the result here. A full pass is 24 requests and takes about
 12 minutes at a 25-second pause.
 
+**Dashboard insights** (Section 14) has its own command and its own, much smaller budget (8 requests per model):
+
+```
+python manage.py evaluate_dashboard_insights                       # dry run: prints the plan, sends nothing
+python manage.py evaluate_dashboard_insights --yes --model fast    # 8 requests, about 3 minutes of pausing
+python manage.py evaluate_dashboard_insights --yes --model quality # the same 8 requests on the 120B model
+```
+
+Re-run it after any change to `apps/dashboard/prompts.py` (and bump `PROMPT_VERSION`), to the number guard, or to the Groq
+models. `--session-cap` (default 16) is a hard ceiling on model requests per invocation.
+
 ## 13. Decisions (owner, 04 November 2026)
 
 1. **Injection resistance (1 violation in 6 canary checks): accepted as a documented known limit.** The output is a
@@ -202,3 +213,69 @@ Re-run after **any change to `apps/proposals/prompts.py`** and after **any chang
 2. **`specifics` score: kept as is.** AI drafts top out near 9/10 because the check awards its point only for a number
    written with digits, and the score card already tells the freelancer to add a real figure. `scoring.py` stays
    frozen; revisit only if the product wants it.
+
+## 14. Dashboard insights (Prompt 09, 06 November 2026)
+
+**What is measured.** The production path for the Dashboard Insights card: `insights.generate_insight_texts` (the same function
+`get_insights` calls, `system=True`) and every returned text through `insights.check_insight` (format, per-fact number guard,
+direction check, banned words). Four invented cases built with the pure fact constructors, no database: c1 income up 18% +
+client concentration 64% + 23 days to pay (3 facts); c2 income down 31% + proposals 2 of 5 (2 facts); c3 flat income + 9 days to
+pay + proposals 4 of 4 (3 facts); c4 one client at 91% (1 fact). Each case twice = 8 requests per model, 20 s pause,
+`reasoning_effort='low'`, `max_tokens=1500`. Results are in `eval_runs/` (gitignored; invented data).
+
+**The rule, decided before any result existed (not changed afterwards).** FAST (`openai/gpt-oss-20b`) passes only if ALL of:
+(a) no `truncated` result; (b) no failure other than `rate_limited`; (c) at least 90% of facts accepted by `check_insight`;
+(d) a human read of every accepted AI text finds no claim the facts do not support (a cause stated as known, a platform or tool
+name, an invented client, a prediction). If FAST fails, the same 8 requests on QUALITY (`openai/gpt-oss-120b`) under the same rule;
+ship whichever passes, FAST preferred. If neither passes, do NOT edit the prompt to make it pass: switch the feature's default off,
+leave everything built, and let the owner decide.
+
+**Numbers (a)-(c).**
+
+| | FAST (20B) | QUALITY (120B) |
+|---|---|---|
+| requests / ok | 8 / 8 | 8 / 8 |
+| truncated, other failures | 0, 0 | 0, 0 |
+| facts accepted by the guard | 18 of 18 (100%) | 18 of 18 (100%) |
+| tokens per request (total), avg / max | 702 / 1,044 | 921 / 1,443 |
+| completion tokens, avg | 205 | 424 |
+| reasoning tokens, max (inside completion) | 355 | 729 |
+| latency per request, avg | 831 ms | 1,468 ms |
+| fell back to the other model | 0 | 0 |
+
+`max_tokens=1500` left headroom in every case (the largest completion was well under it). No insight was rejected by the guard in
+either run, so there are no rejected texts to list.
+
+**(d) the manual read: I read all 18 + 18 accepted texts.** The standard I applied to both runs: a text counts against a model
+if it states or presupposes a cause as known, names a tool/platform/client not in the facts, predicts or guarantees, or states a
+figure, statistic or period different from the fact's.
+- FAST: 4 texts counted. "Average" written where the fact says the *typical* (median) time, three times (c1 r1 suggestion, c3 r1
+  observation, c1 r2 observation); and c1 r2's suggestion "reviewing the strategies that contributed to the higher collection this
+  month", which presupposes contributing strategies and says "this month" about last month. Nothing else: no tool or platform
+  names, no invented clients, no predictions.
+- QUALITY: 1 clear text counted ("average payment time of 23 days", c1 r2), plus 2 borderline presuppositions that I did NOT count
+  because they are phrased as things to look into ("to see what contributed to the increase", "look at what made those four
+  proposals successful"); a stricter reader would count them. No tool names, invented clients or predictions.
+- Neither run contained a wrong number, an invented client or a prediction. Every miss is wording-level.
+
+**Rule outcome: neither model passes (d), which allows zero such claims.** FAST fails (4 of 18), QUALITY fails (1 of 18, plus 2
+borderline). The rule says what happens next and it was applied as written: the prompt was NOT changed, and
+`DASHBOARD_INSIGHTS_AI_ENABLED` now defaults to **False**. The card still works and shows the fixed sentences built from the same
+facts; setting the variable to `True` turns the model text on. For the owner's decision: QUALITY read cleaner (1 vs 4) but spends the
+shared 120B daily allowance that Proposals also uses and costs about 2x the tokens and latency; FAST is what the code ships as primary
+with QUALITY as its rate-limit fallback. The "average"/"typical" drift is the recurring issue and is prompt-level (the facts say
+"typical"; the prompt says nothing about not renaming a statistic), which is exactly the kind of change the rule forbids making
+after seeing results.
+
+**A guard gap the read exposed (fixed in code, not in the prompt).** Both models wrote numbers as words ("six of your invoices",
+"a nine-day cycle", "all four proposals", "the two accepted proposals"), which a digits-only guard cannot see. Every one was
+correct here, but the guard now also checks spelled numbers (two to ninety, plus zero) against the fact's allowed figures, ignoring
+"one" (an article far more often than a count). The stored texts were re-scored offline with the new guard (no model call): 18 of 18
+and 18 of 18 still accepted, so the numbers in the table stand.
+
+**Known limits of this measurement.** 8 requests per model, one day, invented data; four cases cannot show how the 20B model
+behaves on every combination of facts. The guard cannot catch a non-numeric invented claim (hence the card's "check them against
+your invoices" footer). The model-text footers and the two-month/three-invoice minimums are product decisions, not measured here.
+One unrelated process note: an insight test of mine briefly lacked a patch and could have reached the real model layer once or
+twice before I found it (a guard now makes any such call fail the test); those requests are not counted above.
+

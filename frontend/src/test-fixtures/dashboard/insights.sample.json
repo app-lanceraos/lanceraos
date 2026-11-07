@@ -1,0 +1,20 @@
+{
+  "status": "ready",
+  "source": "mixed",
+  "currency": "PKR",
+  "generated_at": "2026-11-06T09:30:00.000000",
+  "insights": [
+    {
+      "fact": "month_vs_previous",
+      "observation": "You collected PKR 413,000 last month, up 18% from PKR 350,000 the month before.",
+      "suggestion": "Look at which clients or projects drove the rise and see whether you can repeat it.",
+      "source": "ai"
+    },
+    {
+      "fact": "days_to_pay",
+      "observation": "Your invoices paid in the last 90 days were typically paid 23 days after the issue date (6 invoices).",
+      "suggestion": "A clear due date, shorter payment terms and a friendly reminder shortly before it can help you get paid sooner.",
+      "source": "template"
+    }
+  ]
+}

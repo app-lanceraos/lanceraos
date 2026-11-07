@@ -55,6 +55,10 @@ Always handle `result.ok == False` (every feature must still work with AI off or
 every figure — the model only explains. `core.AiCallLog` stores sizes, never prompt or reply text.
 A change to a feature's prompt or model is re-measured with that feature's evaluation before release and the result
 is recorded (Proposals: `python manage.py evaluate_proposal_ai --yes`, results in `AI_EVALUATION.md`).
+Facts and numbers come from code; a feature that shows model text next to numbers must check the numbers (see
+`apps/dashboard/insights.py`): per-fact allowed figures (spelled numbers included), a direction check, a banned-word list, and a
+fixed fallback sentence per fact so the feature works with AI off. Send the model only what is needed and nothing that identifies a
+person or client. Decide the pass rule of an evaluation BEFORE running it and do not edit the prompt afterwards to pass it.
 
 ## Multi-row writes are atomic; state-dependent edits re-check state under a lock
 
