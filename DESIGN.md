@@ -699,6 +699,39 @@ secondary text, both plain React text nodes (escaped, never HTML). Empty: a quie
 against your invoices before acting.") ONLY for `source` `ai` or `mixed`, never for the fixed-sentence `template`. No focusable
 element inside the ready card (the tiles are not links). 320px: no horizontal scroll.
 
+### Payments page (`/payments`, 08 November 2026)
+
+Top to bottom: a flash message (`FosAlert`, auto-dismissing), the KPI strip, a row with the chart and the by-source card, the
+"excluded / estimated" notes (small `Info` lines, only for a count above zero), search + sort, the filters, the list, the pagination.
+The KPI strip, chart and by-source card cover ALL the person's payments and never change with the list filters; the strip says so
+("All your payments, whatever the filters below").
+
+KPI strip (`PaymentsKpiStrip.jsx`, classes prefixed `pay-`): one currency select and three cards (This month with a month-over-month
+delta ONLY when the server sends one, green up / red down; This year; All time), always side by side at every width — type and padding
+shrink at 939px and 480px (below 480 the delta drops to the arrow and the percentage). Loading is skeleton blocks; a refetch dims the cards
+(opacity .55) and never unmounts them; a failed request shows "Couldn't load these figures." with Reload inside the strip while the list
+still works. Chart (`PaymentsIncomeChart.jsx`): a `DashboardCard`, one series, no legend, colour from `COLLECTED_BAR_COLORS`, `role="img"`
+with a one-sentence label plus a visually-hidden table of the twelve values beside it. By-source card: label, converted total, count and a
+thin neutral bar sized against the largest row — the numbers carry the meaning, never colour. Chart and by-source sit in a grid `2fr 1fr`
+with `align-items: start` (stretching the chart to the list's height left an empty block under the bars) and `1fr` at <= 768px.
+
+Mobile order (<= 768px): KPIs, chart, by-source, notes, search + sort (sort is the `ArrowUpDown` dropdown), filters (selects and date
+inputs in one wrapping row), the card list, compact pagination, and the `.page-fab` (56px) for "Add payment". Desktop shows the table
+(`PaymentTable.jsx`: Date | Received from | Source | Amount | Invoice) built on `listTableStyles.js`; the date cell holds a real `<button>`
+so every row is keyboard-operable, and the whole row opens the panel too. An amount shows its cents; an estimated or missing exchange rate adds
+an `Info` icon whose `aria-label` is the same sentence the panel shows as visible text.
+
+Dialogs are `PaymentDialog.jsx` (the centered-modal recipe, `useFocusTrap`; Escape and the close button do nothing while a request runs;
+never `autoFocus` a field inside one — pass `initialFocus` so focus returns to the opener). The add/edit dialog has a second step, the
+DUPLICATE step, shown after the payment is saved: "Possible duplicate", one sentence, up to three rows (date, source, who, how it got
+there) each with a View button, then "Keep both" and the danger button "Delete the one I just added". A linked payment's edit dialog
+disables amount, currency, date and source and says why in a visible info alert. The side panel (`PaymentDetailPanel.jsx`) is the
+slide-in recipe at max width 480 and closes on the overlay and on Escape only when no dialog is open. Estimated/missing-rate notes are
+visible text in the panel (info style for "nearby", warning style for the others).
+
+The 320px rule: the page, the panel and every dialog must have `scrollWidth == clientWidth`; no fixed widths over the available space, rows
+and badges wrap or ellipsise.
+
 ## 8. Animation and Transitions
 
 ### Timing tokens

@@ -270,3 +270,19 @@ def payment_summary(request):
         except serializers.ValidationError as exc:
             return _bad_request(str(exc.detail[0]))
     return Response(ledger.summary_for_user(request.user, timezone.now().date(), currency))
+
+
+@no_store
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payment_currencies(request):
+    """
+    Distinct currencies present in the user's own payments, ordered by code — the options of the
+    Payments list's currency filter (the same idea as invoice_currencies and client_currencies).
+    """
+    if rate_limited(f'payments:currencies:{request.user.pk}', READS_PER_HOUR):
+        return too_many_requests()
+    currencies = list(
+        Payment.objects.filter(user=request.user).order_by('currency').values_list('currency', flat=True).distinct()
+    )
+    return Response({'currencies': currencies})

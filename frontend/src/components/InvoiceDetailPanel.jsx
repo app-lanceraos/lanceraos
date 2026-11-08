@@ -72,6 +72,7 @@ import FormField from './FormField'
 import FormSelect from './FormSelect'
 import FosAlert from './FosAlert'
 import InvoiceFormFields from './InvoiceFormFields'
+import InvoiceLinkPaymentForm from './InvoiceLinkPaymentForm'
 import InvoiceStatusBadge from './InvoiceStatusBadge'
 import {
   INVOICE_STATUS_META, OVERDUE_BADGE, STATUS_BADGE_STYLE, badgeBaseStyle, formatMoney,
@@ -241,6 +242,12 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
     setInvoice(data); notifyChanged(data); setModal(null)
     await loadTimeline()
   }, 'Payment recorded.')
+
+  const handleLinkPayment = (paymentId, amount) => runAction('link_payment', async () => {
+    const { data } = await api.post(`/payments/${paymentId}/link-invoice/`, { invoice_id: invoiceId, amount })
+    setInvoice(data.invoice); notifyChanged(data.invoice); setModal(null)
+    await loadTimeline()
+  }, 'Payment linked.')
 
   const handleConfirmClaim = (claimId) => runAction('confirm_claim', async () => {
     const { data } = await api.post(`/invoices/${invoiceId}/claims/${claimId}/confirm/`, { confirm: true })
@@ -745,7 +752,7 @@ export default function InvoiceDetailPanel({ invoiceId, onClose, onChanged, onPr
         <SendModal invoice={invoice} busy={busyKey === 'send'} onConfirm={handleSend} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'add_payment' && (
-        <AddPaymentModal invoice={invoice} busy={busy} busyKey={busyKey} onMarkPaid={handleMarkPaid} onAddPayment={handleAddPayment} onClose={() => setModal(null)} />
+        <AddPaymentModal invoice={invoice} busy={busy} busyKey={busyKey} onMarkPaid={handleMarkPaid} onAddPayment={handleAddPayment} onLinkPayment={handleLinkPayment} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'refund' && (
         <RefundModal invoice={invoice} busy={busyKey === 'refund'} onConfirm={handleRefund} onClose={() => setModal(null)} />
@@ -1251,8 +1258,8 @@ function MarkSentModal({ busy, onConfirm, onClose }) {
 // add-payment endpoint (user-entered amount). Same two backend calls
 // this panel already had — a frontend consolidation into one entry
 // point, not new backend logic. ──
-function AddPaymentModal({ invoice, busy, busyKey, onMarkPaid, onAddPayment, onClose }) {
-  const [mode, setMode] = useState(null) // null (choose) | 'full' | 'partial'
+function AddPaymentModal({ invoice, busy, busyKey, onMarkPaid, onAddPayment, onLinkPayment, onClose }) {
+  const [mode, setMode] = useState(null) // null (choose) | 'full' | 'partial' | 'existing'
 
   if (mode === null) {
     return (
@@ -1267,6 +1274,9 @@ function AddPaymentModal({ invoice, busy, busyKey, onMarkPaid, onAddPayment, onC
           <button onClick={() => setMode('partial')} className="fos-btn fos-btn-ghost" style={{ justifyContent: 'flex-start', padding: '12px 16px' }}>
             <Wallet size={15} /> Add a Partial Amount
           </button>
+          <button onClick={() => setMode('existing')} className="fos-btn fos-btn-ghost" style={{ justifyContent: 'flex-start', padding: '12px 16px' }}>
+            <Link2 size={15} /> Use a Payment I Already Recorded
+          </button>
         </div>
       </ModalShell>
     )
@@ -1274,6 +1284,14 @@ function AddPaymentModal({ invoice, busy, busyKey, onMarkPaid, onAddPayment, onC
 
   if (mode === 'full') {
     return <MarkPaidForm invoice={invoice} busy={busyKey === 'mark_paid'} onBack={() => setMode(null)} onConfirm={onMarkPaid} onClose={onClose} />
+  }
+
+  if (mode === 'existing') {
+    return (
+      <ModalShell title="Use a Recorded Payment" onClose={onClose} maxWidth={520}>
+        <InvoiceLinkPaymentForm invoice={invoice} busy={busyKey === 'link_payment'} onBack={() => setMode(null)} onConfirm={onLinkPayment} />
+      </ModalShell>
+    )
   }
 
   return <PartialPaymentForm invoice={invoice} busy={busyKey === 'add_payment'} onBack={() => setMode(null)} onConfirm={onAddPayment} onClose={onClose} />

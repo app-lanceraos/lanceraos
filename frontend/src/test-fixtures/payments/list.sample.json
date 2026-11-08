@@ -1,0 +1,87 @@
+{
+  "results": [
+    {
+      "id": "7a307e86-2fcd-4aad-b7f2-7a64ae6af680",
+      "amount": "250.00",
+      "currency": "USD",
+      "payment_date": "2026-11-06",
+      "source": "payoneer",
+      "counterparty": "Acme Ltd",
+      "notes": "Logo design, final milestone",
+      "origin": "manual",
+      "rate_basis": "nearby",
+      "allocated_amount": "0.00",
+      "remaining_amount": "250.00",
+      "invoices": [],
+      "created_at": "2026-11-08T12:44:24.515615",
+      "updated_at": "2026-11-08T12:44:24.515619"
+    },
+    {
+      "id": "7d0be4a6-0d03-4550-b6aa-7c9aef021c8c",
+      "amount": "300.00",
+      "currency": "USD",
+      "payment_date": "2026-11-04",
+      "source": "bank",
+      "counterparty": "Acme Co",
+      "notes": "",
+      "origin": "invoice",
+      "rate_basis": "nearby",
+      "allocated_amount": "300.00",
+      "remaining_amount": "0.00",
+      "invoices": [
+        {
+          "allocation_id": "a7b478ec-1a16-473c-bc86-9da4fef1f7ff",
+          "invoice_id": "06f2ffcd-8f41-46fb-8394-e160b1d2533d",
+          "invoice_number": "INV-2026-0001",
+          "client_name": "Acme Co",
+          "amount": "300.00"
+        }
+      ],
+      "created_at": "2026-11-08T12:44:24.715619",
+      "updated_at": "2026-11-08T12:44:24.715625"
+    },
+    {
+      "id": "1035cb74-bbe3-438f-bd81-c555710302ef",
+      "amount": "1000.00",
+      "currency": "USD",
+      "payment_date": "2026-11-02",
+      "source": "wise",
+      "counterparty": "Globex",
+      "notes": "",
+      "origin": "manual",
+      "rate_basis": "nearby",
+      "allocated_amount": "400.00",
+      "remaining_amount": "600.00",
+      "invoices": [
+        {
+          "allocation_id": "d3ded90c-7c5e-4313-80b1-9f206aafccdf",
+          "invoice_id": "5def5f4c-c2d0-4777-af88-d5c6941ba454",
+          "invoice_number": "INV-2026-0002",
+          "client_name": "Acme Co",
+          "amount": "400.00"
+        }
+      ],
+      "created_at": "2026-11-08T12:44:24.519144",
+      "updated_at": "2026-11-08T12:44:24.519148"
+    },
+    {
+      "id": "275c11e0-464a-4528-894b-ef824fc99fcd",
+      "amount": "45000.00",
+      "currency": "PKR",
+      "payment_date": "2026-10-30",
+      "source": "jazzcash",
+      "counterparty": "Local client",
+      "notes": "",
+      "origin": "manual",
+      "rate_basis": "estimated",
+      "allocated_amount": "0.00",
+      "remaining_amount": "45000.00",
+      "invoices": [],
+      "created_at": "2026-11-08T12:44:24.729219",
+      "updated_at": "2026-11-08T12:44:24.729226"
+    }
+  ],
+  "total": 4,
+  "limit": 20,
+  "offset": 0
+}

@@ -13,17 +13,14 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import useTheme from '@/hooks/useTheme'
 import { formatMoney } from '@/pages/invoiceHelpers'
 import {
-  compactNumber, paymentNote, trendChartData, trendHasData, trendSummary, visuallyHidden,
+  COLLECTED_BAR_COLORS, compactNumber, paymentNote, trendChartData, trendHasData, trendSummary, visuallyHidden,
 } from '@/pages/dashboardHelpers'
 import DashboardCard from './DashboardCard'
 import DashboardUnavailable from './DashboardUnavailable'
 
-// Same validated light/dark "collected" step theme.css defines as --chart-series-collected.
-const COLLECTED = { light: '#1baf7a', dark: '#199e70' }
-
 export default function DashboardIncomeChart({ trend, currency, onReload, className }) {
   const { isDark } = useTheme()
-  const color = COLLECTED[isDark ? 'dark' : 'light']
+  const color = COLLECTED_BAR_COLORS[isDark ? 'dark' : 'light']
 
   return (
     <DashboardCard id="income" title="Income, last 6 months" subtitle={`Money collected, shown in ${currency} at today's exchange rate`} className={className}>

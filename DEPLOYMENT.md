@@ -365,6 +365,16 @@ counts and at most 10 ids per problem (never amounts or names) and exits non-zer
     `dashboard_insights` row; with `DASHBOARD_INSIGHTS_AI_ENABLED` unset (or `AI_ENABLED=false`) the card still shows sentences
     (no footer) and no row is written. Before enabling it for real users: the privacy policy must say aggregated income figures are
     processed by an AI provider, and Groq's current data-handling terms must be checked (DECISIONS.md, 06 November 2026).
+19. **Payments page (Prompt 11):** a code-only release — **no migration, no new environment variable** (`python manage.py makemigrations
+    --check --dry-run` reports none); the one new backend route, `GET /api/payments/currencies/`, is read-only. Smoke test with a real account:
+    open `/payments` (the sidebar's *Payments* item no longer lands on the dashboard); the three KPI numbers equal the figures from
+    `GET /api/payments/summary/`. *Add payment* (amount, currency, date): it appears first in the list and *This month* changes; add the same
+    amount again within three days: the "Possible duplicate" step appears AFTER it is saved and *Delete the one I just added* removes only the
+    new one. Open a payment, *Link to invoice*: the open invoice with the same balance is listed first as "Exact match"; link it, the invoice
+    becomes *Paid*; *Unlink* (it asks first), the invoice goes back to *Sent*. A payment recorded on an invoice shows no Unlink and no Delete, only
+    the reason. On an invoice, *Add Payment* now has a third choice, *Use a Payment I Already Recorded*: it lists only unlinked payments in the
+    invoice's currency dated on or after its issue date; linking one updates the invoice in place with a timeline entry. Browser console clean
+    throughout; no horizontal scroll at 320px.
 
 ## 9. Rollback
 

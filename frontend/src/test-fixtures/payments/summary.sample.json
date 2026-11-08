@@ -1,0 +1,100 @@
+{
+  "currency": "USD",
+  "periods": {
+    "this_month": {
+      "total": "1550.00",
+      "count": 3
+    },
+    "last_month": {
+      "total": "162.69",
+      "count": 1
+    },
+    "this_year": {
+      "total": "1712.69",
+      "count": 4
+    },
+    "all_time": {
+      "total": "1712.69",
+      "count": 4
+    }
+  },
+  "month_change_pct": 852.7,
+  "by_source": [
+    {
+      "source": "wise",
+      "label": "Wise",
+      "total": "1000.00",
+      "count": 1
+    },
+    {
+      "source": "bank",
+      "label": "Bank Transfer",
+      "total": "300.00",
+      "count": 1
+    },
+    {
+      "source": "payoneer",
+      "label": "Payoneer",
+      "total": "250.00",
+      "count": 1
+    },
+    {
+      "source": "jazzcash",
+      "label": "JazzCash",
+      "total": "162.69",
+      "count": 1
+    }
+  ],
+  "monthly": [
+    {
+      "month": "2025-12",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-01",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-02",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-03",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-04",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-05",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-06",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-07",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-08",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-09",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-10",
+      "total": "162.69"
+    },
+    {
+      "month": "2026-11",
+      "total": "1550.00"
+    }
+  ],
+  "unconverted_count": 0,
+  "estimated_count": 1
+}

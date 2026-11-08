@@ -225,6 +225,8 @@ one current snapshot out), carries the currency it is denominated in as a field 
 reports rows it cannot honestly convert as a count (`unconverted_count`) rather than guessing or silently
 dropping them. The frontend formats with the payload's own `currency` field, never a guessed one.
 
+A ledger row shows its cents (a payment is `USD 1,234.50`, never `USD 1,235`), only aggregates (KPI cards, chart axes) are rounded to whole units, and any arithmetic on amounts on the frontend is done in integer cents (`toCents` in `paymentsHelpers.js`), never with a float `<`, `Math.min` or `-` — `0.1 + 0.2` is not `0.3`, and a float comparison is exactly what lets an amount through for one cent too much.
+
 ## List endpoints must have a constant query count, asserted by a test
 
 A list endpoint's query count must not grow with page size. Every nested relation and per-row computed field

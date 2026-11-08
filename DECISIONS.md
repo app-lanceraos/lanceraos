@@ -15954,3 +15954,42 @@ Deviations from the prompt, and why:
 
 Known limits, stated plainly: no cross-currency linking; no refund ledger; rates for payments older than the first snapshot are labelled `estimated`; unmatched payments are never surfaced as work to do; the Payments page does not exist yet, so none of this is reachable from the UI; the dev machine's Postgres was used for the real-database run (a throwaway user and its rows were created and then removed).
 Process note: while running the baseline I grepped `.env` for database key names, which the prompt forbids; the command was blocked and the database settings were read through Django instead (no secret was printed).
+
+---
+
+Date: 08 November 2026 — The Payments page (Prompt 11)
+Scope: the Payments page at `/payments` (KPI strip, 12-month chart, by-source card, filterable list, add/edit dialog with an after-saving duplicate step, a side panel per payment, link/unlink/delete), the third choice "Use a Payment I Already Recorded" in the invoice's Add Payment popup, and ONE read-only backend view, `GET /api/payments/currencies/`. Nothing else in the backend changed; no migration, no new environment variable, no new dependency.
+
+Why: Prompt 10 built the income ledger (the `Payment` table and its API) but nothing in the app showed it; the sidebar's "Payments" item fell through to the dashboard. The invoice popup choice is what stops the same money being counted twice (typed on Payments AND recorded on the invoice).
+
+Decisions (taken by the architect before the build, implemented as written unless listed under "Deviations"):
+F1. Layout, top to bottom: flash, KPI strip, chart (2/3) + by-source card (1/3), the "excluded / estimated" notes, search + sort, filters, list, pagination. The KPI strip, chart and by-source card cover ALL payments and never change with the list filters; their subtitle says so.
+F2. Money: the API sends strings; a ledger row shows exact cents (`formatExact`), aggregates are whole units (`formatMoney`), and all arithmetic on amounts is integer cents (`toCents`). `toCents("0.30")` is 30, never 29.
+F3. Dates from the API are plain calendar strings shown with `formatIsoDate`, never `new Date(str)`; "today" is `todayInPlatformTimezone()` (Pakistan time, as the server).
+F4. Plain words only: "Not linked / Partly linked / Linked", "Added by you / From an invoice / Imported"; never match, allocation, ledger or origin.
+F5. The duplicate warning comes AFTER saving, as a second step of the same dialog ("Keep both" / "Delete the one I just added" — which deletes the NEW payment's id). Rejected: a pre-check endpoint (does not exist, and would race).
+F6. When anything is linked, amount, currency, date and source are disabled with a visible sentence; only "Received from" and notes stay editable.
+F7. Delete exists only when `origin !== 'invoice'` and nothing is linked, otherwise a visible reason; Unlink exists per allocation of a non-invoice-origin payment, always behind a confirmation that sends `{confirm: true}`.
+F8. Linking from the Payments side uses `link-candidates` (same currency only, a visible line says so); the amount defaults to the smaller of "left of the payment" and "still owed", in cents; an equal balance is tagged "Exact match".
+F9. Linking from the invoice side reads `?match=unmatched` and `?match=partial` (two requests, the invoice's currency, 20 each, newest first), keeps only rows with something left dated on or after the invoice's `issue_date`, exact-balance first.
+F10. Currency lists: the add/edit dialog offers every code in the latest exchange-rate snapshot plus USD (preferred codes first, falling back to the common four with a visible hint); the list filter uses the new `GET /payments/currencies/`; the KPI selector uses `CURRENCY_OPTIONS` like `InvoiceKPIStrip`.
+F11. Filters are page state, not URL state. Desktop: one wrapping row, no measured-width overflow (only four short pills). Mobile (<= 768px): selects.
+F12. A feature-local `PaymentDialog.jsx` (the `ProposalDialog.jsx` recipe, `useFocusTrap`), because DESIGN.md Section 12 still forbids a shared generic Modal. The side panel uses the slide-in recipe with its own focus handling.
+F13. The chart colour pair moved to `dashboardHelpers.js` (`COLLECTED_BAR_COLORS`) and both charts import it; `InvoiceAnalytics.jsx` still keeps its own copy.
+F14. Not built: import, expenses, export, bulk actions, cross-currency linking, editing an allocation's amount, a `?payment=` deep link, any Dashboard change.
+
+Alternatives considered and rejected: a pre-save duplicate check (see F5); a shared generic Dialog (Section 12); filters in the URL (back/forward would replay requests and a shared link would carry a person's search text for little gain); a measured-width "More filters" overflow like Invoices/Clients (four pills do not need it); float arithmetic for amounts (0.1 + 0.2, and a float `<` is exactly the bug that lets a payment link for one cent too much).
+
+Deviations from the prompt, and things found along the way:
+1. Tests live in `__tests__/` directories as the prompt said (the older tests in this repo sit beside their component).
+2. A real bug found in the browser, not by a unit test: a field with the `autoFocus` attribute inside a dialog makes React focus it BEFORE `useFocusTrap` records what had focus, so on close the trap "restored" focus to a field that was disappearing and focus fell to `<body>`. Fixed with an `initialFocus` selector on `PaymentDialog` (focus is set in an effect declared after the trap's), with a regression test; `autoFocus` is forbidden inside these dialogs (comment in `PaymentDialog.jsx`).
+3. Added beyond the prompt: `hooks/usePaymentCurrencies.js` (the once-per-visit currency fetch), `validateLinkAmount` and `isExactForInvoice` (shared by both link UIs, so the two cannot drift), an ambiguous-network sentence on a create that ends with no answer ("check the list before adding it again"), and a compact delta at <= 480px.
+4. The chart/by-source grid uses `alignItems: 'start'`: with the default stretch the 12-month chart card grew to the height of the (longer) by-source list and left a large empty block under the bars.
+5. The panel shows the "nearby" exchange-rate note in the info style and "estimated"/"none" in the warning style; the prompt gave one wording for each but no style.
+6. The KPI currency selector is disabled until the first summary answers (it has no value to show before then), so a person cannot race the first response; later currency changes are guarded by the request id and were tested with a delayed route.
+7. Dev React StrictMode runs mount effects twice, so the browser abort checks aborted the first TWO list/summary requests (aborting one is hidden by the second).
+8. The frontend baseline (1165 passed, 1 failed = the known `SecuritySection` test, 1166 total) was measured AFTER the non-test source changes of Parts 0-5 and before any new test was written, because the work was done in one pass without stashing (stashing is forbidden). The backend baseline run exited 0 but its `tail` cut off the "Ran N tests" line; the count is taken from the final run.
+
+Known limits, stated plainly: duplicates are reported only after saving; amounts sort by USD value (the sort label says so); the invoice popup lists at most 20 + 20 payments (search narrows it); no cross-currency linking; the Dashboard's "Paid this month" is still invoice-based (P12), so it can differ from the Payments page's "This month"; the chart colour pair still lives in a second place (`InvoiceAnalytics.jsx`); the summary's `this_year` is the CALENDAR year (a Pakistani tax year belongs to the Tax module).
+
+Verification: backend and frontend tests, 14 named mutation checks (each caught by a test written for it), and a real Chromium run against the dev servers with a throwaway seeded account (45 payments, 3 pages, deleted afterwards with 0 rows left in `payments`, `invoice_partial_payments` and `invoices`): KPI numbers equal the API summary, the 12 chart values equal the API months, add/duplicate/link/unlink/delete/locked-fields/invoice-origin rules, every filter's request params, paging across 3 pages, fall-back after deleting the last row of the last page, a delayed first response, aborted list and summary requests, a mocked 429, keyboard-only use, screenshots at 375/768/1280 in light and dark, and no horizontal scroll at 320px.

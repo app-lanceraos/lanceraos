@@ -90,6 +90,11 @@ export function deltaView(pctChange) {
 }
 
 // ── Income chart ──────────────────────────────────────────────────────────────────────────────
+// The validated light/dark "collected" step theme.css defines as --chart-series-collected, mirrored as plain hex
+// (Recharts writes colours into SVG attributes, where var() does not resolve reliably). Shared by the Dashboard chart
+// and the Payments chart; InvoiceAnalytics.jsx still keeps its own copy.
+export const COLLECTED_BAR_COLORS = { light: '#1baf7a', dark: '#199e70' }
+
 export function trendHasData(months) {
   return (months || []).some((m) => Number(m.collected) > 0)
 }

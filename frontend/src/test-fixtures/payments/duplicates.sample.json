@@ -1,0 +1,29 @@
+{
+  "payment": {
+    "id": "675bb6d6-4611-49a0-9141-eeff3d39b325",
+    "amount": "250.00",
+    "currency": "USD",
+    "payment_date": "2026-11-07",
+    "source": "payoneer",
+    "counterparty": "Acme Ltd",
+    "notes": "",
+    "origin": "manual",
+    "rate_basis": "nearby",
+    "allocated_amount": "0.00",
+    "remaining_amount": "250.00",
+    "invoices": [],
+    "created_at": "2026-11-08T12:44:24.798219",
+    "updated_at": "2026-11-08T12:44:24.798226"
+  },
+  "possible_duplicates": [
+    {
+      "id": "7a307e86-2fcd-4aad-b7f2-7a64ae6af680",
+      "amount": "250.00",
+      "currency": "USD",
+      "payment_date": "2026-11-06",
+      "source": "payoneer",
+      "counterparty": "Acme Ltd",
+      "origin": "manual"
+    }
+  ]
+}

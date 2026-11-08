@@ -1,0 +1,26 @@
+{
+  "results": [
+    {
+      "id": "a944c40a-9dd2-4ddc-94bc-b90e71978482",
+      "invoice_number": "INV-2026-0003",
+      "client_name": "Acme Co",
+      "status": "sent",
+      "issue_date": "2026-10-14",
+      "due_date": "2026-01-31",
+      "total": "600.00",
+      "outstanding_amount": "600.00",
+      "currency": "USD"
+    },
+    {
+      "id": "e88cfc47-c8b7-4422-987d-cbd8fc923dfa",
+      "invoice_number": "INV-2026-0004",
+      "client_name": "Acme Co",
+      "status": "sent",
+      "issue_date": "2026-09-29",
+      "due_date": "2026-01-31",
+      "total": "2500.00",
+      "outstanding_amount": "2500.00",
+      "currency": "USD"
+    }
+  ]
+}
