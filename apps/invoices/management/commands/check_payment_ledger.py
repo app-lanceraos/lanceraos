@@ -1,6 +1,7 @@
 # apps/invoices/management/commands/check_payment_ledger.py
 """
-Read-only integrity check for the income ledger (Payments core, 07 November 2026). It lives in
+Read-only integrity check for the income ledger (Payments core, 07 November 2026) and, since
+Prompt 14 (08 November 2026), the expense ledger. It lives in
 apps.invoices because it needs both Payment and InvoicePartialPayment, and apps.payments can
 import neither the invoice models nor this command.
 
@@ -12,7 +13,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Count, F, Q, Sum
 
 from apps.invoices.models import InvoicePartialPayment
-from apps.payments.models import Payment
+from apps.payments.models import Expense, Payment
 
 MAX_IDS = 10
 
@@ -52,10 +53,24 @@ class Command(BaseCommand):
                 'non-imported payment that carries an external id or an import batch',
                 Payment.objects.exclude(origin='import').filter(~Q(external_id='') | Q(import_batch__isnull=False)),
             ),
+            # Expense ledger (Prompt 14). `rate_basis` and `rate_to_usd` must agree, and USD is always 1.
+            (
+                'USD expense whose rate is not exactly 1',
+                Expense.objects.filter(currency='USD').exclude(rate_to_usd=1),
+            ),
+            (
+                "expense with a rate but rate basis 'none'",
+                Expense.objects.filter(rate_to_usd__isnull=False, rate_basis='none'),
+            ),
+            (
+                "expense with no rate whose rate basis is not 'none'",
+                Expense.objects.filter(rate_to_usd__isnull=True).exclude(rate_basis='none'),
+            ),
         ]
 
         self.stdout.write(
-            f'Ledger rows: {Payment.objects.count()} payments, {InvoicePartialPayment.objects.count()} invoice allocations.'
+            f'Ledger rows: {Payment.objects.count()} payments, {InvoicePartialPayment.objects.count()} invoice allocations, '
+            f'{Expense.objects.count()} expenses.'
         )
         problems = 0
         for label, qs in checks:

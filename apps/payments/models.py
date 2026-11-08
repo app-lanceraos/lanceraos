@@ -2,8 +2,9 @@
 """
 Module 3 (Payments + Expenses + P&L), built in slices. Built so far:
   - ExchangeRateSnapshot, the currency-conversion anchor Module 2 builds against;
-  - Payment, the income ledger (Payments core, 07 November 2026).
-Expenses, CSV import, P&L reporting and exchange-rate alerts are later builds.
+  - Payment, the income ledger (Payments core, 07 November 2026), and PaymentImportBatch (its CSV import);
+  - Expense, the money-out ledger (Prompt 14, 08 November 2026).
+Expense receipts, recurring expenses, expense import, P&L reporting and exchange-rate alerts are later builds.
 
 apps.payments is the BOTTOM of the dependency tree: it imports nothing from another
 feature app (use settings.AUTH_USER_MODEL strings), only core.* and itself.
@@ -15,6 +16,7 @@ from django.conf import settings
 from django.db import models
 
 from .constants import (
+    EXPENSE_CATEGORY_CHOICES,
     ORIGIN_CHOICES,
     PAYMENT_SOURCE_CHOICES,
     RATE_BASIS_CHOICES,
@@ -156,6 +158,74 @@ class Payment(models.Model):
     def save(self, *args, **kwargs):
         if self.currency == 'USD' and self.rate_to_usd != Decimal('1'):
             # Same invariant as Invoice and InvoicePartialPayment: USD -> USD is exactly 1.
+            self.rate_to_usd = Decimal('1')
+            update_fields = kwargs.get('update_fields')
+            if update_fields is not None and 'rate_to_usd' not in update_fields:
+                kwargs['update_fields'] = [*update_fields, 'rate_to_usd']
+        super().save(*args, **kwargs)
+
+
+class Expense(models.Model):
+    """
+    The money-out ledger, a deliberate mirror of Payment: every amount spent is exactly ONE row, with a
+    category, a date, an optional vendor and description, and a deductible flag. The rate is frozen from the
+    snapshot NEAREST expense_date (same rule and same `rate_basis` values as Payment), so a report of a past
+    month does not move when today's rate moves. Report maths lives in apps.payments.expense_ledger, on the
+    same rollup engine as the income summary.
+
+    `is_deductible` records the owner's claim that this is a business cost that can reduce taxable income.
+    This table only stores it and the summary only sums it; what to do with it is the Tax module's decision.
+    Record a platform fee as an expense only when the income was recorded BEFORE the fee came off; if the NET
+    payment was recorded, the fee is already out of the income and counting it again counts it twice.
+
+    6-question framework:
+    1. Mutable? Yes, every field: an expense has no allocations, so nothing else depends on its values. The
+       rate is recomputed when currency or expense_date change (and only then), in
+       expense_services.update_expense under a row lock.
+    2. Soft deleted? No: hard delete plus a full-snapshot AuditLog row (same reasoning as Payment, P5). A
+       deleted expense has no business consequence beyond the report it was part of.
+    3. Audit trail? Yes: expense_created, expense_updated, expense_deleted. The rows hold ids, money, dates and
+       category, never the vendor or description text.
+    4. Indexed? (user, -expense_date): every list, summary and report filters and orders on both.
+    5. Encrypted? No. Amounts and dates are not credentials; vendor and description are short plain text the
+       owner typed.
+    6. Cascade behavior? user PROTECT (financial record: account deletion anonymizes, it never removes the
+       user row). exchange_rate_snapshot SET_NULL (a pruned snapshot must not take an expense with it).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='expenses')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    expense_date = models.DateField()
+    category = models.CharField(max_length=20, choices=EXPENSE_CATEGORY_CHOICES)
+    vendor = models.CharField(max_length=200, blank=True)
+    description = models.CharField(max_length=300, blank=True)
+    is_deductible = models.BooleanField(default=True)
+
+    # Anchor-currency design: value of 1 unit of `currency` in USD on (about) expense_date.
+    rate_to_usd = models.DecimalField(max_digits=18, decimal_places=10, null=True, blank=True)
+    rate_basis = models.CharField(max_length=10, choices=RATE_BASIS_CHOICES, default=RATE_NONE)
+    exchange_rate_snapshot = models.ForeignKey(
+        ExchangeRateSnapshot, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'expenses'
+        ordering = ['-expense_date', '-created_at']
+        indexes = [models.Index(fields=['user', '-expense_date'], name='expenses_user_date_idx')]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name='expenses_amount_positive'),
+        ]
+
+    def __str__(self):
+        return f'{self.currency} {self.amount} on {self.expense_date} ({self.category})'
+
+    def save(self, *args, **kwargs):
+        if self.currency == 'USD' and self.rate_to_usd != Decimal('1'):
+            # Same invariant as Payment, Invoice and InvoicePartialPayment: USD -> USD is exactly 1.
             self.rate_to_usd = Decimal('1')
             update_fields = kwargs.get('update_fields')
             if update_fields is not None and 'rate_to_usd' not in update_fields:

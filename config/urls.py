@@ -42,6 +42,7 @@ urlpatterns = [
     path('api/payments/<uuid:pk>/link-invoice/', payment_link_invoice, name='payment_link_invoice'),
     path('api/payments/<uuid:pk>/link-invoice/<uuid:allocation_id>/', payment_unlink_invoice, name='payment_unlink_invoice'),
     path('api/payments/', include('apps.payments.urls')),
+    path('api/expenses/', include('apps.payments.expense_urls')),
     path('api/proposals/', include('apps.proposals.urls')),
     path('api/dashboard/', include('apps.dashboard.urls')),
     # Lives at the root, not under api/auth/ — matches what the frontend

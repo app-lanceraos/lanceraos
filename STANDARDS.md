@@ -406,6 +406,14 @@ invoice, `check_payment_ledger`) lives in `apps.invoices`. Shared helpers it nee
 (`validate_currency_code` -> `apps/payments/validators.py`, `rate_limited` -> `core/ratelimit.py`).
 Enforced by `apps/payments/tests/test_direction.py` (AST, lazy imports inside functions included).
 
+**Two ledgers, one app (Prompt 14, 08 November 2026).** Money in (`Payment`) and money out (`Expense`) are two ledgers inside
+`apps.payments`. They share `rates.py` (the frozen nearest-snapshot rate) and `rollup.py` (the one windowed summary loop that both
+`ledger.summary_for_user` and `expense_ledger.summary_for_user` call), and the expense modules (`expense_services.py`,
+`expense_ledger.py`, `expense_serializers.py`, `views_expenses.py`, `expense_urls.py`) sit flat next to the income ones. A report (the
+P&L, the Tax module, the income certificate) reads BOTH ledgers through `apps.payments` — `ledger` for income, `expense_ledger` for
+spending — never through `InvoicePartialPayment` or invoice totals, and never by re-deriving the maths. A rule fixed in `rollup.py` is
+fixed for both; do not copy that loop. Pin any change to it with the golden master in `apps/payments/tests/test_rollup.py`.
+
 **One ledger rule: money received is a `Payment`; an invoice allocates it.** Never add a second place that records money received.
 A report of income reads `apps.payments.ledger` (converted with each payment's own frozen snapshot), not `InvoicePartialPayment`
 directly. `InvoicePartialPayment.save()` is what guarantees the ledger row exists, so create allocations through the model (a

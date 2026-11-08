@@ -12,7 +12,6 @@ from django.db import transaction
 from django.db.models import DecimalField, ExpressionWrapper, F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.utils.dateparse import parse_date
 from rest_framework import serializers, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -23,7 +22,7 @@ from core.ratelimit import rate_limited
 
 from . import ledger, services
 from .constants import ORIGIN_CHOICES, ORIGIN_MANUAL, PAYMENT_SOURCE_CHOICES
-from .http import no_store, too_many_requests
+from .http import bad_request, no_store, parse_date_param, parse_paging, too_many_requests
 from .models import Payment
 from .selectors import payments_queryset, serialize_payment
 from .serializers import PaymentSerializer, PaymentWriteSerializer
@@ -37,27 +36,8 @@ READS_PER_HOUR = 240
 # payments by hand must not be blocked halfway through.
 WRITES_PER_HOUR = 60
 
-DEFAULT_LIMIT = 20
-MAX_LIMIT = 100
-
 SORTS = ('recent', 'oldest', 'amount_high', 'amount_low')
 MATCHES = ('unmatched', 'partial', 'matched')
-
-
-def _bad_request(message):
-    return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
-
-
-def _parse_date_param(raw):
-    if not raw:
-        return None, None
-    try:
-        parsed = parse_date(raw)  # None for a wrong shape, ValueError for a well-shaped impossible date (2026-13-45)
-    except ValueError:
-        parsed = None
-    if parsed is None:
-        return None, 'Invalid date, use YYYY-MM-DD.'
-    return parsed, None
 
 
 def _apply_filters(request, qs):
@@ -103,10 +83,10 @@ def _apply_filters(request, qs):
         else:
             qs = qs.filter(allocated_total__gte=F('amount'))
 
-    start, error = _parse_date_param(params.get('start'))
+    start, error = parse_date_param(params.get('start'))
     if error:
         return qs, error
-    end, error = _parse_date_param(params.get('end'))
+    end, error = parse_date_param(params.get('end'))
     if error:
         return qs, error
     if start:
@@ -134,15 +114,6 @@ def _apply_sort(request, qs):
     return qs.order_by(direction, '-payment_date', '-created_at'), None
 
 
-def _parse_paging(request):
-    try:
-        limit = int(request.query_params.get('limit', DEFAULT_LIMIT))
-        offset = int(request.query_params.get('offset', 0))
-    except (TypeError, ValueError):
-        return None, None, 'limit and offset must be whole numbers.'
-    return max(1, min(limit, MAX_LIMIT)), max(0, offset), None
-
-
 def _duplicate_payload(payment):
     return {
         'id': str(payment.pk),
@@ -168,15 +139,15 @@ def payment_list(request):
     if request.method == 'GET':
         if rate_limited(f'payments:list:{request.user.pk}', READS_PER_HOUR):
             return too_many_requests()
-        limit, offset, error = _parse_paging(request)
+        limit, offset, error = parse_paging(request)
         if error:
-            return _bad_request(error)
+            return bad_request(error)
         qs, error = _apply_filters(request, payments_queryset(request.user))
         if error:
-            return _bad_request(error)
+            return bad_request(error)
         qs, error = _apply_sort(request, qs)
         if error:
-            return _bad_request(error)
+            return bad_request(error)
         total = qs.count()
         page = qs[offset:offset + limit]
         return Response({'results': PaymentSerializer(page, many=True).data, 'total': total, 'limit': limit, 'offset': offset})
@@ -233,7 +204,7 @@ def payment_detail(request, pk):
             try:
                 changes = services.update_payment(payment, serializer.validated_data)
             except services.PaymentRuleError as exc:
-                return _bad_request(str(exc))
+                return bad_request(str(exc))
         if changes:
             log_event(
                 'payment_updated', user=request.user, request=request,
@@ -247,7 +218,7 @@ def payment_detail(request, pk):
         try:
             services.delete_payment(payment)
         except services.PaymentRuleError as exc:
-            return _bad_request(str(exc))
+            return bad_request(str(exc))
     log_event('payment_deleted', user=request.user, request=request, metadata=audit)
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -268,7 +239,7 @@ def payment_summary(request):
         try:
             currency = validate_currency_code(currency)
         except serializers.ValidationError as exc:
-            return _bad_request(str(exc.detail[0]))
+            return bad_request(str(exc.detail[0]))
     return Response(ledger.summary_for_user(request.user, timezone.now().date(), currency))
 
 

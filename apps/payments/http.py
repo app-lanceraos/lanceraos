@@ -1,9 +1,17 @@
 # apps/payments/http.py
-"""Small HTTP helpers shared by the Payments views and the invoice-side link views."""
+"""
+Small HTTP helpers shared by the Payments views, the Expenses views and the invoice-side link views.
+The date and paging parsers and the 400 builder were promoted here from views.py (Prompt 14) so the
+expense views do not copy them.
+"""
 import functools
 
+from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.response import Response
+
+DEFAULT_LIMIT = 20
+MAX_LIMIT = 100
 
 
 def no_store(view):
@@ -22,3 +30,31 @@ def no_store(view):
 
 def too_many_requests():
     return Response({'error': 'Too many requests. Please try again later.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+def bad_request(message):
+    """A 400 in the project's `{"error": "..."}` shape."""
+    return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def parse_date_param(raw):
+    """Returns (date or None, error message or None); an empty value is (None, None)."""
+    if not raw:
+        return None, None
+    try:
+        parsed = parse_date(raw)  # None for a wrong shape, ValueError for a well-shaped impossible date (2026-13-45)
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        return None, 'Invalid date, use YYYY-MM-DD.'
+    return parsed, None
+
+
+def parse_paging(request):
+    """Returns (limit, offset, error message or None); limit is clamped to 1..MAX_LIMIT, offset to >= 0."""
+    try:
+        limit = int(request.query_params.get('limit', DEFAULT_LIMIT))
+        offset = int(request.query_params.get('offset', 0))
+    except (TypeError, ValueError):
+        return None, None, 'limit and offset must be whole numbers.'
+    return max(1, min(limit, MAX_LIMIT)), max(0, offset), None

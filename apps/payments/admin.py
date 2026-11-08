@@ -1,7 +1,7 @@
 # apps/payments/admin.py
 from django.contrib import admin
 
-from .models import ExchangeRateSnapshot, Payment
+from .models import ExchangeRateSnapshot, Expense, Payment
 
 
 @admin.register(ExchangeRateSnapshot)
@@ -21,6 +21,26 @@ class PaymentAdmin(admin.ModelAdmin):
     list_display = ['id', 'user', 'amount', 'currency', 'payment_date', 'source', 'origin', 'rate_basis']
     list_filter = ['origin', 'source', 'currency', 'rate_basis']
     search_fields = ['id', 'counterparty']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Expense)
+class ExpenseAdmin(admin.ModelAdmin):
+    """
+    Fully read-only, for the same reason as PaymentAdmin: expense rows are changed only through the
+    Expenses API, which holds the row lock, recomputes the frozen rate and writes the audit trail.
+    """
+    list_display = ['id', 'user', 'amount', 'currency', 'expense_date', 'category', 'is_deductible', 'rate_basis']
+    list_filter = ['category', 'currency', 'is_deductible']
+    search_fields = ['id', 'vendor']
 
     def has_add_permission(self, request):
         return False

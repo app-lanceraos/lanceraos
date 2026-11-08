@@ -283,6 +283,27 @@ One migration, applied by the normal pre-deploy `migrate`: `payments.0003_paymen
 
 No new environment variable and no new service. **Run `python manage.py check_payment_ledger` afterwards** (it now also checks that an imported payment has a batch and that no manual/invoice payment carries an external id or batch). Smoke test (the Prompt 13 screens exist): sign in with a throwaway account, open **Payments**, click **Import**, choose **Wise** as where the money arrived, choose `apps/payments/sample_exports/wise_statement.csv` (synthetic), **Check the file**, confirm the rows (11 ready, a handful marked Check / May already be there / Already imported / Not income), **Import 11 payments**, then **Undo this import** and confirm. The currency snapshots for USD, EUR, GBP and PKR must exist for the dates in the file (check `ExchangeRateSnapshot`, or let the daily task run first) — a row whose currency has no snapshot at all is shown as "Can't read" and cannot be imported. The dialog is stateless and re-sends the file when you press Import, so the 2 MiB limit applies to both uploads and the per-hour limits are 20 checks, 10 imports and 10 undos per user. The 2 MiB upload cap sits under any proxy body limit (Cloudflare's default is 100 MB, Railway's is larger), so no proxy setting is needed. Undo: `python manage.py migrate payments 0002` drops the new columns and table (data in them is lost).
 
+## 7c. Expenses ledger release (08 November 2026, Prompt 14) **[U]**
+
+One migration, applied by the normal pre-deploy `migrate`: `payments.0004_expense` — purely additive (a new `expenses` table, one index and
+one CHECK constraint on it). Nothing existing is rewritten, so it cannot fail on production data. `python manage.py sqlmigrate payments 0004`
+shows the exact SQL. Undo: `python manage.py migrate payments 0003` drops the table (the expenses in it are lost).
+
+No new environment variable and no new service. **Backend only**: the Expenses page is the next prompt, so there is no Vercel change and
+nothing for a user to see yet. New endpoints, all under `/api/expenses/` and all behind login: `GET`/`POST /api/expenses/`,
+`GET`/`PUT`/`DELETE /api/expenses/<id>/`, `GET /api/expenses/summary/`, `GET /api/expenses/currencies/`. Rate limits are per user and per
+hour: 240 reads, 60 each of create, update and delete.
+
+**Run `python manage.py check_payment_ledger` afterwards** (Railway -> `web` -> shell). Its "Ledger rows:" line now also counts expenses
+(0 on the first deploy) and it checks that no USD expense has a rate other than 1 and that every expense's rate and rate basis agree. A
+clean run still ends with `Payment ledger check passed.`
+
+The same release refactors how the Payments income summary is computed (the loop now lives in `apps/payments/rollup.py`). Its output is
+unchanged and pinned byte for byte by a test, so `GET /api/payments/summary/` and the Payments page need no check beyond the usual smoke
+test. Smoke test: sign in with a throwaway account, `POST /api/expenses/` (a browser console `fetch` with the CSRF header, or the Django
+shell's test client) with `{"amount": "10.00", "currency": "USD", "expense_date": "<today>", "category": "software"}`, expect 201;
+`GET /api/expenses/summary/` should show `10.00` in `this_month`; `DELETE` it and expect 204.
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

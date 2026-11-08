@@ -11,30 +11,16 @@ month's total never changes when today's rate changes. If that snapshot link is 
 core.money.convert_amount (STANDARDS.md); a row that cannot be converted is counted, never
 guessed and never dropped silently.
 """
-from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal
 
-from dateutil.relativedelta import relativedelta
+from core.money import CENT
 
-from core.money import CENT, convert_amount
-
+from . import rollup
 from .constants import PAYMENT_SOURCE_LABELS, PROBABLE_DUPLICATE_DAYS, RATE_ESTIMATED
 from .models import ExchangeRateSnapshot, Payment
 
 ZERO = Decimal('0')
-
-
-def _convert_row(row, target_currency, snapshots, current_snapshot):
-    """One (amount, currency, rate_to_usd, snapshot_id, rate_basis) row -> Decimal or None."""
-    amount, currency, rate_to_usd, snapshot_id, _basis = row
-    snapshot = snapshots.get(snapshot_id) or current_snapshot
-    return convert_amount(amount, currency, rate_to_usd, target_currency, snapshot)
-
-
-def _load_snapshots(rows):
-    ids = {row[3] for row in rows if row[3]}
-    return ExchangeRateSnapshot.objects.in_bulk(ids) if ids else {}
 
 
 def converted_total(rows, target_currency, current_snapshot):
@@ -45,10 +31,10 @@ def converted_total(rows, target_currency, current_snapshot):
     conversion actually used a rate (a payment already in the target currency uses none).
     """
     rows = list(rows)
-    snapshots = _load_snapshots(rows)
+    snapshots = rollup.load_snapshots(rows)
     total, converted, unconverted, estimated = ZERO, 0, 0, 0
     for row in rows:
-        value = _convert_row(row, target_currency, snapshots, current_snapshot)
+        value = rollup.convert_row(row, target_currency, snapshots, current_snapshot)
         if value is None:
             unconverted += 1
             continue
@@ -59,19 +45,12 @@ def converted_total(rows, target_currency, current_snapshot):
     return total.quantize(CENT), converted, unconverted, estimated
 
 
-def _month_start(d):
-    return d.replace(day=1)
-
-
-def _money(value):
-    return str(value.quantize(CENT))
-
-
 def summary_for_user(user, today, currency=None):
     """
     The Payments page's headline numbers. Constant query count whatever the row count: one
     query for the user's payments, one for the snapshots they reference, one for the profile
-    currency and the current snapshot lookup; everything else is Python.
+    currency and the current snapshot lookup; everything else is Python (apps.payments.rollup,
+    shared with the expense summary).
 
     Windows are by payment_date. `this_year` is the CALENDAR year; a Pakistani tax year
     (July-June) belongs to the future Tax module. `count` is the number of payments that
@@ -83,70 +62,28 @@ def summary_for_user(user, today, currency=None):
     """
     target = (currency or user.profile.default_currency or 'USD').upper()
     current = ExchangeRateSnapshot.get_current()
-    raw = list(
-        Payment.objects.filter(user=user).values_list(
+    rows = [
+        rollup.Row(amount, row_currency, rate, snapshot_id, basis, payment_date, source, False)
+        for amount, row_currency, rate, snapshot_id, basis, payment_date, source in Payment.objects.filter(user=user).values_list(
             'amount', 'currency', 'rate_to_usd', 'exchange_rate_snapshot_id', 'rate_basis', 'payment_date', 'source',
         )
-    )
-    snapshots = _load_snapshots(raw)
-
-    this_month_start = _month_start(today)
-    last_month_start = this_month_start - relativedelta(months=1)
-    next_month_start = this_month_start + relativedelta(months=1)
-    year_start = today.replace(month=1, day=1)
-    first_monthly = this_month_start - relativedelta(months=11)
-
-    windows = {
-        'this_month': lambda d: this_month_start <= d < next_month_start,
-        'last_month': lambda d: last_month_start <= d < this_month_start,
-        'this_year': lambda d: year_start <= d < year_start.replace(year=year_start.year + 1),
-        'all_time': lambda d: True,
-    }
-    periods = {name: [ZERO, 0] for name in windows}
-    by_source = defaultdict(lambda: [ZERO, 0])
-    monthly = {(first_monthly + relativedelta(months=i)).strftime('%Y-%m'): ZERO for i in range(12)}
-    unconverted_total = 0
-    estimated_total = 0
-    unconverted_in_change_months = 0
-
-    for amount, row_currency, rate, snapshot_id, basis, payment_date, source in raw:
-        value = _convert_row((amount, row_currency, rate, snapshot_id, basis), target, snapshots, current)
-        in_change_months = last_month_start <= payment_date < next_month_start
-        if value is None:
-            unconverted_total += 1
-            if in_change_months:
-                unconverted_in_change_months += 1
-            continue
-        if basis == RATE_ESTIMATED and row_currency != target:
-            estimated_total += 1
-        for name, contains in windows.items():
-            if contains(payment_date):
-                periods[name][0] += value
-                periods[name][1] += 1
-        if windows['this_year'](payment_date):
-            by_source[source][0] += value
-            by_source[source][1] += 1
-        key = payment_date.strftime('%Y-%m')
-        if key in monthly:
-            monthly[key] += value
-
-    this_total, last_total = periods['this_month'][0], periods['last_month'][0]
-    if last_total > 0 and unconverted_in_change_months == 0:
-        month_change_pct = float(((this_total - last_total) / last_total * 100).quantize(Decimal('0.1')))
-    else:
-        month_change_pct = None
+    ]
+    result = rollup.summarize(rows, target, today, current)
 
     return {
         'currency': target,
-        'periods': {name: {'total': _money(total), 'count': count} for name, (total, count) in periods.items()},
-        'month_change_pct': month_change_pct,
+        'periods': {
+            name: {'total': rollup.money(window.total), 'count': window.count}
+            for name, window in result.periods.items()
+        },
+        'month_change_pct': result.month_change_pct,
         'by_source': [
-            {'source': source, 'label': PAYMENT_SOURCE_LABELS.get(source, source), 'total': _money(total), 'count': count}
-            for source, (total, count) in sorted(by_source.items(), key=lambda item: item[1][0], reverse=True)
+            {'source': source, 'label': PAYMENT_SOURCE_LABELS.get(source, source), 'total': rollup.money(total), 'count': count}
+            for source, total, count in result.by_group
         ],
-        'monthly': [{'month': month, 'total': _money(total)} for month, total in monthly.items()],
-        'unconverted_count': unconverted_total,
-        'estimated_count': estimated_total,
+        'monthly': [{'month': month, 'total': rollup.money(total)} for month, total in result.monthly],
+        'unconverted_count': result.unconverted_count,
+        'estimated_count': result.estimated_count,
     }
 
 

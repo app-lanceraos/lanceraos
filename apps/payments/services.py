@@ -100,11 +100,15 @@ def update_payment(payment, data):
     return changes
 
 
-def audit_changes(changes):
-    """The changes in the shape the AuditLog may store: free-text values are dropped."""
+def audit_changes(changes, text_fields=TEXT_FIELDS):
+    """
+    The changes in the shape the AuditLog may store: free-text values are dropped. `text_fields`
+    names the free-text fields of the ledger in question (payments: the default; expenses pass
+    their own, see expense_services).
+    """
     out = []
     for change in changes:
-        if change['field'] in TEXT_FIELDS:
+        if change['field'] in text_fields:
             out.append({'field': change['field']})
         else:
             out.append({'field': change['field'], 'old': str(change['old']), 'new': str(change['new'])})

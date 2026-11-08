@@ -1,6 +1,6 @@
 # apps/payments/constants.py
 """
-The one place the income ledger's shared vocabulary is defined, so Payment and
+The one place the ledgers' shared vocabulary is defined, so Payment, Expense and
 apps.invoices.InvoicePartialPayment cannot drift apart.
 
 PayPal is deliberately absent from the sources: PayPal does not support receiving
@@ -41,6 +41,26 @@ NEARBY_MAX_DAYS = 7
 
 # No payment can predate this; it catches a mistyped year without blocking real history.
 EARLIEST_PAYMENT_DATE = date(2010, 1, 1)
+# One cut-off for both ledgers (decision E8).
+EARLIEST_EXPENSE_DATE = EARLIEST_PAYMENT_DATE
+
+# Expenses (Prompt 14, decision E3): one fixed category list, defined once. Income tax is deliberately NOT a
+# category: income tax paid is not a business cost (the Tax module will track tax paid separately).
+EXPENSE_CATEGORY_CHOICES = [
+    ('software', 'Software and subscriptions'),
+    ('equipment', 'Equipment and hardware'),
+    ('internet', 'Internet and phone'),
+    ('utilities', 'Electricity and utilities'),
+    ('office', 'Office and co-working'),
+    ('fees', 'Platform and payment fees'),
+    ('marketing', 'Marketing and ads'),
+    ('education', 'Courses and learning'),
+    ('professional', 'Professional services and registrations'),
+    ('travel', 'Travel'),
+    ('contractors', 'Contractors and outsourcing'),
+    ('other', 'Other'),
+]
+EXPENSE_CATEGORY_LABELS = dict(EXPENSE_CATEGORY_CHOICES)
 
 # Payment import engine (Prompt 12). Limits are enforced before any parsing work is done.
 IMPORT_MAX_BYTES = 2 * 1024 * 1024

@@ -1741,10 +1741,55 @@ Migration `payments.0003_payment_import_engine` (additive: a defaulted `varchar`
 5. Encrypted? No: the owner's own file name and header names; never a row value.
 6. Cascade? `user` PROTECT (financial history; accounts are anonymised, never removed). Payments point here with PROTECT.
 
+## `expenses` (`Expense`, in `apps.payments`)
+
+The money-out ledger (Prompt 14, 08 November 2026), a deliberate mirror of `payments`: **every amount spent is exactly one row here**, with a
+category, a date, an optional vendor and description, and a deductible flag. Migration `payments.0004_expense` (a new table, one index, one
+CHECK constraint; nothing existing is touched, so it cannot fail on production data). Receipts (an image or PDF per expense) are NOT in the
+schema: they are a deliberate, costed deferral (DECISIONS.md E6) and will arrive as an additive migration.
+
+**Schema**:
+```
+id                      UUIDField, primary key
+user                    FK -> User, PROTECT, related_name 'expenses'
+amount                  Decimal(12,2), CHECK amount > 0 (expenses_amount_positive)
+currency                CharField(3), no choices= (validated against the latest snapshot, like everywhere)
+expense_date            DateField (PKT date; not in the future, not before 2010-01-01 — enforced in the serializer)
+category                CharField(20), 12 choices — apps/payments/constants.py EXPENSE_CATEGORY_CHOICES (software, equipment, internet,
+                        utilities, office, fees, marketing, education, professional, travel, contractors, other)
+vendor                  CharField(200), blank — plain text
+description             CharField(300), blank — plain text
+is_deductible           Boolean, default True — the owner's claim that this can reduce taxable income; the Tax module decides what it means
+rate_to_usd             Decimal(18,10), null — value of 1 unit of `currency` in USD on (about) expense_date; USD always exactly 1
+rate_basis              CharField(10): exact | nearby | estimated | none (same values and meaning as payments)
+exchange_rate_snapshot  FK -> ExchangeRateSnapshot, SET_NULL, null, related_name '+'
+created_at / updated_at
+db_table 'expenses'; ordering -expense_date, -created_at; index expenses_user_date_idx (user, -expense_date)
+```
+
+1. **Mutable?** Yes, every field. An expense has no allocations, so nothing else depends on its values. The rate is recomputed when
+   `currency` or `expense_date` change (and only then), in `expense_services.update_expense` under `select_for_update()`.
+2. **Soft deleted?** No — hard delete plus a full-snapshot `AuditLog` row (`expense_deleted`: amount, currency, date, category,
+   deductible flag). A deleted expense has no business consequence beyond the report it was part of (same reasoning as `payments`).
+3. **Audit trail?** Yes: `expense_created`, `expense_updated` (changed field names; old/new for amount, currency, date, category and the
+   deductible flag; never the vendor or description text), `expense_deleted`. Written after the transaction commits.
+4. **Indexed?** `(user, -expense_date)` — every list, summary and report filters and orders on both.
+5. **Encrypted?** No — amounts and dates are not credentials; vendor and description are short plain text the owner typed.
+6. **Cascade behavior?** `user` PROTECT (a financial record: account deletion anonymizes the user, never removes the row);
+   `exchange_rate_snapshot` SET_NULL (a pruned snapshot must not take an expense with it; readers fall back to the current snapshot).
+
+**The historical-rate rule** is the income ledger's: the rate of the snapshot NEAREST `expense_date` is frozen on the row, and reports
+convert with that SAME snapshot for both legs (`apps.payments.rollup`), so a past month's total does not change when today's rate changes.
+
+**Not in the ledger:** negative expenses (a vendor refund — future work, like invoice refunds), recurring generation, receipts, and any
+imported expense. Income tax is not a category: income tax paid is not a business cost (the Tax module tracks tax paid separately).
+
+---
+
 ## Not yet built
 
 Tax, Health Score, Proposals, Contracts, Subscriptions, and the rest of Payments (income tracking,
-expense tracking, P&L) — none of these exist yet. Within `apps.invoices` itself, this step was
+expense receipts, P&L) — none of these exist yet. Within `apps.invoices` itself, this step was
 models-only: no views, serializers, URLs, PDF generation, email delivery, the client portal,
 payment claims *workflow* (the table exists; confirm/reject actions don't), comments *delivery*
 (the table exists; posting/WebSocket endpoints don't), or recurring/reminder *tasks* (the fields and
