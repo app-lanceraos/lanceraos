@@ -4,6 +4,11 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from apps.invoices.views_payment_link import (
+    payment_link_candidates,
+    payment_link_invoice,
+    payment_unlink_invoice,
+)
 from apps.invoices.views_statement import client_statement_pdf
 from core.health import health_check
 from core.notifications import (
@@ -30,6 +35,13 @@ urlpatterns = [
     # app's code implements it — see views_statement.py's own docstring.
     path('api/clients/<uuid:pk>/statement/pdf/', client_statement_pdf, name='client_statement_pdf'),
     path('api/invoices/', include('apps.invoices.urls')),
+    # Registered here, BEFORE the apps.payments include, for the same reason as the statement route
+    # above: linking a payment to an invoice needs both models, and apps.payments (the bottom of
+    # the dependency tree) can never import apps.invoices. The URL shape is still /api/payments/...
+    path('api/payments/<uuid:pk>/link-candidates/', payment_link_candidates, name='payment_link_candidates'),
+    path('api/payments/<uuid:pk>/link-invoice/', payment_link_invoice, name='payment_link_invoice'),
+    path('api/payments/<uuid:pk>/link-invoice/<uuid:allocation_id>/', payment_unlink_invoice, name='payment_unlink_invoice'),
+    path('api/payments/', include('apps.payments.urls')),
     path('api/proposals/', include('apps.proposals.urls')),
     path('api/dashboard/', include('apps.dashboard.urls')),
     # Lives at the root, not under api/auth/ — matches what the frontend
@@ -41,9 +53,6 @@ urlpatterns = [
     path('api/notifications/mark-read/', mark_notifications_read, name='notifications_mark_read'),
     path('api/notifications/<uuid:notification_id>/read/', mark_notification_read, name='notification_read'),
     # Future modules add their own include() here as they're built.
-    # (apps.payments has no HTTP surface of its own — it's consumed
-    # internally by other modules, e.g. apps.clients'/apps.invoices'
-    # currency validation.)
 ]
 
 # Outside DEBUG, /static/ is served by WhiteNoise (settings.MIDDLEWARE), not

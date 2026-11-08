@@ -397,6 +397,19 @@ import models and shared helpers (`apps.invoices.kpis`, `core.*`) from any other
 Both rules are enforced by `apps/dashboard/tests/test_import_direction.py`, which parses the real source with `ast`. The same
 rule family already holds lower down (`apps.clients` never imports `apps.invoices`; `core/` imports no app).
 
+**`apps.payments` is the BOTTOM of the tree (07 November 2026).** It imports only `core.*` and itself — never `apps.invoices`,
+`apps.clients`, `apps.dashboard`, `apps.proposals` or `apps.users` (the user model is `settings.AUTH_USER_MODEL`, a string). It reads
+invoice data only through the reverse accessor `Payment.invoice_allocations`. Anything that needs both models (linking a payment to an
+invoice, `check_payment_ledger`) lives in `apps.invoices`. Shared helpers it needs were promoted DOWN to it or to `core/`
+(`validate_currency_code` -> `apps/payments/validators.py`, `rate_limited` -> `core/ratelimit.py`).
+Enforced by `apps/payments/tests/test_direction.py` (AST, lazy imports inside functions included).
+
+**One ledger rule: money received is a `Payment`; an invoice allocates it.** Never add a second place that records money received.
+A report of income reads `apps.payments.ledger` (converted with each payment's own frozen snapshot), not `InvoicePartialPayment`
+directly. `InvoicePartialPayment.save()` is what guarantees the ledger row exists, so create allocations through the model (a
+`bulk_create` or queryset `.update()` bypasses it on purpose only in tests and migrations). Lock order for anything touching both:
+invoice row first, then payment row.
+
 When two screens need the same number, extract the rule into a request-free module and call it from both. A second copy of
 an invoice rule is how the Dashboard and the Invoices page end up disagreeing.
 

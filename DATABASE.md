@@ -772,6 +772,54 @@ sanity check before shipping (PKR at `api_rate≈278.5` inverts to `≈0.0036` U
 
 ---
 
+## `payments` (`Payment`, in `apps.payments`)
+
+The income ledger (Payments core, 07 November 2026): **every amount of money received is exactly one row here.** An invoice does not
+own money, it allocates part or all of a payment to itself through `invoice_partial_payments.payment`. A payment may exist with no
+invoice (a freelancer paid through Payoneer or Wise with nothing invoiced), and one payment may be split across several invoices.
+
+**Schema**:
+```
+id                      UUIDField, primary key
+user                    FK -> User, PROTECT, related_name 'payments'
+amount                  Decimal(12,2), CHECK amount > 0
+currency                CharField(3), no choices= (validated against the latest snapshot, like everywhere)
+payment_date            DateField (PKT date; not in the future, not before 2010-01-01 — enforced in the serializer)
+source                  CharField(20), 7 choices (payoneer, wise, jazzcash, easypaisa, bank, cash, other) — apps/payments/constants.py
+counterparty            CharField(200), blank — plain text
+notes                   CharField(300), blank — plain text
+origin                  CharField(10): manual | invoice | import
+rate_to_usd             Decimal(18,10), null — value of 1 unit of `currency` in USD on (about) payment_date; USD always exactly 1
+rate_basis              CharField(10): exact (same-day snapshot) | nearby (within 7 days) | estimated (nearest, older/farther) | none
+exchange_rate_snapshot  FK -> ExchangeRateSnapshot, SET_NULL, null, related_name '+'
+created_at / updated_at
+db_table 'payments'; ordering -payment_date, -created_at; index payments_user_date_idx (user, -payment_date)
+```
+
+1. **Mutable?** Limited. A payment with any allocation can change only `counterparty` and `notes`; a free one can change everything
+   (the rate is recomputed when currency or date change). Checked in `services.update_payment` under `select_for_update()`.
+2. **Soft deleted?** No — hard delete plus a full-snapshot `AuditLog` row (`payment_deleted`: amount, currency, date, source, origin).
+   A soft-deleted row would silently block re-importing the same transaction later and every reader would need `deleted_at IS NULL`.
+   Same precedent as `InvoicePartialPayment` undo. A payment recorded on an invoice is removed only by that invoice's Undo payment.
+3. **Audit trail?** Yes: `payment_created` (manual only — invoice-recorded payments are covered by the invoice events), `payment_updated`
+   (changed field names; old/new for amount, currency, date, source; never the free text), `payment_deleted`, `payment_linked`,
+   `payment_unlinked`.
+4. **Indexed?** `(user, -payment_date)` — every list, summary and report filters on both.
+5. **Encrypted?** No — amounts and dates are not credentials; counterparty and notes are short plain text the owner typed.
+6. **Cascade behavior?** `user` PROTECT (a financial record: account deletion anonymizes the user, never removes the row);
+   `exchange_rate_snapshot` SET_NULL (a pruned snapshot must not take a payment with it; readers fall back to the current snapshot).
+   Allocations point here with PROTECT.
+
+**The historical-rate rule.** A payment stores the rate of the snapshot NEAREST its own `payment_date` (tie goes to the earlier one; a
+nearer snapshot lacking the currency is skipped for the other side). Reports convert with that SAME snapshot for both legs, so a past
+month's total does not change when today's rate changes (`apps.payments.ledger`). Honest limit: snapshots exist only from the day the
+daily fetch started, so older payments are `estimated`, and the summary API reports how many (`estimated_count`).
+
+**Not in the ledger:** refunds. An invoice refund has no date of its own (the known "refunds aren't netted out" gap), so the ledger is
+gross receipts; a refund ledger is future work.
+
+---
+
 ## `clients` (`Client`, in `apps.clients`)
 
 The Client CRM, built ahead of `apps.invoices` (which doesn't exist yet — see
@@ -1157,12 +1205,17 @@ non-draft USD invoices (29 rows in the dev DB, created through the ORM by seed s
    layer (a later step); this table is itself the detailed record. 4. **Indexed?** None beyond the
    implicit FK index. 5. **Encrypted?** No. 6. **Cascade behavior?** `CASCADE` from `Invoice`.
 
-**The spec's `payment` FK (→ `payments.Payment`, `SET_NULL`, "field ready for Module 3") is
-deliberately NOT included yet.** `apps.payments` has no `Payment` model as of this step (verified
-directly), and Django's system checks (`fields.E300`/`E307`, confirmed empirically before writing
-this file) reject a `ForeignKey` to a model that doesn't exist at all — this isn't a lazy reference
-Django tolerates, unlike a same-app forward string reference. Adding this FK is a real migration for
-whichever step actually builds `apps.payments.Payment` (Module 3).
+**The `payment` FK is now real (Payments core, 07 November 2026)** — migration `invoices/0023_invoicepartialpayment_payment`, then
+`0024_backfill_payments`. `payment` -> `payments.Payment`, **nullable, `PROTECT`, related_name `invoice_allocations`** (the original
+spec said `SET_NULL`; rejected, because a deleted payment must never silently orphan an allocation). A row of this table is now an
+**allocation** of a ledger payment. It is nullable ONLY for the moment inside `save()` before the ledger row exists and for legacy rows
+until the backfill; `python manage.py check_payment_ledger` proves nothing stays null. The guarantee lives in
+`InvoicePartialPayment.save()`: a NEW allocation saved with no `payment` automatically gets a ledger `Payment` (origin `invoice`) in
+the same transaction, and `rate_to_usd` is filled from that payment — the rate of the payment DATE's nearest snapshot, no longer
+"today's" (a rate passed explicitly by the caller is kept; only a missing one is filled). The column keeps 6 decimals (the ledger keeps
+10), so the allocation's rate is the ledger's rounded to 6. `SOURCE_CHOICES` is now the shared `PAYMENT_SOURCE_CHOICES`
+(`apps/payments/constants.py`; no migration). Cascade is otherwise unchanged. The backfill created one `Payment` per legacy allocation
+(20 in the dev database), copying the existing frozen rate and never inventing one.
 
 ---
 

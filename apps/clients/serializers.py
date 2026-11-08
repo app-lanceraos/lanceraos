@@ -11,27 +11,12 @@ from client-supplied payload data.
 """
 from rest_framework import serializers
 
-from apps.payments.models import ExchangeRateSnapshot
+# Re-exported on purpose: validate_currency_code moved down to apps.payments (the bottom of the
+# dependency tree) in the Payments core pass, and four modules still import it from here.
+from apps.payments.validators import validate_currency_code  # noqa: F401
 
 from .models import Client, ClientNote, ClientTag
 from .scoring import LAZY
-
-
-def validate_currency_code(value):
-    """
-    'USD' is always valid, even before a single ExchangeRateSnapshot
-    exists. Every other currency must appear in the most recent
-    snapshot's rates_to_usd keys — this is what makes adding a new
-    currency a data change (tomorrow's fetch includes it) rather than a
-    migration (no choices= list to edit here).
-    """
-    code = (value or '').strip().upper()
-    if code == 'USD':
-        return code
-    latest = ExchangeRateSnapshot.objects.order_by('-date').first()
-    if latest is None or code not in latest.rates_to_usd:
-        raise serializers.ValidationError(f'"{code}" is not a supported currency.')
-    return code
 
 
 class ClientTagSerializer(serializers.ModelSerializer):

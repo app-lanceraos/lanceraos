@@ -12,9 +12,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-# Imported from apps.proposals on purpose: it is the project's one atomic fixed-window limiter. Promoting it to
-# core/ is a later chore (DECISIONS.md, Dashboard entry), not part of this change.
-from apps.proposals.ratelimit import rate_limited
+from core.ratelimit import rate_limited
 
 from . import insights, services
 

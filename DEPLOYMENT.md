@@ -261,6 +261,22 @@ account, check that same setting before launch**, and confirm with the PDF smoke
       `python manage.py shell -c "from apps.payments.tasks import fetch_exchange_rates; fetch_exchange_rates.delay()"`
       (exchange rates must exist before invoices in non-USD currencies convert).
 
+## 7a. Payments core release (the income ledger, 07 November 2026) **[U]**
+
+Three migrations, applied by the normal pre-deploy `migrate` in this order (Django orders them from their dependencies):
+1. `payments.0002_payment` — creates the `payments` table.
+2. `invoices.0023_invoicepartialpayment_payment` — adds the nullable `payment` FK to `invoice_partial_payments`.
+3. `invoices.0024_backfill_payments` — data migration: creates one `Payment` per existing allocation (rate copied, never recomputed; a
+   missing non-USD rate stays missing with `rate_basis=none`), batches of 500, idempotent, reversible.
+
+No new environment variable. **Take a Postgres backup first** (Section 9: a migration is not undone by redeploying). Deploy `web`,
+`worker` and `beat` together: the old code does not know the ledger and would record invoice payments without a ledger row.
+
+**Mandatory after the migrate step:** `python manage.py check_payment_ledger` (Railway -> `web` -> shell). It is read-only, prints
+counts and at most 10 ids per problem (never amounts or names) and exits non-zero on any problem; a clean run ends with
+`Payment ledger check passed.` Do not enable anything that depends on the ledger until it passes. To undo only the data step:
+`python manage.py migrate invoices 0022` (clears the FK column and deletes the origin='invoice' payments; allocations stay).
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

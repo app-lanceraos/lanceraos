@@ -36,7 +36,7 @@ from core.events import emit
 
 from .emails import build_client_proposal_email
 from .models import Proposal, ProposalItem, _today
-from .ratelimit import rate_limited
+from core.ratelimit import rate_limited
 from .serializers import (
     ConfirmSerializer, ConvertRequestSerializer, GenerateRequestSerializer, ProposalDetailSerializer,
     ProposalListSerializer, ProposalSerializer, SendRequestSerializer, JOB_DESCRIPTION_MIN_FOR_AI, TITLE_MAX,

@@ -1,13 +1,25 @@
 # apps/payments/models.py
 """
-Minimal foundational slice of Module 3 (Payments + Expenses + P&L) —
-just enough to give Module 2 (Invoices/Clients) a real currency-conversion
-anchor to build against. Everything else in Module 3's scope (income
-tracking, expense tracking, P&L reporting) is a separate, later build.
+Module 3 (Payments + Expenses + P&L), built in slices. Built so far:
+  - ExchangeRateSnapshot, the currency-conversion anchor Module 2 builds against;
+  - Payment, the income ledger (Payments core, 07 November 2026).
+Expenses, CSV import, P&L reporting and exchange-rate alerts are later builds.
+
+apps.payments is the BOTTOM of the dependency tree: it imports nothing from another
+feature app (use settings.AUTH_USER_MODEL strings), only core.* and itself.
 """
 import uuid
+from decimal import Decimal
 
+from django.conf import settings
 from django.db import models
+
+from .constants import (
+    ORIGIN_CHOICES,
+    PAYMENT_SOURCE_CHOICES,
+    RATE_BASIS_CHOICES,
+    RATE_NONE,
+)
 
 
 class ExchangeRateSnapshot(models.Model):
@@ -63,3 +75,75 @@ class ExchangeRateSnapshot(models.Model):
 
     def __str__(self):
         return f'{self.date} — {len(self.rates_to_usd)} currencies'
+
+
+class Payment(models.Model):
+    """
+    The income ledger: every amount of money received is exactly ONE row here. An
+    invoice does not own money, it ALLOCATES part (or all) of a Payment to itself
+    through apps.invoices.InvoicePartialPayment.payment (reverse accessor
+    `invoice_allocations`). A payment can exist with no invoice at all (a freelancer
+    paid through Payoneer or Wise with nothing invoiced), and one payment can be split
+    across several invoices.
+
+    The rate is frozen from the snapshot NEAREST payment_date, so a report of a past
+    month does not move when today's rate moves (`rate_basis` says how close that
+    snapshot was). Report maths lives in apps.payments.ledger.
+
+    6-question framework:
+    1. Mutable? Limited. A payment with any allocation can only change counterparty and
+       notes; a free one can change everything (the rate is recomputed when currency or
+       date change). Enforced in services.update_payment under a row lock.
+    2. Soft deleted? No — hard delete plus a full-snapshot AuditLog row. A soft-deleted
+       row would silently block re-importing the same transaction later and every reader
+       would need `deleted_at IS NULL`. Same precedent as InvoicePartialPayment undo.
+    3. Audit trail? Yes: payment_created (manual), payment_updated, payment_deleted,
+       payment_linked, payment_unlinked. Payments recorded on an invoice are covered by
+       the invoice events.
+    4. Indexed? (user, -payment_date) — every list, summary and report filters on both.
+    5. Encrypted? No. Amounts and dates are not credentials; counterparty and notes are
+       short plain text the owner typed.
+    6. Cascade behavior? user PROTECT (financial record: account deletion anonymizes, it
+       never removes the user row). exchange_rate_snapshot SET_NULL (a pruned snapshot
+       must not take a payment with it). Allocations point here with PROTECT: a deleted
+       payment can never silently orphan an allocation.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    payment_date = models.DateField()
+    source = models.CharField(max_length=20, choices=PAYMENT_SOURCE_CHOICES, default='other')
+    counterparty = models.CharField(max_length=200, blank=True)
+    notes = models.CharField(max_length=300, blank=True)
+    origin = models.CharField(max_length=10, choices=ORIGIN_CHOICES)
+
+    # Anchor-currency design: value of 1 unit of `currency` in USD on (about) payment_date.
+    rate_to_usd = models.DecimalField(max_digits=18, decimal_places=10, null=True, blank=True)
+    rate_basis = models.CharField(max_length=10, choices=RATE_BASIS_CHOICES, default=RATE_NONE)
+    exchange_rate_snapshot = models.ForeignKey(
+        ExchangeRateSnapshot, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'payments'
+        ordering = ['-payment_date', '-created_at']
+        indexes = [models.Index(fields=['user', '-payment_date'], name='payments_user_date_idx')]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name='payments_amount_positive'),
+        ]
+
+    def __str__(self):
+        return f'{self.currency} {self.amount} on {self.payment_date}'
+
+    def save(self, *args, **kwargs):
+        if self.currency == 'USD' and self.rate_to_usd != Decimal('1'):
+            # Same invariant as Invoice and InvoicePartialPayment: USD -> USD is exactly 1.
+            self.rate_to_usd = Decimal('1')
+            update_fields = kwargs.get('update_fields')
+            if update_fields is not None and 'rate_to_usd' not in update_fields:
+                kwargs['update_fields'] = [*update_fields, 'rate_to_usd']
+        super().save(*args, **kwargs)

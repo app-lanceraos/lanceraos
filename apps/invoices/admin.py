@@ -26,7 +26,7 @@ class InvoicePartialPaymentAdmin(admin.ModelAdmin):
     list_display = ['invoice', 'amount', 'currency', 'source', 'payment_date', 'recorded_at']
     list_filter = ['source', 'currency']
     search_fields = ['invoice__invoice_number']
-    readonly_fields = ['recorded_at']
+    readonly_fields = ['recorded_at', 'payment']
 
 
 @admin.register(InvoiceReminder)

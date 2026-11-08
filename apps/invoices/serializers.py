@@ -58,7 +58,8 @@ class InvoicePartialPaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = InvoicePartialPayment
         fields = ['id', 'amount', 'currency', 'rate_to_usd', 'source', 'payment_date', 'notes', 'recorded_at']
-        # rate_to_usd is captured server-side (anchor-currency lookup), never client-supplied.
+        # rate_to_usd is captured server-side by InvoicePartialPayment.save() (the rate of the payment
+        # DATE, copied from the ledger Payment), never client-supplied.
         read_only_fields = ['id', 'rate_to_usd', 'recorded_at']
 
     def validate_currency(self, value):

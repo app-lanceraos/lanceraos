@@ -21,10 +21,12 @@ import uuid
 from decimal import Decimal
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from apps.clients.models import Client
+from apps.payments import services as payment_services
+from apps.payments.constants import ORIGIN_INVOICE, PAYMENT_SOURCE_CHOICES
 from apps.payments.models import ExchangeRateSnapshot
 from core.money import Money
 
@@ -788,6 +790,12 @@ class InvoiceItem(models.Model):
 
 class InvoicePartialPayment(models.Model):
     """
+    An ALLOCATION: part (or all) of one ledger Payment applied to one invoice. The invoice
+    does not own money, the Payment does (apps.payments.Payment, "money received is a
+    Payment; an invoice allocates it"). Recording a payment on an invoice still works as
+    before from the user's side and now also creates the ledger row automatically — see
+    save().
+
     6-question framework:
     1. Mutable? No — append-only; recording/removing a payment creates
        or deletes a row, never edits amount/date in place (matches v1).
@@ -795,30 +803,22 @@ class InvoicePartialPayment(models.Model):
        Invoice.update_paid_status()'s pre_payment_status restore path).
     3. Audit trail? Payment record/undo emits events at the view layer
        (Step 5) — this table is itself the detailed record.
-    4. Indexed? None beyond the implicit FK index — always queried
-       scoped to one invoice.
+    4. Indexed? None beyond the implicit FK indexes — always queried
+       scoped to one invoice (or, for `payment`, to one ledger Payment).
     5. Encrypted? No.
-    6. Cascade behavior? CASCADE from Invoice.
-
-    `payment` (FK to payments.Payment, per the spec — "field ready for
-    Module 3") is deliberately NOT included yet: apps.payments has no
-    Payment model as of this step (verified directly against
-    apps/payments/models.py, which only defines ExchangeRateSnapshot), and
-    Django's system checks (fields.E300/E307, confirmed empirically before
-    writing this file) reject a ForeignKey to a model that doesn't exist
-    at all — this isn't a lazy/deferred reference Django tolerates. Adding
-    this FK is a real migration for whichever step actually builds
-    apps.payments.Payment (Module 3), not something that can be
-    pre-declared here. See DECISIONS.md.
+    6. Cascade behavior? CASCADE from Invoice. `payment` is PROTECT: a deleted ledger Payment
+       must never silently orphan an allocation (the spec's SET_NULL was rejected for that
+       reason). It is nullable ONLY for the moment inside save() before the ledger row exists,
+       and for legacy rows until the 0024 backfill; `check_payment_ledger` proves nothing
+       stays null afterwards.
     """
-    SOURCE_CHOICES = [
-        ('payoneer', 'Payoneer'), ('wise', 'Wise'),
-        ('jazzcash', 'JazzCash'), ('easypaisa', 'Easypaisa'),
-        ('bank', 'Bank Transfer'), ('cash', 'Cash'), ('other', 'Other'),
-    ]
+    SOURCE_CHOICES = PAYMENT_SOURCE_CHOICES
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='partial_payments')
+    payment = models.ForeignKey(
+        'payments.Payment', null=True, blank=True, on_delete=models.PROTECT, related_name='invoice_allocations',
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     currency = models.CharField(max_length=3, default='USD')
     # Anchor-currency design — replaces v1's amount_pkr/exchange_rate.
@@ -841,14 +841,40 @@ class InvoicePartialPayment(models.Model):
     def save(self, *args, **kwargs):
         if self.currency == 'USD' and self.rate_to_usd is None:
             # Same defensive invariant as Invoice.save(): USD -> USD is exactly 1.
-            # The three real payment paths (add-payment, mark-paid, claim-confirm)
-            # already set it via views._lookup_rate_to_usd; this covers any row
-            # created around them. Non-USD is never touched.
+            # Covers any row created around the normal paths. Non-USD is never touched here.
             self.rate_to_usd = Decimal('1')
             update_fields = kwargs.get('update_fields')
             if update_fields is not None and 'rate_to_usd' not in update_fields:
                 kwargs['update_fields'] = [*update_fields, 'rate_to_usd']
-        super().save(*args, **kwargs)
+
+        if not self._state.adding:
+            # Updating an existing allocation never touches the ledger.
+            super().save(*args, **kwargs)
+            return
+
+        # THE ledger guarantee (Payments core, decision P3): it lives here, in the model, and not
+        # in each view, so no future code path (a new endpoint, an import, a shell script) can
+        # record money on an invoice and forget the ledger row. A NEW allocation saved with no
+        # `payment` gets one automatically, in the same transaction.
+        with transaction.atomic():
+            if self.payment_id is None:
+                self.payment = payment_services.create_payment(
+                    user_id=self.invoice.user_id,
+                    amount=self.amount,
+                    currency=self.currency,
+                    payment_date=self.payment_date,
+                    source=self.source,
+                    counterparty=(self.invoice.client_name or '')[:200],
+                    notes=self.notes,
+                    origin=ORIGIN_INVOICE,
+                )
+            if self.rate_to_usd is None and self.payment.rate_to_usd is not None:
+                # The allocation column holds 6 decimals, the ledger 10: round explicitly so the
+                # in-memory value equals what the database will hold. An explicit rate passed by
+                # the caller is never overridden (only a missing one is filled), the same
+                # "fill, never override" rule the USD invariant above follows.
+                self.rate_to_usd = self.payment.rate_to_usd.quantize(Decimal('0.000001'))
+            super().save(*args, **kwargs)
 
 
 # ══════════════════════════════════════════════════════════════════

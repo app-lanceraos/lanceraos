@@ -42,6 +42,7 @@ from core.money import convert_amount, unify_amounts_to_currency
 from apps.clients.scoring import EXCLUDED_STATUSES as CLIENT_SCORING_EXCLUDED_STATUSES
 from apps.clients.serializers import validate_currency_code
 from apps.clients.views_portal import _send_portal_link_email
+from apps.payments import services as payment_services
 from apps.payments.models import ExchangeRateSnapshot
 from apps.users.models import FreelancerProfile, User
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
@@ -140,34 +141,6 @@ def _get_locked_invoice(pk, user):
     request for one consistent pattern.
     """
     return get_object_or_404(Invoice.objects.select_for_update(), pk=pk, user=user)
-
-
-def _lookup_rate_to_usd(currency):
-    """
-    Real, server-side anchor-currency lookup for a payment recorded right
-    now — mirrors Invoice.capture_issue_rate()'s own snapshot-selection
-    logic (today's snapshot, falling back to the most recent one) rather
-    than duplicating a second, subtly different version of it. Used to
-    actually populate InvoicePartialPayment.rate_to_usd, a real, found
-    gap: that field's own help_text has always claimed "captured at
-    record time," but no call site anywhere in this app ever set it
-    (confirmed directly, not assumed, before writing this) — every real
-    payment recorded before this fix has rate_to_usd=NULL. Returns None
-    only when truly unavailable (no snapshot exists yet, or this specific
-    currency is missing from the snapshot's own rates_to_usd) — never
-    raises, since a missing rate must not block recording the payment
-    itself.
-    """
-    if currency == 'USD':
-        return Decimal('1')
-    snapshot = (
-        ExchangeRateSnapshot.objects.filter(date=timezone.now().date()).first()
-        or ExchangeRateSnapshot.objects.order_by('-date').first()
-    )
-    if snapshot is None:
-        return None
-    rate = snapshot.rates_to_usd.get(currency)
-    return Decimal(str(rate)) if rate is not None else None
 
 
 def _get_latest_snapshot():
@@ -1017,7 +990,7 @@ def invoice_mark_paid(request, pk):
         serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request, 'invoice': invoice})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(invoice.currency))
+        serializer.save(invoice=invoice)
 
         invoice.update_paid_status()
         invoice.refresh_from_db()
@@ -1059,13 +1032,9 @@ def invoice_add_payment(request, pk):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # 'currency' is omitted from validated_data entirely (not defaulted
-        # to 'USD') when the request doesn't supply it — DRF only injects a
-        # serializer-field default when one is explicitly declared, which
-        # this field isn't (it relies on the MODEL's own default=). Falls
-        # back to the same 'USD' the model itself would use on save().
-        payment_currency = serializer.validated_data.get('currency', 'USD')
-        payment = serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(payment_currency))
+        # The rate is not set here: InvoicePartialPayment.save() creates the ledger Payment and
+        # copies the rate of the payment DATE onto the allocation (Payments core).
+        payment = serializer.save(invoice=invoice)
         invoice.update_paid_status()
         invoice.refresh_from_db()
 
@@ -1138,7 +1107,12 @@ def invoice_undo_payment(request, pk):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        ledger_payment = last_payment.payment
         last_payment.delete()
+        if ledger_payment is not None:
+            # A payment recorded ON this invoice leaves the ledger with it; a manual or imported
+            # payment that was merely linked here stays, unallocated (decision P3/P7).
+            payment_services.discard_invoice_origin_payment(ledger_payment)
         invoice.update_paid_status()
         invoice.refresh_from_db()
 
@@ -1817,7 +1791,7 @@ def invoice_claim_confirm(request, pk, claim_id):
         serializer = InvoicePartialPaymentSerializer(data=payload, context={'request': request, 'invoice': invoice})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        serializer.save(invoice=invoice, rate_to_usd=_lookup_rate_to_usd(claim.currency))
+        serializer.save(invoice=invoice)
 
         invoice.update_paid_status()
         invoice.refresh_from_db()

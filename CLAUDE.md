@@ -408,6 +408,8 @@ lanceraos/                          <- Django project root
 │   │                         evaluation, see AI_EVALUATION.md; export_proposal_send_cases — regenerates the
 │   │                         frontend send pre-flight fixture from the real backend rule)
 │   ├── observability.py     ← Logging/request-metadata helpers used by all modules
+│   ├── ratelimit.py         ← rate_limited(): the one atomic fixed-window limiter (promoted from
+│   │                         apps/proposals/ratelimit.py, 07 November 2026, so apps.payments can use it)
 │   └── permissions.py       ← Shared DRF permission classes [not yet built]
 ├── apps/
 │   ├── users/                      <- Auth, profile, settings — BUILT
@@ -448,9 +450,16 @@ lanceraos/                          <- Django project root
 │   ├── clients/                    <- Client CRM — BUILT. Client/ClientNote/ClientTag,
 │   │                                  scoring.py (reliability-score formula, pure/testable
 │   │                                  independent of Invoice — see DECISIONS.md)
-│   ├── payments/                   <- BUILT so far: ExchangeRateSnapshot + daily fetch task
-│   │                                  only (the currency-conversion anchor). Income tracking,
-│   │                                  expenses, P&L, CSV import — NOT YET BUILT.
+│   ├── payments/                   <- BUILT so far: ExchangeRateSnapshot + daily fetch task (the
+│   │                                  currency-conversion anchor) AND the income ledger (07 Nov 2026,
+│   │                                  "Payments core"): Payment model, rates.py (nearest-snapshot rate +
+│   │                                  trust label), services.py (create/update/delete rules), ledger.py
+│   │                                  (shared income maths, summary), selectors.py, serializers.py, views.py
+│   │                                  (list/CRUD/summary), validators.py (validate_currency_code, promoted
+│   │                                  here). The BOTTOM of the dependency tree: imports only core.* and
+│   │                                  itself. Linking a payment to an invoice lives in apps/invoices/
+│   │                                  views_payment_link.py. Payoneer/Wise CSV import, expenses, P&L, income
+│   │                                  certificate, exchange-rate alerts, the Payments PAGE — NOT YET BUILT.
 │   ├── tax/                        <- FBR tax, SRO 586, income certificate
 │   ├── health/                     <- Financial health score
 │   ├── dashboard/                  <- Dashboard — BUILT (04 November 2026). No models, no migration:
@@ -1465,10 +1474,13 @@ update_paid_status() as payments are recorded or removed. "Mark paid" pre-fills 
 balance as a real payment record (never a bare status edit) via the same flow. Undo removes exactly
 the most-recently-recorded payment and restores the exact pre-payment status — repeatable, walking
 back through multiple payments one at a time; undoing a payment recorded more than 7 days ago
-requires an explicit confirmation flag (this app's own judgment call, not spec-pinned). A `payment`
-FK to a future `apps.payments.Payment` model is NOT yet added — that model doesn't exist, and Django
-rejects a FK to a nonexistent model outright (verified empirically); it'll be a real migration once
-Module 3 builds `Payment`.
+requires an explicit confirmation flag (this app's own judgment call, not spec-pinned). **Update, 07 November 2026
+(Payments core): the `payment` FK now exists** — `InvoicePartialPayment.payment` -> `payments.Payment`, `PROTECT`,
+related_name `invoice_allocations`. A partial payment is now an ALLOCATION of a ledger Payment ("money received is a
+Payment; an invoice allocates it"). `InvoicePartialPayment.save()` creates the ledger row automatically for any new
+allocation saved without one (so no code path can forget it), the rate comes from the payment DATE's nearest snapshot (not
+today's), and Undo payment also removes the ledger row when it was created by the invoice itself (a linked manual/imported
+payment survives an undo, unallocated). `views._lookup_rate_to_usd` is gone. See Module 3 below.
 
 Dashboard KPIs (`GET /api/invoices/summary/`) — Outstanding / Total Paid this month / Past-Due —
 and the AR aging report (Current/1-30/31-60/61-90/90+ days, the "broader version": every unpaid
@@ -2760,8 +2772,19 @@ considered.
 ---
 
 ### Module 3 — Payments + Expenses + P&L
-Status: [updated as built]
-App: apps/payments/
+Status: IN PROGRESS. BUILT (07 November 2026, "Payments core", backend only): the income LEDGER — a `Payment` table (one row per
+amount of money received), manual entry, edit/delete under rules, linking a payment to invoices (one payment may be split across
+several), a list with filters/sorts, a summary endpoint, per-payment exchange rate frozen from the nearest snapshot to its own date,
+an integrity command. NOT BUILT: the Payments page (frontend), Payoneer/Wise/custom CSV import, expenses, P&L and its PDF, the income
+certificate, exchange-rate alerts, the `GET /api/payments/exchange-rates/` endpoint, a refund ledger.
+App: apps/payments/ (the bottom of the app dependency tree: imports only `core.*` and itself; the invoice-side link endpoints live in
+apps/invoices/views_payment_link.py)
+
+The ledger rules (DECISIONS.md, 07 November 2026, "Payments core: the income ledger", P1-P12): every amount received is exactly ONE
+`Payment`; an invoice only ALLOCATES part or all of it (`InvoicePartialPayment.payment`); a payment with any allocation can change only
+its counterparty and notes; deletion is a hard delete plus a full-snapshot `AuditLog` row; a payment recorded on an invoice is removed only
+through that invoice's Undo payment; the payment's currency must equal the invoice's to link; unmatched is a normal state (no nag);
+refunds are NOT in the ledger (it is gross receipts); the Dashboard's "Paid this month" is untouched and stays invoice-based.
 
 Income tracking:
 Manual payment entry with amount, currency, source, date, notes.
@@ -2812,6 +2835,21 @@ Key API endpoints:
 - GET /api/payments/income-certificate/pdf/
 - GET /api/payments/exchange-rates/
 - CRUD /api/payments/alerts/
+
+BUILT (07 November 2026, Payments core) — the income ledger endpoints. All `IsAuthenticated`, function views, every response
+`Cache-Control: no-store`, a foreign or unknown id is the same 404, reads 240/hour, writes 60/hour per user:
+- GET /api/payments/ (filters: search, source, currency, origin, match=unmatched|partial|matched, start, end; sort=recent|oldest|
+  amount_high|amount_low — amount sorts rank by USD value; limit default 20, max 100, offset) -> {results, total, limit, offset}
+- POST /api/payments/ (manual entry, origin='manual') -> 201 {payment, possible_duplicates}
+- GET/PUT/DELETE /api/payments/{id}/ (PUT: partial; an allocated payment can only change counterparty and notes. DELETE: 204 for a
+  free manual/imported payment only)
+- GET /api/payments/summary/ (this month / last month / this year / all time, by source, last 12 months, in the user's default
+  currency or ?currency=; each payment converts with the snapshot it froze, so past months never move)
+- GET /api/payments/{id}/link-candidates/?search= (apps/invoices/views_payment_link.py)
+- POST /api/payments/{id}/link-invoice/ {invoice_id, amount?} (same file)
+- DELETE /api/payments/{id}/link-invoice/{allocation_id}/ {confirm: true} (same file)
+- `python manage.py check_payment_ledger` (apps/invoices/management/commands/) — read-only integrity check, mandatory after the
+  ledger migrations (DEPLOYMENT.md Section 7a)
 
 ---
 
@@ -3199,7 +3237,7 @@ single clean run — see DECISIONS.md's 13 September 2026 entry for that pass's 
 (`python manage.py test`, `--keepdb` — every test module passes individually/in batches; a full
 single-process run intermittently hits an unrelated, already-documented native WeasyPrint/GC
 segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 19 August 2026 design_data render path pass's new `test_design_renderer.py` (29 tests — closes audit finding PDF-001, see this module's own 19 August 2026 "design_data render path" entry above and DECISIONS.md), the same-day SEV1 follow-up's new `test_design_assignment.py` (10 tests — real invoice_create/_finalise_invoice/_duplicate_invoice_core design-assignment coverage plus a recurring-generation regression guard, see this module's own "SEV1" entry above), and the 20 August 2026 SEV1 follow-up's new `test_design_color_and_preview.py` (20 tests — all 9 real color combinations, the draft-live-default-fallback, both preview endpoints, see this module's own 20 August 2026 "SEV1" entry above), the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`, this pass's own KPI-period/currency-filter coverage, the InvoiceDetailPanel redesign's Send Reminder/Resend/Change Due Date/freelancer-preview-guard-regression coverage, the first 18 August pass's real end-to-end Cloudinary-401 proof for both PDF download endpoints, the second 18 August pass's frozen-PDF-vs-live-render/portal-list-scoping/payment-claim-message coverage (incl. a direct before/after profile-edit drift test), the sixth 18 August pass's `PdfReuploadCircuitBreakerTests` (`test_send.py`, incl. a real measured before/after timing test showing a genuine 65-66% speed-up from the new per-invoice breaker), the 19 August 2026 production-audit fix round's new `apps/invoices/tests/test_concurrency.py` (real, genuinely-concurrent-thread regression tests for the audit's INV-003/DB-002/INV-004/INV-001/INV-009 findings), and that same audit's second fix round's new `apps/invoices/tests/test_audit_trail.py` (real AuditLog-row-per-lifecycle-event coverage, INV-002) plus `test_portal.py`'s new `CrossAccountFreelancerPreviewGuardTests`/`PortalWriteEndpointsCSRFEnforcementTests` classes (real two-distinct-account ownership-guard coverage and real CSRF-rejection-vs-legitimate-traffic coverage, PORTAL-001/PORTAL-002) — see below. Frontend: 224 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `Pagination.test.jsx`, `InvoiceKPIStrip.test.jsx` (rewritten for the no-carousel/compact-delta redesign), `useFilterOverflow.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`, `ErrorBoundary.test.jsx`, `InvoiceTable.test.jsx` rewritten for row-click-vs-checkbox-click, `InvoiceDetailPanel.test.jsx` substantially expanded past its prior narrow tooltip-only suite (now also covering the Duplicate/More-menu footer scoping, fifth 18 August pass, and the 19 August audit fix round's Undo Payment More-menu gate regression tests), `InvoiceView.test.jsx` rewritten for the blob-based rework, `useWebSocket.test.jsx` — this hook's first dedicated test file, fifth 18 August pass) + a production `vite build` check + real Playwright screenshots (375/768/1280/1920 light/dark for the InvoiceDetailPanel redesign; 320/375/480/600/768 for the KPI strip fix; two live runs against the real dev Cloudinary account, one per 18 August pass, for the frontend-domain/Download fix and the frozen-PDF/portal-list/claims fixes) against the running dev servers — the fifth 18 August pass's own mobile 375px sizing was test-covered but NOT screenshot-verified at the time (no live browser/Playwright tool available that session); the sixth 18 August pass corrected this with real Playwright + Chromium screenshots at 375/768/1280/1920, light and dark, against the real running dev servers with a seeded demo account (see DECISIONS.md) | Two 16 August 2026 verification passes, the 17 August 2026 List/Table restructure, the same-day InvoiceDetailPanel redesign, both 18 August 2026 passes (KPI-strip/frontend-domain/Download-proxy, then frozen-PDF/portal-list/payment-claims), a fifth 18 August 2026 pass (WebSocket console-error fix + a third InvoiceDetailPanel bug-hardening round), a sixth 18 August 2026 pass (PDF re-upload circuit breaker + a fourth InvoiceDetailPanel/AppShell bug-hardening round, screenshot-verified), and a 19 August 2026 full production-readiness audit (`LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`, verdict NOT READY — 3 live-reproduced CRITICAL financial-corruption bugs plus 9 further HIGH findings) with two same-day fix rounds closing 7 of its findings total — round 1: INV-003/DB-002 concurrent-overpayment locking, INV-009/FE-001 Undo-Payment-on-terminal-status guard, INV-004 invoice-numbering race, INV-001 stale-total-on-empty-items (see DECISIONS.md's four 19 August 2026 "audit fix" entries); round 2: INV-002 (8 new AuditLog handlers closing the lifecycle-audit-trail gap), PORTAL-001 (the freelancer-preview guard now checks real ownership, not just "a freelancer session exists somewhere"), PORTAL-002 (CSRF enforcement added to the 3 portal write endpoints that lacked it — see DECISIONS.md's three 19 August 2026 "audit fix, second round" entries) — complete (see DECISIONS.md) — the audit's remaining MEDIUM/LOW findings (CLIENT-001 through CLIENT-009, PORTAL-004 through PORTAL-009, PDF-002 through PDF-004 — PDF-001 closed 19 August 2026, see this module's own "design_data render path" entry above, DB-004, INV-005 through INV-008, FE-003/FE-004, and DB-003's dormant CASCADE-vs-PROTECT landmine — see the audit document's own §25/§26 for the full remaining list), the still-open PERF-001 verification (whether the dev-machine WeasyPrint/Celery segfault reproduces in the real production container), Admin panel screens, and the full-module verification pass (Section 8, steps 20-21), the 19 real dev-database findings this document itself doesn't yet reflect line-by-line for every historical entry above (this row predates the 12 September 2026 Full Reversion in most of its own prose — read the "LanceraOS Template Builder" and "Post-Reversion Polish"/"Template Gallery Foundation" narrative paragraphs above this table as the current source of truth for the design/template system specifically, not this cell's own older wording about "design gallery/canvas editor") remain — the 20-new-template import itself is COMPLETE as of 15 September 2026 (Batch 5, FINAL — see this module's own "20-Template Import, Batches 2-5" entry above and DECISIONS.md's 15 September 2026 entry: 22 real, selectable templates, 11 free + 11 pro, every one with a real gallery preview image) |
-| Payments + Expenses  | -       | -        | -     | Not started |
+| Payments + Expenses  | Payments core built (07 Nov 2026): Payment ledger, CRUD, link/unlink to invoices, summary, rates frozen per payment date, backfill of the 20 dev-DB payments, `check_payment_ledger`. Not built: CSV import, expenses, P&L, certificate, alerts | - (Payments page not built) | backend suite 2043 -> 2178 passing (135 new; `python manage.py test --keepdb`; new tests are in the gitignored `apps/*/tests/`) | In progress |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
 | Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A (list, create, autosaving draft editor, score/tips) and part B (Send dialog with pre-flight and verify-by-checking, the client's public page `/proposal/:token`, withdraw, convert to invoice, activity timeline, client link, client's answer, in-app Preview) — 04 Nov 2026 | backend 479 passing (`apps.proposals` 299 + `core` 181; untouched by part B); frontend 1037 of 1038 passing (221 new for part B; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Complete; real-deployment smoke tests (DEPLOYMENT.md Section 8, items 12-16) still to run |

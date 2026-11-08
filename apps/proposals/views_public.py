@@ -33,7 +33,7 @@ from core.events import emit
 from core.observability import get_client_ip, get_user_agent
 
 from .models import Proposal, _today
-from .ratelimit import rate_limited
+from core.ratelimit import rate_limited
 from .serializers import RespondRequestSerializer, public_payload, public_state
 
 logger = logging.getLogger(__name__)
