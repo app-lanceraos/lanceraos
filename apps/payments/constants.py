@@ -19,7 +19,7 @@ PAYMENT_SOURCE_LABELS = dict(PAYMENT_SOURCE_CHOICES)
 
 # How the row came to exist. 'invoice' = recorded on an invoice (the ledger row is
 # created for the user automatically); 'manual' = typed on the Payments page;
-# 'import' = a future CSV import.
+# 'import' = created by the payment import engine (apps/payments/importing/).
 ORIGIN_MANUAL = 'manual'
 ORIGIN_INVOICE = 'invoice'
 ORIGIN_IMPORT = 'import'
@@ -41,3 +41,13 @@ NEARBY_MAX_DAYS = 7
 
 # No payment can predate this; it catches a mistyped year without blocking real history.
 EARLIEST_PAYMENT_DATE = date(2010, 1, 1)
+
+# Payment import engine (Prompt 12). Limits are enforced before any parsing work is done.
+IMPORT_MAX_BYTES = 2 * 1024 * 1024
+IMPORT_MAX_ROWS = 2000
+IMPORT_MAX_COLUMNS = 60
+IMPORT_MAX_CELL = 2000
+
+# Two payments with the same currency and exact amount dated within this many days (either way,
+# inclusive) are "possibly the same money". Shared by the manual-entry duplicate notice and the import.
+PROBABLE_DUPLICATE_DAYS = 3

@@ -17,6 +17,7 @@ def payments_queryset(user):
     """
     return (
         Payment.objects.filter(user=user)
+        .select_related('import_batch')
         .annotate(
             allocated_total=Coalesce(
                 Sum('invoice_allocations__amount'), Value(Decimal('0.00')),

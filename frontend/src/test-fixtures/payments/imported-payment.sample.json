@@ -1,0 +1,22 @@
+{
+  "id": "3ac532c4-ec95-4f35-81e0-2c88e90790a8",
+  "amount": "1500.00",
+  "currency": "USD",
+  "payment_date": "2026-09-03",
+  "source": "wise",
+  "counterparty": "Acme Corp",
+  "notes": "INV-2026-0101",
+  "origin": "import",
+  "external_id": "TRANSFER-1001",
+  "imported_from": {
+    "id": "d342cfc9-b459-421e-a944-e71e07a8f3ea",
+    "file_name": "wise-statement-q3.csv",
+    "imported_at": "2026-11-08T15:23:52.685199"
+  },
+  "rate_basis": "nearby",
+  "allocated_amount": "0.00",
+  "remaining_amount": "1500.00",
+  "invoices": [],
+  "created_at": "2026-11-08T15:23:52.685829",
+  "updated_at": "2026-11-08T15:23:52.685832"
+}

@@ -19,7 +19,7 @@ from dateutil.relativedelta import relativedelta
 
 from core.money import CENT, convert_amount
 
-from .constants import PAYMENT_SOURCE_LABELS, RATE_ESTIMATED
+from .constants import PAYMENT_SOURCE_LABELS, PROBABLE_DUPLICATE_DAYS, RATE_ESTIMATED
 from .models import ExchangeRateSnapshot, Payment
 
 ZERO = Decimal('0')
@@ -150,7 +150,7 @@ def summary_for_user(user, today, currency=None):
     }
 
 
-def find_possible_duplicates(user, amount, currency, payment_date, exclude_id=None, window_days=3, limit=3):
+def find_possible_duplicates(user, amount, currency, payment_date, exclude_id=None, window_days=PROBABLE_DUPLICATE_DAYS, limit=3):
     """
     Payments of the same user, currency and exact amount dated within `window_days` either way
     (inclusive). Shown after a manual entry so a payment typed twice, or typed once and also

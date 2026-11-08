@@ -1,0 +1,16 @@
+{
+  "batch": {
+    "id": "d342cfc9-b459-421e-a944-e71e07a8f3ea",
+    "source": "wise",
+    "file_name": "wise-statement-q3.csv",
+    "created_at": "2026-11-08T15:23:52.685199",
+    "rows_total": 29,
+    "imported": 11,
+    "skipped_duplicate": 3,
+    "skipped_not_income": 12,
+    "skipped_invalid": 0,
+    "skipped_unselected": 3,
+    "remaining": 11,
+    "undone_at": null
+  }
+}

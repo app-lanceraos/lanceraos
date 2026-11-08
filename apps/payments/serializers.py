@@ -56,12 +56,20 @@ class PaymentSerializer(serializers.Serializer):
     counterparty = serializers.CharField()
     notes = serializers.CharField()
     origin = serializers.CharField()
+    external_id = serializers.CharField()
+    imported_from = serializers.SerializerMethodField()
     rate_basis = serializers.CharField()
     allocated_amount = serializers.SerializerMethodField()
     remaining_amount = serializers.SerializerMethodField()
     invoices = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
+
+    def get_imported_from(self, obj):
+        batch = obj.import_batch  # select_related in payments_queryset: no query per row
+        if batch is None:
+            return None
+        return {'id': str(batch.pk), 'file_name': batch.file_name, 'imported_at': batch.created_at.isoformat()}
 
     def get_allocated_amount(self, obj):
         return str(obj.allocated_total.quantize(Decimal('0.01')))

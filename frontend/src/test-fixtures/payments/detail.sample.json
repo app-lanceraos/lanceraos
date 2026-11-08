@@ -1,5 +1,5 @@
 {
-  "id": "1035cb74-bbe3-438f-bd81-c555710302ef",
+  "id": "3c6f7620-9149-42c7-9f8a-04ecd7725a98",
   "amount": "1000.00",
   "currency": "USD",
   "payment_date": "2026-11-02",
@@ -7,18 +7,20 @@
   "counterparty": "Globex",
   "notes": "",
   "origin": "manual",
+  "external_id": "",
+  "imported_from": null,
   "rate_basis": "nearby",
   "allocated_amount": "400.00",
   "remaining_amount": "600.00",
   "invoices": [
     {
-      "allocation_id": "d3ded90c-7c5e-4313-80b1-9f206aafccdf",
-      "invoice_id": "5def5f4c-c2d0-4777-af88-d5c6941ba454",
+      "allocation_id": "e1522d78-787d-4464-85b4-c8e3e7815d3c",
+      "invoice_id": "a8a0e654-1e54-46ba-95ea-02b9642869d4",
       "invoice_number": "INV-2026-0002",
       "client_name": "Acme Co",
       "amount": "400.00"
     }
   ],
-  "created_at": "2026-11-08T12:44:24.519144",
-  "updated_at": "2026-11-08T12:44:24.519148"
+  "created_at": "2026-11-08T15:23:52.443516",
+  "updated_at": "2026-11-08T15:23:52.443519"
 }

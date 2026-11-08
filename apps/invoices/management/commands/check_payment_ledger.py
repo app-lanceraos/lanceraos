@@ -44,6 +44,14 @@ class Command(BaseCommand):
                 'payment belongs to a different user than its invoice',
                 InvoicePartialPayment.objects.filter(payment__isnull=False).exclude(payment__user=F('invoice__user')),
             ),
+            (
+                'imported payment with no import batch',
+                Payment.objects.filter(origin='import', import_batch__isnull=True),
+            ),
+            (
+                'non-imported payment that carries an external id or an import batch',
+                Payment.objects.exclude(origin='import').filter(~Q(external_id='') | Q(import_batch__isnull=False)),
+            ),
         ]
 
         self.stdout.write(

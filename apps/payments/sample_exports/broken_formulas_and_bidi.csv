@@ -1,0 +1,8 @@
+Date,Description,Amount,Currency,Payer
+2026-10-01,Invoice payment,100.00,USD,"=HYPERLINK(""http://example.invalid"",""click"")"
+2026-10-02,Invoice payment,200.00,USD,+cmd|' /C calc'!A0
+2026-10-03,Invoice payment,300.00,USD,@SUM(1+1)
+2026-10-04,Invoice payment,400.00,USD,-2+3
+2026-10-05,Invoice payment,500.00,USD,Evil‮Revenue​⁦Co﻿
+2026-10-06,Invoice payment,600.00,USD,"Line one
+line two	tabbed"

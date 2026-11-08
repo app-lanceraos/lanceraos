@@ -8,6 +8,7 @@ today's snapshot: a report of a past month must not move when today's rate moves
 so a payment older than the oldest snapshot gets that snapshot's rate and is labelled
 `estimated`. Request-free: no view, no serializer.
 """
+from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -79,3 +80,57 @@ def rate_context(currency: str, on_date: date) -> RateContext:
             continue
         return RateContext(rate, snapshot, basis_for_distance(distance))
     return RateContext(None, None, RATE_NONE)
+
+
+class RateResolver:
+    """
+    The same answer as `rate_context`, from ONE query instead of two per payment: every
+    ExchangeRateSnapshot is loaded once, ordered by date, and the nearest one on each side of a
+    date is found with a binary search. The import engine resolves up to 2,000 rows with it.
+
+    Semantics are identical to `rate_context` (a test compares them field for field): the nearest
+    snapshot on or before and the nearest after are the candidates, closest first, a tie goes to
+    the earlier one; USD is always 1 and still attaches the nearest snapshot; a currency missing
+    from the nearest snapshot falls to the next candidate; no rate anywhere is (None, None, none).
+    """
+
+    def __init__(self):
+        self._snapshots = list(ExchangeRateSnapshot.objects.order_by('date'))
+        self._dates = [snapshot.date for snapshot in self._snapshots]
+
+    def currencies(self):
+        """USD plus every currency in the latest snapshot: what `validate_currency_code` accepts."""
+        if not self._snapshots:
+            return {'USD'}
+        return set(self._snapshots[-1].rates_to_usd) | {'USD'}
+
+    def _candidates(self, on_date):
+        index = bisect_right(self._dates, on_date)  # snapshots[:index] are on or before on_date
+        ranked = []
+        if index > 0:
+            before = self._snapshots[index - 1]
+            ranked.append(((on_date - before.date).days, 0, before))
+        if index < len(self._snapshots):
+            after = self._snapshots[index]
+            ranked.append(((after.date - on_date).days, 1, after))
+        ranked.sort(key=lambda item: (item[0], item[1]))
+        return [(distance, snapshot) for distance, _tie, snapshot in ranked]
+
+    def resolve(self, currency: str, on_date: date) -> RateContext:
+        candidates = self._candidates(on_date)
+
+        if currency == 'USD':
+            if not candidates:
+                return RateContext(Decimal('1'), None, RATE_EXACT)
+            distance, snapshot = candidates[0]
+            return RateContext(Decimal('1'), snapshot, basis_for_distance(distance))
+
+        for distance, snapshot in candidates:
+            raw = snapshot.rates_to_usd.get(currency)
+            if raw is None:
+                continue
+            rate = Decimal(str(raw)).quantize(RATE_QUANTUM)
+            if rate <= 0:
+                continue
+            return RateContext(rate, snapshot, basis_for_distance(distance))
+        return RateContext(None, None, RATE_NONE)

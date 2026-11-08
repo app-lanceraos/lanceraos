@@ -1,0 +1,8 @@
+Date,Description,Amount,Currency,Status,Reference ID
+2026-09-05,Payment from Upwork Escrow,1450.00,USD,Completed,PAY-90001
+2026-09-19,Payment from Fiverr Inc,320.00,USD,Completed,PAY-90002
+2026-10-02,Payment from Toptal LLC,2800.00,USD,Pending,PAY-90003
+2026-10-11,Payment from Upwork Escrow,610.00,USD,Cancelled,PAY-90004
+2026-10-16,Withdrawal to bank account,-2000.00,USD,Completed,PAY-90005
+2026-10-23,Payment from Upwork Escrow,990.00,USD,Held for review,PAY-90006
+2026-10-29,Payment from Fiverr Inc,275.00,USD,Completed,PAY-90007

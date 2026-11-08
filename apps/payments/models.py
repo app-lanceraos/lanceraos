@@ -125,6 +125,13 @@ class Payment(models.Model):
         ExchangeRateSnapshot, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
     )
 
+    # The provider's own transaction id (Wise "TransferWise ID"). Always '' unless origin='import'.
+    external_id = models.CharField(max_length=100, blank=True, default='')
+    # The import that created this row; null for manual and invoice-origin payments.
+    import_batch = models.ForeignKey(
+        'PaymentImportBatch', null=True, blank=True, on_delete=models.PROTECT, related_name='payments',
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -134,6 +141,13 @@ class Payment(models.Model):
         indexes = [models.Index(fields=['user', '-payment_date'], name='payments_user_date_idx')]
         constraints = [
             models.CheckConstraint(condition=models.Q(amount__gt=0), name='payments_amount_positive'),
+            # The last line of defence of the import engine: the same provider transaction can never
+            # enter one person's ledger twice. Rows without an id ('') are exempt.
+            models.UniqueConstraint(
+                fields=['user', 'source', 'external_id'],
+                condition=~models.Q(external_id=''),
+                name='payments_unique_external_id',
+            ),
         ]
 
     def __str__(self):
@@ -147,3 +161,50 @@ class Payment(models.Model):
             if update_fields is not None and 'rate_to_usd' not in update_fields:
                 kwargs['update_fields'] = [*update_fields, 'rate_to_usd']
         super().save(*args, **kwargs)
+
+
+class PaymentImportBatch(models.Model):
+    """
+    One confirmed import of a Wise, Payoneer or custom CSV file: what was uploaded (name, hash,
+    header signature), how the columns were read (`mapping`) and how every row of the file was
+    dealt with. The counts always sum to `rows_total`. The batch is the handle for "undo this
+    import" and for remembering a column mapping for the next file with the same headers.
+
+    6-question framework:
+    1. Mutable? Only through `undone_at`, set once when the import is undone. Counts and mapping
+       are a historical record of what happened and never change.
+    2. Soft deleted? Never deleted at all: an undone batch keeps its row as history (the payments
+       it created are hard-deleted, P5). `undone_at` is the only "state".
+    3. Audit trail? Yes: payment_import_committed and payment_import_undone (counts, source and
+       batch id only; no file name, no names, no amounts).
+    4. Indexed? (user, -created_at) for the history list; header_signature for the "same headers
+       as last time" mapping lookup.
+    5. Encrypted? No. It holds the owner's own file name and the file's HEADER names; never a row
+       value (mapping references columns by name only).
+    6. Cascade behavior? user PROTECT (financial history: account deletion anonymizes the user,
+       it never removes the row). Payments point here with PROTECT: a batch with payments cannot
+       be deleted by accident.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='payment_import_batches')
+    source = models.CharField(max_length=20, choices=PAYMENT_SOURCE_CHOICES)
+    file_name = models.CharField(max_length=255)
+    file_sha256 = models.CharField(max_length=64)
+    header_signature = models.CharField(max_length=64, db_index=True)
+    mapping = models.JSONField()
+    rows_total = models.PositiveIntegerField()
+    imported = models.PositiveIntegerField()
+    skipped_duplicate = models.PositiveIntegerField()
+    skipped_not_income = models.PositiveIntegerField()
+    skipped_invalid = models.PositiveIntegerField()
+    skipped_unselected = models.PositiveIntegerField()
+    undone_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'payment_import_batches'
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['user', '-created_at'], name='payment_import_user_idx')]
+
+    def __str__(self):
+        return f'{self.source} import of {self.rows_total} rows ({self.imported} imported)'

@@ -1723,6 +1723,24 @@ dropped fields.
 
 ---
 
+## `payments` — import additions (Prompt 12, 08 November 2026) and `payment_import_batches` (`PaymentImportBatch`, in `apps.payments`)
+
+Migration `payments.0003_payment_import_engine` (additive: a defaulted `varchar` column, a nullable FK column, a new table, two indexes and one partial unique index; no existing row is rewritten, so it cannot fail on production data).
+
+**`payments` gains two columns and one constraint.**
+- `external_id` `varchar(100)`, `blank`, default `''` — the provider's own transaction id (Wise "TransferWise ID"). Always `''` unless `origin='import'` (checked by `check_payment_ledger`). Free text, not credentials: not encrypted.
+- `import_batch` FK -> `payment_import_batches`, **nullable, `PROTECT`**, related_name `payments` — null for manual and invoice-origin payments. PROTECT: a batch that still has payments cannot be deleted by accident.
+- `UniqueConstraint(user, source, external_id)` where `external_id <> ''` (name `payments_unique_external_id`, a partial unique index): the same provider transaction cannot enter one person's ledger twice, per source. Rows with no id are exempt.
+- `PaymentWriteSerializer` is unchanged: a manual create or edit can never set either column. `PaymentSerializer` exposes `external_id` and `imported_from` (`null` or `{id, file_name, imported_at}`), read through `select_related('import_batch')`.
+
+**`payment_import_batches`** — one row per confirmed import: `id` UUID, `user` FK PROTECT, `source` (the payment source choices), `file_name` (basename only, control characters stripped, <= 255), `file_sha256`, `header_signature` (SHA-256 of the lower-cased header names, indexed), `mapping` JSON (column NAMES and options only, never a row value), `rows_total`, `imported`, `skipped_duplicate`, `skipped_not_income`, `skipped_invalid`, `skipped_unselected` (always sum to `rows_total`), `undone_at` (null), `created_at`. Index `(user, -created_at)`.
+1. Mutable? Only `undone_at`, once. Counts and mapping are history.
+2. Soft deleted? Never deleted; an undone batch keeps its row (its payments are hard-deleted).
+3. Audit? `payment_import_committed` and `payment_import_undone` (counts, source and batch id only; no file name, names or amounts).
+4. Indexed? `(user, -created_at)`; `header_signature` for "same headers as last time".
+5. Encrypted? No: the owner's own file name and header names; never a row value.
+6. Cascade? `user` PROTECT (financial history; accounts are anonymised, never removed). Payments point here with PROTECT.
+
 ## Not yet built
 
 Tax, Health Score, Proposals, Contracts, Subscriptions, and the rest of Payments (income tracking,
@@ -1732,5 +1750,5 @@ payment claims *workflow* (the table exists; confirm/reject actions don't), comm
 (the table exists; posting/WebSocket endpoints don't), or recurring/reminder *tasks* (the fields and
 `InvoiceReminder` table exist; the Celery Beat generation/escalation logic doesn't). This document
 only covers what's actually in the database today (`apps.users`' six tables, `apps.admin_panel`'s
-one table, `apps.payments`'s one table, `apps.clients`' three tables, `apps.invoices`' ten tables —
-twenty-two tables spanning five apps — and the three shared `core` tables).
+one table, `apps.payments`'s two tables, `apps.clients`' three tables, `apps.invoices`' ten tables —
+twenty-three tables spanning five apps — and the three shared `core` tables).

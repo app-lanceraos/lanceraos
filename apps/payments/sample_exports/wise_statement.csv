@@ -1,0 +1,30 @@
+TransferWise ID,Date,Amount,Currency,Description,Payment Reference,Running Balance,Exchange From,Exchange To,Exchange Rate,Payer Name,Payee Name,Payee Account Number,Merchant,Card Last Four Digits,Card Holder Full Name,Attachment,Note,Total fees
+TRANSFER-1001,03-09-2026,1500.00,USD,Received money from Acme Corp with reference INV-2026-0101,INV-2026-0101,1500.00,,,,Acme Corp,,,,,,,,6.20
+TRANSFER-1002,14-09-2026,2400.00,USD,Received money from Globex LLC with reference Website redesign,Website redesign,3900.00,,,,Globex LLC,,,,,,,,9.90
+TRANSFER-1003,21-09-2026,850.50,EUR,Received money from Initech GmbH with reference INV-2026-0107,INV-2026-0107,850.50,,,,Initech GmbH,,,,,,,,3.40
+TRANSFER-1004,25-09-2026,1200.00,GBP,Received money from Umbrella Ltd with reference Sprint 4,Sprint 4,1200.00,,,,Umbrella Ltd,,,,,,,,4.80
+TRANSFER-1005,02-10-2026,3100.00,USD,Received money from Hooli Inc. with reference October retainer,October retainer,6700.00,,,,Hooli Inc.,,,,,,,,12.40
+TRANSFER-1006,16-10-2026,640.00,USD,Received money from Stark Industries with reference Logo pack,Logo pack,7340.00,,,,Stark Industries,,,,,,,,2.60
+TRANSFER-1007,28-10-2026,975.25,EUR,Received money from Wayne Enterprises with reference INV-2026-0111,INV-2026-0111,1825.75,,,,Wayne Enterprises,,,,,,,,3.90
+TRANSFER-1008,30-10-2026,750.00,USD,Received money from Soylent Corp with reference INV-2026-0112,INV-2026-0112,8090.00,,,,Soylent Corp,,,,,,,,3.00
+TRANSFER-1009,05-11-2026,500.00,USD,Received money from Acme Corp with reference Hotfix,Hotfix,8590.00,,,,Acme Corp,,,,,,,,2.00
+TRANSFER-1010,06-11-2026,1800.00,USD,Received money from Vandelay Industries with reference Q4 design work,Q4 design work,10390.00,,,,Vandelay Industries,,,,,,,,7.20
+TRANSFER-1011,07-11-2026,2250.00,USD,Received money from Pied Piper with reference Backend contract,Backend contract,12640.00,,,,Pied Piper,,,,,,,,9.00
+TRANSFER-1001,03-09-2026,1500.00,USD,Received money from Acme Corp with reference INV-2026-0101,INV-2026-0101,1500.00,,,,Acme Corp,,,,,,,,6.20
+CARD-2001,10-09-2026,-45.00,USD,Card transaction of 45.00 USD issued by Figma,,3855.00,,,,,,,Figma,4242,Ali Amir,,,0.00
+TRANSFER-2002,18-09-2026,-2000.00,USD,Sent money to Ali Amir,Withdrawal,1855.00,,,,,Ali Amir,PK36SCBL0000001123456702,,,,,,0.00
+CARD-2003,12-10-2026,-19.99,USD,Card transaction of 19.99 USD issued by GitHub,,7320.01,,,,,,,GitHub,4242,Ali Amir,,,0.00
+CARD-2004,13-10-2026,-12.50,EUR,Card transaction of 12.50 EUR issued by Notion,,1813.25,,,,,,,Notion,4242,Ali Amir,,,0.00
+BALANCE-3001,12-10-2026,-1000.00,USD,"Converted 1,000.00 USD to 920.00 EUR",,6320.01,USD,EUR,0.92,,,,,,,,,4.10
+BALANCE-3002,12-10-2026,920.00,EUR,"Converted 1,000.00 USD to 920.00 EUR",,2733.25,USD,EUR,0.92,,,,,,,,,0.00
+TOPUP-4001,20-09-2026,300.00,USD,Added money via bank transfer,,2155.00,,,,,,,,,,,,0.00
+TOPUP-4002,11-10-2026,500.00,USD,Topped up with a debit card,,6820.01,,,,,,,,,,,,0.00
+FEE-5001,13-10-2026,-3.20,USD,Wise charges for: BALANCE-3001,,6316.81,,,,,,,,,,,,0.00
+FEE-5002,14-10-2026,1.10,USD,Fee adjustment for BALANCE-3001,,6317.91,,,,,,,,,,,,0.00
+REFUND-6001,22-10-2026,25.00,USD,Refund from Figma,,7345.00,,,,Figma,,,,,,,,0.00
+IN-7001,23-10-2026,2.10,USD,Interest on your balance,,7347.10,,,,,,,,,,,,0.00
+IN-7002,24-10-2026,450.00,GBP,Balance received,,1650.00,USD,GBP,0.78,,,,,,,,,0.00
+IN-7003,29-10-2026,310.00,USD,Incoming transfer,,7657.10,,,,,,,,,,,,0.00
+TRANSFER-1012,02-11-2026,1100.00,USD,Received money from Cyberdyne Systems with reference INV-2026-0115,INV-2026-0115,8757.10,,,,Cyberdyne Systems,,,,,,,,4.40
+TRANSFER-1013,03-11-2026,2750.00,USD,Received money from Tyrell Corp with reference Mobile app milestone 2,Mobile app milestone 2,11507.10,,,,Tyrell Corp,,,,,,,,11.00
+CARD-2005,04-11-2026,-8.00,USD,Card transaction of 8.00 USD issued by Namecheap,,11499.10,,,,,,,Namecheap,4242,Ali Amir,,,0.00

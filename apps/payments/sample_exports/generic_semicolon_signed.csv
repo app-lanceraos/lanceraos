@@ -1,0 +1,7 @@
+Date;Description;Amount;Currency
+2026-10-01;Payment from Northwind;1250.00;USD
+2026-10-04;Payment from Contoso;980.50;EUR
+2026-10-09;Subscription charge;-29.00;USD
+2026-10-15;Payment from Fabrikam;2100.00;USD
+2026-10-21;Bank fee;-4.50;USD
+2026-10-27;Payment from Adventure Works;760.00;GBP

@@ -277,6 +277,12 @@ counts and at most 10 ids per problem (never amounts or names) and exits non-zer
 `Payment ledger check passed.` Do not enable anything that depends on the ledger until it passes. To undo only the data step:
 `python manage.py migrate invoices 0022` (clears the FK column and deletes the origin='invoice' payments; allocations stay).
 
+## 7b. Payment import engine release (08 November 2026) **[U]**
+
+One migration, applied by the normal pre-deploy `migrate`: `payments.0003_payment_import_engine` — additive (a defaulted `external_id` column, a nullable `import_batch` FK, the new `payment_import_batches` table, and a partial unique index on `payments`). Adding a defaulted `varchar` column is metadata-only on PostgreSQL 11+ (no table rewrite); `CREATE UNIQUE INDEX` scans the `payments` table once under a short lock, which is instant at this table's size. Existing rows have `external_id = ''`, which the partial index ignores, so it cannot fail on production data. `python manage.py sqlmigrate payments 0003` shows the exact SQL.
+
+No new environment variable and no new service. **Run `python manage.py check_payment_ledger` afterwards** (it now also checks that an imported payment has a batch and that no manual/invoice payment carries an external id or batch). Smoke test, once the Prompt 13 screens exist: upload `apps/payments/sample_exports/wise_statement.csv` (synthetic), confirm the preview, import, then undo the import. Until then the API can be exercised with a throwaway account. The 2 MiB upload cap sits under any proxy body limit (Cloudflare's default is 100 MB, Railway's is larger), so no proxy setting is needed. Undo: `python manage.py migrate payments 0002` drops the new columns and table (data in them is lost).
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

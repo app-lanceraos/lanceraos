@@ -1,0 +1,7 @@
+Transaction Date,Details,Credit,Debit,Currency
+05 Oct 2026,Transfer from Northwind Traders,"1,250.00",,USD
+07 Oct 2026,Withdrawal to local bank,,"1,000.00",USD
+12 Oct 2026,Transfer from Contoso,980.50,0.00,USD
+19 Oct 2026,Transfer from Fabrikam,"2,100.00",,USD
+22 Oct 2026,Card payment,,35.40,USD
+30 Oct 2026,Odd row,50.00,20.00,USD

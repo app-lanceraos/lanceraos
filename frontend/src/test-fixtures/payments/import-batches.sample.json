@@ -1,0 +1,32 @@
+{
+  "results": [
+    {
+      "id": "d342cfc9-b459-421e-a944-e71e07a8f3ea",
+      "source": "wise",
+      "file_name": "wise-statement-q3.csv",
+      "created_at": "2026-11-08T15:23:52.685199",
+      "rows_total": 29,
+      "imported": 11,
+      "skipped_duplicate": 3,
+      "skipped_not_income": 12,
+      "skipped_invalid": 0,
+      "skipped_unselected": 3,
+      "remaining": 11,
+      "undone_at": null
+    },
+    {
+      "id": "91bbbacf-b6a7-4a06-8633-31bc11788c5e",
+      "source": "wise",
+      "file_name": "wise-september.csv",
+      "created_at": "2026-11-08T15:23:52.659667",
+      "rows_total": 1,
+      "imported": 1,
+      "skipped_duplicate": 0,
+      "skipped_not_income": 0,
+      "skipped_invalid": 0,
+      "skipped_unselected": 0,
+      "remaining": 1,
+      "undone_at": null
+    }
+  ]
+}

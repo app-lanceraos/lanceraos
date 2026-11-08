@@ -1,0 +1,72 @@
+{
+  "file": {
+    "name": "export.csv",
+    "size": 218,
+    "sha256": "f299ccee9b8d59e06846d5188cbac7396fac3b1314e83a1497e68afd47587248",
+    "encoding": "utf-8",
+    "delimiter": "comma",
+    "rows": 4,
+    "header_line": 1
+  },
+  "source": "payoneer",
+  "mapping": {
+    "date": "Date",
+    "amount": "Amount",
+    "credit": null,
+    "debit": null,
+    "currency": "Currency",
+    "counterparty": null,
+    "description": "Description",
+    "notes": null,
+    "external_id": null,
+    "status": null,
+    "header_row": null,
+    "date_format": "auto",
+    "amount_mode": "signed",
+    "decimal_separator": ".",
+    "fixed_currency": null
+  },
+  "mapping_origin": "detected",
+  "needs_mapping": true,
+  "reasons": [
+    "date_format_ambiguous"
+  ],
+  "ambiguous_roles": [],
+  "suggested_source": null,
+  "headers": [
+    "Date",
+    "Description",
+    "Amount",
+    "Currency"
+  ],
+  "sample_rows": [
+    [
+      "05/10/2026",
+      "Payment from Northwind",
+      "1250.00",
+      "USD"
+    ],
+    [
+      "03/09/2026",
+      "Payment from Contoso",
+      "980.50",
+      "USD"
+    ],
+    [
+      "11/08/2026",
+      "Payment from Fabrikam",
+      "2100.00",
+      "USD"
+    ],
+    [
+      "02/10/2026",
+      "Payment from Adventure Works",
+      "760.00",
+      "USD"
+    ]
+  ],
+  "rows": [],
+  "summary": null,
+  "plan_fingerprint": null,
+  "warnings": []
+}

@@ -1,0 +1,4 @@
+Transaction ID,Date,Amount,Currency,Description
+1.23457E+15,2026-10-01,100.00,USD,Payment from Northwind
+4.5E+14,2026-10-02,200.00,USD,Payment from Contoso
+TX-100,2026-10-03,300.00,USD,Payment from Fabrikam

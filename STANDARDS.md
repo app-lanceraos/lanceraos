@@ -438,3 +438,8 @@ first applied to `apps/proposals/views_public.py`:
   one conditional `UPDATE ... WHERE status=...`, emitting only if it changed a row.
 - Escape every interpolated value (`django.utils.html.escape`) in HTML email, and collapse whitespace in subjects. A client's
   free text and a freelancer's titles can both contain markup.
+
+## Uploads and exports (Prompt 12, 08 November 2026)
+
+- Uploads are read with a byte cap (`file.read(MAX + 1)`, and `Content-Length` checked before the body is parsed) and are never trusted by file name or content type: the bytes are inspected (zip/PDF/UTF-16 magic, NUL bytes) and every refusal is a fixed sentence that never echoes file content.
+- CSV/Excel EXPORTS must neutralise cells that start with `=`, `+`, `-` or `@` (prefix with an apostrophe or a tab). The import side stores such text exactly as typed and React escapes it on screen; an export puts it in front of a spreadsheet, which executes it.
