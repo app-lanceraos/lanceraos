@@ -1,0 +1,25 @@
+{
+  "expense": {
+    "id": "a3a7d23d-d998-4acf-8bce-853110956ce6",
+    "amount": "49.99",
+    "currency": "USD",
+    "expense_date": "2026-11-04",
+    "category": "software",
+    "vendor": "Figma",
+    "description": "",
+    "is_deductible": true,
+    "rate_basis": "nearby",
+    "created_at": "2026-11-08T20:40:27.677024",
+    "updated_at": "2026-11-08T20:40:27.677028"
+  },
+  "possible_duplicates": [
+    {
+      "id": "ed807b8e-02ba-4644-a0f9-88c8d3d1bb5e",
+      "amount": "49.99",
+      "currency": "USD",
+      "expense_date": "2026-11-03",
+      "category": "software",
+      "vendor": "Figma"
+    }
+  ]
+}

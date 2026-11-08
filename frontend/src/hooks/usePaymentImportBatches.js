@@ -23,6 +23,7 @@ export default function usePaymentImportBatches({ onUndone } = {}) {
   onUndoneRef.current = onUndone
 
   const load = useCallback(async () => {
+    if (!alive.current) return // a dialog that has closed has nothing to reload
     const id = ++latest.current
     setLoading(true)
     setLoadError('')
@@ -54,10 +55,12 @@ export default function usePaymentImportBatches({ onUndone } = {}) {
     setUndoError('')
     try {
       const data = await undoBatch(id)
+      // The server HAS removed the payments: the page is told even if the dialog has closed in the meantime. Every
+      // setState below stays behind the alive guard.
+      onUndoneRef.current?.()
       if (!alive.current) return
       setResult({ removed: data.removed, kept: data.kept })
       setConfirmingId(null)
-      onUndoneRef.current?.()
       await load()
     } catch (error) {
       if (!alive.current) return

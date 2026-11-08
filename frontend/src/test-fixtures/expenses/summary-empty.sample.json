@@ -1,0 +1,79 @@
+{
+  "currency": "USD",
+  "periods": {
+    "this_month": {
+      "total": "0.00",
+      "count": 0,
+      "deductible_total": "0.00"
+    },
+    "last_month": {
+      "total": "0.00",
+      "count": 0,
+      "deductible_total": "0.00"
+    },
+    "this_year": {
+      "total": "0.00",
+      "count": 0,
+      "deductible_total": "0.00"
+    },
+    "all_time": {
+      "total": "0.00",
+      "count": 0,
+      "deductible_total": "0.00"
+    }
+  },
+  "month_change_pct": null,
+  "by_category": [],
+  "monthly": [
+    {
+      "month": "2025-12",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-01",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-02",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-03",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-04",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-05",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-06",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-07",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-08",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-09",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-10",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-11",
+      "total": "0.00"
+    }
+  ],
+  "unconverted_count": 0,
+  "estimated_count": 0
+}

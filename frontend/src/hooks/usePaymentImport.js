@@ -161,9 +161,11 @@ export default function usePaymentImport({ onImported, onUndone } = {}) {
         const { batch } = await commitImport({
           file, source, mapping: plan.mapping, fingerprint: plan.plan_fingerprint, includeRows: rows,
         })
-        if (!alive.current) return
+        // The page callback runs even when the dialog has already closed: the server HAS imported, and the page's list and
+        // totals must refresh. `patch` ignores an unmounted hook, so no state is set.
         patch({ batch, step: STEP.DONE, busy: null, undoResult: null, confirmingUndo: false })
         callbacks.current.onImported?.(batch)
+        if (!alive.current) return
       } catch (error) {
         if (!alive.current) return
         if (isPlanConflict(error)) {
@@ -188,7 +190,7 @@ export default function usePaymentImport({ onImported, onUndone } = {}) {
       patch({ busy: 'undo', error: '' })
       try {
         const result = await undoBatch(batch.id)
-        if (!alive.current) return
+        // Same rule as commit: the page is told even if the dialog has closed (patch is a no-op once unmounted).
         patch({ undoResult: { removed: result.removed, kept: result.kept }, confirmingUndo: false, busy: null })
         callbacks.current.onUndone?.()
       } catch (error) {

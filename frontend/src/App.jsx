@@ -23,6 +23,7 @@ import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
 import Dashboard from '@/pages/Dashboard'
 import Clients from '@/pages/Clients'
+import Expenses from '@/pages/Expenses'
 import Payments from '@/pages/Payments'
 import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
@@ -194,6 +195,10 @@ export default function App() {
         <Route
           path="/payments"
           element={<PrivateRoute><AppShell><Payments /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/expenses"
+          element={<PrivateRoute><AppShell><Expenses /></AppShell></PrivateRoute>}
         />
         <Route
           path="/invoices"

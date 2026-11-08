@@ -1,0 +1,140 @@
+{
+  "currency": "USD",
+  "periods": {
+    "this_month": {
+      "total": "62.49",
+      "count": 2,
+      "deductible_total": "62.49"
+    },
+    "last_month": {
+      "total": "1336.10",
+      "count": 3,
+      "deductible_total": "1336.10"
+    },
+    "this_year": {
+      "total": "1997.26",
+      "count": 12,
+      "deductible_total": "1908.26"
+    },
+    "all_time": {
+      "total": "2012.26",
+      "count": 13,
+      "deductible_total": "1923.26"
+    }
+  },
+  "month_change_pct": -95.3,
+  "by_category": [
+    {
+      "category": "equipment",
+      "label": "Equipment and hardware",
+      "total": "1200.00",
+      "count": 1
+    },
+    {
+      "category": "travel",
+      "label": "Travel",
+      "total": "300.00",
+      "count": 1
+    },
+    {
+      "category": "internet",
+      "label": "Internet and phone",
+      "total": "113.60",
+      "count": 2
+    },
+    {
+      "category": "education",
+      "label": "Courses and learning",
+      "total": "89.00",
+      "count": 1
+    },
+    {
+      "category": "software",
+      "label": "Software and subscriptions",
+      "total": "69.99",
+      "count": 2
+    },
+    {
+      "category": "professional",
+      "label": "Professional services and registrations",
+      "total": "60.00",
+      "count": 1
+    },
+    {
+      "category": "utilities",
+      "label": "Electricity and utilities",
+      "total": "54.05",
+      "count": 1
+    },
+    {
+      "category": "marketing",
+      "label": "Marketing and ads",
+      "total": "43.20",
+      "count": 1
+    },
+    {
+      "category": "fees",
+      "label": "Platform and payment fees",
+      "total": "35.00",
+      "count": 1
+    },
+    {
+      "category": "office",
+      "label": "Office and co-working",
+      "total": "32.41",
+      "count": 1
+    }
+  ],
+  "monthly": [
+    {
+      "month": "2025-12",
+      "total": "15.00"
+    },
+    {
+      "month": "2026-01",
+      "total": "60.00"
+    },
+    {
+      "month": "2026-02",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-03",
+      "total": "300.00"
+    },
+    {
+      "month": "2026-04",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-05",
+      "total": "0.00"
+    },
+    {
+      "month": "2026-06",
+      "total": "43.20"
+    },
+    {
+      "month": "2026-07",
+      "total": "20.00"
+    },
+    {
+      "month": "2026-08",
+      "total": "32.41"
+    },
+    {
+      "month": "2026-09",
+      "total": "143.05"
+    },
+    {
+      "month": "2026-10",
+      "total": "1336.10"
+    },
+    {
+      "month": "2026-11",
+      "total": "62.49"
+    }
+  ],
+  "unconverted_count": 1,
+  "estimated_count": 1
+}

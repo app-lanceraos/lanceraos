@@ -304,6 +304,17 @@ test. Smoke test: sign in with a throwaway account, `POST /api/expenses/` (a bro
 shell's test client) with `{"amount": "10.00", "currency": "USD", "expense_date": "<today>", "category": "software"}`, expect 201;
 `GET /api/expenses/summary/` should show `10.00` in `this_month`; `DELETE` it and expect 204.
 
+## 7d. Expenses page release (08 November 2026, Prompt 15) **[U]**
+
+Code only: **no migration, no environment variable, no new service, no backend change.** Redeploy the frontend (Vercel). The release also fixes two
+bugs in the payment import dialog (its "Past imports" list was stale after an import or undo, and closing the dialog while an undo was running left
+the Payments list stale); nothing to configure for those either. `/expenses` is a private route; the sidebar's "Expenses" item already existed and
+now leads to it. The `vercel.json` SPA rewrite already covers the new path.
+
+Smoke test: sign in, open Expenses (the sidebar item stays highlighted), Add expense (category Software and subscriptions, USD 10), check the
+three headline numbers and the chart update, open the row's menu and choose Duplicate, save the copy (expect a "Possible duplicate" step because it
+is dated within 3 days of the original), choose "Delete the one I just added", then delete the original from the menu. The list ends empty.
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

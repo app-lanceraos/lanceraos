@@ -44,8 +44,15 @@ const RESPONSIVE_CSS = `
 `
 
 export default function PaymentImportDialog({ currencies, onImported, onUndone, onClose }) {
-  const { state, actions } = usePaymentImport({ onImported, onUndone })
+  // The history list is created first so the import flow can reload it: a finished import or undo changes what "Past
+  // imports" must show (Prompt 15, Part 0). The history's OWN undo passes the page callback unwrapped; it reloads itself.
   const history = usePaymentImportBatches({ onUndone })
+  const { load: reloadHistory } = history
+  const { state, actions } = usePaymentImport({
+    onImported: (batch) => { onImported?.(batch); reloadHistory() },
+    onUndone: () => { onUndone?.(); reloadHistory() },
+  })
+  const requestBusy = Boolean(state.busy) || history.busyId !== null
   const [leaving, setLeaving] = useState(false)
   const rootRef = useRef(null)
   // The step the heading focus last ran for. A "first render" boolean flag is NOT safe here: React StrictMode runs mount
@@ -70,6 +77,14 @@ export default function PaymentImportDialog({ currencies, onImported, onUndone, 
 
   useEffect(() => { if (step === STEP.COLUMNS) currencies.ensureLoaded() }, [step]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Whenever the file step is shown AGAIN (Import another file, Back, Choose another file) the list is reloaded; the rows
+  // already on screen stay until the answer arrives.
+  const previousStep = useRef(STEP.FILE)
+  useEffect(() => {
+    if (step === STEP.FILE && previousStep.current !== STEP.FILE) reloadHistory()
+    previousStep.current = step
+  }, [step, reloadHistory])
+
   useEffect(() => { if (leaving) keepRef.current?.focus() }, [leaving])
   useEffect(() => { setLeaving(false) }, [step])
 
@@ -85,7 +100,7 @@ export default function PaymentImportDialog({ currencies, onImported, onUndone, 
 
   return createPortal((
     <PaymentDialog
-      title={STEP_TITLES[step]} busy={Boolean(state.busy)} onClose={requestClose} maxWidth={980} initialFocus="select"
+      title={STEP_TITLES[step]} busy={requestBusy} onClose={requestClose} maxWidth={980} initialFocus="select"
       overlayClassName="pay-import-overlay" cardClassName="pay-import-card"
     >
       <div ref={rootRef}>
@@ -95,7 +110,7 @@ export default function PaymentImportDialog({ currencies, onImported, onUndone, 
               <span style={{ display: 'block', marginBottom: 8 }}>Leave without importing? Your choices on this screen will be lost.</span>
               <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button ref={keepRef} type="button" className="fos-btn fos-btn-ghost" onClick={() => setLeaving(false)}>Keep reviewing</button>
-                <button type="button" className="fos-btn fos-btn-danger" onClick={() => onClose()}>Leave</button>
+                <button type="button" className="fos-btn fos-btn-danger" onClick={() => onClose()} disabled={requestBusy}>Leave</button>
               </span>
             </FosAlert>
           </div>

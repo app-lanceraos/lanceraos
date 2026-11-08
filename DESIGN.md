@@ -757,6 +757,43 @@ cents, amber notes about ticked "Check"/"May already be there" rows, "Choose ano
 Full-screen at <= 768px: overlay padding 0, card `100dvh`, no radius, padding 18px 16px. The 320px rule applies to every step (page and dialog
 `scrollWidth == clientWidth`). After choosing a file, focus moves to "Check the file" (the input it replaces would otherwise drop focus to `<body>`).
 
+### Expenses page (`/expenses`, 08 November 2026, Prompt 15)
+
+A deliberate mirror of the Payments page, with the differences below. Top to bottom: flash message, the KPI strip (`ExpensesKpiStrip.jsx`, classes
+prefixed `exp-`), a row with the 12-month spending chart and the "where this year's spending went" card (grid `2fr 1fr`, `1fr` at <= 768px), the
+"excluded / estimated" notes, search + sort, ONE wrapping filter row (category, deductible, currency, From/To; each control grows to share the width at
+<= 768px), the list (table on desktop, cards at <= 768px) and the pagination. The strip, chart and category card cover ALL expenses and never change
+with the list filters.
+
+**No side panel.** A Payment has invoice links, provenance and link/unlink actions, so it earns a panel; an expense is seven plain fields, and a panel
+would only repeat the edit form. A row (or card) opens the edit dialog, and each row has a row-actions menu (`DropdownMenu`, `MoreVertical`, built like
+`ClientTable`'s): Edit, Duplicate, Delete. The actions cell stops click propagation so opening the menu never also opens the row (the menu panel is
+portaled to `<body>`, but React events still bubble through the portal to the cell). The mobile card is a `div` holding a main `button` and the same
+menu beside it — never a button inside a button. Delete asks first in a small dialog ("Delete this expense?").
+
+**Neutral colours.** Spending is not an error and not a success. Totals use `var(--text-primary)`; the "vs last month" delta shows an arrow in
+`var(--text-secondary)` whichever way it points. Never `--status-green-text` / `--status-red-text` in the Expenses components (those are reserved for
+state; field errors and the inverted-dates message use the shared `.fos-error` class because they ARE errors). The 12-month chart uses the validated
+blue pair `SPENT_BAR_COLORS` (`#2a78d6` light / `#3987e5` dark, mirrored hex of `--chart-series-invoiced`; Recharts writes colours into SVG attributes).
+The repo has no `scripts/validate_palette.js`, so no new unvalidated colour was invented. Blue means "money out" on this page and "invoiced" on the
+Invoice analytics page; each chart is a single labelled series, so nothing is ambiguous. The category bars use `var(--accent)` like the by-source card.
+
+**Add / edit / copy dialog** (`ExpenseFormModal.jsx` in a `PaymentDialog`, `initialFocus` = the first input): Amount + Currency, Date spent, Category,
+Paid to, What it was for, and the checkbox "Deductible business cost" (checked by default; its hint makes no tax promise). The category select starts
+at "Choose a category" and saving without one is refused — there is deliberately no default, because a silent default would file most expenses under the
+wrong category. Under it, always, a one-line hint that income tax has no category; and, only while "Platform and payment fees" is chosen, a visible
+`warning` alert saying a fee is a correct expense only if the income was recorded BEFORE the fee came off (otherwise it is counted twice). It is text,
+never a tooltip. Duplicate (from the menu) opens this same dialog as an Add with every field copied, the date set to today (Pakistan date) and an info
+line "Copied from ... Check the date and the amount." After a save the server may report a possible duplicate (same amount and category within 3 days);
+that is a second step of the same dialog, "Keep both" or "Delete the one I just added" (the NEW expense, never the older one), with no View button
+because there is no panel. A Duplicate dated within 3 days of its original triggers that notice by design.
+
+**Rate honesty.** A row whose rate basis is `estimated` or `none` carries an `Info` icon (`role="img"`, `aria-label` = the sentence) and the edit dialog
+shows the same sentence as visible text; the notes under the chart say how many expenses were left out or approximated.
+
+The 320px rule applies: the page and every dialog must have `scrollWidth == clientWidth`; the vendor and description are single-line with an ellipsis in
+the table and the card.
+
 ## 8. Animation and Transitions
 
 ### Timing tokens

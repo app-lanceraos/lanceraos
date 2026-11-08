@@ -1,0 +1,50 @@
+[
+  {
+    "value": "software",
+    "label": "Software and subscriptions"
+  },
+  {
+    "value": "equipment",
+    "label": "Equipment and hardware"
+  },
+  {
+    "value": "internet",
+    "label": "Internet and phone"
+  },
+  {
+    "value": "utilities",
+    "label": "Electricity and utilities"
+  },
+  {
+    "value": "office",
+    "label": "Office and co-working"
+  },
+  {
+    "value": "fees",
+    "label": "Platform and payment fees"
+  },
+  {
+    "value": "marketing",
+    "label": "Marketing and ads"
+  },
+  {
+    "value": "education",
+    "label": "Courses and learning"
+  },
+  {
+    "value": "professional",
+    "label": "Professional services and registrations"
+  },
+  {
+    "value": "travel",
+    "label": "Travel"
+  },
+  {
+    "value": "contractors",
+    "label": "Contractors and outsourcing"
+  },
+  {
+    "value": "other",
+    "label": "Other"
+  }
+]
