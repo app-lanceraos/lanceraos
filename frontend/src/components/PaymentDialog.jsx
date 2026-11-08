@@ -17,7 +17,9 @@ import useFocusTrap from '@/hooks/useFocusTrap'
 
 export const paymentDialogText = { margin: '0 0 16px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }
 
-export function PaymentDialog({ title, busy = false, onClose, children, maxWidth = 460, initialFocus = null }) {
+// `overlayClassName` / `cardClassName` are OPTIONAL hooks for a dialog that needs a media query on its own frame (the
+// import dialog goes full-screen on a phone); callers that pass nothing render exactly as before.
+export function PaymentDialog({ title, busy = false, onClose, children, maxWidth = 460, initialFocus = null, overlayClassName, cardClassName }) {
   const titleId = useId()
   const dialogRef = useRef(null)
 
@@ -35,9 +37,9 @@ export function PaymentDialog({ title, busy = false, onClose, children, maxWidth
   }, [busy, onClose])
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+    <div className={overlayClassName} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div
-        ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        ref={dialogRef} className={cardClassName} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
         style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-xl)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)', padding: '24px 28px', width: '100%', maxWidth, maxHeight: '90vh', overflowY: 'auto', outline: 'none', animation: 'modal-in 0.2s cubic-bezier(0.22,1,0.36,1)' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 12 }}>

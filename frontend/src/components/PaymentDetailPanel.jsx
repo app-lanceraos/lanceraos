@@ -25,6 +25,7 @@ import PaymentFormModal from './PaymentFormModal'
 import PaymentLinkModal from './PaymentLinkModal'
 import { STATUS_BADGE_STYLE, badgeBaseStyle } from '@/pages/clientHelpers'
 import { formatIsoDate } from '@/pages/dashboardHelpers'
+import { importedFromRows } from '@/pages/paymentImportHelpers'
 import {
   canLink, canUnlink, createdOn, deleteBlockReason, errorMessage, formatExact, originLabel, progressLine, rateNote,
 } from '@/pages/paymentsHelpers'
@@ -178,6 +179,12 @@ export default function PaymentDetailPanel({ paymentId, currencies, onClose, onC
                   <p style={labelStyle}>Added</p>
                   <p style={valueStyle}>{createdOn(payment)}</p>
                 </div>
+                {importedFromRows(payment).map((item) => (
+                  <div key={item.label} style={{ gridColumn: '1 / -1' }}>
+                    <p style={labelStyle}>{item.label}</p>
+                    <p style={valueStyle}>{item.value}</p>
+                  </div>
+                ))}
               </div>
 
               {note && <FosAlert type={payment.rate_basis === 'nearby' ? 'info' : 'warning'} style={{ marginBottom: 18 }}>{note}</FosAlert>}

@@ -732,6 +732,31 @@ visible text in the panel (info style for "nearby", warning style for the others
 The 320px rule: the page, the panel and every dialog must have `scrollWidth == clientWidth`; no fixed widths over the available space, rows
 and badges wrap or ellipsise.
 
+### Import payments dialog (`PaymentImportDialog.jsx`, 08 November 2026, Prompt 13)
+
+Opened from the Payments page: the header's ghost "Import" button next to the accent "Add payment" (desktop), an "Import payments" item in AppShell's
+three-dot menu (mobile), and "Import from a file" in the empty state. One `PaymentDialog` frame, `maxWidth` 980, **rendered through a portal to
+`<body>`** with its own overlay class at `z-index: 600`: AppShell's main frame is a stacking context (z-index 1), so no z-index set inside it can climb
+above the sidebar (250), header (350) or mobile drawer (400) — a 980px dialog covered the tick-box column of its own table at 1280px, and on a phone the
+header covered its title and close button (both found in browser verification). Any new dialog wider than the content area must do the same.
+
+Four steps, one title each (the dialog's own `h3`, which takes focus whenever the step changes — never `autoFocus`; compare with the PREVIOUS step, not a
+"first render" flag, because StrictMode runs mount effects twice): **Import payments** (source select, native file input, "Where do I get this file?"
+details, "Check the file", then "Past imports" with an inline Undo), **Check the columns** (shown only when the server cannot tell, or from Review's
+"Change columns": reason sentences, a scrolling table of the first rows, a two-column form that is one column at <= 768px), **Review before importing**,
+**Import finished**. Closing on Columns/Review asks first with a sticky inline warning bar ("Keep reviewing" / "Leave"); Escape and the X are ignored
+while a request runs.
+
+Review: a line "N rows in <file>. M look ready to import.", filter pills with counts (only groups that exist), "Select all ready" / "Clear selection",
+then the rows — a table on desktop (`.pay-import-table`) and cards at <= 768px (`.pay-import-cards`), toggled by CSS like the Payments list. Status badges
+use the existing status tokens: Ready green, Check amber, May already be there amber, Already imported gray, Not income gray, Can't read red. Every row
+shows the server's reason verbatim; a row that cannot be imported has a DISABLED checkbox. 50 rows are rendered at a time ("Show 50 more (n left)").
+The bottom bar (`.pay-import-bar`) is `position: sticky; bottom: 0`, full width of the dialog, and carries "{n} selected", the per-currency totals in exact
+cents, amber notes about ticked "Check"/"May already be there" rows, "Choose another file" and the primary "Import n payments".
+
+Full-screen at <= 768px: overlay padding 0, card `100dvh`, no radius, padding 18px 16px. The 320px rule applies to every step (page and dialog
+`scrollWidth == clientWidth`). After choosing a file, focus moves to "Check the file" (the input it replaces would otherwise drop focus to `<body>`).
+
 ## 8. Animation and Transitions
 
 ### Timing tokens

@@ -15,7 +15,7 @@
 // Dialogs and the side panel are feature-local components (PaymentFormModal, PaymentDetailPanel, PaymentLinkModal): this
 // page only decides which one is open.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpDown, Info, Plus, Search, Wallet, X } from 'lucide-react'
+import { ArrowUpDown, Info, Plus, Search, Upload, Wallet, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
@@ -28,6 +28,7 @@ import FosAlert from '@/components/FosAlert'
 import Pagination from '@/components/Pagination'
 import PaymentDetailPanel from '@/components/PaymentDetailPanel'
 import PaymentFormModal from '@/components/PaymentFormModal'
+import PaymentImportDialog from '@/components/PaymentImportDialog'
 import PaymentTable, { PaymentCard } from '@/components/PaymentTable'
 import PaymentsIncomeChart from '@/components/PaymentsIncomeChart'
 import PaymentsKpiStrip from '@/components/PaymentsKpiStrip'
@@ -38,7 +39,6 @@ import {
 } from './paymentsHelpers'
 
 const INITIAL_FILTERS = { search: '', link: 'all', source: '', currency: '', start: '', end: '', sort: 'recent' }
-const NO_MOBILE_ITEMS = []
 
 export default function Payments() {
   useTitle('LanceraOS | Payments')
@@ -60,6 +60,7 @@ export default function Payments() {
   const [profileCurrency, setProfileCurrency] = useState('')
 
   const [formState, setFormState] = useState(null) // null | { mode: 'create' }
+  const [importOpen, setImportOpen] = useState(false)
   const [selectedId, setSelectedId] = useState(null)
   const flash = useTimedMessage()
   const currencies = usePaymentCurrencies()
@@ -79,12 +80,17 @@ export default function Payments() {
   const rangeProblem = dateRangeProblem(filters.start, filters.end)
 
   const openCreate = useCallback(() => setFormState({ mode: 'create' }), [])
+  const openImport = useCallback(() => setImportOpen(true), [])
   // Memoised: AppShell re-renders on every header-action change, and a fresh JSX node each render would re-fire the
   // registration effect forever (the same trap Clients.jsx documents).
   const desktopHeaderActions = useMemo(() => (
-    <button type="button" className="fos-btn fos-btn-accent" onClick={openCreate}><Plus size={15} aria-hidden="true" /> Add payment</button>
-  ), [openCreate])
-  usePageHeaderActions({ desktop: desktopHeaderActions, mobileItems: NO_MOBILE_ITEMS })
+    <div style={{ display: 'flex', gap: 8 }}>
+      <button type="button" className="fos-btn fos-btn-ghost" onClick={openImport}><Upload size={15} aria-hidden="true" /> Import</button>
+      <button type="button" className="fos-btn fos-btn-accent" onClick={openCreate}><Plus size={15} aria-hidden="true" /> Add payment</button>
+    </div>
+  ), [openCreate, openImport])
+  const mobileHeaderItems = useMemo(() => [{ key: 'import', label: 'Import payments', Icon: Upload, onClick: openImport }], [openImport])
+  usePageHeaderActions({ desktop: desktopHeaderActions, mobileItems: mobileHeaderItems })
 
   const loadList = useCallback(async (targetPage) => {
     const requestId = ++listRequest.current
@@ -257,7 +263,7 @@ export default function Payments() {
         </div>
       )}
 
-      {nothingYet && <EmptyState onAdd={openCreate} />}
+      {nothingYet && <EmptyState onAdd={openCreate} onImport={openImport} />}
       {noMatches && <NoMatches onClear={clearFilters} />}
 
       {payments.length > 0 && (
@@ -300,6 +306,15 @@ export default function Payments() {
           onFinish={(text) => { setFormState(null); flash.show('success', text) }}
           onViewPayment={(id) => { setFormState(null); setSelectedId(id) }}
           onClose={() => setFormState(null)}
+        />
+      )}
+
+      {importOpen && (
+        <PaymentImportDialog
+          currencies={currencies}
+          onImported={() => refresh({ firstPage: true })}
+          onUndone={() => refresh()}
+          onClose={(text) => { setImportOpen(false); if (text) flash.show('success', text) }}
         />
       )}
 
@@ -383,7 +398,7 @@ function ListSkeleton() {
   )
 }
 
-function EmptyState({ onAdd }) {
+function EmptyState({ onAdd, onImport }) {
   return (
     <div style={{ textAlign: 'center', padding: '48px 24px', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)' }}>
       <Wallet size={28} aria-hidden="true" style={{ color: 'var(--text-tertiary)', marginBottom: 10 }} />
@@ -391,7 +406,10 @@ function EmptyState({ onAdd }) {
       <p style={{ margin: '8px 0 0', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
         Add money you have received here. A payment you mark as paid on an invoice also appears in this list.
       </p>
-      <button type="button" className="fos-btn fos-btn-accent" style={{ marginTop: 16 }} onClick={onAdd}><Plus size={15} aria-hidden="true" /> Add payment</button>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap', marginTop: 16 }}>
+        <button type="button" className="fos-btn fos-btn-accent" onClick={onAdd}><Plus size={15} aria-hidden="true" /> Add payment</button>
+        <button type="button" className="fos-btn fos-btn-ghost" onClick={onImport}><Upload size={15} aria-hidden="true" /> Import from a file</button>
+      </div>
     </div>
   )
 }
