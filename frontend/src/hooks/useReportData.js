@@ -5,12 +5,14 @@
 // overwrites a newer one, and the loading flag is cleared only by the latest request. While a new period loads the previous
 // `data` stays (the page dims it); on an error `data` becomes null — figures for a period the person has left are never shown
 // beside an error. There is no retry loop: reload() is the only retry. enabled:false sends nothing, clears the error and the figures.
+// `errorMessage(error)` turns a failure into the sentence the caller shows (default: the report pages' own); the Health Score
+// page passes its own so a 429 says "your health score". The Dashboard's Financial health widget uses the hook unchanged.
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import api from '@/lib/api'
 import { loadErrorMessage } from '@/pages/reportsHelpers'
 
-export default function useReportData({ path, params, enabled = true }) {
+export default function useReportData({ path, params, enabled = true, errorMessage = loadErrorMessage }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(Boolean(enabled))
   const [error, setError] = useState('')
@@ -20,6 +22,8 @@ export default function useReportData({ path, params, enabled = true }) {
   paramsRef.current = params
   const pathRef = useRef(path)
   pathRef.current = path
+  const errorMessageRef = useRef(errorMessage)
+  errorMessageRef.current = errorMessage
 
   const load = useCallback(async () => {
     const id = ++requestId.current
@@ -32,7 +36,7 @@ export default function useReportData({ path, params, enabled = true }) {
     } catch (e) {
       if (id !== requestId.current) return
       setData(null)
-      setError(loadErrorMessage(e))
+      setError(errorMessageRef.current(e))
     } finally {
       if (id === requestId.current) setLoading(false)
     }

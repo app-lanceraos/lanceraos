@@ -1,0 +1,196 @@
+{
+  "currency": "USD",
+  "months": 12,
+  "window": {
+    "start": "2025-11-01",
+    "end": "2026-10-31",
+    "earlier_start": "2024-11-01",
+    "earlier_end": "2025-10-31"
+  },
+  "score": null,
+  "grade": null,
+  "grade_label": null,
+  "available_points": 20,
+  "earned_points": 0,
+  "partial": true,
+  "message": "There is not enough recorded yet to give a score. The areas below say what each one needs.",
+  "dimensions": [
+    {
+      "key": "income_consistency",
+      "label": "Income consistency",
+      "max_points": 25,
+      "status": "not_enough_data",
+      "reason": "no_payments",
+      "points": null,
+      "percent": null,
+      "about": "How steady your income is from month to month. Swing means how far a typical month is from your average month. A full score needs a swing of 15% or less; the score is zero at 100% or more.",
+      "measure": "Not scored yet.",
+      "needed": "Record your first payment. This area needs at least 3 full months since your first payment.",
+      "steps": [
+        "Record the payments you have received on the Payments page, or import them from a CSV file."
+      ],
+      "details": {
+        "months_counted": 0,
+        "average": null,
+        "swing_pct": null,
+        "months_without_income": null,
+        "weakest_month": null,
+        "typical_month": null
+      }
+    },
+    {
+      "key": "profit_margin",
+      "label": "Profit margin",
+      "max_points": 20,
+      "status": "not_enough_data",
+      "reason": "no_income",
+      "points": null,
+      "percent": null,
+      "about": "How much of what you earn is left after the business expenses you recorded. A full score needs 60% or more left; the score is zero at 0% or less. Only expenses recorded in LanceraOS count. Personal spending and savings are not tracked here.",
+      "measure": "Not scored yet.",
+      "needed": "This needs income in the last 12 months.",
+      "steps": [],
+      "details": {
+        "income": "0.00",
+        "expenses": "0.00",
+        "net": null,
+        "margin_pct": null,
+        "expense_count": 0,
+        "largest_category": null
+      }
+    },
+    {
+      "key": "tax_compliance",
+      "label": "Tax compliance",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 0,
+      "percent": 0,
+      "about": "Whether your tax basics are in place: an NTN saved (8 points), PSEB registration marked (4 points), a payment recorded in the last 90 days (4 points) and an expense recorded in the last 90 days (4 points). The NTN and PSEB are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+      "measure": "0 of 4 checks are in place.",
+      "needed": "To score higher, complete the missing checks: NTN saved; PSEB registration marked; Payment recorded in the last 90 days; Expense recorded in the last 90 days.",
+      "steps": [
+        "Save your NTN in Settings, then Tax & PSEB. An NTN is the number you need to file a tax return with FBR.",
+        "If you are registered with PSEB, mark it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+        "No payment is recorded in the last 90 days. Record the money you have received on the Payments page.",
+        "No expense is recorded in the last 90 days. Record your business costs on the Expenses page, so your profit is not overstated."
+      ],
+      "details": {
+        "checks": [
+          {
+            "key": "ntn",
+            "label": "NTN saved",
+            "done": false,
+            "points": 0,
+            "max_points": 8
+          },
+          {
+            "key": "pseb",
+            "label": "PSEB registration marked",
+            "done": false,
+            "points": 0,
+            "max_points": 4
+          },
+          {
+            "key": "recent_payment",
+            "label": "Payment recorded in the last 90 days",
+            "done": false,
+            "points": 0,
+            "max_points": 4
+          },
+          {
+            "key": "recent_expense",
+            "label": "Expense recorded in the last 90 days",
+            "done": false,
+            "points": 0,
+            "max_points": 4
+          }
+        ]
+      }
+    },
+    {
+      "key": "income_growth",
+      "label": "Income growth",
+      "max_points": 20,
+      "status": "not_enough_data",
+      "reason": "too_little_history",
+      "points": null,
+      "percent": null,
+      "about": "How your average month compares with your average month in the same number of months before it. A full score needs growth of 30% or more, flat income earns half the points, and a fall of 30% or more scores zero.",
+      "measure": "Not scored yet.",
+      "needed": "This compares your last 12 months with the 12 months before them, and needs at least 3 of those earlier months on record. You have 0 months.",
+      "steps": [],
+      "details": {
+        "months_recent": 0,
+        "months_earlier": 0,
+        "average_recent": null,
+        "average_earlier": null,
+        "change_pct": null
+      }
+    },
+    {
+      "key": "client_diversity",
+      "label": "Client diversity",
+      "max_points": 15,
+      "status": "not_enough_data",
+      "reason": "no_income",
+      "points": null,
+      "percent": null,
+      "about": "How much of your income depends on one payer, using the \"Received from\" name on your payments. A full score needs your biggest payer to be 30% or less of your named income; the score is zero at 80% or more. This needs a name on at least 70% of your income.",
+      "measure": "Not scored yet.",
+      "needed": "This needs income in the last 12 months.",
+      "steps": [],
+      "details": {
+        "named_payers": 0,
+        "top_payer": null,
+        "top_share_pct": null,
+        "named_income": "0.00",
+        "unnamed_income": "0.00",
+        "named_share_pct": 0.0
+      }
+    }
+  ],
+  "tips": [
+    {
+      "dimension": "income_consistency",
+      "kind": "record",
+      "text": "Record the payments you have received on the Payments page, or import them from a CSV file.",
+      "gain": null
+    },
+    {
+      "dimension": "tax_compliance",
+      "kind": "record",
+      "text": "Save your NTN in Settings, then Tax & PSEB. An NTN is the number you need to file a tax return with FBR.",
+      "gain": null
+    },
+    {
+      "dimension": "tax_compliance",
+      "kind": "record",
+      "text": "If you are registered with PSEB, mark it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+      "gain": null
+    },
+    {
+      "dimension": "tax_compliance",
+      "kind": "record",
+      "text": "No payment is recorded in the last 90 days. Record the money you have received on the Payments page.",
+      "gain": null
+    },
+    {
+      "dimension": "tax_compliance",
+      "kind": "record",
+      "text": "No expense is recorded in the last 90 days. Record your business costs on the Expenses page, so your profit is not overstated.",
+      "gain": null
+    }
+  ],
+  "notes": [
+    "Only full calendar months are counted, so the current month is left out until it ends.",
+    "This score is a guide based on the records you keep in LanceraOS. It is not financial, accounting or tax advice."
+  ],
+  "counts": {
+    "payments_in_window": 0,
+    "expenses_in_window": 0,
+    "unconverted_payments": 0,
+    "unconverted_expenses": 0
+  }
+}

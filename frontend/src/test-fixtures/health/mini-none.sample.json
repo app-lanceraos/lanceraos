@@ -1,0 +1,15 @@
+{
+  "currency": "USD",
+  "months": 12,
+  "score": null,
+  "grade": null,
+  "grade_label": null,
+  "partial": true,
+  "message": "There is not enough recorded yet to give a score. The areas below say what each one needs.",
+  "top_tip": {
+    "dimension": "income_consistency",
+    "kind": "record",
+    "text": "Record the payments you have received on the Payments page, or import them from a CSV file.",
+    "gain": null
+  }
+}

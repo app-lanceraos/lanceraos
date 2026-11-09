@@ -356,6 +356,17 @@ Smoke test: sign in, then `GET /api/health/score/?months=12` returns 200 with a 
 (`score` may be `null` with a `message` for an account with few records: that is correct, not an error); `GET /api/health/score/?months=7` returns 400
 `{"error": "months must be 3, 6, 12 or 24."}`; `GET /api/health/mini/` returns 200; signed out, both return 401; and `GET /api/health/` still answers the probe.
 
+## 7h. Health Score page release (09 November 2026, Prompt 19) **[U]**
+
+Frontend only: redeploy on **Vercel** AFTER section 7g (the backend with `GET /api/health/score/` and `/mini/` must be live first, or the page and the
+Dashboard widget show their load errors). **No environment variable, no migration, no backend change, no new service.** `vercel.json`'s SPA rewrite
+already serves `/health` on a direct visit or a reload.
+
+Smoke test: sign in; the Dashboard shows a "Financial health" card with a score and a grade word, or "No score yet" for an account with few records;
+the sidebar's "Health Score" opens `/health` and stays highlighted; each of the four pills (3, 6, 12, 24 months) changes the "Looking at ..." dates
+line; reloading `/health` directly works; the Network tab shows `GET /api/health/mini/` on the Dashboard and `GET /api/health/score/?months=12` on the
+page (React StrictMode doubles GETs in development only).
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

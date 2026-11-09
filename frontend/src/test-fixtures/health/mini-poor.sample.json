@@ -1,0 +1,15 @@
+{
+  "currency": "USD",
+  "months": 12,
+  "score": 4,
+  "grade": "poor",
+  "grade_label": "Poor",
+  "partial": false,
+  "message": null,
+  "top_tip": {
+    "dimension": "income_growth",
+    "kind": "improve",
+    "text": "Your average month was USD 375 over the last 12 months, against USD 900 over the 6 months before. An average month of USD 990 (10% above the earlier months) would raise this area. This is worth about 13 points of your score.",
+    "gain": 13
+  }
+}

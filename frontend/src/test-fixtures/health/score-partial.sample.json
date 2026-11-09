@@ -1,0 +1,183 @@
+{
+  "currency": "USD",
+  "months": 12,
+  "window": {
+    "start": "2025-11-01",
+    "end": "2026-10-31",
+    "earlier_start": "2024-11-01",
+    "earlier_end": "2025-10-31"
+  },
+  "score": 94,
+  "grade": "excellent",
+  "grade_label": "Excellent",
+  "available_points": 65,
+  "earned_points": 61,
+  "partial": true,
+  "message": null,
+  "dimensions": [
+    {
+      "key": "income_consistency",
+      "label": "Income consistency",
+      "max_points": 25,
+      "status": "scored",
+      "reason": null,
+      "points": 25,
+      "percent": 100,
+      "about": "How steady your income is from month to month. Swing means how far a typical month is from your average month. A full score needs a swing of 15% or less; the score is zero at 100% or more.",
+      "measure": "Your monthly income swung 2% around its average of USD 2,835 over 8 months.",
+      "needed": "Nothing more is needed here: this area has the full score.",
+      "steps": [],
+      "details": {
+        "months_counted": 8,
+        "average": "2835.00",
+        "swing_pct": 2.0,
+        "months_without_income": 0,
+        "weakest_month": {
+          "month": "2026-07",
+          "income": "2740.00"
+        },
+        "typical_month": "2830.00"
+      }
+    },
+    {
+      "key": "profit_margin",
+      "label": "Profit margin",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 20,
+      "percent": 100,
+      "about": "How much of what you earn is left after the business expenses you recorded. A full score needs 60% or more left; the score is zero at 0% or less. Only expenses recorded in LanceraOS count. Personal spending and savings are not tracked here.",
+      "measure": "You kept 68% of your income: USD 22,680 received, USD 7,200 spent, USD 15,480 left.",
+      "needed": "Nothing more is needed here: this area has the full score.",
+      "steps": [],
+      "details": {
+        "income": "22680.00",
+        "expenses": "7200.00",
+        "net": "15480.00",
+        "margin_pct": 68.3,
+        "expense_count": 32,
+        "largest_category": {
+          "category": "fees",
+          "label": "Platform and payment fees",
+          "total": "1800.00"
+        }
+      }
+    },
+    {
+      "key": "tax_compliance",
+      "label": "Tax compliance",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 16,
+      "percent": 80,
+      "about": "Whether your tax basics are in place: an NTN saved (8 points), PSEB registration marked (4 points), a payment recorded in the last 90 days (4 points) and an expense recorded in the last 90 days (4 points). The NTN and PSEB are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+      "measure": "3 of 4 checks are in place.",
+      "needed": "To score higher, complete the missing checks: PSEB registration marked.",
+      "steps": [
+        "If you are registered with PSEB, mark it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work. This is worth about 6 points of your score."
+      ],
+      "details": {
+        "checks": [
+          {
+            "key": "ntn",
+            "label": "NTN saved",
+            "done": true,
+            "points": 8,
+            "max_points": 8
+          },
+          {
+            "key": "pseb",
+            "label": "PSEB registration marked",
+            "done": false,
+            "points": 0,
+            "max_points": 4
+          },
+          {
+            "key": "recent_payment",
+            "label": "Payment recorded in the last 90 days",
+            "done": true,
+            "points": 4,
+            "max_points": 4
+          },
+          {
+            "key": "recent_expense",
+            "label": "Expense recorded in the last 90 days",
+            "done": true,
+            "points": 4,
+            "max_points": 4
+          }
+        ]
+      }
+    },
+    {
+      "key": "income_growth",
+      "label": "Income growth",
+      "max_points": 20,
+      "status": "not_enough_data",
+      "reason": "too_little_history",
+      "points": null,
+      "percent": null,
+      "about": "How your average month compares with your average month in the same number of months before it. A full score needs growth of 30% or more, flat income earns half the points, and a fall of 30% or more scores zero.",
+      "measure": "Not scored yet.",
+      "needed": "This compares your last 12 months with the 12 months before them, and needs at least 3 of those earlier months on record. You have 0 months.",
+      "steps": [],
+      "details": {
+        "months_recent": 8,
+        "months_earlier": 0,
+        "average_recent": null,
+        "average_earlier": null,
+        "change_pct": null
+      }
+    },
+    {
+      "key": "client_diversity",
+      "label": "Client diversity",
+      "max_points": 15,
+      "status": "not_enough_data",
+      "reason": "few_payer_names",
+      "points": null,
+      "percent": null,
+      "about": "How much of your income depends on one payer, using the \"Received from\" name on your payments. A full score needs your biggest payer to be 30% or less of your named income; the score is zero at 80% or more. This needs a name on at least 70% of your income.",
+      "measure": "Not scored yet.",
+      "needed": "This needs a \"Received from\" name on at least 70% of your income. 26% has one now.",
+      "steps": [
+        "Only 26% of your income has a \"Received from\" name. Fill in that name on your payments until at least 70% of your income has one."
+      ],
+      "details": {
+        "named_payers": 1,
+        "top_payer": null,
+        "top_share_pct": null,
+        "named_income": "5960.00",
+        "unnamed_income": "16720.00",
+        "named_share_pct": 26.3
+      }
+    }
+  ],
+  "tips": [
+    {
+      "dimension": "tax_compliance",
+      "kind": "improve",
+      "text": "If you are registered with PSEB, mark it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work. This is worth about 6 points of your score.",
+      "gain": 6
+    },
+    {
+      "dimension": "client_diversity",
+      "kind": "record",
+      "text": "Only 26% of your income has a \"Received from\" name. Fill in that name on your payments until at least 70% of your income has one.",
+      "gain": null
+    }
+  ],
+  "notes": [
+    "Only full calendar months are counted, so the current month is left out until it ends.",
+    "This score covers 3 of 5 areas (65 of 100 points). The other areas could not be measured yet, and the score will change when they can.",
+    "This score is a guide based on the records you keep in LanceraOS. It is not financial, accounting or tax advice."
+  ],
+  "counts": {
+    "payments_in_window": 24,
+    "expenses_in_window": 32,
+    "unconverted_payments": 0,
+    "unconverted_expenses": 0
+  }
+}

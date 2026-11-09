@@ -488,12 +488,14 @@ lanceraos/                          <- Django project root
 │   │                                  pages/IncomeStatement.jsx). Tax figures, period comparison, export, receipts, recurring
 │   │                                  expenses and exchange-rate alerts are NOT YET BUILT.
 │   ├── tax/                        <- FBR tax, SRO 586, income certificate
-│   ├── health/                     <- Financial health score — BACKEND BUILT (09 November 2026, Prompt 18). No models, no migration, no
+│   ├── health/                     <- Financial health score — BUILT: backend 09 November 2026 (Prompt 18), the /health page and the Dashboard
+│   │                                  widget 09 November 2026 (Prompt 19, frontend only). No models, no migration, no
 │   │                                  environment variable: constants.py (every number, named), domain.py (Facts/AreaResult/Overall/Action),
 │   │                                  facts.py (the ONLY module that reads the database), scoring.py + tips.py + copy.py (pure: no Django, no
 │   │                                  apps.*), service.py (assembles the payload), views.py/urls.py (GET /api/health/score/, /api/health/mini/).
 │   │                                  Sits ABOVE apps.payments: imports only core.* and apps.payments non-view modules; NO app imports it
-│   │                                  (AST-tested). The /health page, the radar chart and the Dashboard widget are NOT built.
+│   │                                  (AST-tested). The page, the radar chart and the widget are in frontend/ (pages/HealthScore.jsx, Health*.jsx,
+│   │                                  DashboardHealthCard.jsx).
 │   ├── dashboard/                  <- Dashboard — BUILT (04 November 2026). No models, no migration:
 │   │                                  services.py (one builder per section), views.py (GET
 │   │                                  /api/dashboard/summary/, per-section isolation), urls.py.
@@ -557,6 +559,12 @@ lanceraos/                          <- Django project root
 │   │   │   │                          <- The report pages (09 Nov 2026, Prompt 17, frontend only): one period <select> of presets + custom dates,
 │   │   │   │                             the P&L's headline numbers and income-vs-expenses chart, the shared real month table (shows the SERVER's
 │   │   │   │                             total row), and the Income Statement's options card, "details printed on the statement" card and preview
+│   │   │   ├── HealthScoreCard.jsx, HealthRadar.jsx, HealthTipsCard.jsx, HealthAreaCard.jsx, HealthGradeBadge.jsx, HealthWindowPicker.jsx,
+│   │   │   │   DashboardHealthCard.jsx
+│   │   │   │                          <- The Health Score page and the Dashboard "Financial health" widget (09 Nov 2026, Prompt 19, frontend only):
+│   │   │   │                             the big score + grade word, a Recharts radar of the five areas (only with 3+ scored areas; an unscored
+│   │   │   │                             area is drawn at the centre and labelled "not scored"), the ranked "Where to start" list, one card per area,
+│   │   │   │                             four window pills, and the widget (own request to /health/mini/, like the Insights card)
 │   │   │   ├── listTableStyles.js  <- Shared th/td/wrapper/row-hover styles for InvoiceTable + ClientTable
 │   │   │   ├── PublicRoute.jsx     <- Redirects logged-in users away from Login/Register
 │   │   │   ├── Card.jsx, FormField.jsx, FormSelect.jsx,
@@ -575,6 +583,9 @@ lanceraos/                          <- Django project root
 │   │                              expensesHelpers.js — pure logic: the 12 categories (mirrored from the server, drift-tested), form
 │   │                              rules, list params, notes, error mapping;
 │   │                              ProfitAndLoss.jsx — the routed page /pnl (the sidebar's "P&L" item) and IncomeStatement.jsx — the routed
+│   │                              HealthScore.jsx — the routed page /health (the sidebar's "Health Score" item) + healthHelpers.js — pure logic:
+│   │                              the window, usable-payload and radar-gate tests, grade tones, radar rows and label, extra steps, every static sentence
+│   │                              (all figures and money sentences are the SERVER's; nothing here computes a score);
 │   │                              page /income-certificate (the sidebar's "Income Statement" item) + reportsHelpers.js — pure logic: the
 │   │                              period presets (calendar and July-June tax year), the server's four period sentences, request builders,
 │   │                              the notes (the PDF's own sentences, drift-tested), the identity allowlist, block reasons, error mapping)
@@ -597,7 +608,8 @@ lanceraos/                          <- Django project root
 │   │   │   ├── useReportData.js, useReportDownload.js, useStatementProfile.js <- The report pages' hooks (09 Nov 2026, Prompt 17): load one
 │   │   │   │                              report (request-id guard, no retry loop), download a PDF as a BLOB request (error body read as text,
 │   │   │   │                              one at a time), and read /auth/profile/ keeping only the printed identity + two booleans (the CNIC and
-│   │   │   │                              NTN digits are discarded in the same function)
+│   │   │   │                              NTN digits are discarded in the same function). useReportData also loads the Health Score page and the
+│   │   │   │                              Dashboard widget (an optional `errorMessage` says "your health score" in the 429 sentence)
 │   │   │   ├── usePaymentCurrencies.js <- The add/edit dialog's currency codes: GET /invoices/exchange-rate/ once per page visit, USD always, fallback to the common four
 │   │   │   └── useAppTooltip.js    <- The one delegated tooltip controller (installTooltipController, called once in main.jsx)
 │   │   ├── test-fixtures/payments/ <- TRACKED test data generated from the real Payments views (list, summary, candidates,
@@ -606,6 +618,8 @@ lanceraos/                          <- Django project root
 │   │   ├── test-fixtures/expenses/ <- TRACKED test data generated from the real Expenses views (list, summary, empty summary,
 │   │   │                              create-with-duplicates, currencies, and the category list that the drift test reads);
 │   │   │                              README.md says how
+│   │   ├── test-fixtures/health/   <- TRACKED test data generated from the real /api/health/score/ and /mini/ endpoints (12 score personas, 7 mini,
+│   │   │                              the months=7 error body, an index.js loader); README.md says how, the rows left behind (none) and the NTN assertion
 │   │   ├── test-fixtures/reports/  <- TRACKED test data generated from the real report views and PDF builders (P&L and statement
 │   │   │                              samples for every state, the four period sentences, the PDF 400 bodies, the notes oracle, three
 │   │   │                              profiles with invented CNIC/NTN, the purposes table); README.md says how
@@ -3074,8 +3088,8 @@ Key API endpoints:
 ---
 
 ### Module 5 — Financial Health Score
-Status: BACKEND BUILT (09 November 2026, Prompt 18). The `/health` page, the radar chart and the Dashboard widget are NOT built
-(Prompt 19, frontend). No AI, no stored history, no caching, no notifications, no Pro gating, no Tax figure.
+Status: BUILT (backend 09 November 2026, Prompt 18; the `/health` page, the radar chart and the Dashboard widget 09 November 2026, Prompt 19,
+frontend only). No AI, no stored history, no caching, no notifications, no Pro gating, no Tax figure.
 App: apps/health/ (no model, no migration, no environment variable; computed live on every request)
 
 One **Health Score out of 100** across five areas, each with a plain sentence for what was measured, what is needed for a higher
@@ -3123,7 +3137,17 @@ Known limits (stated, not hidden): PSEB can never be earned by someone whose wor
 payment dates add noise to the swing; unrecorded expenses make the margin look better than it is; the score is a guide and not advice,
 and it cannot be compared across people.
 
-Planned (NOT built): the radar chart (Recharts) and the `/health` page; the Dashboard mini widget (score, grade, top tip).
+**The page and the widget (BUILT 09 November 2026, Prompt 19, frontend only; DECISIONS.md Q1-Q16).** `/health` (the sidebar's "Health Score"):
+four window pills (3, 6, 12 or 24 months, default 12, page state not URL state), the big score with the grade word (the grade is the one
+judgement that may use status colours; the word is always written; area bars stay neutral), a Recharts radar of the five areas (shown only
+when at least three areas are scored; an unscored area is drawn at the centre, labelled "not scored" and explained under the chart, never
+as a zero), "Where to start" (the server's ranked steps, in the server's order), one card per area (what was measured, what is needed, the
+extra steps not already in "Where to start", and a fold-out "How this is scored"), a fixed row of links to Payments / Expenses / Tax & PSEB,
+and the server's notes. EVERY number and sentence is the server's; the page only formats and arranges (a score is never recomputed or
+rescaled in JavaScript). No score (under 50 points measurable) is "No score yet" plus the server's message, never a 0. The Dashboard's
+"Financial health" widget (top right, above Needs attention) shows the 12-month score, the grade word and the single best next step, and
+owns its own request like the Insights card, so neither it nor the rest of the Dashboard can hide the other. Not built: score history,
+comparisons, sharing, a PDF, notifications, AI text, Urdu, per-step deep links, a "dismiss this step" action.
 
 ---
 
@@ -3327,8 +3351,10 @@ Key API endpoints:
 ---
 
 ### Module 9 — Dashboard
-Status: BUILT (04 November 2026); AI Insights card added 06 November 2026 (Prompt 09, below). The Financial Health widget
-arrives with the Health Score module and is not rendered as a placeholder.
+Status: BUILT (04 November 2026); AI Insights card added 06 November 2026 (Prompt 09, below); Financial health widget added
+09 November 2026 (Prompt 19: the 12-month score, grade word and best next step, with its own request to GET /api/health/mini/, placed
+top right above Needs attention; desktop grid areas `"chart chart health" "chart chart attention" "insights insights insights"
+"activity activity upcoming" "activity activity rates"`, mobile order attention, health, chart, insights, upcoming, activity, rates).
 App: apps/dashboard/ — a thin app: `services.py` (one builder per section), `views.py`, `urls.py`; no models, no
 migration. (This section used to say "not a separate app"; superseded — the aggregation needs its own URLs and tests, and
 putting it in apps/invoices would make Invoices import Proposals and Clients. DECISIONS.md, 04 November 2026.)
@@ -3361,7 +3387,7 @@ Currency convention (the app's existing one): the user's `default_currency`; fro
 a user who invoices in USD and displays PKR, past months' bars move with today's rate — the "historical rate" decision
 belongs to the Payments module. Anything that cannot be honestly converted is counted in `unconverted_count`, never
 guessed and never dropped silently. Known gaps, stated: refunds are not netted from "Paid this month" (a refund has no
-per-transaction date), no Financial Health widget yet, AI insights still to come.
+per-transaction date), AI insights off by default (see the Insights card below).
 
 **Insights card (06 November 2026, Prompt 09).** Up to three short observations + suggestions. THE RULE: code calculates, the AI
 only words it. Code picks up to three facts (priority: `month_vs_previous`, `client_concentration`, `days_to_pay`,
@@ -3428,7 +3454,7 @@ single-process run intermittently hits an unrelated, already-documented native W
 segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 19 August 2026 design_data render path pass's new `test_design_renderer.py` (29 tests — closes audit finding PDF-001, see this module's own 19 August 2026 "design_data render path" entry above and DECISIONS.md), the same-day SEV1 follow-up's new `test_design_assignment.py` (10 tests — real invoice_create/_finalise_invoice/_duplicate_invoice_core design-assignment coverage plus a recurring-generation regression guard, see this module's own "SEV1" entry above), and the 20 August 2026 SEV1 follow-up's new `test_design_color_and_preview.py` (20 tests — all 9 real color combinations, the draft-live-default-fallback, both preview endpoints, see this module's own 20 August 2026 "SEV1" entry above), the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`, this pass's own KPI-period/currency-filter coverage, the InvoiceDetailPanel redesign's Send Reminder/Resend/Change Due Date/freelancer-preview-guard-regression coverage, the first 18 August pass's real end-to-end Cloudinary-401 proof for both PDF download endpoints, the second 18 August pass's frozen-PDF-vs-live-render/portal-list-scoping/payment-claim-message coverage (incl. a direct before/after profile-edit drift test), the sixth 18 August pass's `PdfReuploadCircuitBreakerTests` (`test_send.py`, incl. a real measured before/after timing test showing a genuine 65-66% speed-up from the new per-invoice breaker), the 19 August 2026 production-audit fix round's new `apps/invoices/tests/test_concurrency.py` (real, genuinely-concurrent-thread regression tests for the audit's INV-003/DB-002/INV-004/INV-001/INV-009 findings), and that same audit's second fix round's new `apps/invoices/tests/test_audit_trail.py` (real AuditLog-row-per-lifecycle-event coverage, INV-002) plus `test_portal.py`'s new `CrossAccountFreelancerPreviewGuardTests`/`PortalWriteEndpointsCSRFEnforcementTests` classes (real two-distinct-account ownership-guard coverage and real CSRF-rejection-vs-legitimate-traffic coverage, PORTAL-001/PORTAL-002) — see below. Frontend: 224 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `Pagination.test.jsx`, `InvoiceKPIStrip.test.jsx` (rewritten for the no-carousel/compact-delta redesign), `useFilterOverflow.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`, `ErrorBoundary.test.jsx`, `InvoiceTable.test.jsx` rewritten for row-click-vs-checkbox-click, `InvoiceDetailPanel.test.jsx` substantially expanded past its prior narrow tooltip-only suite (now also covering the Duplicate/More-menu footer scoping, fifth 18 August pass, and the 19 August audit fix round's Undo Payment More-menu gate regression tests), `InvoiceView.test.jsx` rewritten for the blob-based rework, `useWebSocket.test.jsx` — this hook's first dedicated test file, fifth 18 August pass) + a production `vite build` check + real Playwright screenshots (375/768/1280/1920 light/dark for the InvoiceDetailPanel redesign; 320/375/480/600/768 for the KPI strip fix; two live runs against the real dev Cloudinary account, one per 18 August pass, for the frontend-domain/Download fix and the frozen-PDF/portal-list/claims fixes) against the running dev servers — the fifth 18 August pass's own mobile 375px sizing was test-covered but NOT screenshot-verified at the time (no live browser/Playwright tool available that session); the sixth 18 August pass corrected this with real Playwright + Chromium screenshots at 375/768/1280/1920, light and dark, against the real running dev servers with a seeded demo account (see DECISIONS.md) | Two 16 August 2026 verification passes, the 17 August 2026 List/Table restructure, the same-day InvoiceDetailPanel redesign, both 18 August 2026 passes (KPI-strip/frontend-domain/Download-proxy, then frozen-PDF/portal-list/payment-claims), a fifth 18 August 2026 pass (WebSocket console-error fix + a third InvoiceDetailPanel bug-hardening round), a sixth 18 August 2026 pass (PDF re-upload circuit breaker + a fourth InvoiceDetailPanel/AppShell bug-hardening round, screenshot-verified), and a 19 August 2026 full production-readiness audit (`LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`, verdict NOT READY — 3 live-reproduced CRITICAL financial-corruption bugs plus 9 further HIGH findings) with two same-day fix rounds closing 7 of its findings total — round 1: INV-003/DB-002 concurrent-overpayment locking, INV-009/FE-001 Undo-Payment-on-terminal-status guard, INV-004 invoice-numbering race, INV-001 stale-total-on-empty-items (see DECISIONS.md's four 19 August 2026 "audit fix" entries); round 2: INV-002 (8 new AuditLog handlers closing the lifecycle-audit-trail gap), PORTAL-001 (the freelancer-preview guard now checks real ownership, not just "a freelancer session exists somewhere"), PORTAL-002 (CSRF enforcement added to the 3 portal write endpoints that lacked it — see DECISIONS.md's three 19 August 2026 "audit fix, second round" entries) — complete (see DECISIONS.md) — the audit's remaining MEDIUM/LOW findings (CLIENT-001 through CLIENT-009, PORTAL-004 through PORTAL-009, PDF-002 through PDF-004 — PDF-001 closed 19 August 2026, see this module's own "design_data render path" entry above, DB-004, INV-005 through INV-008, FE-003/FE-004, and DB-003's dormant CASCADE-vs-PROTECT landmine — see the audit document's own §25/§26 for the full remaining list), the still-open PERF-001 verification (whether the dev-machine WeasyPrint/Celery segfault reproduces in the real production container), Admin panel screens, and the full-module verification pass (Section 8, steps 20-21), the 19 real dev-database findings this document itself doesn't yet reflect line-by-line for every historical entry above (this row predates the 12 September 2026 Full Reversion in most of its own prose — read the "LanceraOS Template Builder" and "Post-Reversion Polish"/"Template Gallery Foundation" narrative paragraphs above this table as the current source of truth for the design/template system specifically, not this cell's own older wording about "design gallery/canvas editor") remain — the 20-new-template import itself is COMPLETE as of 15 September 2026 (Batch 5, FINAL — see this module's own "20-Template Import, Batches 2-5" entry above and DECISIONS.md's 15 September 2026 entry: 22 real, selectable templates, 11 free + 11 pro, every one with a real gallery preview image) |
 | Payments + Expenses  | Reports built, backend (08 Nov 2026, Prompt 16): P&L and Statement of Income as JSON and PDF, `rollup.summarize_range`, one rounding rule; tax figures, comparison and export are not built. Expense ledger built, backend only (08 Nov 2026, Prompt 14): `Expense` model + `payments.0004_expense`, the seven `/api/expenses/` routes, `expense_*` modules, the shared `rollup.py` engine, `check_payment_ledger` expense checks. Receipts, recurring/imported expenses, P&L not built. Import engine built, backend only (08 Nov 2026, Prompt 12): Wise preset + column mapping + duplicate detection + preview/commit/undo + `RateResolver`, migration `payments.0003`. Payments core built (07 Nov 2026): Payment ledger, CRUD, link/unlink to invoices, summary, rates frozen per payment date, backfill of the 20 dev-DB payments, `check_payment_ledger`; `GET /api/payments/currencies/` (08 Nov). Not built: expenses, P&L, certificate, alerts | Payments page built (08 Nov 2026): `/payments` with KPI strip, 12-month chart, by-source card, filterable list, add/edit with duplicate step, side panel, link/unlink; plus "Use a Payment I Already Recorded" in the invoice's Add Payment popup; import SCREENS built (08 Nov 2026, Prompt 13): an Import dialog (file + source, check columns, review every row, import, undo, past imports) opened from the page header / empty state / mobile menu, and "Imported from" + "Transaction ID" in the side panel; Expenses page built (08 Nov 2026, Prompt 15): `/expenses` with KPI strip (each card shows how much is marked deductible), 12-month spending chart, by-category card, filterable list, add / edit / duplicate / delete with the after-saving duplicate step and the fee double-counting warning, no side panel; plus two import-dialog fixes (stale "Past imports", closing mid-undo); report pages built (09 Nov 2026, Prompt 17): `/pnl` (period + currency selects, headline numbers, chart, month table, by-source and by-category cards, notes, PDF) and `/income-certificate` ("Income Statement": options, preview, printed identity, PDF) | backend suite 2043 -> 2178 passing (135 new; `python manage.py test --keepdb`; new tests are in the gitignored `apps/*/tests/`); 08 Nov 2026 (Payments page): backend 2186 passing (8 new, `test_currencies.py`); 08 Nov 2026 (import engine, Prompt 12): backend 2419 passing (233 new, `apps/payments/tests/test_import_*.py`, gitignored), frontend unchanged at 1325 of 1326 passing (160 new in `__tests__/`; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | 08 Nov 2026 (expenses ledger, Prompt 14): backend 2419 -> 2563 passing (144 new, gitignored `apps/*/tests/`; the income-summary golden master is one of them); frontend untouched | 08 Nov 2026 (reports, Prompt 16): backend 2563 -> 2635 passing (new tests in the gitignored `apps/*/tests/`), frontend untouched | 09 Nov 2026 (report pages, Prompt 17): frontend 1640 -> 1816 passing (new tests in gitignored `__tests__/`; the 1 failure is the pre-existing `SecuritySection.test.jsx`), backend untouched (2635 OK) | 08 Nov 2026 (Expenses page, Prompt 15): frontend 1472 -> 1640 passing (168 new in `__tests__/`, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`), backend untouched | In progress |
 | FBR Tax              | -       | -        | -     | Not started |
-| Health Score         | Built (09 Nov 2026, Prompt 18): `apps/health` (no model, no migration) — `GET /api/health/score/` and `/mini/`; five areas, rescaled total, computed tips | - (the `/health` page, radar chart and Dashboard widget are Prompt 19) | backend `apps.health` tests (untracked, see DECISIONS.md) | Backend only |
+| Health Score         | Built (09 Nov 2026, Prompt 18): `apps/health` (no model, no migration) — `GET /api/health/score/` and `/mini/`; five areas, rescaled total, computed tips | Built (09 Nov 2026, Prompt 19): `/health` (window pills, score + grade, radar, "Where to start", five area cards, notes) and the Dashboard "Financial health" widget | backend `apps.health` tests (untracked, see DECISIONS.md); frontend 1816 -> 1979 tests (162 new, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Built (no AI, no history, no Pro gating) |
 | Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A (list, create, autosaving draft editor, score/tips) and part B (Send dialog with pre-flight and verify-by-checking, the client's public page `/proposal/:token`, withdraw, convert to invoice, activity timeline, client link, client's answer, in-app Preview) — 04 Nov 2026 | backend 479 passing (`apps.proposals` 299 + `core` 181; untouched by part B); frontend 1037 of 1038 passing (221 new for part B; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Complete; real-deployment smoke tests (DEPLOYMENT.md Section 8, items 12-16) still to run |
 | Contracts            | -       | -        | -     | Not started |
 | Subscriptions        | -       | -        | -     | Not started |

@@ -676,9 +676,10 @@ the device clock: 05:00-11:59 "Good morning", 12:00-16:59 "Good afternoon", othe
 a farewell). Name = first name, else username, else none. Everything else is naive Pakistan time shown as written with a PKT
 label; no relative times.
 
-Desktop (a CSS grid with named areas, 16px gap): a row of four KPI tiles; then `chart chart attention` / `activity activity
-upcoming` / `activity activity rates`. At <= 768px it is one column in the order **greeting, KPIs (2 x 2), Needs attention,
-chart, Upcoming, Activity, Rates** — what needs action comes before history (the grid items carry `order`). Nothing may scroll
+Desktop (a CSS grid with named areas, 16px gap): a row of four KPI tiles; then `chart chart health` / `chart chart attention` /
+`insights insights insights` / `activity activity upcoming` / `activity activity rates`. At <= 768px it is one column in the order
+**greeting, KPIs (2 x 2), Needs attention, Financial health, chart, Insights, Upcoming, Activity, Rates** — what needs action
+comes before history (the grid items carry `order`; the Financial health widget was added by Prompt 19, see "Health Score page"). Nothing may scroll
 horizontally at 320px.
 
 Pieces: every section is a `DashboardCard` (the standard card recipe, a real `h2`, a `<section>` landmark). KPI tiles are real
@@ -690,8 +691,8 @@ visually-hidden table of the six values next to it. Rates are labelled "Daily ra
 Keyboard: every link shows a `:focus-visible` ring (`.dash-link`, 2px accent outline).
 
 **Insights card (06 November 2026).** A `DashboardCard` titled "Insights" ("From your own numbers"), a FULL-WIDTH row between the
-chart/attention row and the activity row (`"chart chart attention" "insights insights insights" "activity activity upcoming" "activity
-activity rates"`); on mobile the order is attention, chart, insights, upcoming, activity, rates. It owns its own request and is always
+chart/attention-and-health rows and the activity row (the grid areas are listed under "Desktop" above); on mobile the order is
+attention, health, chart, insights, upcoming, activity, rates. It owns its own request and is always
 rendered, so there is no layout jump: loading is three skeleton tiles of the ready tiles' height. Ready: up to three tiles in a grid
 `repeat(auto-fit, minmax(240px, 1fr))`, each a `Lightbulb` icon, the observation in primary text and the suggestion below it in
 secondary text, both plain React text nodes (escaped, never HTML). Empty: a quiet `BarChart3` message with the server's hint. Error:
@@ -826,6 +827,42 @@ loading, failed to load, nothing to put in the report, no convertible payment, a
 replaces the chart, table and cards with one block and two links ("Record a payment", "Add an expense"). One failed load shows ONE message and one Reload.
 
 **The 320px rule** applies: the page must have `scrollWidth == clientWidth`. The month tables keep a minimum width and scroll sideways inside their own card.
+
+### Health Score page (`/health`) and Dashboard widget (09 November 2026, Prompt 19)
+
+**Page, top to bottom.** (1) Four window pills (`FilterPill`, `aria-pressed`, a `role="group"` labelled "Months to look at"; they wrap onto a
+second line at 375px rather than scroll). (2) The score card beside the radar card in a `repeat(auto-fit, minmax(300px, 1fr))` grid; one
+column on a phone; with fewer than three scored areas the radar is not rendered at all (no placeholder) and the score card takes the row.
+(3) "Where to start" (an ordered list; each step under the small name of its area, the server's text beneath it; no gain badge because the
+text already says "worth about N points"). (4) The five area cards in the same auto-fit grid, `align-items: start` (each: points text on the
+right of the header, a thin neutral meter, what was measured, what is needed, "More steps for this area" only for steps not already in
+"Where to start", and a native `<details>` "How this is scored", closed by default). (5) One static row of links (Payments, Expenses,
+Tax & PSEB). (6) The server's notes as `ReportNote` lines. A refetch for a new window dims the content to 0.55 and keeps it; an error shows
+one `FosAlert` with Reload inside the score card and the picker stays usable.
+
+**Colour rule.** The grade is a judgement, so the grade badge and the fill of the big score meter use the status tokens (green for Excellent
+and Good, amber for Fair, red for Poor, gray for an unknown grade) AND the grade word is always written, so colour is never the only signal
+(a grayscale screenshot was checked). Nothing else on the page uses a status colour: the five area bars are neutral (`--accent` on
+`--bg-surface-3`, like `BreakdownCard`) because a wall of red cards helps nobody and the points text carries the meaning. The score number is
+`--text-primary`.
+
+**Radar.** One neutral series, stroke 2px and fill at 0.18 opacity, in the existing `--accent-dim` token mirrored as hex
+(`HEALTH_RADAR_COLORS`: light `#00a87e`, dark `#00c896`), because SVG attributes do not resolve `var()` reliably (the same reason as the
+bar colours). Axis domain 0 to 100 (percent of each area's own points), radius numbers hidden, grid rings in `--border-subtle` (they
+resolve in both themes). The axis labels are custom two-line ticks nudged away from the centre so a full-marks vertex never touches them.
+The SVG is hidden from assistive tech and the wrapper is a `role="img"` with a one-sentence label that points at the area cards: the radar is
+a glance, every figure in it is also visible text.
+
+**Unknown is not zero, for charts too.** An area with too little data has no percent. The polygon needs a value, so it is plotted at the
+centre, but its axis label has a second line "not scored" in `--text-tertiary`, the tooltip says "Not scored", and a sentence under the chart
+says the centre does not mean zero. A "No score yet" state never shows a 0 anywhere (not in the big number, not in a meter).
+
+**Dashboard widget.** A `DashboardCard` titled "Financial health", subtitle "Last N full months", ONE "Details" link (with an arrow icon) in
+the header; the card itself is never a link. Score state: the number (2.4rem), "/ 100", the grade badge, a meter, "Based on the areas that
+could be scored." when partial, then "Best next step" and the server's full text (never truncated: a clamped sentence would hide "worth
+about N points"). No score: "No score yet", the server's message and a text link "See what is needed". It owns its request and is always
+rendered (loading is a skeleton of the final height; an error is `DashboardUnavailable` inside its own card), so it neither delays nor
+hides, and is neither delayed nor hidden by, the rest of the Dashboard. Grid areas and the mobile order are in "Dashboard layout" above.
 
 ## 8. Animation and Transitions
 

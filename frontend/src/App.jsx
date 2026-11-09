@@ -26,6 +26,7 @@ import Clients from '@/pages/Clients'
 import Expenses from '@/pages/Expenses'
 import ProfitAndLoss from '@/pages/ProfitAndLoss'
 import IncomeStatement from '@/pages/IncomeStatement'
+import HealthScore from '@/pages/HealthScore'
 import Payments from '@/pages/Payments'
 import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
@@ -209,6 +210,10 @@ export default function App() {
         <Route
           path="/income-certificate"
           element={<PrivateRoute><AppShell><IncomeStatement /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/health"
+          element={<PrivateRoute><AppShell><HealthScore /></AppShell></PrivateRoute>}
         />
         <Route
           path="/invoices"

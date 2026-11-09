@@ -1,0 +1,166 @@
+{
+  "currency": "USD",
+  "months": 24,
+  "window": {
+    "start": "2024-11-01",
+    "end": "2026-10-31",
+    "earlier_start": "2022-11-01",
+    "earlier_end": "2024-10-31"
+  },
+  "score": 100,
+  "grade": "excellent",
+  "grade_label": "Excellent",
+  "available_points": 80,
+  "earned_points": 80,
+  "partial": true,
+  "message": null,
+  "dimensions": [
+    {
+      "key": "income_consistency",
+      "label": "Income consistency",
+      "max_points": 25,
+      "status": "scored",
+      "reason": null,
+      "points": 25,
+      "percent": 100,
+      "about": "How steady your income is from month to month. Swing means how far a typical month is from your average month. A full score needs a swing of 15% or less; the score is zero at 100% or more.",
+      "measure": "Your monthly income swung 9% around its average of USD 2,267 over 18 months.",
+      "needed": "Nothing more is needed here: this area has the full score.",
+      "steps": [],
+      "details": {
+        "months_counted": 18,
+        "average": "2266.67",
+        "swing_pct": 8.8,
+        "months_without_income": 0,
+        "weakest_month": {
+          "month": "2025-06",
+          "income": "1940.00"
+        },
+        "typical_month": "2328.00"
+      }
+    },
+    {
+      "key": "profit_margin",
+      "label": "Profit margin",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 20,
+      "percent": 100,
+      "about": "How much of what you earn is left after the business expenses you recorded. A full score needs 60% or more left; the score is zero at 0% or less. Only expenses recorded in LanceraOS count. Personal spending and savings are not tracked here.",
+      "measure": "You kept 79% of your income: USD 40,800 received, USD 8,640 spent, USD 32,160 left.",
+      "needed": "Nothing more is needed here: this area has the full score.",
+      "steps": [],
+      "details": {
+        "income": "40800.00",
+        "expenses": "8640.00",
+        "net": "32160.00",
+        "margin_pct": 78.8,
+        "expense_count": 48,
+        "largest_category": {
+          "category": "fees",
+          "label": "Platform and payment fees",
+          "total": "2160.00"
+        }
+      }
+    },
+    {
+      "key": "tax_compliance",
+      "label": "Tax compliance",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 20,
+      "percent": 100,
+      "about": "Whether your tax basics are in place: an NTN saved (8 points), PSEB registration marked (4 points), a payment recorded in the last 90 days (4 points) and an expense recorded in the last 90 days (4 points). The NTN and PSEB are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+      "measure": "4 of 4 checks are in place.",
+      "needed": "Nothing more is needed here: this area has the full score.",
+      "steps": [],
+      "details": {
+        "checks": [
+          {
+            "key": "ntn",
+            "label": "NTN saved",
+            "done": true,
+            "points": 8,
+            "max_points": 8
+          },
+          {
+            "key": "pseb",
+            "label": "PSEB registration marked",
+            "done": true,
+            "points": 4,
+            "max_points": 4
+          },
+          {
+            "key": "recent_payment",
+            "label": "Payment recorded in the last 90 days",
+            "done": true,
+            "points": 4,
+            "max_points": 4
+          },
+          {
+            "key": "recent_expense",
+            "label": "Expense recorded in the last 90 days",
+            "done": true,
+            "points": 4,
+            "max_points": 4
+          }
+        ]
+      }
+    },
+    {
+      "key": "income_growth",
+      "label": "Income growth",
+      "max_points": 20,
+      "status": "not_enough_data",
+      "reason": "too_little_history",
+      "points": null,
+      "percent": null,
+      "about": "How your average month compares with your average month in the same number of months before it. A full score needs growth of 30% or more, flat income earns half the points, and a fall of 30% or more scores zero.",
+      "measure": "Not scored yet.",
+      "needed": "This compares your last 24 months with the 24 months before them, and needs at least 3 of those earlier months on record. You have 0 months.",
+      "steps": [],
+      "details": {
+        "months_recent": 18,
+        "months_earlier": 0,
+        "average_recent": null,
+        "average_earlier": null,
+        "change_pct": null
+      }
+    },
+    {
+      "key": "client_diversity",
+      "label": "Client diversity",
+      "max_points": 15,
+      "status": "scored",
+      "reason": null,
+      "points": 15,
+      "percent": 100,
+      "about": "How much of your income depends on one payer, using the \"Received from\" name on your payments. A full score needs your biggest payer to be 30% or less of your named income; the score is zero at 80% or more. This needs a name on at least 70% of your income.",
+      "measure": "Acme Studio paid 28% of the income that has a name (USD 11,424 of USD 40,800). You have 4 named payers.",
+      "needed": "Nothing more is needed here: this area has the full score.",
+      "steps": [],
+      "details": {
+        "named_payers": 4,
+        "top_payer": "Acme Studio",
+        "top_share_pct": 28.0,
+        "named_income": "40800.00",
+        "unnamed_income": "0.00",
+        "named_share_pct": 100.0
+      }
+    }
+  ],
+  "tips": [],
+  "notes": [
+    "Only full calendar months are counted, so the current month is left out until it ends.",
+    "This score covers 4 of 5 areas (80 of 100 points). The other areas could not be measured yet, and the score will change when they can.",
+    "This score is a guide based on the records you keep in LanceraOS. It is not financial, accounting or tax advice."
+  ],
+  "counts": {
+    "payments_in_window": 72,
+    "expenses_in_window": 48,
+    "unconverted_payments": 0,
+    "unconverted_expenses": 0
+  }
+}

@@ -1,0 +1,206 @@
+{
+  "currency": "USD",
+  "months": 12,
+  "window": {
+    "start": "2025-11-01",
+    "end": "2026-10-31",
+    "earlier_start": "2024-11-01",
+    "earlier_end": "2025-10-31"
+  },
+  "score": 4,
+  "grade": "poor",
+  "grade_label": "Poor",
+  "available_points": 100,
+  "earned_points": 4,
+  "partial": false,
+  "message": null,
+  "dimensions": [
+    {
+      "key": "income_consistency",
+      "label": "Income consistency",
+      "max_points": 25,
+      "status": "scored",
+      "reason": null,
+      "points": 0,
+      "percent": 0,
+      "about": "How steady your income is from month to month. Swing means how far a typical month is from your average month. A full score needs a swing of 15% or less; the score is zero at 100% or more.",
+      "measure": "Your monthly income swung 173% around its average of USD 375 over 12 months.",
+      "needed": "To score higher, make your months more even. At a swing of 15% or less you get all 25 points; yours is 173%.",
+      "steps": [
+        "No payment is recorded in 9 of your 12 full months. If you were paid in any of them, record the payment; until you do, they count as months with no income."
+      ],
+      "details": {
+        "months_counted": 12,
+        "average": "375.00",
+        "swing_pct": 173.2,
+        "months_without_income": 9,
+        "weakest_month": {
+          "month": "2025-12",
+          "income": "0.00"
+        },
+        "typical_month": "0.00"
+      }
+    },
+    {
+      "key": "profit_margin",
+      "label": "Profit margin",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 0,
+      "percent": 0,
+      "about": "How much of what you earn is left after the business expenses you recorded. A full score needs 60% or more left; the score is zero at 0% or less. Only expenses recorded in LanceraOS count. Personal spending and savings are not tracked here.",
+      "measure": "Your expenses were as high as or higher than your income: USD 4,500 received, USD 8,400 spent.",
+      "needed": "To score higher, keep more of your income. When 60% or more is left you get all 20 points; you kept nothing.",
+      "steps": [],
+      "details": {
+        "income": "4500.00",
+        "expenses": "8400.00",
+        "net": "-3900.00",
+        "margin_pct": -86.7,
+        "expense_count": 24,
+        "largest_category": {
+          "category": "fees",
+          "label": "Platform and payment fees",
+          "total": "2100.00"
+        }
+      }
+    },
+    {
+      "key": "tax_compliance",
+      "label": "Tax compliance",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 4,
+      "percent": 20,
+      "about": "Whether your tax basics are in place: an NTN saved (8 points), PSEB registration marked (4 points), a payment recorded in the last 90 days (4 points) and an expense recorded in the last 90 days (4 points). The NTN and PSEB are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+      "measure": "1 of 4 checks are in place.",
+      "needed": "To score higher, complete the missing checks: NTN saved; Payment recorded in the last 90 days; Expense recorded in the last 90 days.",
+      "steps": [
+        "Save your NTN in Settings, then Tax & PSEB. An NTN is the number you need to file a tax return with FBR. This is worth about 8 points of your score.",
+        "No payment is recorded in the last 90 days. Record the money you have received on the Payments page. This is worth about 4 points of your score.",
+        "No expense is recorded in the last 90 days. Record your business costs on the Expenses page, so your profit is not overstated. This is worth about 4 points of your score."
+      ],
+      "details": {
+        "checks": [
+          {
+            "key": "ntn",
+            "label": "NTN saved",
+            "done": false,
+            "points": 0,
+            "max_points": 8
+          },
+          {
+            "key": "pseb",
+            "label": "PSEB registration marked",
+            "done": true,
+            "points": 4,
+            "max_points": 4
+          },
+          {
+            "key": "recent_payment",
+            "label": "Payment recorded in the last 90 days",
+            "done": false,
+            "points": 0,
+            "max_points": 4
+          },
+          {
+            "key": "recent_expense",
+            "label": "Expense recorded in the last 90 days",
+            "done": false,
+            "points": 0,
+            "max_points": 4
+          }
+        ]
+      }
+    },
+    {
+      "key": "income_growth",
+      "label": "Income growth",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 0,
+      "percent": 0,
+      "about": "How your average month compares with your average month in the same number of months before it. A full score needs growth of 30% or more, flat income earns half the points, and a fall of 30% or more scores zero.",
+      "measure": "Your average month was USD 375 over the last 12 months, against USD 900 over the 6 months before (down 58%).",
+      "needed": "To score higher, grow your average month. At growth of 30% or more you get all 20 points; yours is down 58%.",
+      "steps": [
+        "Your average month was USD 375 over the last 12 months, against USD 900 over the 6 months before. An average month of USD 990 (10% above the earlier months) would raise this area. This is worth about 13 points of your score."
+      ],
+      "details": {
+        "months_recent": 12,
+        "months_earlier": 6,
+        "average_recent": "375.00",
+        "average_earlier": "900.00",
+        "change_pct": -58.3
+      }
+    },
+    {
+      "key": "client_diversity",
+      "label": "Client diversity",
+      "max_points": 15,
+      "status": "scored",
+      "reason": null,
+      "points": 0,
+      "percent": 0,
+      "about": "How much of your income depends on one payer, using the \"Received from\" name on your payments. A full score needs your biggest payer to be 30% or less of your named income; the score is zero at 80% or more. This needs a name on at least 70% of your income.",
+      "measure": "Solo Client paid 100% of the income that has a name (USD 4,500 of USD 4,500). You have 1 named payer.",
+      "needed": "To score higher, spread your income across more payers. When your biggest payer is 30% or less you get all 15 points; yours is 100%.",
+      "steps": [
+        "Solo Client paid 100% of the income that has a name (USD 4,500 of USD 4,500). If your biggest payer were 50% of it, that would raise this area. This is worth about 9 points of your score."
+      ],
+      "details": {
+        "named_payers": 1,
+        "top_payer": "Solo Client",
+        "top_share_pct": 100.0,
+        "named_income": "4500.00",
+        "unnamed_income": "0.00",
+        "named_share_pct": 100.0
+      }
+    }
+  ],
+  "tips": [
+    {
+      "dimension": "income_growth",
+      "kind": "improve",
+      "text": "Your average month was USD 375 over the last 12 months, against USD 900 over the 6 months before. An average month of USD 990 (10% above the earlier months) would raise this area. This is worth about 13 points of your score.",
+      "gain": 13
+    },
+    {
+      "dimension": "client_diversity",
+      "kind": "improve",
+      "text": "Solo Client paid 100% of the income that has a name (USD 4,500 of USD 4,500). If your biggest payer were 50% of it, that would raise this area. This is worth about 9 points of your score.",
+      "gain": 9
+    },
+    {
+      "dimension": "tax_compliance",
+      "kind": "improve",
+      "text": "Save your NTN in Settings, then Tax & PSEB. An NTN is the number you need to file a tax return with FBR. This is worth about 8 points of your score.",
+      "gain": 8
+    },
+    {
+      "dimension": "tax_compliance",
+      "kind": "improve",
+      "text": "No payment is recorded in the last 90 days. Record the money you have received on the Payments page. This is worth about 4 points of your score.",
+      "gain": 4
+    },
+    {
+      "dimension": "tax_compliance",
+      "kind": "improve",
+      "text": "No expense is recorded in the last 90 days. Record your business costs on the Expenses page, so your profit is not overstated. This is worth about 4 points of your score.",
+      "gain": 4
+    }
+  ],
+  "notes": [
+    "Only full calendar months are counted, so the current month is left out until it ends.",
+    "This score is a guide based on the records you keep in LanceraOS. It is not financial, accounting or tax advice."
+  ],
+  "counts": {
+    "payments_in_window": 3,
+    "expenses_in_window": 24,
+    "unconverted_payments": 0,
+    "unconverted_expenses": 0
+  }
+}

@@ -1,0 +1,182 @@
+{
+  "currency": "USD",
+  "months": 12,
+  "window": {
+    "start": "2025-11-01",
+    "end": "2026-10-31",
+    "earlier_start": "2024-11-01",
+    "earlier_end": "2025-10-31"
+  },
+  "score": 78,
+  "grade": "good",
+  "grade_label": "Good",
+  "available_points": 100,
+  "earned_points": 78,
+  "partial": false,
+  "message": null,
+  "dimensions": [
+    {
+      "key": "income_consistency",
+      "label": "Income consistency",
+      "max_points": 25,
+      "status": "scored",
+      "reason": null,
+      "points": 25,
+      "percent": 100,
+      "about": "How steady your income is from month to month. Swing means how far a typical month is from your average month. A full score needs a swing of 15% or less; the score is zero at 100% or more.",
+      "measure": "Your monthly income swung 0% around its average of USD 2,000 over 12 months.",
+      "needed": "Nothing more is needed here: this area has the full score.",
+      "steps": [],
+      "details": {
+        "months_counted": 12,
+        "average": "2000.00",
+        "swing_pct": 0.0,
+        "months_without_income": 0,
+        "weakest_month": {
+          "month": "2025-11",
+          "income": "2000.00"
+        },
+        "typical_month": "2000.00"
+      }
+    },
+    {
+      "key": "profit_margin",
+      "label": "Profit margin",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 20,
+      "percent": 100,
+      "about": "How much of what you earn is left after the business expenses you recorded. A full score needs 60% or more left; the score is zero at 0% or less. Only expenses recorded in LanceraOS count. Personal spending and savings are not tracked here.",
+      "measure": "You kept 70% of your income: USD 24,000 received, USD 7,200 spent, USD 16,800 left.",
+      "needed": "Nothing more is needed here: this area has the full score.",
+      "steps": [],
+      "details": {
+        "income": "24000.00",
+        "expenses": "7200.00",
+        "net": "16800.00",
+        "margin_pct": 70.0,
+        "expense_count": 48,
+        "largest_category": {
+          "category": "fees",
+          "label": "Platform and payment fees",
+          "total": "1800.00"
+        }
+      }
+    },
+    {
+      "key": "tax_compliance",
+      "label": "Tax compliance",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 20,
+      "percent": 100,
+      "about": "Whether your tax basics are in place: an NTN saved (8 points), PSEB registration marked (4 points), a payment recorded in the last 90 days (4 points) and an expense recorded in the last 90 days (4 points). The NTN and PSEB are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+      "measure": "4 of 4 checks are in place.",
+      "needed": "Nothing more is needed here: this area has the full score.",
+      "steps": [],
+      "details": {
+        "checks": [
+          {
+            "key": "ntn",
+            "label": "NTN saved",
+            "done": true,
+            "points": 8,
+            "max_points": 8
+          },
+          {
+            "key": "pseb",
+            "label": "PSEB registration marked",
+            "done": true,
+            "points": 4,
+            "max_points": 4
+          },
+          {
+            "key": "recent_payment",
+            "label": "Payment recorded in the last 90 days",
+            "done": true,
+            "points": 4,
+            "max_points": 4
+          },
+          {
+            "key": "recent_expense",
+            "label": "Expense recorded in the last 90 days",
+            "done": true,
+            "points": 4,
+            "max_points": 4
+          }
+        ]
+      }
+    },
+    {
+      "key": "income_growth",
+      "label": "Income growth",
+      "max_points": 20,
+      "status": "scored",
+      "reason": null,
+      "points": 10,
+      "percent": 50,
+      "about": "How your average month compares with your average month in the same number of months before it. A full score needs growth of 30% or more, flat income earns half the points, and a fall of 30% or more scores zero.",
+      "measure": "Your average month was USD 2,000 over the last 12 months, against USD 2,000 over the 6 months before (unchanged).",
+      "needed": "To score higher, grow your average month. At growth of 30% or more you get all 20 points; yours is unchanged.",
+      "steps": [
+        "Your average month was USD 2,000 over the last 12 months, against USD 2,000 over the 6 months before. An average month of USD 2,200 (10% above the earlier months) would raise this area. This is worth about 3 points of your score."
+      ],
+      "details": {
+        "months_recent": 12,
+        "months_earlier": 6,
+        "average_recent": "2000.00",
+        "average_earlier": "2000.00",
+        "change_pct": 0.0
+      }
+    },
+    {
+      "key": "client_diversity",
+      "label": "Client diversity",
+      "max_points": 15,
+      "status": "scored",
+      "reason": null,
+      "points": 3,
+      "percent": 20,
+      "about": "How much of your income depends on one payer, using the \"Received from\" name on your payments. A full score needs your biggest payer to be 30% or less of your named income; the score is zero at 80% or more. This needs a name on at least 70% of your income.",
+      "measure": "<img src=x onerror=alert(1)> & Co paid 70% of the income that has a name (USD 16,800 of USD 24,000). You have 2 named payers.",
+      "needed": "To score higher, spread your income across more payers. When your biggest payer is 30% or less you get all 15 points; yours is 70%.",
+      "steps": [
+        "<img src=x onerror=alert(1)> & Co paid 70% of the income that has a name (USD 16,800 of USD 24,000). If your biggest payer were 50% of it, that would raise this area. This is worth about 6 points of your score."
+      ],
+      "details": {
+        "named_payers": 2,
+        "top_payer": "<img src=x onerror=alert(1)> & Co",
+        "top_share_pct": 70.0,
+        "named_income": "24000.00",
+        "unnamed_income": "0.00",
+        "named_share_pct": 100.0
+      }
+    }
+  ],
+  "tips": [
+    {
+      "dimension": "client_diversity",
+      "kind": "improve",
+      "text": "<img src=x onerror=alert(1)> & Co paid 70% of the income that has a name (USD 16,800 of USD 24,000). If your biggest payer were 50% of it, that would raise this area. This is worth about 6 points of your score.",
+      "gain": 6
+    },
+    {
+      "dimension": "income_growth",
+      "kind": "improve",
+      "text": "Your average month was USD 2,000 over the last 12 months, against USD 2,000 over the 6 months before. An average month of USD 2,200 (10% above the earlier months) would raise this area. This is worth about 3 points of your score.",
+      "gain": 3
+    }
+  ],
+  "notes": [
+    "Only full calendar months are counted, so the current month is left out until it ends.",
+    "This score is a guide based on the records you keep in LanceraOS. It is not financial, accounting or tax advice."
+  ],
+  "counts": {
+    "payments_in_window": 24,
+    "expenses_in_window": 48,
+    "unconverted_payments": 0,
+    "unconverted_expenses": 0
+  }
+}
