@@ -68,7 +68,7 @@ const PAGE_TITLES = {
   '/contracts': 'Contracts',
   '/profile': 'Profile',
   '/settings': 'Settings',
-  '/income-certificate': 'Income Certificate',
+  '/income-certificate': 'Income Statement',
   '/skill-gap': 'Skill Analyzer',
 }
 
@@ -146,7 +146,7 @@ const NAV_GROUPS = [
     label: 'Account',
     items: [
       { to: '/health', label: 'Health Score', tip: 'Health Score', Icon: CheckCircle2, end: true },
-      { to: '/income-certificate', label: 'Income Certificate', tip: 'Income Certificate', Icon: Receipt, end: true },
+      { to: '/income-certificate', label: 'Income Statement', tip: 'Income Statement', Icon: Receipt, end: true },
       { to: '/skill-gap', label: 'Skill Analyzer', tip: 'Skill Analyzer', Icon: TrendingUp, end: true },
     ],
   },

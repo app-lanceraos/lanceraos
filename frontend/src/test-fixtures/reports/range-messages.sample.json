@@ -1,0 +1,6 @@
+{
+  "start_after_end": "The start date must be on or before the end date.",
+  "end_in_future": "The end date cannot be in the future.",
+  "start_too_early": "The start date cannot be before 2010-01-01.",
+  "too_many_months": "Choose a period of 60 months or less."
+}

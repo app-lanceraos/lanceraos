@@ -1,0 +1,97 @@
+{
+  "currency": "USD",
+  "start": "2026-01-01",
+  "end": "2026-11-09",
+  "income": {
+    "total": "0.00",
+    "count": 0,
+    "by_source": []
+  },
+  "expenses": {
+    "total": "0.00",
+    "count": 0,
+    "deductible_total": "0.00",
+    "not_deductible_total": "0.00",
+    "by_category": []
+  },
+  "net": {
+    "total": "0.00",
+    "margin_pct": null
+  },
+  "monthly": [
+    {
+      "month": "2026-01",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-02",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-03",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-04",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-05",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-06",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-07",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-08",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-09",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-10",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-11",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    }
+  ],
+  "unconverted_count": {
+    "income": 0,
+    "expenses": 0
+  },
+  "estimated_count": {
+    "income": 0,
+    "expenses": 0
+  }
+}

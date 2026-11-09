@@ -1,0 +1,14 @@
+{
+  "empty_period": {
+    "error": "You have no payments in this period, so there is nothing to put in the statement."
+  },
+  "cnic_not_saved": {
+    "error": "You asked to show your CNIC, but none is saved. Add it in Settings, then Tax and PSEB."
+  },
+  "ntn_not_saved": {
+    "error": "You asked to show your NTN, but none is saved. Add it in Settings, then Tax and PSEB."
+  },
+  "addressed_to_too_long": {
+    "error": "addressed_to must be plain text of up to 100 characters."
+  }
+}

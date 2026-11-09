@@ -1,0 +1,117 @@
+{
+  "currency": "USD",
+  "start": "2026-01-01",
+  "end": "2026-11-09",
+  "income": {
+    "total": "400.00",
+    "count": 1,
+    "by_source": [
+      {
+        "source": "payoneer",
+        "label": "Payoneer",
+        "total": "400.00",
+        "count": 1
+      }
+    ]
+  },
+  "expenses": {
+    "total": "1150.00",
+    "count": 2,
+    "deductible_total": "1150.00",
+    "not_deductible_total": "0.00",
+    "by_category": [
+      {
+        "category": "equipment",
+        "label": "Equipment and hardware",
+        "total": "900.00",
+        "count": 1
+      },
+      {
+        "category": "software",
+        "label": "Software and subscriptions",
+        "total": "250.00",
+        "count": 1
+      }
+    ]
+  },
+  "net": {
+    "total": "-750.00",
+    "margin_pct": -187.5
+  },
+  "monthly": [
+    {
+      "month": "2026-01",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-02",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-03",
+      "income": "400.00",
+      "expenses": "900.00",
+      "net": "-500.00"
+    },
+    {
+      "month": "2026-04",
+      "income": "0.00",
+      "expenses": "250.00",
+      "net": "-250.00"
+    },
+    {
+      "month": "2026-05",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-06",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-07",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-08",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-09",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-10",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-11",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    }
+  ],
+  "unconverted_count": {
+    "income": 0,
+    "expenses": 0
+  },
+  "estimated_count": {
+    "income": 0,
+    "expenses": 0
+  }
+}

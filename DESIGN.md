@@ -794,6 +794,39 @@ shows the same sentence as visible text; the notes under the chart say how many 
 The 320px rule applies: the page and every dialog must have `scrollWidth == clientWidth`; the vendor and description are single-line with an ellipsis in
 the table and the card.
 
+### Report pages (`/pnl` and `/income-certificate`, 09 November 2026, Prompt 17)
+
+Two routed pages inside `AppShell`, sharing one period control. **Profit and Loss**, top to bottom: flash message, the controls row (the period select, a
+"Show amounts in" currency select, the Download PDF button), the cash-basis sentence, the reason Download is disabled (visible text, never a tooltip), the
+dates line read from the server's answer, three headline cards (Income received, Expenses, Net profit or Net loss), the income-against-expenses chart, the
+"Month by month" table, "Income by source" and "Expenses by category" side by side (stacked at <= 768px), the notes and a link to the statement page.
+**Income Statement**: an intro card, "Set up your statement" (period, purpose, addressed to with an n/100 counter, the CNIC and NTN checkboxes, the Download
+button with a one-line summary beside it), "What the statement will show" (totals, month table, by source, by original currency, notes) and "Details printed
+on the statement".
+
+**The period select, not pills.** Nine presets do not fit a phone as pills, and a native `<select>` is keyboard- and screen-reader-native. Choosing a preset
+resolves it to real dates at once; Custom dates reveal two date inputs. Underneath, always, either the resolved dates ("1 Jan 2026 to 9 Nov 2026, 11 months")
+or the exact sentence for the problem as a `.fos-error` with `role="alert"`; a tax-year preset adds one tertiary-text note. No quarter presets.
+
+**Exact cents on report pages, whole units on cards.** The Payments and Expenses cards show whole units ("USD 1,235") because they are glances; a report shows
+the figure that is printed on the PDF ("USD 1,234.56"). `BreakdownCard` defaults to whole units and the P&L passes `formatAmount={formatExact}`. Table cells
+omit the currency code (the column header names it); chart axes are compact.
+
+**Colour.** The three headline values are `var(--text-primary)`: they are a calculation, not good or bad news. A loss is the label "Net loss", a minus sign and
+the words, never red; the `--status-green-text` and `--status-red-text` tokens are not used in these components. The chart is the validated green/blue pair
+the two amounts already have elsewhere (`COLLECTED_BAR_COLORS` for income, `SPENT_BAR_COLORS` for expenses), with a plain-HTML legend (swatch + word). The
+SVG is `role="img"` with a one-sentence label; the same figures are in the visible month table below it.
+
+**Auto-fit KPI grid, not a breakpoint.** `repeat(auto-fit, minmax(220px, 1fr))`: three across when there is room, two or one when there is not. Exact
+figures such as "PKR 3,401,834.01" do not fit three across in a narrow main area, and the width of the main area depends on whether the sidebar is open, not
+only on the screen, so a fixed breakpoint cannot be right.
+
+**Empty and blocked states.** A disabled Download always says why, in visible text under the button (`Info` icon + sentence): an invalid period, still
+loading, failed to load, nothing to put in the report, no convertible payment, an invalid "addressed to". An empty P&L keeps the zero headline cards and
+replaces the chart, table and cards with one block and two links ("Record a payment", "Add an expense"). One failed load shows ONE message and one Reload.
+
+**The 320px rule** applies: the page must have `scrollWidth == clientWidth`. The month tables keep a minimum width and scroll sideways inside their own card.
+
 ## 8. Animation and Transitions
 
 ### Timing tokens

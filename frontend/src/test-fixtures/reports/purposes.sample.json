@@ -1,0 +1,18 @@
+[
+  {
+    "value": "bank",
+    "label": "Bank account or loan application"
+  },
+  {
+    "value": "visa",
+    "label": "Visa application"
+  },
+  {
+    "value": "pseb",
+    "label": "PSEB registration"
+  },
+  {
+    "value": "other",
+    "label": "General reference"
+  }
+]

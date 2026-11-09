@@ -24,6 +24,8 @@ import Profile from '@/pages/Profile'
 import Dashboard from '@/pages/Dashboard'
 import Clients from '@/pages/Clients'
 import Expenses from '@/pages/Expenses'
+import ProfitAndLoss from '@/pages/ProfitAndLoss'
+import IncomeStatement from '@/pages/IncomeStatement'
 import Payments from '@/pages/Payments'
 import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
@@ -199,6 +201,14 @@ export default function App() {
         <Route
           path="/expenses"
           element={<PrivateRoute><AppShell><Expenses /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/pnl"
+          element={<PrivateRoute><AppShell><ProfitAndLoss /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/income-certificate"
+          element={<PrivateRoute><AppShell><IncomeStatement /></AppShell></PrivateRoute>}
         />
         <Route
           path="/invoices"

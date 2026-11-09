@@ -1,0 +1,177 @@
+{
+  "currency": "USD",
+  "start": "2026-01-01",
+  "end": "2026-11-09",
+  "income": {
+    "total": "24499.62",
+    "count": 12,
+    "by_source": [
+      {
+        "source": "payoneer",
+        "label": "Payoneer",
+        "total": "11350.85",
+        "count": 5
+      },
+      {
+        "source": "wise",
+        "label": "Wise",
+        "total": "6164.77",
+        "count": 3
+      },
+      {
+        "source": "bank",
+        "label": "Bank Transfer",
+        "total": "2916.00",
+        "count": 2
+      },
+      {
+        "source": "easypaisa",
+        "label": "Easypaisa",
+        "total": "2196.00",
+        "count": 1
+      },
+      {
+        "source": "jazzcash",
+        "label": "JazzCash",
+        "total": "1872.00",
+        "count": 1
+      }
+    ]
+  },
+  "expenses": {
+    "total": "2356.44",
+    "count": 10,
+    "deductible_total": "1930.64",
+    "not_deductible_total": "425.80",
+    "by_category": [
+      {
+        "category": "equipment",
+        "label": "Equipment and hardware",
+        "total": "1200.00",
+        "count": 1
+      },
+      {
+        "category": "marketing",
+        "label": "Marketing and ads",
+        "total": "350.00",
+        "count": 1
+      },
+      {
+        "category": "travel",
+        "label": "Travel",
+        "total": "226.80",
+        "count": 1
+      },
+      {
+        "category": "education",
+        "label": "Courses and learning",
+        "total": "199.00",
+        "count": 1
+      },
+      {
+        "category": "fees",
+        "label": "Platform and payment fees",
+        "total": "120.45",
+        "count": 1
+      },
+      {
+        "category": "software",
+        "label": "Software and subscriptions",
+        "total": "108.99",
+        "count": 2
+      },
+      {
+        "category": "office",
+        "label": "Office and co-working",
+        "total": "90.00",
+        "count": 1
+      },
+      {
+        "category": "internet",
+        "label": "Internet and phone",
+        "total": "61.20",
+        "count": 2
+      }
+    ]
+  },
+  "net": {
+    "total": "22143.18",
+    "margin_pct": 90.4
+  },
+  "monthly": [
+    {
+      "month": "2026-01",
+      "income": "1500.00",
+      "expenses": "49.99",
+      "net": "1450.01"
+    },
+    {
+      "month": "2026-02",
+      "income": "2200.50",
+      "expenses": "1200.00",
+      "net": "1000.50"
+    },
+    {
+      "month": "2026-03",
+      "income": "2484.27",
+      "expenses": "30.60",
+      "net": "2453.67"
+    },
+    {
+      "month": "2026-04",
+      "income": "1800.00",
+      "expenses": "347.25",
+      "net": "1452.75"
+    },
+    {
+      "month": "2026-05",
+      "income": "1872.00",
+      "expenses": "90.00",
+      "net": "1782.00"
+    },
+    {
+      "month": "2026-06",
+      "income": "2750.75",
+      "expenses": "199.00",
+      "net": "2551.75"
+    },
+    {
+      "month": "2026-07",
+      "income": "1296.00",
+      "expenses": "0.00",
+      "net": "1296.00"
+    },
+    {
+      "month": "2026-08",
+      "income": "3100.00",
+      "expenses": "350.00",
+      "net": "2750.00"
+    },
+    {
+      "month": "2026-09",
+      "income": "2400.10",
+      "expenses": "59.00",
+      "net": "2341.10"
+    },
+    {
+      "month": "2026-10",
+      "income": "2196.00",
+      "expenses": "30.60",
+      "net": "2165.40"
+    },
+    {
+      "month": "2026-11",
+      "income": "2900.00",
+      "expenses": "0.00",
+      "net": "2900.00"
+    }
+  ],
+  "unconverted_count": {
+    "income": 1,
+    "expenses": 1
+  },
+  "estimated_count": {
+    "income": 1,
+    "expenses": 1
+  }
+}

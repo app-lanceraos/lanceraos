@@ -1,0 +1,1443 @@
+{
+  "pnl": [
+    {
+      "name": "plain",
+      "pnl": {
+        "currency": "USD",
+        "start": "2026-01-01",
+        "end": "2026-11-09",
+        "income": {
+          "total": "700.00",
+          "count": 2,
+          "by_source": [
+            {
+              "source": "bank",
+              "label": "Bank Transfer",
+              "total": "700.00",
+              "count": 2
+            }
+          ]
+        },
+        "expenses": {
+          "total": "50.00",
+          "count": 1,
+          "deductible_total": "50.00",
+          "not_deductible_total": "0.00",
+          "by_category": [
+            {
+              "category": "software",
+              "label": "Software and subscriptions",
+              "total": "50.00",
+              "count": 1
+            }
+          ]
+        },
+        "net": {
+          "total": "650.00",
+          "margin_pct": 92.9
+        },
+        "monthly": [
+          {
+            "month": "2026-01",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "income": "500.00",
+            "expenses": "50.00",
+            "net": "450.00"
+          },
+          {
+            "month": "2026-04",
+            "income": "200.00",
+            "expenses": "0.00",
+            "net": "200.00"
+          },
+          {
+            "month": "2026-05",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-06",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-07",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-08",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-09",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-10",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-11",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          }
+        ],
+        "unconverted_count": {
+          "income": 0,
+          "expenses": 0
+        },
+        "estimated_count": {
+          "income": 0,
+          "expenses": 0
+        }
+      },
+      "start": "2026-01-01",
+      "end": "2026-11-09",
+      "notes": [
+        "This report counts money you recorded as received and money you recorded as spent, on the date of each. Invoices that have not been paid are not income. Amounts in other currencies are converted at the exchange rate saved for the date of each payment or expense.",
+        "'Marked deductible' is your own note. LanceraOS adds these up but does not calculate tax."
+      ]
+    },
+    {
+      "name": "one unconverted payment, no expenses",
+      "pnl": {
+        "currency": "USD",
+        "start": "2026-01-01",
+        "end": "2026-11-09",
+        "income": {
+          "total": "500.00",
+          "count": 1,
+          "by_source": [
+            {
+              "source": "bank",
+              "label": "Bank Transfer",
+              "total": "500.00",
+              "count": 1
+            }
+          ]
+        },
+        "expenses": {
+          "total": "0.00",
+          "count": 0,
+          "deductible_total": "0.00",
+          "not_deductible_total": "0.00",
+          "by_category": []
+        },
+        "net": {
+          "total": "500.00",
+          "margin_pct": 100.0
+        },
+        "monthly": [
+          {
+            "month": "2026-01",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "income": "500.00",
+            "expenses": "0.00",
+            "net": "500.00"
+          },
+          {
+            "month": "2026-04",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-05",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-06",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-07",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-08",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-09",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-10",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-11",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          }
+        ],
+        "unconverted_count": {
+          "income": 1,
+          "expenses": 0
+        },
+        "estimated_count": {
+          "income": 0,
+          "expenses": 0
+        }
+      },
+      "start": "2026-01-01",
+      "end": "2026-11-09",
+      "notes": [
+        "This report counts money you recorded as received and money you recorded as spent, on the date of each. Invoices that have not been paid are not income. Amounts in other currencies are converted at the exchange rate saved for the date of each payment or expense.",
+        "1 payment and 0 expenses could not be converted because no exchange rate was saved for it. It is left out of every figure in this report, so the net result is incomplete.",
+        "'Marked deductible' is your own note. LanceraOS adds these up but does not calculate tax."
+      ]
+    },
+    {
+      "name": "two unconverted payments and one unconverted expense",
+      "pnl": {
+        "currency": "USD",
+        "start": "2026-01-01",
+        "end": "2026-11-09",
+        "income": {
+          "total": "500.00",
+          "count": 1,
+          "by_source": [
+            {
+              "source": "bank",
+              "label": "Bank Transfer",
+              "total": "500.00",
+              "count": 1
+            }
+          ]
+        },
+        "expenses": {
+          "total": "30.00",
+          "count": 1,
+          "deductible_total": "30.00",
+          "not_deductible_total": "0.00",
+          "by_category": [
+            {
+              "category": "software",
+              "label": "Software and subscriptions",
+              "total": "30.00",
+              "count": 1
+            }
+          ]
+        },
+        "net": {
+          "total": "470.00",
+          "margin_pct": 94.0
+        },
+        "monthly": [
+          {
+            "month": "2026-01",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "income": "500.00",
+            "expenses": "30.00",
+            "net": "470.00"
+          },
+          {
+            "month": "2026-04",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-05",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-06",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-07",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-08",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-09",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-10",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-11",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          }
+        ],
+        "unconverted_count": {
+          "income": 2,
+          "expenses": 1
+        },
+        "estimated_count": {
+          "income": 0,
+          "expenses": 0
+        }
+      },
+      "start": "2026-01-01",
+      "end": "2026-11-09",
+      "notes": [
+        "This report counts money you recorded as received and money you recorded as spent, on the date of each. Invoices that have not been paid are not income. Amounts in other currencies are converted at the exchange rate saved for the date of each payment or expense.",
+        "2 payments and 1 expense could not be converted because no exchange rate was saved for them. They are left out of every figure in this report, so the net result is incomplete.",
+        "'Marked deductible' is your own note. LanceraOS adds these up but does not calculate tax."
+      ]
+    },
+    {
+      "name": "one estimated item",
+      "pnl": {
+        "currency": "USD",
+        "start": "2026-01-01",
+        "end": "2026-11-09",
+        "income": {
+          "total": "500.00",
+          "count": 1,
+          "by_source": [
+            {
+              "source": "bank",
+              "label": "Bank Transfer",
+              "total": "500.00",
+              "count": 1
+            }
+          ]
+        },
+        "expenses": {
+          "total": "43.20",
+          "count": 1,
+          "deductible_total": "43.20",
+          "not_deductible_total": "0.00",
+          "by_category": [
+            {
+              "category": "travel",
+              "label": "Travel",
+              "total": "43.20",
+              "count": 1
+            }
+          ]
+        },
+        "net": {
+          "total": "456.80",
+          "margin_pct": 91.4
+        },
+        "monthly": [
+          {
+            "month": "2026-01",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "income": "500.00",
+            "expenses": "0.00",
+            "net": "500.00"
+          },
+          {
+            "month": "2026-04",
+            "income": "0.00",
+            "expenses": "43.20",
+            "net": "-43.20"
+          },
+          {
+            "month": "2026-05",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-06",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-07",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-08",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-09",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-10",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-11",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          }
+        ],
+        "unconverted_count": {
+          "income": 0,
+          "expenses": 0
+        },
+        "estimated_count": {
+          "income": 0,
+          "expenses": 1
+        }
+      },
+      "start": "2026-01-01",
+      "end": "2026-11-09",
+      "notes": [
+        "This report counts money you recorded as received and money you recorded as spent, on the date of each. Invoices that have not been paid are not income. Amounts in other currencies are converted at the exchange rate saved for the date of each payment or expense.",
+        "1 item uses an estimated exchange rate (the closest day available), so the converted figures are approximate.",
+        "'Marked deductible' is your own note. LanceraOS adds these up but does not calculate tax."
+      ]
+    },
+    {
+      "name": "three estimated items",
+      "pnl": {
+        "currency": "USD",
+        "start": "2026-01-01",
+        "end": "2026-11-09",
+        "income": {
+          "total": "1188.00",
+          "count": 2,
+          "by_source": [
+            {
+              "source": "bank",
+              "label": "Bank Transfer",
+              "total": "1188.00",
+              "count": 2
+            }
+          ]
+        },
+        "expenses": {
+          "total": "43.20",
+          "count": 1,
+          "deductible_total": "43.20",
+          "not_deductible_total": "0.00",
+          "by_category": [
+            {
+              "category": "travel",
+              "label": "Travel",
+              "total": "43.20",
+              "count": 1
+            }
+          ]
+        },
+        "net": {
+          "total": "1144.80",
+          "margin_pct": 96.4
+        },
+        "monthly": [
+          {
+            "month": "2026-01",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "income": "540.00",
+            "expenses": "0.00",
+            "net": "540.00"
+          },
+          {
+            "month": "2026-04",
+            "income": "0.00",
+            "expenses": "43.20",
+            "net": "-43.20"
+          },
+          {
+            "month": "2026-05",
+            "income": "648.00",
+            "expenses": "0.00",
+            "net": "648.00"
+          },
+          {
+            "month": "2026-06",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-07",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-08",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-09",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-10",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-11",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          }
+        ],
+        "unconverted_count": {
+          "income": 0,
+          "expenses": 0
+        },
+        "estimated_count": {
+          "income": 2,
+          "expenses": 1
+        }
+      },
+      "start": "2026-01-01",
+      "end": "2026-11-09",
+      "notes": [
+        "This report counts money you recorded as received and money you recorded as spent, on the date of each. Invoices that have not been paid are not income. Amounts in other currencies are converted at the exchange rate saved for the date of each payment or expense.",
+        "3 items use an estimated exchange rate (the closest day available), so the converted figures are approximate.",
+        "'Marked deductible' is your own note. LanceraOS adds these up but does not calculate tax."
+      ]
+    },
+    {
+      "name": "a fees expense",
+      "pnl": {
+        "currency": "USD",
+        "start": "2026-01-01",
+        "end": "2026-11-09",
+        "income": {
+          "total": "500.00",
+          "count": 1,
+          "by_source": [
+            {
+              "source": "bank",
+              "label": "Bank Transfer",
+              "total": "500.00",
+              "count": 1
+            }
+          ]
+        },
+        "expenses": {
+          "total": "25.00",
+          "count": 1,
+          "deductible_total": "25.00",
+          "not_deductible_total": "0.00",
+          "by_category": [
+            {
+              "category": "fees",
+              "label": "Platform and payment fees",
+              "total": "25.00",
+              "count": 1
+            }
+          ]
+        },
+        "net": {
+          "total": "475.00",
+          "margin_pct": 95.0
+        },
+        "monthly": [
+          {
+            "month": "2026-01",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "income": "500.00",
+            "expenses": "25.00",
+            "net": "475.00"
+          },
+          {
+            "month": "2026-04",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-05",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-06",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-07",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-08",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-09",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-10",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-11",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          }
+        ],
+        "unconverted_count": {
+          "income": 0,
+          "expenses": 0
+        },
+        "estimated_count": {
+          "income": 0,
+          "expenses": 0
+        }
+      },
+      "start": "2026-01-01",
+      "end": "2026-11-09",
+      "notes": [
+        "This report counts money you recorded as received and money you recorded as spent, on the date of each. Invoices that have not been paid are not income. Amounts in other currencies are converted at the exchange rate saved for the date of each payment or expense.",
+        "Platform and payment fees are counted as expenses here. If the income you recorded was already reduced by those fees, they are counted twice and your net profit is understated.",
+        "'Marked deductible' is your own note. LanceraOS adds these up but does not calculate tax."
+      ]
+    },
+    {
+      "name": "everything together",
+      "pnl": {
+        "currency": "USD",
+        "start": "2026-01-01",
+        "end": "2026-11-09",
+        "income": {
+          "total": "1148.00",
+          "count": 2,
+          "by_source": [
+            {
+              "source": "bank",
+              "label": "Bank Transfer",
+              "total": "1148.00",
+              "count": 2
+            }
+          ]
+        },
+        "expenses": {
+          "total": "68.20",
+          "count": 2,
+          "deductible_total": "68.20",
+          "not_deductible_total": "0.00",
+          "by_category": [
+            {
+              "category": "travel",
+              "label": "Travel",
+              "total": "43.20",
+              "count": 1
+            },
+            {
+              "category": "fees",
+              "label": "Platform and payment fees",
+              "total": "25.00",
+              "count": 1
+            }
+          ]
+        },
+        "net": {
+          "total": "1079.80",
+          "margin_pct": 94.1
+        },
+        "monthly": [
+          {
+            "month": "2026-01",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "income": "500.00",
+            "expenses": "25.00",
+            "net": "475.00"
+          },
+          {
+            "month": "2026-04",
+            "income": "0.00",
+            "expenses": "43.20",
+            "net": "-43.20"
+          },
+          {
+            "month": "2026-05",
+            "income": "648.00",
+            "expenses": "0.00",
+            "net": "648.00"
+          },
+          {
+            "month": "2026-06",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-07",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-08",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-09",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-10",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          },
+          {
+            "month": "2026-11",
+            "income": "0.00",
+            "expenses": "0.00",
+            "net": "0.00"
+          }
+        ],
+        "unconverted_count": {
+          "income": 1,
+          "expenses": 1
+        },
+        "estimated_count": {
+          "income": 1,
+          "expenses": 1
+        }
+      },
+      "start": "2026-01-01",
+      "end": "2026-11-09",
+      "notes": [
+        "This report counts money you recorded as received and money you recorded as spent, on the date of each. Invoices that have not been paid are not income. Amounts in other currencies are converted at the exchange rate saved for the date of each payment or expense.",
+        "1 payment and 1 expense could not be converted because no exchange rate was saved for them. They are left out of every figure in this report, so the net result is incomplete.",
+        "2 items use an estimated exchange rate (the closest day available), so the converted figures are approximate.",
+        "Platform and payment fees are counted as expenses here. If the income you recorded was already reduced by those fees, they are counted twice and your net profit is understated.",
+        "'Marked deductible' is your own note. LanceraOS adds these up but does not calculate tax."
+      ]
+    }
+  ],
+  "statement": [
+    {
+      "name": "plain, period starts mid-month by default end today",
+      "statement": {
+        "start": "2026-01-01",
+        "end": "2026-11-09",
+        "months": 11,
+        "currencies": [
+          "USD",
+          "PKR"
+        ],
+        "total": {
+          "usd": "500.00",
+          "pkr": "138888.89"
+        },
+        "count": 1,
+        "by_source": [
+          {
+            "source": "bank",
+            "label": "Bank Transfer",
+            "usd": "500.00",
+            "pkr": "138888.89",
+            "count": 1
+          }
+        ],
+        "by_currency": [
+          {
+            "currency": "USD",
+            "amount": "500.00",
+            "count": 1
+          }
+        ],
+        "monthly": [
+          {
+            "month": "2026-01",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "count": 1,
+            "usd": "500.00",
+            "pkr": "138888.89"
+          },
+          {
+            "month": "2026-04",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-05",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-06",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-07",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-08",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-09",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-10",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-11",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          }
+        ],
+        "unconverted_count": 0,
+        "estimated_count": 0
+      },
+      "start": "2026-01-01",
+      "end": "2026-11-09",
+      "notes": [
+        "PKR amounts are an indicative equivalent. Each payment is converted at the daily reference exchange rate saved by LanceraOS for the date of that payment. They may differ from the amounts actually credited to a bank account.",
+        "A month at the start or end of the period may be partial if the period does not begin or end on a month boundary.",
+        "These figures come from records entered or imported by the account holder. LanceraOS has not checked them against any bank, platform or tax record. This is not a certificate, audit or attestation issued by LanceraOS, a bank, the FBR, PSEB or any other authority."
+      ]
+    },
+    {
+      "name": "exactly whole months",
+      "statement": {
+        "start": "2026-01-01",
+        "end": "2026-03-31",
+        "months": 3,
+        "currencies": [
+          "USD",
+          "PKR"
+        ],
+        "total": {
+          "usd": "500.00",
+          "pkr": "138888.89"
+        },
+        "count": 1,
+        "by_source": [
+          {
+            "source": "bank",
+            "label": "Bank Transfer",
+            "usd": "500.00",
+            "pkr": "138888.89",
+            "count": 1
+          }
+        ],
+        "by_currency": [
+          {
+            "currency": "USD",
+            "amount": "500.00",
+            "count": 1
+          }
+        ],
+        "monthly": [
+          {
+            "month": "2026-01",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "count": 1,
+            "usd": "500.00",
+            "pkr": "138888.89"
+          }
+        ],
+        "unconverted_count": 0,
+        "estimated_count": 0
+      },
+      "start": "2026-01-01",
+      "end": "2026-03-31",
+      "notes": [
+        "PKR amounts are an indicative equivalent. Each payment is converted at the daily reference exchange rate saved by LanceraOS for the date of that payment. They may differ from the amounts actually credited to a bank account.",
+        "These figures come from records entered or imported by the account holder. LanceraOS has not checked them against any bank, platform or tax record. This is not a certificate, audit or attestation issued by LanceraOS, a bank, the FBR, PSEB or any other authority."
+      ]
+    },
+    {
+      "name": "period starting mid-month",
+      "statement": {
+        "start": "2026-02-10",
+        "end": "2026-03-31",
+        "months": 2,
+        "currencies": [
+          "USD",
+          "PKR"
+        ],
+        "total": {
+          "usd": "500.00",
+          "pkr": "138888.89"
+        },
+        "count": 1,
+        "by_source": [
+          {
+            "source": "bank",
+            "label": "Bank Transfer",
+            "usd": "500.00",
+            "pkr": "138888.89",
+            "count": 1
+          }
+        ],
+        "by_currency": [
+          {
+            "currency": "USD",
+            "amount": "500.00",
+            "count": 1
+          }
+        ],
+        "monthly": [
+          {
+            "month": "2026-02",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "count": 1,
+            "usd": "500.00",
+            "pkr": "138888.89"
+          }
+        ],
+        "unconverted_count": 0,
+        "estimated_count": 0
+      },
+      "start": "2026-02-10",
+      "end": "2026-03-31",
+      "notes": [
+        "PKR amounts are an indicative equivalent. Each payment is converted at the daily reference exchange rate saved by LanceraOS for the date of that payment. They may differ from the amounts actually credited to a bank account.",
+        "A month at the start or end of the period may be partial if the period does not begin or end on a month boundary.",
+        "These figures come from records entered or imported by the account holder. LanceraOS has not checked them against any bank, platform or tax record. This is not a certificate, audit or attestation issued by LanceraOS, a bank, the FBR, PSEB or any other authority."
+      ]
+    },
+    {
+      "name": "one unconverted",
+      "statement": {
+        "start": "2026-01-01",
+        "end": "2026-03-31",
+        "months": 3,
+        "currencies": [
+          "USD",
+          "PKR"
+        ],
+        "total": {
+          "usd": "500.00",
+          "pkr": "138888.89"
+        },
+        "count": 1,
+        "by_source": [
+          {
+            "source": "bank",
+            "label": "Bank Transfer",
+            "usd": "500.00",
+            "pkr": "138888.89",
+            "count": 1
+          }
+        ],
+        "by_currency": [
+          {
+            "currency": "GBP",
+            "amount": "90.00",
+            "count": 1
+          },
+          {
+            "currency": "USD",
+            "amount": "500.00",
+            "count": 1
+          }
+        ],
+        "monthly": [
+          {
+            "month": "2026-01",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "count": 1,
+            "usd": "500.00",
+            "pkr": "138888.89"
+          }
+        ],
+        "unconverted_count": 1,
+        "estimated_count": 0
+      },
+      "start": "2026-01-01",
+      "end": "2026-03-31",
+      "notes": [
+        "PKR amounts are an indicative equivalent. Each payment is converted at the daily reference exchange rate saved by LanceraOS for the date of that payment. They may differ from the amounts actually credited to a bank account.",
+        "1 payment could not be converted because no exchange rate was saved for it. It is shown under 'Received in these currencies' but is not included in the totals above.",
+        "These figures come from records entered or imported by the account holder. LanceraOS has not checked them against any bank, platform or tax record. This is not a certificate, audit or attestation issued by LanceraOS, a bank, the FBR, PSEB or any other authority."
+      ]
+    },
+    {
+      "name": "two unconverted",
+      "statement": {
+        "start": "2026-01-01",
+        "end": "2026-03-31",
+        "months": 3,
+        "currencies": [
+          "USD",
+          "PKR"
+        ],
+        "total": {
+          "usd": "500.00",
+          "pkr": "138888.89"
+        },
+        "count": 1,
+        "by_source": [
+          {
+            "source": "bank",
+            "label": "Bank Transfer",
+            "usd": "500.00",
+            "pkr": "138888.89",
+            "count": 1
+          }
+        ],
+        "by_currency": [
+          {
+            "currency": "GBP",
+            "amount": "160.00",
+            "count": 2
+          },
+          {
+            "currency": "USD",
+            "amount": "500.00",
+            "count": 1
+          }
+        ],
+        "monthly": [
+          {
+            "month": "2026-01",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "count": 1,
+            "usd": "500.00",
+            "pkr": "138888.89"
+          }
+        ],
+        "unconverted_count": 2,
+        "estimated_count": 0
+      },
+      "start": "2026-01-01",
+      "end": "2026-03-31",
+      "notes": [
+        "PKR amounts are an indicative equivalent. Each payment is converted at the daily reference exchange rate saved by LanceraOS for the date of that payment. They may differ from the amounts actually credited to a bank account.",
+        "2 payments could not be converted because no exchange rate was saved for them. They are shown under 'Received in these currencies' but are not included in the totals above.",
+        "These figures come from records entered or imported by the account holder. LanceraOS has not checked them against any bank, platform or tax record. This is not a certificate, audit or attestation issued by LanceraOS, a bank, the FBR, PSEB or any other authority."
+      ]
+    },
+    {
+      "name": "one estimated",
+      "statement": {
+        "start": "2026-01-01",
+        "end": "2026-03-31",
+        "months": 3,
+        "currencies": [
+          "USD",
+          "PKR"
+        ],
+        "total": {
+          "usd": "540.00",
+          "pkr": "150000.00"
+        },
+        "count": 1,
+        "by_source": [
+          {
+            "source": "bank",
+            "label": "Bank Transfer",
+            "usd": "540.00",
+            "pkr": "150000.00",
+            "count": 1
+          }
+        ],
+        "by_currency": [
+          {
+            "currency": "EUR",
+            "amount": "500.00",
+            "count": 1
+          }
+        ],
+        "monthly": [
+          {
+            "month": "2026-01",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "count": 1,
+            "usd": "540.00",
+            "pkr": "150000.00"
+          }
+        ],
+        "unconverted_count": 0,
+        "estimated_count": 1
+      },
+      "start": "2026-01-01",
+      "end": "2026-03-31",
+      "notes": [
+        "PKR amounts are an indicative equivalent. Each payment is converted at the daily reference exchange rate saved by LanceraOS for the date of that payment. They may differ from the amounts actually credited to a bank account.",
+        "1 payment uses an estimated exchange rate (the closest day available), so the converted figures are approximate.",
+        "These figures come from records entered or imported by the account holder. LanceraOS has not checked them against any bank, platform or tax record. This is not a certificate, audit or attestation issued by LanceraOS, a bank, the FBR, PSEB or any other authority."
+      ]
+    },
+    {
+      "name": "three estimated",
+      "statement": {
+        "start": "2026-01-01",
+        "end": "2026-08-31",
+        "months": 8,
+        "currencies": [
+          "USD",
+          "PKR"
+        ],
+        "total": {
+          "usd": "1620.00",
+          "pkr": "450000.00"
+        },
+        "count": 3,
+        "by_source": [
+          {
+            "source": "bank",
+            "label": "Bank Transfer",
+            "usd": "1620.00",
+            "pkr": "450000.00",
+            "count": 3
+          }
+        ],
+        "by_currency": [
+          {
+            "currency": "EUR",
+            "amount": "1500.00",
+            "count": 3
+          }
+        ],
+        "monthly": [
+          {
+            "month": "2026-01",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-02",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "count": 1,
+            "usd": "540.00",
+            "pkr": "150000.00"
+          },
+          {
+            "month": "2026-04",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-05",
+            "count": 1,
+            "usd": "540.00",
+            "pkr": "150000.00"
+          },
+          {
+            "month": "2026-06",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-07",
+            "count": 1,
+            "usd": "540.00",
+            "pkr": "150000.00"
+          },
+          {
+            "month": "2026-08",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          }
+        ],
+        "unconverted_count": 0,
+        "estimated_count": 3
+      },
+      "start": "2026-01-01",
+      "end": "2026-08-31",
+      "notes": [
+        "PKR amounts are an indicative equivalent. Each payment is converted at the daily reference exchange rate saved by LanceraOS for the date of that payment. They may differ from the amounts actually credited to a bank account.",
+        "3 payments use an estimated exchange rate (the closest day available), so the converted figures are approximate.",
+        "These figures come from records entered or imported by the account holder. LanceraOS has not checked them against any bank, platform or tax record. This is not a certificate, audit or attestation issued by LanceraOS, a bank, the FBR, PSEB or any other authority."
+      ]
+    },
+    {
+      "name": "everything together",
+      "statement": {
+        "start": "2026-02-10",
+        "end": "2026-05-20",
+        "months": 4,
+        "currencies": [
+          "USD",
+          "PKR"
+        ],
+        "total": {
+          "usd": "540.00",
+          "pkr": "150000.00"
+        },
+        "count": 1,
+        "by_source": [
+          {
+            "source": "bank",
+            "label": "Bank Transfer",
+            "usd": "540.00",
+            "pkr": "150000.00",
+            "count": 1
+          }
+        ],
+        "by_currency": [
+          {
+            "currency": "EUR",
+            "amount": "500.00",
+            "count": 1
+          },
+          {
+            "currency": "GBP",
+            "amount": "160.00",
+            "count": 2
+          }
+        ],
+        "monthly": [
+          {
+            "month": "2026-02",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-03",
+            "count": 1,
+            "usd": "540.00",
+            "pkr": "150000.00"
+          },
+          {
+            "month": "2026-04",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          },
+          {
+            "month": "2026-05",
+            "count": 0,
+            "usd": "0.00",
+            "pkr": "0.00"
+          }
+        ],
+        "unconverted_count": 2,
+        "estimated_count": 1
+      },
+      "start": "2026-02-10",
+      "end": "2026-05-20",
+      "notes": [
+        "PKR amounts are an indicative equivalent. Each payment is converted at the daily reference exchange rate saved by LanceraOS for the date of that payment. They may differ from the amounts actually credited to a bank account.",
+        "2 payments could not be converted because no exchange rate was saved for them. They are shown under 'Received in these currencies' but are not included in the totals above.",
+        "1 payment uses an estimated exchange rate (the closest day available), so the converted figures are approximate.",
+        "A month at the start or end of the period may be partial if the period does not begin or end on a month boundary.",
+        "These figures come from records entered or imported by the account holder. LanceraOS has not checked them against any bank, platform or tax record. This is not a certificate, audit or attestation issued by LanceraOS, a bank, the FBR, PSEB or any other authority."
+      ]
+    }
+  ]
+}

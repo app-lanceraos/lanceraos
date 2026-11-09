@@ -1,0 +1,131 @@
+{
+  "start": "2026-01-01",
+  "end": "2026-11-09",
+  "months": 11,
+  "currencies": [
+    "USD",
+    "PKR"
+  ],
+  "total": {
+    "usd": "16807.52",
+    "pkr": "4668755.56"
+  },
+  "count": 8,
+  "by_source": [
+    {
+      "source": "payoneer",
+      "label": "Payoneer",
+      "usd": "7150.75",
+      "pkr": "1986319.45",
+      "count": 3
+    },
+    {
+      "source": "wise",
+      "label": "Wise",
+      "usd": "6164.77",
+      "pkr": "1712436.11",
+      "count": 3
+    },
+    {
+      "source": "jazzcash",
+      "label": "JazzCash",
+      "usd": "1872.00",
+      "pkr": "520000.00",
+      "count": 1
+    },
+    {
+      "source": "bank",
+      "label": "Bank Transfer",
+      "usd": "1620.00",
+      "pkr": "450000.00",
+      "count": 1
+    }
+  ],
+  "by_currency": [
+    {
+      "currency": "EUR",
+      "amount": "800.25",
+      "count": 1
+    },
+    {
+      "currency": "PKR",
+      "amount": "970000.00",
+      "count": 2
+    },
+    {
+      "currency": "USD",
+      "amount": "12451.25",
+      "count": 5
+    }
+  ],
+  "monthly": [
+    {
+      "month": "2026-01",
+      "count": 1,
+      "usd": "1500.00",
+      "pkr": "416666.67"
+    },
+    {
+      "month": "2026-02",
+      "count": 1,
+      "usd": "2200.50",
+      "pkr": "611250.00"
+    },
+    {
+      "month": "2026-03",
+      "count": 2,
+      "usd": "2484.27",
+      "pkr": "690075.00"
+    },
+    {
+      "month": "2026-04",
+      "count": 0,
+      "usd": "0.00",
+      "pkr": "0.00"
+    },
+    {
+      "month": "2026-05",
+      "count": 1,
+      "usd": "1872.00",
+      "pkr": "520000.00"
+    },
+    {
+      "month": "2026-06",
+      "count": 1,
+      "usd": "2750.75",
+      "pkr": "764097.22"
+    },
+    {
+      "month": "2026-07",
+      "count": 0,
+      "usd": "0.00",
+      "pkr": "0.00"
+    },
+    {
+      "month": "2026-08",
+      "count": 1,
+      "usd": "3100.00",
+      "pkr": "861111.11"
+    },
+    {
+      "month": "2026-09",
+      "count": 0,
+      "usd": "0.00",
+      "pkr": "0.00"
+    },
+    {
+      "month": "2026-10",
+      "count": 0,
+      "usd": "0.00",
+      "pkr": "0.00"
+    },
+    {
+      "month": "2026-11",
+      "count": 1,
+      "usd": "2900.00",
+      "pkr": "805555.56"
+    }
+  ],
+  "unconverted_count": 0,
+  "estimated_count": 1
+}

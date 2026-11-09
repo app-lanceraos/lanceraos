@@ -1,0 +1,207 @@
+{
+  "currency": "USD",
+  "start": "2024-11-01",
+  "end": "2026-11-09",
+  "income": {
+    "total": "4500.00",
+    "count": 3,
+    "by_source": [
+      {
+        "source": "payoneer",
+        "label": "Payoneer",
+        "total": "3000.00",
+        "count": 2
+      },
+      {
+        "source": "wise",
+        "label": "Wise",
+        "total": "1500.00",
+        "count": 1
+      }
+    ]
+  },
+  "expenses": {
+    "total": "250.00",
+    "count": 2,
+    "deductible_total": "250.00",
+    "not_deductible_total": "0.00",
+    "by_category": [
+      {
+        "category": "internet",
+        "label": "Internet and phone",
+        "total": "150.00",
+        "count": 1
+      },
+      {
+        "category": "software",
+        "label": "Software and subscriptions",
+        "total": "100.00",
+        "count": 1
+      }
+    ]
+  },
+  "net": {
+    "total": "4250.00",
+    "margin_pct": 94.4
+  },
+  "monthly": [
+    {
+      "month": "2024-11",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2024-12",
+      "income": "1000.00",
+      "expenses": "0.00",
+      "net": "1000.00"
+    },
+    {
+      "month": "2025-01",
+      "income": "0.00",
+      "expenses": "100.00",
+      "net": "-100.00"
+    },
+    {
+      "month": "2025-02",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2025-03",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2025-04",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2025-05",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2025-06",
+      "income": "1500.00",
+      "expenses": "0.00",
+      "net": "1500.00"
+    },
+    {
+      "month": "2025-07",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2025-08",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2025-09",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2025-10",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2025-11",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2025-12",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-01",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-02",
+      "income": "2000.00",
+      "expenses": "0.00",
+      "net": "2000.00"
+    },
+    {
+      "month": "2026-03",
+      "income": "0.00",
+      "expenses": "150.00",
+      "net": "-150.00"
+    },
+    {
+      "month": "2026-04",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-05",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-06",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-07",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-08",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-09",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-10",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    },
+    {
+      "month": "2026-11",
+      "income": "0.00",
+      "expenses": "0.00",
+      "net": "0.00"
+    }
+  ],
+  "unconverted_count": {
+    "income": 0,
+    "expenses": 0
+  },
+  "estimated_count": {
+    "income": 0,
+    "expenses": 0
+  }
+}

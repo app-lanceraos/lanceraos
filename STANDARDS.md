@@ -383,6 +383,10 @@ look (a highlighted row, a scaled icon, a collapsed-rail tooltip on an iPad) sta
 ungated: scrollbar thumbs (desktop-only), a `:hover` that changes nothing visible, a browser-internal pseudo-class
 (`:-webkit-autofill:hover`).
 
+### A download that can be refused with a sentence is fetched as a blob, never a plain link
+
+A download that can be refused with a sentence (an empty period, a number that is not saved, a rate limit) is fetched with `api.get(path, { responseType: 'blob' })`, and its error body is read as text (`blobToText`); never a plain link (a refused download would show the person a raw JSON page, with no loading state). The saved file name comes from `Content-Disposition` only when it is a safe name (`^[A-Za-z0-9._-]{1,120}$`), otherwise a fallback built by the page. See `lib/downloadBlob.js` and `hooks/useReportDownload.js`.
+
 ### Test files live next to what they test
 
 `ComponentName.test.jsx` sits in a `__tests__/` folder alongside `ComponentName.jsx`, not in one

@@ -333,6 +333,18 @@ then `GET /api/payments/income-certificate/pdf/?purpose=bank` (expect 200); with
 "You have no payments in this period, so there is nothing to put in the statement." If a PDF answers 500 "Could not create the PDF", read the
 `[PDF] document_type=` log line for that `request_id`: WeasyPrint is the usual cause (see Appendix A).
 
+## 7f. Report pages release (09 November 2026, Prompt 17) **[U]**
+
+Frontend only (Vercel): **no migration, no environment variable, no new service, no backend change.** **Deploy the backend of 7e first**: the pages call endpoints
+(`/api/payments/pnl/`, `/api/payments/income-certificate/` and their `/pdf/` routes) that do not exist before it. The sidebar item that used to read "Income
+Certificate" now reads "Income Statement" (the URL `/income-certificate` is unchanged, so bookmarks keep working).
+
+Smoke test: sign in, open **P&L** (the figures load for "This year"), then **Download PDF** (a file named `profit_and_loss_<start>_<end>.pdf` arrives and
+opens; its headline totals equal the page's). Open **Income Statement**, choose **Last 12 months** and **Bank account or loan application**, then
+**Download statement (PDF)** (a file arrives); with no payment in the period the page must say so and the button must be disabled with the reason instead.
+Confirm the browser can read the `Content-Disposition` filename (it needs `Access-Control-Expose-Headers: Content-Disposition`, already set by
+`CORS_EXPOSE_HEADERS`); if it cannot, the page falls back to its own file name and nothing breaks.
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals
