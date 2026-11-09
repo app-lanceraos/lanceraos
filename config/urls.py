@@ -23,6 +23,8 @@ from core.notifications import (
 urlpatterns = [
     # Platform probe (Railway healthcheck) — see core/health.py.
     path('api/health/', health_check, name='health_check'),
+    # The Health Score (Prompt 18). AFTER the exact probe above: it matches only 'api/health/' itself.
+    path('api/health/', include('apps.health.urls')),
     path('admin/', admin.site.urls),
     path('api/auth/', include('apps.users.urls')),
     path('api/admin/', include('apps.admin_panel.urls')),

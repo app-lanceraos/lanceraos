@@ -345,6 +345,17 @@ opens; its headline totals equal the page's). Open **Income Statement**, choose 
 Confirm the browser can read the `Content-Disposition` filename (it needs `Access-Control-Expose-Headers: Content-Disposition`, already set by
 `CORS_EXPOSE_HEADERS`); if it cannot, the page falls back to its own file name and nothing breaks.
 
+## 7g. Health Score backend release (09 November 2026, Prompt 18) **[U]**
+
+Backend only: redeploy the **web** service. **No migration, no environment variable, no new service**; the worker and beat do not use it (there is no
+task, no model and nothing stored). Two read-only endpoints are new: `GET /api/health/score/?months=3|6|12|24` and `GET /api/health/mini/`. The platform probe
+`GET /api/health/` is unchanged (exact path, still not written to `ApiRequestLog`, still exempt from the HTTPS redirect). The `/health` page and the Dashboard
+widget are not built yet, so nothing in the browser changes.
+
+Smoke test: sign in, then `GET /api/health/score/?months=12` returns 200 with a `dimensions` array of length 5 and `Cache-Control: no-store`
+(`score` may be `null` with a `message` for an account with few records: that is correct, not an error); `GET /api/health/score/?months=7` returns 400
+`{"error": "months must be 3, 6, 12 or 24."}`; `GET /api/health/mini/` returns 200; signed out, both return 401; and `GET /api/health/` still answers the probe.
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

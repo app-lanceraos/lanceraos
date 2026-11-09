@@ -412,6 +412,10 @@ invoice, `check_payment_ledger`) lives in `apps.invoices`. Shared helpers it nee
 (`validate_currency_code` -> `apps/payments/validators.py`, `rate_limited` -> `core/ratelimit.py`).
 Enforced by `apps/payments/tests/test_direction.py` (AST, lazy imports inside functions included).
 
+**`apps.health` sits above `apps.payments` (Prompt 18, 09 November 2026).** It imports only the standard library, Django/DRF, `core.*` and, from `apps.payments`, the non-view modules `ledger`, `expense_ledger`, `rollup`, `models`, `constants` and `http`; never `apps.invoices`, `apps.clients`, `apps.dashboard`, `apps.proposals`, `apps.users`, `apps.admin_panel` or a `views*` module. **No app imports it** (only `config/urls.py` and `config/settings.py` name it), and `apps.payments` is forbidden from importing it. Enforced by `apps/health/tests/test_direction.py` and `apps/payments/tests/test_direction.py`.
+
+**A score or a grade is computed in a pure module from a facts object (Prompt 18).** The database is read in one place (`apps/health/facts.py`) and turned into a frozen `Facts`; `scoring.py`, `tips.py` and `copy.py` import no Django and no `apps.*`, so they are tested without a database. **A "how to improve" figure is computed by re-running the same scoring on a modified copy of the facts** (`dataclasses.replace`), and the gain shown is the change in the DISPLAYED total, never estimated separately; a step worth under one point is dropped. A sentence a person reads is built from the person's numbers by a template and from the same constants the formula uses, so the words cannot disagree with the maths. An area with too little data is "not enough data", never zero, and the total is rescaled over the areas that could be scored.
+
 **Two ledgers, one app (Prompt 14, 08 November 2026).** Money in (`Payment`) and money out (`Expense`) are two ledgers inside
 `apps.payments`. They share `rates.py` (the frozen nearest-snapshot rate) and `rollup.py` (the one windowed summary loop that both
 `ledger.summary_for_user` and `expense_ledger.summary_for_user` call), and the expense modules (`expense_services.py`,

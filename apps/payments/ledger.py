@@ -11,6 +11,8 @@ month's total never changes when today's rate changes. If that snapshot link is 
 core.money.convert_amount (STANDARDS.md); a row that cannot be converted is counted, never
 guessed and never dropped silently.
 """
+import re
+import unicodedata
 from datetime import timedelta
 from decimal import Decimal
 
@@ -62,6 +64,51 @@ def income_rows(user, start=None, end=None):
             'amount', 'currency', 'rate_to_usd', 'exchange_rate_snapshot_id', 'rate_basis', 'payment_date', 'source',
         )
     ]
+
+
+_WHITESPACE_RUN = re.compile(r'\s+')
+
+
+def _collapse_whitespace(text):
+    """Every run of whitespace (non-breaking spaces and newlines included) becomes one space; the ends are stripped."""
+    return _WHITESPACE_RUN.sub(' ', text or '').strip()
+
+
+def normalise_payer(text):
+    """
+    The grouping key of a "Received from" name: Unicode compatibility-folded (NFKC), case-folded, with every run
+    of whitespace as one space and the ends stripped. "ACME  Corp", "acme corp" and "Acme Corp" are one payer.
+    Blank gives ''. Two spellings that differ in punctuation ("Acme Inc" / "Acme, Inc.") are still two payers.
+    """
+    return _collapse_whitespace(unicodedata.normalize('NFKC', text or '').casefold())
+
+
+def income_rows_by_payer(user, start=None, end=None):
+    """
+    The same ONE query, filters and Row fields as `income_rows`, except `group` is `normalise_payer(counterparty)`
+    ('' = the payment has no name). Returns (rows, display): `display` maps each non-empty group key to the
+    spelling to show, which is the whitespace-collapsed counterparty of the payment with the latest payment_date
+    in that group (a tie goes to the lexicographically smallest spelling). Built here so the Row tuple is still
+    assembled in the payments app; the Health Score reads it for its Client diversity measure.
+    """
+    qs = Payment.objects.filter(user=user)
+    if start is not None:
+        qs = qs.filter(payment_date__gte=start)
+    if end is not None:
+        qs = qs.filter(payment_date__lte=end)
+    rows = []
+    newest = {}  # key -> (payment_date, spelling) of the spelling to show
+    for amount, row_currency, rate, snapshot_id, basis, payment_date, counterparty in qs.values_list(
+        'amount', 'currency', 'rate_to_usd', 'exchange_rate_snapshot_id', 'rate_basis', 'payment_date', 'counterparty',
+    ):
+        key = normalise_payer(counterparty)
+        rows.append(rollup.Row(amount, row_currency, rate, snapshot_id, basis, payment_date, key, False))
+        if key:
+            spelling = _collapse_whitespace(counterparty)
+            current = newest.get(key)
+            if current is None or payment_date > current[0] or (payment_date == current[0] and spelling < current[1]):
+                newest[key] = (payment_date, spelling)
+    return rows, {key: spelling for key, (_date, spelling) in newest.items()}
 
 
 def summary_for_user(user, today, currency=None):

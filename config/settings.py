@@ -114,8 +114,9 @@ INSTALLED_APPS = [
     'apps.invoices',
     'apps.proposals',
     'apps.dashboard',
+    'apps.health',
     # Future modules join this list as their own chats build them:
-    # 'apps.tax', 'apps.health',
+    # 'apps.tax',
     # 'apps.contracts', 'apps.subscriptions',
     # 'apps.insights', 'apps.assistant',
 ]
