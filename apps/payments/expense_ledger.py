@@ -16,6 +16,24 @@ from .constants import EXPENSE_CATEGORY_LABELS, PROBABLE_DUPLICATE_DAYS
 from .models import ExchangeRateSnapshot, Expense
 
 
+def expense_rows(user, start=None, end=None):
+    """
+    The user's expenses as rollup Rows, from ONE query. `start` / `end` (inclusive) filter on expense_date
+    in SQL when given. group = category, flagged = is_deductible.
+    """
+    qs = Expense.objects.filter(user=user)
+    if start is not None:
+        qs = qs.filter(expense_date__gte=start)
+    if end is not None:
+        qs = qs.filter(expense_date__lte=end)
+    return [
+        rollup.Row(amount, row_currency, rate, snapshot_id, basis, expense_date, category, is_deductible)
+        for amount, row_currency, rate, snapshot_id, basis, expense_date, category, is_deductible in qs.values_list(
+            'amount', 'currency', 'rate_to_usd', 'exchange_rate_snapshot_id', 'rate_basis', 'expense_date', 'category', 'is_deductible',
+        )
+    ]
+
+
 def summary_for_user(user, today, currency=None):
     """
     The Expenses page's headline numbers. Constant query count whatever the row count: one query for
@@ -29,12 +47,7 @@ def summary_for_user(user, today, currency=None):
     """
     target = (currency or user.profile.default_currency or 'USD').upper()
     current = ExchangeRateSnapshot.get_current()
-    rows = [
-        rollup.Row(amount, row_currency, rate, snapshot_id, basis, expense_date, category, is_deductible)
-        for amount, row_currency, rate, snapshot_id, basis, expense_date, category, is_deductible in Expense.objects.filter(user=user).values_list(
-            'amount', 'currency', 'rate_to_usd', 'exchange_rate_snapshot_id', 'rate_basis', 'expense_date', 'category', 'is_deductible',
-        )
-    ]
+    rows = expense_rows(user)
     result = rollup.summarize(rows, target, today, current)
 
     return {

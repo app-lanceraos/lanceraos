@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ document_title }}</title>
+{% include "invoices/reports/_report_styles.html" %}
+<style>
+  h1.title { font-family: 'Source Serif 4', Georgia, serif; font-size: 24pt; }
+  .selfdecl { font-size: 10pt; font-weight: 600; margin: 0 0 6pt; }
+  .to { font-size: 10pt; margin: 14pt 0 10pt; }
+  dl.identity { display: grid; grid-template-columns: 90pt 1fr; margin: 0 0 12pt; padding: 8pt 10pt; border: 0.75pt solid #cbd5e1; border-radius: 3pt; }
+  dl.identity dt { font-size: 8pt; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; padding: 2pt 0; }
+  dl.identity dd { margin: 0; padding: 2pt 0; min-width: 0; }
+  .intro { margin: 0 0 12pt; }
+  .box { border: 1.25pt solid #1e293b; border-radius: 3pt; padding: 10pt 12pt; display: flex; margin: 0 0 4pt; break-inside: avoid; }
+  .box .cell { flex: 1 1 0; min-width: 0; }
+  .box .label { font-size: 7.5pt; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; }
+  .box .value { font-size: 14pt; font-weight: 600; margin-top: 2pt; white-space: nowrap; }
+  .box .value.small { font-size: 12pt; }
+  .declaration { margin-top: 20pt; break-inside: avoid; }
+  .declaration p { margin: 0 0 40pt; }
+  .sign { display: flex; margin-top: 8pt; }
+  .sign .line { flex: 1 1 0; margin-right: 24pt; border-top: 0.75pt solid #1e293b; padding-top: 3pt; font-size: 8.5pt; color: #475569; }
+  .sign .line:last-child { margin-right: 0; }
+</style>
+</head>
+<body>
+  {% include "invoices/reports/_letterhead.html" %}
+
+  <h1 class="title">{{ document_title }}</h1>
+  <p class="selfdecl">Self-declared by the account holder</p>
+  <p class="meta">{{ period_line }}</p>
+  <p class="meta">{{ purpose_line }}</p>
+
+  <p class="to wrap">{{ to_line }}</p>
+
+  <dl class="identity">
+    {% for label, lines in identity %}
+    <dt>{{ label }}</dt>
+    <dd class="wrap">{% for line in lines %}{{ line }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</dd>
+    {% endfor %}
+  </dl>
+
+  <p class="intro wrap">{{ intro }}</p>
+
+  <div class="box">
+    <div class="cell"><div class="label">Total received (USD)</div><div class="value">{{ total_usd }}</div></div>
+    <div class="cell"><div class="label">PKR equivalent</div><div class="value">{{ total_pkr }}</div></div>
+    <div class="cell"><div class="label">Payments counted</div><div class="value small">{{ payment_count_text }}</div></div>
+  </div>
+
+  <h2>Month by month</h2>
+  <table class="data">
+    <thead><tr><th>Month</th><th class="num">Payments</th><th class="num">USD</th><th class="num">PKR equivalent</th></tr></thead>
+    <tbody>
+      {% for row in monthly_rows %}
+      <tr><td>{{ row.month }}</td><td class="num">{{ row.count }}</td><td class="num">{{ row.usd }}</td><td class="num">{{ row.pkr }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>By source</h2>
+  <table class="data">
+    <thead><tr><th>Source</th><th class="num">Payments</th><th class="num">USD</th><th class="num">PKR equivalent</th></tr></thead>
+    <tbody>
+      {% for row in source_rows %}
+      <tr><td class="wrap">{{ row.label }}</td><td class="num">{{ row.count }}</td><td class="num">{{ row.usd }}</td><td class="num">{{ row.pkr }}</td></tr>
+      {% empty %}
+      <tr><td class="empty" colspan="4">No payments could be converted in this period.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Received in these currencies</h2>
+  <table class="data">
+    <thead><tr><th>Currency</th><th class="num">Payments</th><th class="num">Amount received</th></tr></thead>
+    <tbody>
+      {% for row in currency_rows %}
+      <tr><td>{{ row.currency }}</td><td class="num">{{ row.count }}</td><td class="num">{{ row.amount }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Notes</h2>
+  <ol class="notes">
+    {% for note in notes %}<li>{{ note }}</li>{% endfor %}
+  </ol>
+
+  <div class="declaration">
+    <h2>Declaration</h2>
+    <p class="wrap">{{ declaration }}</p>
+    <div class="sign">
+      <div class="line">Signature</div>
+      <div class="line">Date</div>
+    </div>
+  </div>
+</body>
+</html>

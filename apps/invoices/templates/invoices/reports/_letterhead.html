@@ -1,0 +1,8 @@
+{# Business name (and, when given, logo and address lines). Every value is autoescaped. #}
+<div class="letterhead">
+  {% if logo_url %}<img class="logo" src="{{ logo_url }}" alt="">{% endif %}
+  <div class="who">
+    <div class="name wrap">{{ trading_name }}</div>
+    {% if address_lines %}<div class="address wrap">{% for line in address_lines %}{{ line }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</div>{% endif %}
+  </div>
+</div>

@@ -225,6 +225,8 @@ one current snapshot out), carries the currency it is denominated in as a field 
 reports rows it cannot honestly convert as a count (`unconverted_count`) rather than guessing or silently
 dropping them. The frontend formats with the payload's own `currency` field, never a guessed one.
 
+**One rounding rule (Prompt 16, 08 November 2026): a converted row is rounded to the cent ONCE, in `rollup.convert_row` (`ROUND_HALF_UP`), and every total is a sum of rounded rows.** Never round a total, never sum unrounded values and round for display, and never round in a second place: months must add up to the period total on a document someone else reads, and every screen that shows the same period must show the same paisa. Pin a change to it with the golden masters in `apps/payments/tests/` (diff before and after against the bound 0.005 x (rows + 1) per figure).
+
 A ledger row shows its cents (a payment is `USD 1,234.50`, never `USD 1,235`), only aggregates (KPI cards, chart axes) are rounded to whole units, and any arithmetic on amounts on the frontend is done in integer cents (`toCents` in `paymentsHelpers.js`), never with a float `<`, `Math.min` or `-` — `0.1 + 0.2` is not `0.3`, and a float comparison is exactly what lets an amount through for one cent too much.
 
 ## List endpoints must have a constant query count, asserted by a test
@@ -413,6 +415,8 @@ Enforced by `apps/payments/tests/test_direction.py` (AST, lazy imports inside fu
 P&L, the Tax module, the income certificate) reads BOTH ledgers through `apps.payments` — `ledger` for income, `expense_ledger` for
 spending — never through `InvoicePartialPayment` or invoice totals, and never by re-deriving the maths. A rule fixed in `rollup.py` is
 fixed for both; do not copy that loop. Pin any change to it with the golden master in `apps/payments/tests/test_rollup.py`.
+
+**Reports (Prompt 16, 08 November 2026).** A money report reads both ledgers through `apps.payments` only: `ledger.income_rows` / `expense_ledger.expense_rows` for the rows (one query each) and `rollup.summarize_range` for the totals (one period, one or more target currencies, a row counts only if it converts into every target). The report maths and its JSON endpoints live in `apps.payments` (`report.py`, `views_reports.py`); the PDF of a money document lives in `apps.invoices` (`report_pdf.py`, `views_reports.py`, registered at `/api/payments/...` in `config/urls.py`) until a shared PDF module exists, because WeasyPrint and the fonts are there. **Identity data (CNIC, NTN) appears on a document only when the request opts in**, is decrypted only inside the PDF builder, and never reaches JSON, a log line or audit metadata; the identity block is an explicit allowlist, never an iteration over profile fields.
 
 **One ledger rule: money received is a `Payment`; an invoice allocates it.** Never add a second place that records money received.
 A report of income reads `apps.payments.ledger` (converted with each payment's own frozen snapshot), not `InvoicePartialPayment`

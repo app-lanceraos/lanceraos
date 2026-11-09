@@ -45,6 +45,25 @@ def converted_total(rows, target_currency, current_snapshot):
     return total.quantize(CENT), converted, unconverted, estimated
 
 
+def income_rows(user, start=None, end=None):
+    """
+    The user's payments as rollup Rows, from ONE query. `start` / `end` (inclusive) filter on payment_date in
+    SQL when given. group = source, flagged = False. Every income reader builds its rows here, so the Row
+    tuple is assembled in one place.
+    """
+    qs = Payment.objects.filter(user=user)
+    if start is not None:
+        qs = qs.filter(payment_date__gte=start)
+    if end is not None:
+        qs = qs.filter(payment_date__lte=end)
+    return [
+        rollup.Row(amount, row_currency, rate, snapshot_id, basis, payment_date, source, False)
+        for amount, row_currency, rate, snapshot_id, basis, payment_date, source in qs.values_list(
+            'amount', 'currency', 'rate_to_usd', 'exchange_rate_snapshot_id', 'rate_basis', 'payment_date', 'source',
+        )
+    ]
+
+
 def summary_for_user(user, today, currency=None):
     """
     The Payments page's headline numbers. Constant query count whatever the row count: one
@@ -62,12 +81,7 @@ def summary_for_user(user, today, currency=None):
     """
     target = (currency or user.profile.default_currency or 'USD').upper()
     current = ExchangeRateSnapshot.get_current()
-    rows = [
-        rollup.Row(amount, row_currency, rate, snapshot_id, basis, payment_date, source, False)
-        for amount, row_currency, rate, snapshot_id, basis, payment_date, source in Payment.objects.filter(user=user).values_list(
-            'amount', 'currency', 'rate_to_usd', 'exchange_rate_snapshot_id', 'rate_basis', 'payment_date', 'source',
-        )
-    ]
+    rows = income_rows(user)
     result = rollup.summarize(rows, target, today, current)
 
     return {

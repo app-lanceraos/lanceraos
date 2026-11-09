@@ -13,7 +13,7 @@ converted is counted, never guessed and never dropped silently.
 """
 from collections import defaultdict
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import NamedTuple
 
 from dateutil.relativedelta import relativedelta
@@ -63,10 +63,30 @@ class Rollup:
     month_change_pct: float | None
 
 
+class RangeRollup(NamedTuple):
+    """The result of `summarize_range`: one period, one or more target currencies."""
+    targets: tuple          # ('PKR',) or ('USD', 'PKR')
+    total: dict             # target -> Decimal, a sum of cent-rounded rows
+    flagged_total: dict     # target -> Decimal, sum of rows with flagged=True
+    count: int              # rows that contributed (convertible into EVERY target)
+    by_group: list          # [(group, {target: Decimal}, count)] largest first by the FIRST target; ties keep first-seen order
+    monthly: list           # [('YYYY-MM', {target: Decimal}, count)] every month of the period, oldest first, zero-filled
+    by_currency: list       # [(currency, Decimal original amount, count)] EVERY row in the period incl. unconverted ones, by code
+    unconverted_count: int  # rows that did not convert into every target
+    estimated_count: int    # included rows with rate_basis 'estimated' where at least one target differs from the row's own currency
+
+
 def convert_row(row, target_currency, snapshots, current_snapshot):
-    """One row (amount, currency, rate_to_usd, snapshot_id, ...) -> Decimal in the target, or None."""
+    """
+    One row (amount, currency, rate_to_usd, snapshot_id, ...) -> Decimal in the target rounded to the cent
+    (ROUND_HALF_UP), or None when it cannot be honestly converted. A same-currency amount is returned as it
+    is: it already has two decimals and needs no rate.
+    """
     snapshot = snapshots.get(row[3]) or current_snapshot
-    return convert_amount(row[0], row[1], row[2], target_currency, snapshot)
+    value = convert_amount(row[0], row[1], row[2], target_currency, snapshot)
+    if value is None or row[1] == target_currency:
+        return value
+    return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def load_snapshots(rows):
@@ -77,6 +97,22 @@ def load_snapshots(rows):
 
 def month_start(d):
     return d.replace(day=1)
+
+
+def month_keys(start, end):
+    """Every calendar month a period touches, as 'YYYY-MM', oldest first (a period touches a month if any day of it falls in it)."""
+    keys = []
+    cursor = month_start(start)
+    last = month_start(end)
+    while cursor <= last:
+        keys.append(cursor.strftime('%Y-%m'))
+        cursor += relativedelta(months=1)
+    return keys
+
+
+def months_spanned(start, end):
+    """How many calendar months the period touches."""
+    return (end.year - start.year) * 12 + (end.month - start.month) + 1
 
 
 def money(value):
@@ -160,4 +196,67 @@ def summarize(rows, target_currency, today, current_snapshot):
         unconverted_count=unconverted_total,
         estimated_count=estimated_total,
         month_change_pct=month_change_pct,
+    )
+
+
+def summarize_range(rows, targets, start, end, current_snapshot):
+    """
+    Rolls `rows` (a list of Row) up for ONE period, `start` to `end` inclusive, into one or more target
+    currencies at once (the P&L passes one, the income statement passes USD and PKR).
+
+    A row whose `on_date` is outside the period is ignored here too: this function is the authority, a
+    caller's SQL date filter is only an optimisation. A row is included only if it converts into EVERY
+    target; otherwise it is counted in `unconverted_count` and in no total. Every conversion goes through
+    `convert_row` (one rounding rule, one implementation). `by_currency` still lists every row of the
+    period, unconverted ones included, so a statement can show money it could not convert. The month list
+    is complete and zero-filled. No database work beyond one bulk snapshot load.
+    """
+    targets = tuple(targets)
+    in_period = [row for row in rows if start <= row.on_date <= end]
+    snapshots = load_snapshots(in_period)
+
+    total = {t: ZERO for t in targets}
+    flagged_total = {t: ZERO for t in targets}
+    by_group = {}
+    monthly = {key: [{t: ZERO for t in targets}, 0] for key in month_keys(start, end)}
+    by_currency = {}
+    count = unconverted_count = estimated_count = 0
+
+    for row in in_period:
+        entry = by_currency.setdefault(row.currency, [ZERO, 0])
+        entry[0] += row.amount
+        entry[1] += 1
+
+        values = {t: convert_row(row, t, snapshots, current_snapshot) for t in targets}
+        if any(value is None for value in values.values()):
+            unconverted_count += 1
+            continue
+        count += 1
+        if row.rate_basis == RATE_ESTIMATED and any(row.currency != t for t in targets):
+            estimated_count += 1
+        group = by_group.setdefault(row.group, [{t: ZERO for t in targets}, 0])
+        month = monthly[row.on_date.strftime('%Y-%m')]
+        for t, value in values.items():
+            total[t] += value
+            if row.flagged:
+                flagged_total[t] += value
+            group[0][t] += value
+            month[0][t] += value
+        group[1] += 1
+        month[1] += 1
+
+    first = targets[0]
+    return RangeRollup(
+        targets=targets,
+        total=total,
+        flagged_total=flagged_total,
+        count=count,
+        by_group=[
+            (name, amounts, group_count)
+            for name, (amounts, group_count) in sorted(by_group.items(), key=lambda item: item[1][0][first], reverse=True)
+        ],
+        monthly=[(key, amounts, month_count) for key, (amounts, month_count) in monthly.items()],
+        by_currency=[(code, amount, n) for code, (amount, n) in sorted(by_currency.items())],
+        unconverted_count=unconverted_count,
+        estimated_count=estimated_count,
     )

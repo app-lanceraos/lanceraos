@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ document_title }}</title>
+{% include "invoices/reports/_report_styles.html" %}
+<style>
+  .summary { display: flex; margin: 14pt 0 4pt; border: 1pt solid #cbd5e1; border-radius: 3pt; }
+  .summary .cell { flex: 1 1 0; min-width: 0; padding: 9pt 10pt; border-right: 0.5pt solid #cbd5e1; }
+  .summary .cell:last-child { border-right: none; }
+  .summary .label { font-size: 7.5pt; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; }
+  .summary .value { font-size: 12pt; font-weight: 600; margin-top: 2pt; white-space: nowrap; }
+  table.data tr.rule td { border-top: 1pt solid #1e293b; }
+  .margin { font-size: 9pt; color: #475569; margin: 4pt 0 0; }
+</style>
+</head>
+<body>
+  {% include "invoices/reports/_letterhead.html" %}
+  <h1 class="title">{{ document_title }}</h1>
+  <p class="meta">{{ period_line }}</p>
+
+  <div class="summary">
+    <div class="cell"><div class="label">Income received</div><div class="value">{{ income_total }}</div></div>
+    <div class="cell"><div class="label">Expenses</div><div class="value">{{ expenses_total }}</div></div>
+    <div class="cell"><div class="label">{{ net_label }}</div><div class="value">{{ net_total }}</div></div>
+  </div>
+  {% if margin_text %}<p class="margin">{{ margin_text }}</p>{% endif %}
+
+  <h2>Income by source</h2>
+  <table class="data">
+    <thead><tr><th>Source</th><th class="num">Payments</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+      {% for row in income_rows %}
+      <tr><td class="wrap">{{ row.label }}</td><td class="num">{{ row.count }}</td><td class="num">{{ row.amount }}</td></tr>
+      {% empty %}
+      <tr><td class="empty" colspan="3">No payments in this period.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Expenses by category</h2>
+  <table class="data">
+    <thead><tr><th>Category</th><th class="num">Expenses</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+      {% for row in expense_rows %}
+      <tr><td class="wrap">{{ row.label }}</td><td class="num">{{ row.count }}</td><td class="num">{{ row.amount }}</td></tr>
+      {% empty %}
+      <tr><td class="empty" colspan="3">No expenses in this period.</td></tr>
+      {% endfor %}
+      <tr class="rule"><td>Marked deductible</td><td class="num"></td><td class="num">{{ deductible_total }}</td></tr>
+      <tr><td>Not marked deductible</td><td class="num"></td><td class="num">{{ not_deductible_total }}</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Month by month</h2>
+  <table class="data">
+    <thead><tr><th>Month</th><th class="num">Income</th><th class="num">Expenses</th><th class="num">Net</th></tr></thead>
+    <tbody>
+      {% for row in monthly_rows %}
+      <tr><td>{{ row.month }}</td><td class="num">{{ row.income }}</td><td class="num">{{ row.expenses }}</td><td class="num">{{ row.net }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Notes</h2>
+  <ul class="notes">
+    {% for note in notes %}<li>{{ note }}</li>{% endfor %}
+  </ul>
+</body>
+</html>

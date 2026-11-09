@@ -9,6 +9,7 @@ from apps.invoices.views_payment_link import (
     payment_link_invoice,
     payment_unlink_invoice,
 )
+from apps.invoices.views_reports import income_statement_pdf, pnl_pdf
 from apps.invoices.views_statement import client_statement_pdf
 from core.health import health_check
 from core.notifications import (
@@ -41,6 +42,10 @@ urlpatterns = [
     path('api/payments/<uuid:pk>/link-candidates/', payment_link_candidates, name='payment_link_candidates'),
     path('api/payments/<uuid:pk>/link-invoice/', payment_link_invoice, name='payment_link_invoice'),
     path('api/payments/<uuid:pk>/link-invoice/<uuid:allocation_id>/', payment_unlink_invoice, name='payment_unlink_invoice'),
+    # The two report PDFs (Prompt 16): WeasyPrint lives in apps.invoices, so they are registered here, BEFORE
+    # the apps.payments include, exactly like the links above.
+    path('api/payments/pnl/pdf/', pnl_pdf, name='report_pnl_pdf'),
+    path('api/payments/income-certificate/pdf/', income_statement_pdf, name='report_income_certificate_pdf'),
     path('api/payments/', include('apps.payments.urls')),
     path('api/expenses/', include('apps.payments.expense_urls')),
     path('api/proposals/', include('apps.proposals.urls')),

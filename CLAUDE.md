@@ -236,7 +236,7 @@ This is how you investigate "why didn't this happened?"
 
 4. Every PDF generated logs:
    - request_id
-   - document_type (invoice / contract / statement / certificate)
+   - document_type (invoice / contract / statement / certificate / pnl)
    - generated_at
    - duration_ms
    - success or error
@@ -447,7 +447,11 @@ lanceraos/                          <- Django project root
 │   │                                  cutover entry) +
 │   │                                  ai_design.py (Step 9 — classify-only AI design seeding via
 │   │                                  core.ai.call_groq) + signature_tool.py (Step 9 — classical
-│   │                                  Pillow background removal, not AI).
+│   │                                  Pillow background removal, not AI) +
+│   │                                  report_pdf.py/views_reports.py/templates/invoices/reports/ (08 Nov 2026,
+│   │                                  Prompt 16 — the two money-report PDFs, the P&L and the Statement of Income,
+│   │                                  registered at /api/payments/... in config/urls.py because WeasyPrint and the
+│   │                                  fonts live here and apps.payments may not import this app).
 │   ├── clients/                    <- Client CRM — BUILT. Client/ClientNote/ClientTag,
 │   │                                  scoring.py (reliability-score formula, pure/testable
 │   │                                  independent of Invoice — see DECISIONS.md)
@@ -476,7 +480,12 @@ lanceraos/                          <- Django project root
 │   │                                  http.py now also holds the shared bad_request / parse_date_param / parse_paging.
 │   │                                  The Expenses PAGE is built (08 Nov 2026, Prompt 15, frontend only — see the frontend
 │   │                                  tree: pages/Expenses.jsx, Expense*.jsx). Expense receipts, recurring/imported expenses,
-│   │                                  P&L, income certificate, exchange-rate alerts — NOT YET BUILT.
+│   │                                  The REPORTS backend is built (08 Nov 2026, Prompt 16): rollup.summarize_range (one period,
+│   │                                  one or more target currencies), report.py (pnl, income_statement, validate_range),
+│   │                                  views_reports.py (the two JSON endpoints), ledger.income_rows / expense_ledger.expense_rows,
+│   │                                  http.parse_range_params, and ONE rounding rule in rollup.convert_row. The /pnl and
+│   │                                  /income-certificate PAGES, tax figures, period comparison, export, receipts, recurring
+│   │                                  expenses and exchange-rate alerts are NOT YET BUILT.
 │   ├── tax/                        <- FBR tax, SRO 586, income certificate
 │   ├── health/                     <- Financial health score
 │   ├── dashboard/                  <- Dashboard — BUILT (04 November 2026). No models, no migration:
@@ -2839,10 +2848,15 @@ BUILT (08 November 2026, Prompt 15, FRONTEND ONLY): the Expenses PAGE (`/expense
 deductible, a 12-month spending chart, a by-category card, filters, the list, add / edit / duplicate / delete, the after-saving duplicate
 step; no side panel) and two fixes to the import dialog ("Past imports" was stale after an import or undo; closing the dialog mid-undo
 skipped the page refresh); DECISIONS.md "The Expenses page (Prompt 15)", DESIGN.md "Expenses page".
+BUILT (08 November 2026, Prompt 16, BACKEND ONLY): the money reports — the Profit and Loss and the Statement of Income (the page and the
+nav call it "Income Certificate"), each as JSON and as a PDF, plus one rounding rule (a converted row is rounded to the cent once, in
+`rollup.convert_row`, and every total is a sum of rounded rows); see "BUILT (08 November 2026, Prompt 16)" below and DECISIONS.md "Reports: the
+P&L and the income statement (Prompt 16)".
 NOT BUILT: a Payoneer one-click preset, `.xlsx` import,
 Pro gating of import and of expenses, expense receipts, recurring expenses, importing expenses from a file, an
-expense CSV export, negative expenses (a vendor refund), P&L and its PDF, the income
-certificate, exchange-rate alerts, the `GET /api/payments/exchange-rates/` endpoint, a refund ledger.
+expense CSV export, negative expenses (a vendor refund), the `/pnl` and `/income-certificate` PAGES (Prompt 17), any tax figure
+(taxable income, estimated tax: the Tax module), a comparison with the previous period, CSV/Excel export of a report, emailing or saving a
+report, a verification code on the statement, Urdu, exchange-rate alerts, the `GET /api/payments/exchange-rates/` endpoint, a refund ledger.
 App: apps/payments/ (the bottom of the app dependency tree: imports only `core.*` and itself; the invoice-side link endpoints live in
 apps/invoices/views_payment_link.py)
 
@@ -2880,17 +2894,20 @@ Exchange rate alerts: user sets target rate + direction (above/below).
 Celery checks hourly, sends in-app + email notification once when
 threshold crossed. Alert auto-deactivates after firing.
 
-P&L Report:
-Date range selector + quick filters (current year, last year, Q1-Q4).
-Shows: total income by category, total expenses by category, gross
-profit, taxable income (after deductible expenses), estimated FBR tax.
-Downloadable as PDF (WeasyPrint).
+P&L Report (backend BUILT 08 Nov 2026, Prompt 16; the page is Prompt 17):
+Any period (at most 60 months, never in the future; the page will offer quick filters such as the calendar year, the July-June tax
+year and quarters). Cash basis: income = payments dated in the period, expenses = expenses dated in the period, net = income minus ALL
+expenses. Shows income by SOURCE, expenses by category, the deductible and not-deductible parts of the expenses, net profit and margin,
+and month by month. It shows NO taxable income and NO tax estimate: that was in this paragraph's first draft and was dropped, because
+whether expenses reduce the tax of an IT exporter depends on the regime the person is under, which the Tax module must verify against
+current law first. Downloadable as PDF (WeasyPrint).
 
-Income Certificate (sub-feature of this module, not a separate module):
-Formal PDF document suitable for banks, visa applications, PSEB
-registration. Configurable period and purpose. Shows monthly income
-breakdown in USD and PKR equivalent. Uses WeasyPrint with a formal
-letterhead layout. Triggered from the P&L section.
+Income Certificate / Statement of Income (sub-feature of this module, not a separate module; backend BUILT, Prompt 16):
+A formal PDF a freelancer can hand to a bank, an embassy or PSEB. It is titled "Statement of Income" and says "Self-declared by the
+account holder": it summarises the payments the person recorded, LanceraOS certifies nothing, and the document never uses the word
+"certificate" except to say it is not one. Period and purpose (bank / visa / pseb / other) and an optional "To:" line are chosen per
+request. Shows the monthly income in USD and the PKR equivalent, by source and by original currency, on a letterhead, with a declaration
+and blank signature and date lines. CNIC and NTN are printed only when the request opts in. Triggered from the P&L section (page: Prompt 17).
 
 Key API endpoints:
 - CRUD /api/payments/
@@ -2900,9 +2917,8 @@ Key API endpoints:
 - DELETE /api/payments/import/{batch_id}/ (rollback)
 - POST /api/payments/{id}/link-invoice/
 - CRUD /api/expenses/ (BUILT, Prompt 14 — see below)
-- GET /api/payments/pnl/
-- GET /api/payments/pnl/pdf/
-- GET /api/payments/income-certificate/pdf/
+- GET /api/payments/pnl/ + /api/payments/pnl/pdf/ (BUILT, Prompt 16)
+- GET /api/payments/income-certificate/ + /api/payments/income-certificate/pdf/ (BUILT, Prompt 16; the first is the JSON preview)
 - GET /api/payments/exchange-rates/
 - CRUD /api/payments/alerts/
 
@@ -2918,6 +2934,22 @@ body is a 415), `IsAuthenticated`, `Cache-Control: no-store`, errors `{"error", 
 - Only money received is income: conversions, top-ups, fees, refunds, outgoing and not-completed rows are `not_income` and never importable.
   The Wise layout is a preset; Payoneer and custom CSVs go through alias detection and the person's confirmation (`Source`/`Target` are never
   auto-mapped). Wise `Description` wording is a best guess (no real export seen).
+
+BUILT (08 November 2026, Prompt 16) — the money reports (backend only; DECISIONS.md R1-R13). All `IsAuthenticated`, function views, every
+response `Cache-Control: no-store` (errors included). `start` / `end` are inclusive PKT dates, default 1 January of this year to today; refused
+(400, exact sentences in `report.validate_range`): start after end, end in the future, start before 2010-01-01, more than 60 calendar months.
+- GET /api/payments/pnl/ (?start= ?end= ?currency=, default the profile currency; 240/hour) -> income (total, count, by_source), expenses (total,
+  count, deductible_total, not_deductible_total, by_category), net (total, margin_pct or null), monthly (every month, zero-filled),
+  unconverted_count and estimated_count (each split into income and expenses)
+- GET /api/payments/income-certificate/ (?start= ?end=; 240/hour) -> the Statement of Income preview: total in USD and PKR, count, by_source,
+  by_currency (original amounts, unconverted payments included), monthly, unconverted_count, estimated_count; an empty period answers with zeros
+- GET /api/payments/pnl/pdf/ (?start= ?end= ?currency=) and GET /api/payments/income-certificate/pdf/ (?start= ?end= ?purpose=bank|visa|pseb|other
+  ?addressed_to= up to 100 plain characters ?include_cnic=true|false ?include_ntn=true|false) — both PDFs share ONE bucket of 30/hour per user; they
+  live in apps/invoices (views_reports.py, report_pdf.py). The statement is refused (400) when the period has no convertible payment or when a
+  requested CNIC/NTN is not saved; it writes the audit event `income_statement_generated` (period, purpose, two booleans; never an amount, a
+  name, a CNIC or an NTN). Every PDF writes one `[PDF] document_type= request_id= duration_ms= success=` line.
+- One rounding rule: `rollup.convert_row` rounds each converted value to the cent (ROUND_HALF_UP) and every total is a sum of rounded rows, so the
+  months on a statement add up to its total and the reports agree with the Payments and Expenses cards to the paisa.
 
 BUILT (08 November 2026, Prompt 14) — the expense ledger (backend only; DECISIONS.md E1-E13). `Expense` lives in `apps.payments`
 (migration `payments.0004_expense`), a mirror of `Payment`. All `IsAuthenticated`, function views, every response `Cache-Control:
@@ -3337,7 +3369,7 @@ single clean run — see DECISIONS.md's 13 September 2026 entry for that pass's 
 (`python manage.py test`, `--keepdb` — every test module passes individually/in batches; a full
 single-process run intermittently hits an unrelated, already-documented native WeasyPrint/GC
 segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 19 August 2026 design_data render path pass's new `test_design_renderer.py` (29 tests — closes audit finding PDF-001, see this module's own 19 August 2026 "design_data render path" entry above and DECISIONS.md), the same-day SEV1 follow-up's new `test_design_assignment.py` (10 tests — real invoice_create/_finalise_invoice/_duplicate_invoice_core design-assignment coverage plus a recurring-generation regression guard, see this module's own "SEV1" entry above), and the 20 August 2026 SEV1 follow-up's new `test_design_color_and_preview.py` (20 tests — all 9 real color combinations, the draft-live-default-fallback, both preview endpoints, see this module's own 20 August 2026 "SEV1" entry above), the first real WebSocket tests in this codebase via `channels.testing.WebsocketCommunicator`, this pass's own KPI-period/currency-filter coverage, the InvoiceDetailPanel redesign's Send Reminder/Resend/Change Due Date/freelancer-preview-guard-regression coverage, the first 18 August pass's real end-to-end Cloudinary-401 proof for both PDF download endpoints, the second 18 August pass's frozen-PDF-vs-live-render/portal-list-scoping/payment-claim-message coverage (incl. a direct before/after profile-edit drift test), the sixth 18 August pass's `PdfReuploadCircuitBreakerTests` (`test_send.py`, incl. a real measured before/after timing test showing a genuine 65-66% speed-up from the new per-invoice breaker), the 19 August 2026 production-audit fix round's new `apps/invoices/tests/test_concurrency.py` (real, genuinely-concurrent-thread regression tests for the audit's INV-003/DB-002/INV-004/INV-001/INV-009 findings), and that same audit's second fix round's new `apps/invoices/tests/test_audit_trail.py` (real AuditLog-row-per-lifecycle-event coverage, INV-002) plus `test_portal.py`'s new `CrossAccountFreelancerPreviewGuardTests`/`PortalWriteEndpointsCSRFEnforcementTests` classes (real two-distinct-account ownership-guard coverage and real CSRF-rejection-vs-legitimate-traffic coverage, PORTAL-001/PORTAL-002) — see below. Frontend: 224 passing (`npm test`, `frontend/`, incl. `Invoices.test.jsx`, `Clients.test.jsx`, `Pagination.test.jsx`, `InvoiceKPIStrip.test.jsx` (rewritten for the no-carousel/compact-delta redesign), `useFilterOverflow.test.jsx`, `NewInvoiceWizard.test.jsx`, `invoiceHelpers.test.js`, `pages/portal/*.test.jsx`, `CommentThread.test.jsx`, `InvoiceAnalytics.test.jsx`, `ErrorBoundary.test.jsx`, `InvoiceTable.test.jsx` rewritten for row-click-vs-checkbox-click, `InvoiceDetailPanel.test.jsx` substantially expanded past its prior narrow tooltip-only suite (now also covering the Duplicate/More-menu footer scoping, fifth 18 August pass, and the 19 August audit fix round's Undo Payment More-menu gate regression tests), `InvoiceView.test.jsx` rewritten for the blob-based rework, `useWebSocket.test.jsx` — this hook's first dedicated test file, fifth 18 August pass) + a production `vite build` check + real Playwright screenshots (375/768/1280/1920 light/dark for the InvoiceDetailPanel redesign; 320/375/480/600/768 for the KPI strip fix; two live runs against the real dev Cloudinary account, one per 18 August pass, for the frontend-domain/Download fix and the frozen-PDF/portal-list/claims fixes) against the running dev servers — the fifth 18 August pass's own mobile 375px sizing was test-covered but NOT screenshot-verified at the time (no live browser/Playwright tool available that session); the sixth 18 August pass corrected this with real Playwright + Chromium screenshots at 375/768/1280/1920, light and dark, against the real running dev servers with a seeded demo account (see DECISIONS.md) | Two 16 August 2026 verification passes, the 17 August 2026 List/Table restructure, the same-day InvoiceDetailPanel redesign, both 18 August 2026 passes (KPI-strip/frontend-domain/Download-proxy, then frozen-PDF/portal-list/payment-claims), a fifth 18 August 2026 pass (WebSocket console-error fix + a third InvoiceDetailPanel bug-hardening round), a sixth 18 August 2026 pass (PDF re-upload circuit breaker + a fourth InvoiceDetailPanel/AppShell bug-hardening round, screenshot-verified), and a 19 August 2026 full production-readiness audit (`LANCERAOS_CLIENTS_INVOICES_PRODUCTION_AUDIT.md`, verdict NOT READY — 3 live-reproduced CRITICAL financial-corruption bugs plus 9 further HIGH findings) with two same-day fix rounds closing 7 of its findings total — round 1: INV-003/DB-002 concurrent-overpayment locking, INV-009/FE-001 Undo-Payment-on-terminal-status guard, INV-004 invoice-numbering race, INV-001 stale-total-on-empty-items (see DECISIONS.md's four 19 August 2026 "audit fix" entries); round 2: INV-002 (8 new AuditLog handlers closing the lifecycle-audit-trail gap), PORTAL-001 (the freelancer-preview guard now checks real ownership, not just "a freelancer session exists somewhere"), PORTAL-002 (CSRF enforcement added to the 3 portal write endpoints that lacked it — see DECISIONS.md's three 19 August 2026 "audit fix, second round" entries) — complete (see DECISIONS.md) — the audit's remaining MEDIUM/LOW findings (CLIENT-001 through CLIENT-009, PORTAL-004 through PORTAL-009, PDF-002 through PDF-004 — PDF-001 closed 19 August 2026, see this module's own "design_data render path" entry above, DB-004, INV-005 through INV-008, FE-003/FE-004, and DB-003's dormant CASCADE-vs-PROTECT landmine — see the audit document's own §25/§26 for the full remaining list), the still-open PERF-001 verification (whether the dev-machine WeasyPrint/Celery segfault reproduces in the real production container), Admin panel screens, and the full-module verification pass (Section 8, steps 20-21), the 19 real dev-database findings this document itself doesn't yet reflect line-by-line for every historical entry above (this row predates the 12 September 2026 Full Reversion in most of its own prose — read the "LanceraOS Template Builder" and "Post-Reversion Polish"/"Template Gallery Foundation" narrative paragraphs above this table as the current source of truth for the design/template system specifically, not this cell's own older wording about "design gallery/canvas editor") remain — the 20-new-template import itself is COMPLETE as of 15 September 2026 (Batch 5, FINAL — see this module's own "20-Template Import, Batches 2-5" entry above and DECISIONS.md's 15 September 2026 entry: 22 real, selectable templates, 11 free + 11 pro, every one with a real gallery preview image) |
-| Payments + Expenses  | Expense ledger built, backend only (08 Nov 2026, Prompt 14): `Expense` model + `payments.0004_expense`, the seven `/api/expenses/` routes, `expense_*` modules, the shared `rollup.py` engine, `check_payment_ledger` expense checks. Receipts, recurring/imported expenses, P&L not built. Import engine built, backend only (08 Nov 2026, Prompt 12): Wise preset + column mapping + duplicate detection + preview/commit/undo + `RateResolver`, migration `payments.0003`. Payments core built (07 Nov 2026): Payment ledger, CRUD, link/unlink to invoices, summary, rates frozen per payment date, backfill of the 20 dev-DB payments, `check_payment_ledger`; `GET /api/payments/currencies/` (08 Nov). Not built: expenses, P&L, certificate, alerts | Payments page built (08 Nov 2026): `/payments` with KPI strip, 12-month chart, by-source card, filterable list, add/edit with duplicate step, side panel, link/unlink; plus "Use a Payment I Already Recorded" in the invoice's Add Payment popup; import SCREENS built (08 Nov 2026, Prompt 13): an Import dialog (file + source, check columns, review every row, import, undo, past imports) opened from the page header / empty state / mobile menu, and "Imported from" + "Transaction ID" in the side panel; Expenses page built (08 Nov 2026, Prompt 15): `/expenses` with KPI strip (each card shows how much is marked deductible), 12-month spending chart, by-category card, filterable list, add / edit / duplicate / delete with the after-saving duplicate step and the fee double-counting warning, no side panel; plus two import-dialog fixes (stale "Past imports", closing mid-undo) | backend suite 2043 -> 2178 passing (135 new; `python manage.py test --keepdb`; new tests are in the gitignored `apps/*/tests/`); 08 Nov 2026 (Payments page): backend 2186 passing (8 new, `test_currencies.py`); 08 Nov 2026 (import engine, Prompt 12): backend 2419 passing (233 new, `apps/payments/tests/test_import_*.py`, gitignored), frontend unchanged at 1325 of 1326 passing (160 new in `__tests__/`; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | 08 Nov 2026 (expenses ledger, Prompt 14): backend 2419 -> 2563 passing (144 new, gitignored `apps/*/tests/`; the income-summary golden master is one of them); frontend untouched | 08 Nov 2026 (Expenses page, Prompt 15): frontend 1472 -> 1640 passing (168 new in `__tests__/`, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`), backend untouched | In progress |
+| Payments + Expenses  | Reports built, backend only (08 Nov 2026, Prompt 16): P&L and Statement of Income as JSON and PDF, `rollup.summarize_range`, one rounding rule; the two pages, tax figures, comparison and export are not built. Expense ledger built, backend only (08 Nov 2026, Prompt 14): `Expense` model + `payments.0004_expense`, the seven `/api/expenses/` routes, `expense_*` modules, the shared `rollup.py` engine, `check_payment_ledger` expense checks. Receipts, recurring/imported expenses, P&L not built. Import engine built, backend only (08 Nov 2026, Prompt 12): Wise preset + column mapping + duplicate detection + preview/commit/undo + `RateResolver`, migration `payments.0003`. Payments core built (07 Nov 2026): Payment ledger, CRUD, link/unlink to invoices, summary, rates frozen per payment date, backfill of the 20 dev-DB payments, `check_payment_ledger`; `GET /api/payments/currencies/` (08 Nov). Not built: expenses, P&L, certificate, alerts | Payments page built (08 Nov 2026): `/payments` with KPI strip, 12-month chart, by-source card, filterable list, add/edit with duplicate step, side panel, link/unlink; plus "Use a Payment I Already Recorded" in the invoice's Add Payment popup; import SCREENS built (08 Nov 2026, Prompt 13): an Import dialog (file + source, check columns, review every row, import, undo, past imports) opened from the page header / empty state / mobile menu, and "Imported from" + "Transaction ID" in the side panel; Expenses page built (08 Nov 2026, Prompt 15): `/expenses` with KPI strip (each card shows how much is marked deductible), 12-month spending chart, by-category card, filterable list, add / edit / duplicate / delete with the after-saving duplicate step and the fee double-counting warning, no side panel; plus two import-dialog fixes (stale "Past imports", closing mid-undo) | backend suite 2043 -> 2178 passing (135 new; `python manage.py test --keepdb`; new tests are in the gitignored `apps/*/tests/`); 08 Nov 2026 (Payments page): backend 2186 passing (8 new, `test_currencies.py`); 08 Nov 2026 (import engine, Prompt 12): backend 2419 passing (233 new, `apps/payments/tests/test_import_*.py`, gitignored), frontend unchanged at 1325 of 1326 passing (160 new in `__tests__/`; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | 08 Nov 2026 (expenses ledger, Prompt 14): backend 2419 -> 2563 passing (144 new, gitignored `apps/*/tests/`; the income-summary golden master is one of them); frontend untouched | 08 Nov 2026 (reports, Prompt 16): backend 2563 -> 2635 passing (new tests in the gitignored `apps/*/tests/`), frontend untouched | 08 Nov 2026 (Expenses page, Prompt 15): frontend 1472 -> 1640 passing (168 new in `__tests__/`, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`), backend untouched | In progress |
 | FBR Tax              | -       | -        | -     | Not started |
 | Health Score         | -       | -        | -     | Not started |
 | Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A (list, create, autosaving draft editor, score/tips) and part B (Send dialog with pre-flight and verify-by-checking, the client's public page `/proposal/:token`, withdraw, convert to invoice, activity timeline, client link, client's answer, in-app Preview) — 04 Nov 2026 | backend 479 passing (`apps.proposals` 299 + `core` 181; untouched by part B); frontend 1037 of 1038 passing (221 new for part B; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Complete; real-deployment smoke tests (DEPLOYMENT.md Section 8, items 12-16) still to run |

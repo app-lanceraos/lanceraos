@@ -10,6 +10,8 @@ from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.response import Response
 
+from . import report
+
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
 
@@ -58,3 +60,23 @@ def parse_paging(request):
     except (TypeError, ValueError):
         return None, None, 'limit and offset must be whole numbers.'
     return max(1, min(limit, MAX_LIMIT)), max(0, offset), None
+
+
+def parse_range_params(request, today):
+    """
+    Returns (start, end, error message or None) for a report endpoint. Both dates are optional: an omitted
+    `start` is 1 January of the current year and an omitted `end` is today (report.default_range). A
+    malformed date and any period report.validate_range refuses are the error.
+    """
+    default_start, default_end = report.default_range(today)
+    start, error = parse_date_param(request.query_params.get('start'))
+    if error:
+        return None, None, error
+    end, error = parse_date_param(request.query_params.get('end'))
+    if error:
+        return None, None, error
+    start, end = start or default_start, end or default_end
+    error = report.validate_range(start, end, today)
+    if error:
+        return None, None, error
+    return start, end, None

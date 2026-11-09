@@ -315,6 +315,24 @@ Smoke test: sign in, open Expenses (the sidebar item stays highlighted), Add exp
 three headline numbers and the chart update, open the row's menu and choose Duplicate, save the copy (expect a "Possible duplicate" step because it
 is dated within 3 days of the original), choose "Delete the one I just added", then delete the original from the menu. The list ends empty.
 
+## 7e. Reports release (08 November 2026, Prompt 16) **[U]**
+
+Backend only: **no migration, no environment variable, no new service.** Redeploy the **web** service only: the worker and beat do not render reports.
+WeasyPrint is already required by the invoice PDFs, so nothing new is installed; the fonts the reports use (IBM Plex Sans, Source Serif 4) are the ones
+already shipped under `apps/invoices/static/invoices/fonts/`. New endpoints (all need a signed-in user): `GET /api/payments/pnl/`,
+`GET /api/payments/pnl/pdf/`, `GET /api/payments/income-certificate/` and `GET /api/payments/income-certificate/pdf/`; the two PDF routes share one
+rate-limit bucket of 30 per user per hour.
+
+One visible effect on existing screens: converted amounts are now rounded to the cent once per row before they are added up, so a card on the Payments
+or Expenses page can differ by a few paisa from before (never more than 0.005 times the number of rows behind that figure). Nothing is stored
+differently; only the totals shown are affected.
+
+Smoke test: sign in, then with that session call `GET /api/payments/pnl/` (expect 200 and JSON with `income`, `expenses`, `net`) and
+`GET /api/payments/pnl/pdf/` (expect 200, `Content-Type: application/pdf`, a file that opens). For the statement, record one payment dated this month first,
+then `GET /api/payments/income-certificate/pdf/?purpose=bank` (expect 200); with no payment in the period it must answer 400
+"You have no payments in this period, so there is nothing to put in the statement." If a PDF answers 500 "Could not create the PDF", read the
+`[PDF] document_type=` log line for that `request_id`: WeasyPrint is the usual cause (see Appendix A).
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals
