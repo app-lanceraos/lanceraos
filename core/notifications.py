@@ -66,6 +66,10 @@ NOTIFICATION_EVENTS = {
     # separately named (proposal_accepted / proposal_declined) and deliberately
     # NOT listed here — see apps/proposals/notifications.py.
     'proposal_accepted_notice', 'proposal_declined_notice',
+    # apps/contracts (Prompt 22) - a client signed / declined a contract. Same arrangement as the proposal rows
+    # above: these are the toggle-gated BELL rows; the always-written audit rows (contract_signed /
+    # contract_declined, ...) are deliberately NOT listed here - see apps/contracts/notifications.py.
+    'contract_signed_notice', 'contract_declined_notice',
 }
 
 EVENT_TITLES = {
@@ -89,6 +93,8 @@ EVENT_TITLES = {
     'client_details_change_requested': 'Client details change requested',
     'proposal_accepted_notice': 'Proposal accepted',
     'proposal_declined_notice': 'Proposal declined',
+    'contract_signed_notice': 'Contract signed',
+    'contract_declined_notice': 'Contract declined',
 }
 
 # Where clicking each notification type navigates. Compulsory — every
@@ -153,6 +159,9 @@ EVENT_ACTION_URLS = {
     # {id} here is a PROPOSAL id (see _action_url's last fallback).
     'proposal_accepted_notice': '/proposals?proposal={id}',
     'proposal_declined_notice': '/proposals?proposal={id}',
+    # {id} here is a CONTRACT id (see _action_url's last fallback).
+    'contract_signed_notice': '/contracts?contract={id}',
+    'contract_declined_notice': '/contracts?contract={id}',
 }
 
 
@@ -177,11 +186,14 @@ def _action_url(log):
     EXTENDED, Proposals part 2: proposal_id is the LAST fallback, after
     invoice_id and client_id, for the same reason — an event carrying either
     earlier key resolves exactly as before (pinned by a regression test).
+
+    EXTENDED, Contracts (Prompt 22): contract_id is the new LAST fallback, for the same reason.
     """
     template = EVENT_ACTION_URLS.get(log.event)
     if template and '{id}' in template:
         metadata = log.metadata or {}
-        entity_id = metadata.get('invoice_id') or metadata.get('client_id') or metadata.get('proposal_id')
+        entity_id = metadata.get('invoice_id') or metadata.get('client_id') or metadata.get('proposal_id') \
+            or metadata.get('contract_id')
         if entity_id:
             return template.replace('{id}', entity_id)
     return template
@@ -238,6 +250,12 @@ def _describe(log):
         number = log.metadata.get('proposal_number')
         subject = f'your proposal {number}' if number else 'your proposal'
         verb = 'accepted' if log.event == 'proposal_accepted_notice' else 'declined'
+        return f'{client} {verb} {subject}.'
+    if log.event in ('contract_signed_notice', 'contract_declined_notice'):
+        client = log.metadata.get('client_name') or 'Your client'
+        number = log.metadata.get('contract_number')
+        subject = f'your contract {number}' if number else 'your contract'
+        verb = 'signed' if log.event == 'contract_signed_notice' else 'declined'
         return f'{client} {verb} {subject}.'
     return ''
 

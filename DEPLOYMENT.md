@@ -395,6 +395,30 @@ summary (PDF)" downloads a PDF that opens (a 400 with a sentence for an account 
 "The estimate applies one rate, the one for your PSEB status today ..."; Settings > Tax & PSEB shows the new subtitle ("Your saved PSEB number sets the rate
 in your tax estimate. ...") and no longer mentions the SRO check; reloading `/tax?view=sources` directly works (`vercel.json` already rewrites to the SPA).
 
+## 7k. Contracts backend release (10 November 2026, Prompt 22) **[U]**
+
+Backend only. **Back up the database first** (`pg_dump -Fc`, kept outside the repo). **ONE migration: `contracts.0001_initial`** (a new table; nothing
+existing is touched). **No environment variable, no new service, no Celery Beat change.** Redeploy the **web** AND the **worker** service together: the
+worker runs the new task `apps.contracts.tasks.send_signed_copies` (it renders the signed PDF and emails both sides), so a worker left on the old
+image would leave signed copies queued and unsent. Beat is unaffected. Deploy this BEFORE the frontend of Prompt 23 (the Contracts pages call these routes).
+The frontend's Vercel response headers for `/contract/*` (noindex, no-referrer, like `/proposal/*`) are part of Prompt 23, not this release.
+
+The routes (the owner routes need a login; every response answers `Cache-Control: no-store`): `GET /api/contracts/templates/`, `GET/POST /api/contracts/`,
+`GET/PATCH/DELETE /api/contracts/<id>/`, `POST /api/contracts/<id>/send/`, `/withdraw/`, `/duplicate/`, `GET /api/contracts/<id>/pdf/` (shares the 30 per hour
+report-PDF bucket), and the public, no-login `GET /api/contracts/public/<token>/`, `POST .../sign/`, `POST .../decline/`, `GET .../pdf/` (signed contracts only,
+20 per hour per IP).
+
+Before the Contracts pages are announced publicly, a Pakistani lawyer reads `CONTRACTS_LAW.md`, `apps/contracts/clauses.py`, the signing-page wording, the
+contract emails and the PDF text.
+
+Smoke test: sign in; `GET /api/contracts/templates/` returns 5 `templates`; `POST /api/contracts/` with `{"template_key":"custom"}` returns 201 with a `draft`;
+`GET /api/contracts/<id>/pdf/` returns 200 with `Content-Type: application/pdf`; fill the `[[...]]` text with PATCH, set `valid_until`, then
+`POST /api/contracts/<id>/send/` with `{"method":"link","confirm":true,"signer_name":"<your name>"}` returns 200 with a `contract_number` and a `public_url`;
+open that public URL's API form (`/api/contracts/public/<token>/`) in a private window with no cookies: `state` is `open`, there is no email address in it;
+`POST .../sign/` with `{"signer_name":"Test Client","agree":true}` returns 200 with `state: signed`; the contract's detail shows `status: signed` and a
+`signature_record`; `GET /api/contracts/public/<token>/pdf/` now returns a PDF (409 before signing); within a minute the worker log shows
+`Signed copies sent for contract <id>`. Signed out, every owner route returns 401.
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

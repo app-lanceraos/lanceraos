@@ -478,3 +478,20 @@ first applied to `apps/proposals/views_public.py`:
   total the exact sum of rounded parts, and an unconverted payment counted and left out, never guessed.
 - The Tax pages render the server's tax sentences as plain text and never state a rate, band, date or rule in a static string; a test scans every static string for percent figures and dates.
 
+
+
+## Signed documents (Prompt 22, 10 November 2026)
+
+- A document is FROZEN when it is sent: the parties are copied onto the row and a SHA-256 fingerprint of a canonical form of everything the other
+  side is asked to agree to is stored (`apps/contracts/integrity.py`). Signing recomputes the fingerprint from the stored row and refuses on a
+  mismatch (409, with a `logger.error` carrying ids only). Only a draft can be edited or deleted.
+- Text that is hashed is normalised at WRITE time (newlines, control characters, whitespace), so the fingerprint is stable. The number assigned at
+  send, the status and any timestamp are not part of the fingerprint.
+- Evidence of who acted (IP address, browser string) is stored ONLY when a person signs, declines or sends, never on a plain view. The IP is
+  validated with `ipaddress` and stored as NULL when it is not one. Evidence is returned only to the owner of the document, never in a public payload.
+- The public payload is an allowlist of explicit serializers: no email address, id, token, IP address or browser string; names only for the parties.
+- No string a person reads claims legal validity, enforceability, certification or that an identity was verified, and none uses marketing words;
+  say what is RECORDED instead. A test scans the shared sentences, the module's user-facing literals, the emails and the PDF.
+- Signed copies are sent by a Celery task, never inside the signer's request, and the task is idempotent (a timestamp on the row, checked under a row lock).
+- Money is never compared or converted through a float; a source-scanning test enforces it where a behavioural test cannot tell the difference.
+- A promoted shared helper keeps its old import names in the apps that used it, so no existing test or caller changes.

@@ -12,27 +12,19 @@ apps/invoices/email_service.py do NOT escape — see DECISIONS.md, 02 November
 escaping. Subjects are single-line: whitespace (CR, LF, tab, ...) collapses to
 one space so a pasted title cannot inject a header line.
 
-`_html_wrapper` is a local copy of the small branded wrapper in
-apps/invoices/email_service.py, which is private to that app; promoting one
-shared copy to core/ is a follow-up that needs a change in apps/invoices.
+`_html_wrapper` and `_one_line` now live in core/email_html.py (promoted in Prompt 22 so Contracts does not carry a
+second copy) and are imported here under their old names.
 """
-import re
 from datetime import date
 
 from django.conf import settings
 from django.utils.html import escape
 
 from apps.invoices.models import CURRENCY_SYMBOLS
+from core.email_html import html_wrapper as _html_wrapper
+from core.email_html import one_line as _one_line
 
 SUBJECT_TITLE_MAX = 100
-_WHITESPACE = re.compile(r'\s+')
-_CONTROL = re.compile(r'[\x00-\x1f\x7f]')
-
-
-def _one_line(text, limit=None):
-    """Collapses every run of whitespace/control characters to one space; optionally caps the length."""
-    cleaned = _WHITESPACE.sub(' ', _CONTROL.sub(' ', text or '')).strip()
-    return cleaned[:limit].rstrip() if limit else cleaned
 
 
 def _money(amount, currency):
@@ -42,31 +34,6 @@ def _money(amount, currency):
 
 def _date(value):
     return value.strftime('%d %b %Y') if isinstance(value, date) else ''
-
-
-def _html_wrapper(body_html):
-    """Minimal branded HTML wrapper — same brand tokens as the rest of the app's emails."""
-    return f"""<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
-<body style="margin:0;padding:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:28px 16px;">
-<tr><td align="center">
-<table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;">
-  <tr><td style="background:#1a3a5c;border-radius:10px 10px 0 0;padding:18px 32px;">
-    <span style="font-size:18px;font-weight:800;color:#fff;letter-spacing:-0.5px;">LanceraOS</span>
-  </td></tr>
-  <tr><td style="background:#fff;padding:32px;border-radius:0 0 10px 10px;">
-    {body_html}
-  </td></tr>
-  <tr><td style="padding:16px;text-align:center;">
-    <p style="margin:0;font-size:11px;color:#94a3b8;">LanceraOS &bull; lanceraos.com</p>
-  </td></tr>
-</table>
-</td></tr>
-</table>
-</body>
-</html>"""
 
 
 def build_client_proposal_email(proposal, sender_name):

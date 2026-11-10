@@ -17,9 +17,7 @@ accept it or decline it. The token IS the credential, so:
   (`@throttle_classes([])`) so the documented limits here are the real ones.
 * All text is plain text, displayed escaped, never HTML.
 """
-import ipaddress
 import logging
-from functools import wraps
 
 from django.db import transaction
 from django.utils import timezone
@@ -28,9 +26,12 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from apps.users.authentication import CookieJWTAuthentication, identify_user_from_refresh_cookie
+from apps.users.authentication import identify_user_from_refresh_cookie
+from apps.users.owner_probe import _OwnerProbe  # noqa: F401  (kept under its old name)
+from apps.users.owner_probe import request_is_owner as _request_is_owner
 from core.events import emit
 from core.observability import get_client_ip, get_user_agent
+from core.public_http import no_store, safe_ip
 
 from .models import Proposal, _today
 from core.ratelimit import rate_limited
@@ -45,91 +46,13 @@ RESPOND_LIMIT_PER_HOUR = 10
 NOT_FOUND_BODY = {'error': 'Not found.'}
 
 
-def no_store(view):
-    """
-    Adds `Cache-Control: no-store` to EVERY response of the wrapped view,
-    errors and DRF's own 405 included. Applied outside @api_view; functools.wraps
-    carries the csrf_exempt marker across, so the view stays exempt (it carries
-    no ambient credential — see proposal_public_respond).
-    """
-    @wraps(view)
-    def wrapper(*args, **kwargs):
-        response = view(*args, **kwargs)
-        response['Cache-Control'] = 'no-store'
-        return response
-    return wrapper
-
-
-class _OwnerProbe(CookieJWTAuthentication):
-    """
-    Identifies a freelancer session; never authorises anything. CSRF is
-    switched off here on purpose: the parent enforces CSRF inside
-    authenticate(), and on the POST /respond/ path a missing CSRF token would
-    raise, be swallowed by request_is_owner's try/except, and make the OWNER
-    look like an ordinary client — letting them answer their own proposal.
-    Reading "who is this cookie" cannot be forged into any action, so no CSRF
-    check is needed to read it.
-    """
-
-    def enforce_csrf(self, request):
-        return None
-
-
 def request_is_owner(request, owner_user_id):
     """
-    True only if the request carries a valid freelancer session whose user IS
-    the proposal's owner (decision D3). A different logged-in freelancer opening
-    someone else's link is an ordinary client for this purpose. Never raises: any
-    failure (no cookie, expired, revoked, malformed) means "not the owner".
-
-    The access cookie decides first. If it is absent or invalid (it lives only 15
-    minutes), the refresh cookie is consulted read-only
-    (identify_user_from_refresh_cookie), so the owner stays recognised for as
-    long as they are signed in. A VALID access cookie that belongs to someone
-    else does not fall through to the refresh cookie: the two are set together
-    and name the same person, so a different user's access cookie means a
-    different person is signed in.
-
-    Either answer can only reduce what happens (the owner sees a preview, the
-    view is not counted, they cannot answer); it grants no access to anything.
-
-    apps.clients.portal.is_freelancer_previewing_portal cannot be reused: it
-    returns True only when the browser holds BOTH a freelancer session AND a
-    client-portal session, and a proposal link never creates a portal session,
-    so it would always say False.
+    The shared check (apps.users.owner_probe.request_is_owner, promoted in Prompt 22) with this module's own
+    `identify_user_from_refresh_cookie` passed in, so a test that patches that name HERE still intercepts the lookup.
+    Behaviour is identical to the original in-module function.
     """
-    try:
-        result = _OwnerProbe().authenticate(request)
-    except Exception:
-        result = None
-    if result is not None:
-        return str(result[0].pk) == str(owner_user_id)
-    try:
-        user = identify_user_from_refresh_cookie(request)
-    except Exception:
-        return False
-    return user is not None and str(user.pk) == str(owner_user_id)
-
-
-def safe_ip(request):
-    """
-    The client address as a validated, normalised IP string, or None.
-
-    get_client_ip returns whatever the last X-Forwarded-For entry is, and a
-    value that is not an IP makes any PostgreSQL `inet` insert fail; inside a
-    transaction that poisons the whole transaction. Recording an answer must
-    never fail because of a request header, so anything that is not a valid
-    IP address is stored as NULL instead.
-    """
-    raw = get_client_ip(request)
-    # A scoped IPv6 literal ("fe80::1%eth0") parses in Python but is not a client address a proxy would
-    # ever append, and its stored form is not what was parsed; treat it as not-an-IP.
-    if not raw or '%' in raw:
-        return None
-    try:
-        return str(ipaddress.ip_address(raw.strip()))
-    except ValueError:
-        return None
+    return _request_is_owner(request, owner_user_id, identify=identify_user_from_refresh_cookie)
 
 
 def _not_found():

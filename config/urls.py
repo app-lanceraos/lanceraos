@@ -4,6 +4,7 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from apps.invoices.views_contract_pdf import contract_pdf_owner, contract_pdf_public
 from apps.invoices.views_payment_link import (
     payment_link_candidates,
     payment_link_invoice,
@@ -55,6 +56,11 @@ urlpatterns = [
     path('api/payments/', include('apps.payments.urls')),
     path('api/expenses/', include('apps.payments.expense_urls')),
     path('api/proposals/', include('apps.proposals.urls')),
+    # The two Contract PDFs (Prompt 22): WeasyPrint lives in apps.invoices, so they are registered here, BEFORE the
+    # apps.contracts include, exactly like the tax summary and the report PDFs.
+    path('api/contracts/<uuid:pk>/pdf/', contract_pdf_owner, name='contract_pdf_owner'),
+    path('api/contracts/public/<str:view_token>/pdf/', contract_pdf_public, name='contract_pdf_public'),
+    path('api/contracts/', include('apps.contracts.urls')),
     path('api/dashboard/', include('apps.dashboard.urls')),
     # Lives at the root, not under api/auth/ — matches what the frontend
     # (AppShell.jsx) already calls directly via api.get('/notifications/'),

@@ -398,6 +398,10 @@ lanceraos/                          <- Django project root
 │   │                         always returns an AiResult), parse_json_object. No feature uses it
 │   │                         yet — 02 November 2026, see DECISIONS.md
 │   ├── email.py            ← Resend HTTP API sender (send_email)
+│   ├── email_html.py        ← html_wrapper + one_line: the branded email wrapper and the one-line subject helper
+│   │                         (promoted out of apps/proposals/emails.py, Prompt 22, so Contracts has no second copy)
+│   ├── public_http.py        ← no_store (Cache-Control: no-store on every response) + safe_ip (a validated client IP or
+│   │                         None) for no-login public pages (promoted out of apps/proposals/views_public.py, Prompt 22)
 │   ├── encryption.py        ← Fernet + HMAC blind-index helpers
 │   ├── health.py              ← GET /api/health/ platform probe (no auth, no throttle, no
 │   │                            ApiRequestLog row) — 31 October 2026, see DEPLOYMENT.md
@@ -416,7 +420,8 @@ lanceraos/                          <- Django project root
 │   │                         apps/proposals/ratelimit.py, 07 November 2026, so apps.payments can use it)
 │   └── permissions.py       ← Shared DRF permission classes [not yet built]
 ├── apps/
-│   ├── users/                      <- Auth, profile, settings — BUILT
+│   ├── users/                      <- Auth, profile, settings — BUILT (owner_probe.py, Prompt 22: request_is_owner, "is the
+│   │                                  person looking at this public page its owner?", shared by Proposals and Contracts)
 │   ├── admin_panel/                <- Admin panel backend (admin.lanceraos.com's API) — BUILT.
 │   │   │                              Separate session/cookie/auth-class stack from apps.users —
 │   │   │                              see Section 5, Module 1's admin-panel subsection.
@@ -517,7 +522,15 @@ lanceraos/                          <- Django project root
 │   │                                  shared helpers (apps.invoices.kpis, core.*) from other apps;
 │   │                                  NO other app may import it (AST-tested).
 │   ├── proposals/                  <- Proposals + AI writer
-│   ├── contracts/                  <- Contracts + digital signing
+│   ├── contracts/                  <- Contracts + digital signing — BUILT, backend only (10 November 2026, Prompt 22): models.py (one
+│   │                                  table, Contract), clauses.py (the five templates as data, CLAUSE_LIBRARY_VERSION), integrity.py (the
+│   │                                  SHA-256 fingerprint: pure), services.py (create from a template or an accepted proposal, text
+│   │                                  normalisation, send_problem, numbering), copy.py (every shared sentence + the banned-word lists),
+│   │                                  serializers.py (the public payload is an ALLOWLIST), views.py (owner API), views_public.py (token
+│   │                                  page: read, sign, decline), notifications.py (audit + bell), emails.py (four emails), tasks.py
+│   │                                  (send_signed_copies). The two PDF routes are apps/invoices/contract_pdf.py + views_contract_pdf.py
+│   │                                  + templates/invoices/contracts/ (registered in config/urls.py BEFORE the apps.contracts include).
+│   │                                  Imports only core.*, apps.users, apps.clients, apps.proposals (models), apps.invoices (models).
 │   └── subscriptions/              <- Free/Pro plans and enforcement
 ├── frontend/                       <- React application (the main, freelancer-facing app)
 │   ├── src/
@@ -3344,29 +3357,56 @@ items 12-16 (and the new 13a/13b) against the real deployment.
 ---
 
 ### Module 7 — Contracts
-Status: [updated as built]
-App: apps/contracts/
+Status: BUILT, backend only (10 November 2026, Prompt 22). The pages are Prompt 23. No AI, no Pro gating, no new environment variable, no
+new service. One migration, `contracts.0001_initial`. Not announced publicly until a Pakistani lawyer has read `CONTRACTS_LAW.md`, the clause
+library and the wording (`CONTRACTS_LAW.md`, "Before public launch").
+App: apps/contracts/ (+ the PDF in apps/invoices/: contract_pdf.py, views_contract_pdf.py, templates/invoices/contracts/)
 
-5 pre-built templates: Web Development, Design, Consulting,
-Content Writing, Custom. Each is a WeasyPrint HTML template.
+A freelancer picks one of five templates (Web Development, Design, Consulting, Content Writing, Custom), optionally starting from an
+ACCEPTED proposal (title, client, currency, fee, payment terms; the proposal's scope sections fill the first `[[...]]` of the first section).
+The contract is a list of numbered sections plus "Key terms" (fee, currency, payment terms, start, end, sign-by) that come from FIELDS, never
+from text inside a clause. The templates are data (`apps/contracts/clauses.py`), not HTML, and have no variables; text the freelancer still
+has to write is wrapped in `[[double square brackets]]` and sending is refused while any is left. A test pins a fingerprint of the whole
+library, so a text change forces a deliberate `CLAUSE_LIBRARY_VERSION` bump. The clause texts are unreviewed starting points.
 
-Sending: contract sent to client via email with secure token link.
-Client views on public page using same PIN portal auth as invoices.
+Lifecycle: `draft -> sent -> viewed -> signed | declined`, and `sent/viewed -> withdrawn`. `expired` is not a status (computed on read from
+the sign-by date). Only a draft can be edited or deleted. A signed contract is final.
 
-Digital signing: client types name as signature. On submit: name,
-IP address, user agent, and timestamp recorded. Freelancer notified
-immediately via in-app + email.
+Sending: the freelancer signs by typing their full name; the server freezes the parties (names only) and computes a SHA-256 fingerprint of
+the exact text, assigns `CON-YYYY-NNNN` (per user per year, after the email succeeded, under the User-row lock) and stores the freelancer's
+typed name, time, IP and browser. By email goes through `send_client_facing_email` (the freelancer's custom SMTP when set); "link" sends
+nothing. A failed email leaves the draft untouched and consumes no number.
 
-Decline flow: client can decline with reason. Freelancer notified.
+Client: a private link (`{FRONTEND_URL}/contract/<token>`, no login, NO PIN: the old "PIN portal auth" wording was removed because it no
+longer exists). The client reads it and either signs by typing their name and ticking a box, or declines with an optional reason. Signing
+recomputes the fingerprint from the stored row first; a mismatch is a 409 and nothing is signed. Evidence stored with the signature: the
+typed name, the time, the IP address (validated, else NULL), the browser string and the fingerprint. A plain view stores only the time of
+the first view. The honest limit: anyone who holds the link can sign; nothing here claims the signer's identity was verified.
 
-Contract linking: can link to a proposal or to an invoice.
+Public payload: an allowlist (explicit serializers). It shows the frozen parties as NAMES ONLY; no email address of either side, no ids, no
+token, no IP, no browser string. The owner opening their own link sees `preview: true` and can neither sign nor decline.
 
-Key API endpoints:
-- CRUD /api/contracts/
-- POST /api/contracts/{id}/send/
-- GET /api/contracts/public/{token}/
-- POST /api/contracts/public/{token}/sign/
-- POST /api/contracts/public/{token}/decline/
+PDF (rendered on demand, never stored): the owner's, any status (`GET /api/contracts/<id>/pdf/`, sharing the 30 per hour report-PDF bucket)
+and the client's, once signed (`GET /api/contracts/public/<token>/pdf/`, 20 per hour per IP). It prints names, Pakistan times, the Key terms,
+the sections, both typed signatures and the fingerprint; no IP address, no browser string, nothing about legal validity.
+
+Notifications: an audit row for every state change (`contract_created/_deleted/_sent/_viewed/_withdrawn/_signed/_declined`, ids, numbers,
+method, hashes and counts, never contract text or a typed name), written regardless of any toggle. The bell row (`contract_signed_notice` /
+`contract_declined_notice`) and the "declined" email follow the "Client Messages" toggle. The signed copies (PDF attached) go to the client
+and, when the toggle is on, to the freelancer, from the Celery task `apps.contracts.tasks.send_signed_copies`, never inside the client's
+request; `signed_copies_sent_at` makes it idempotent. The worker service must be redeployed with the web service.
+
+Key API endpoints (all `Cache-Control: no-store`):
+- GET /api/contracts/templates/ (the five templates and the library version)
+- GET/POST /api/contracts/ (list with ?status= ?search=; POST creates a draft from `template_key`, optionally `proposal`, `client`, `invoice`)
+- GET/PATCH/DELETE /api/contracts/{id}/ (PATCH and DELETE: draft only, 403 otherwise; the detail carries `signature_record` once signed/declined)
+- POST /api/contracts/{id}/send/ ({method, confirm, signer_name}) + /withdraw/ + /duplicate/
+- GET /api/contracts/{id}/pdf/ (apps.invoices)
+- GET /api/contracts/public/{token}/ + POST .../sign/ ({signer_name, agree: true}) + POST .../decline/ ({reason}) + GET .../pdf/ (signed only)
+
+Not built (do not stub): any frontend page (Prompt 23); an email code or any identity check beyond the emailed link; reminders for unsigned
+contracts; amending or terminating a signed contract; more than one signer per side; a drawn or uploaded signature; AI-written contracts;
+contract line items; Pro gating; client-portal integration; Dashboard or Health Score changes; stored PDFs; Urdu; e-stamping.
 
 ---
 
@@ -3497,7 +3537,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | FBR Tax              | Built (10 Nov 2026, Prompt 20): `apps.tax` (no model, no migration) — overview, law, slab calculator, summary PDF; Prompt 21 changed one sentence (overview note 3) | Built (10 Nov 2026, Prompt 21): `/tax` (Estimate, Calculator, How this works), the summary PDF download, the Settings > Tax & PSEB text fix | backend `apps.tax` tests (untracked); frontend 1979 -> 2112 tests (133 new, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Built (no AI, no Pro gating; pre-launch accountant review still required) |
 | Health Score         | Built (09 Nov 2026, Prompt 18): `apps/health` (no model, no migration) — `GET /api/health/score/` and `/mini/`; five areas, rescaled total, computed tips | Built (09 Nov 2026, Prompt 19): `/health` (window pills, score + grade, radar, "Where to start", five area cards, notes) and the Dashboard "Financial health" widget | backend `apps.health` tests (untracked, see DECISIONS.md); frontend 1816 -> 1979 tests (162 new, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Built (no AI, no history, no Pro gating) |
 | Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A (list, create, autosaving draft editor, score/tips) and part B (Send dialog with pre-flight and verify-by-checking, the client's public page `/proposal/:token`, withdraw, convert to invoice, activity timeline, client link, client's answer, in-app Preview) — 04 Nov 2026 | backend 479 passing (`apps.proposals` 299 + `core` 181; untouched by part B); frontend 1037 of 1038 passing (221 new for part B; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Complete; real-deployment smoke tests (DEPLOYMENT.md Section 8, items 12-16) still to run |
-| Contracts            | -       | -        | -     | Not started |
+| Contracts            | Built (10 Nov 2026, Prompt 22): `apps/contracts` (one table, five templates as data, send with both sides signing by typing a name, public sign/decline page API, SHA-256 fingerprint checked at signing, signed PDF, audit + bell + emails, Celery `send_signed_copies`) | Not started (Prompt 23) | backend `apps/contracts/tests/` + `apps/invoices/tests/test_contract_pdf.py` (untracked) | Backend built (no AI, no Pro gating; a lawyer must read `CONTRACTS_LAW.md` and the wording before public launch) |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | Built: apps/dashboard (no models, no migration) — GET /api/dashboard/summary/ with per-section isolation; the invoice KPI maths extracted to apps/invoices/kpis.py (invoice_summary output byte-identical) | Built: `/dashboard` (greeting, 4 KPI cards, 6-month chart, Needs attention, Upcoming recurring, Recent activity, Exchange rates), now the landing page | backend 54 new (`apps.dashboard`); frontend 77 new (Dashboard, dashboardHelpers, App routing, AppShell pill) | Built without AI (04 Nov 2026); AI insights + Financial Health widget still to come |
 | Help / AI Assistant  | -       | -        | -     | Not started |

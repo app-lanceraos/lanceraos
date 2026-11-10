@@ -1787,9 +1787,64 @@ imported expense. Income tax is not a category: income tax paid is not a busines
 
 ---
 
+## `contracts` (`Contract`, in `apps.contracts`)
+
+The signed-document table (Prompt 22, 10 November 2026). One row per contract. Migration `contracts.0001_initial` (a new table, five indexes
+and one unique constraint; nothing existing is touched, so it cannot fail on production data). A contract is a draft until it is sent; from
+then on its text is frozen and fingerprinted (DECISIONS.md, 10 November 2026, "Contracts: the backend").
+
+**Schema**:
+```
+id                       UUIDField, primary key
+user                     FK -> User, CASCADE, related_name 'contracts'
+client                   FK -> Client, SET_NULL, null (optional; the client_* snapshot below keeps the contract readable)
+client_name / client_email / client_company   CharField(200) / EmailField / CharField(200), blank — snapshot, plain text
+proposal                 FK -> proposals.Proposal, SET_NULL, null — a plain reference to the accepted proposal it started from
+invoice                  FK -> invoices.Invoice, SET_NULL, null — a plain reference; changes nothing on the invoice
+title                    CharField(200)
+template_key             CharField(20): web_development | design | consulting | content_writing | custom
+template_version         CharField(20), blank — the clause library version the sections started from
+sections                 JSONField list of {id, title, text} — plain text, at most 30 sections
+currency                 CharField(3), no choices= (validated in the serializer, like everywhere)
+fee_amount               Decimal(12,2), default 0
+payment_terms            TextField, blank
+start_date / end_date / valid_until   DateField, null (valid_until is the sign-by date)
+status                   CharField(10): draft | sent | viewed | signed | declined | withdrawn (`expired` is computed on read, never stored)
+view_token               CharField(32), unique, indexed — the credential in the client's link
+contract_number          CharField(30), null — CON-YYYY-NNNN, assigned at send; unique per (user, contract_number)
+sent_via                 CharField(10): email | link, blank until sent
+sent_at                  DateTimeField, null
+parties                  JSONField — frozen at send: {freelancer: {name, business_name, city, country}, client: {name, company}}, names only
+content_hash             CharField(64), blank — SHA-256 of the canonical form of the frozen text, parties, fee, terms and dates
+owner_signed_name / owner_signed_at / owner_signed_ip / owner_signed_user_agent   the freelancer's typed signature, set at send
+viewed_at                DateTimeField, null — the FIRST client view only
+responded_at / withdrawn_at   DateTimeField, null
+signed_name              CharField(120), blank — the client's typed signature
+response_message         TextField, blank — the client's optional reason for declining
+response_ip / response_user_agent   GenericIPAddressField null / CharField(500) — evidence, set only when the client signs or declines
+signed_hash              CharField(64), blank — the fingerprint at the moment of signing (equals content_hash)
+signed_copies_sent_at    DateTimeField, null — makes the Celery task send_signed_copies idempotent
+created_at / updated_at
+db_table 'contracts'; ordering -created_at; indexes (user, status), (user, created_at); unique (user, contract_number)
+```
+
+1. **Mutable?** Content only while `draft`. After sending only lifecycle fields change (status, timestamps, the signatures, `signed_copies_sent_at`);
+   every edit and delete endpoint refuses anything but a draft (403), and signing re-checks the fingerprint. A signed contract is final.
+2. **Soft deleted?** No. Only drafts are hard-deleted (a draft has no record-keeping value). A sent or answered contract is withdrawn, never deleted.
+3. **Audit trail?** Yes, every transition, written by `apps/contracts/notifications.py` regardless of any toggle: `contract_created`, `_deleted`,
+   `_sent`, `_viewed`, `_withdrawn`, `_signed`, `_declined` (ids, numbers, method, hashes and counts; never contract text, a typed name, the client's
+   reason or an email address). `contract_signed_notice` and `contract_declined_notice` are the toggle-gated bell rows.
+4. **Indexed?** `(user, status)`, `(user, created_at)`, the unique indexed `view_token`, unique `(user, contract_number)` and the implicit FK indexes.
+5. **Encrypted?** No: business text and prices, no credentials. `response_ip`, `response_user_agent`, `owner_signed_ip` and `owner_signed_user_agent`
+   are evidence stored only when a person signs, declines or sends, returned only to the owner (`signature_record`), never in a public payload.
+6. **Cascade behavior?** `user` CASCADE (accounts are anonymised, never hard-deleted, so it does not fire in practice); `client`, `proposal` and
+   `invoice` SET_NULL, so the snapshot fields and the frozen `parties` keep the contract readable if a linked record is removed.
+
+---
+
 ## Not yet built
 
-Tax, Health Score, Proposals, Contracts, Subscriptions, and the rest of Payments (income tracking,
+Tax, Health Score, Proposals, Subscriptions, and the rest of Payments (income tracking,
 expense receipts, P&L) — none of these exist yet. Within `apps.invoices` itself, this step was
 models-only: no views, serializers, URLs, PDF generation, email delivery, the client portal,
 payment claims *workflow* (the table exists; confirm/reject actions don't), comments *delivery*

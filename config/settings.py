@@ -113,6 +113,7 @@ INSTALLED_APPS = [
     'apps.clients',
     'apps.invoices',
     'apps.proposals',
+    'apps.contracts',
     'apps.dashboard',
     'apps.health',
     'apps.tax',  # Prompt 20: verified-only tax estimate (no models, no migration)
