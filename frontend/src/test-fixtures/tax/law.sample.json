@@ -1,0 +1,152 @@
+{
+  "version": "2026-11-09",
+  "last_verified": "2026-11-09",
+  "tax_years": [
+    2026,
+    2027
+  ],
+  "facts": [
+    {
+      "id": "export_rates",
+      "title": "Tax your bank takes on money from abroad",
+      "text": "When money from a client abroad reaches your bank in Pakistan, the bank takes income tax from it under section 154A. The rate is 0.25% if you are an IT exporter registered with and certified by PSEB, and 1% for everyone else. These rates are set for tax years 2024 to 2029.",
+      "confidence": "high",
+      "sources": [
+        "fbr_rates_card_2027",
+        "fbr_circular_2026_27"
+      ]
+    },
+    {
+      "id": "no_atl_difference",
+      "title": "Active Taxpayer List",
+      "text": "For this tax, FBR's rate card shows the same rate whether or not you are on the Active Taxpayer List.",
+      "confidence": "high",
+      "sources": [
+        "fbr_rates_card_2027"
+      ]
+    },
+    {
+      "id": "final_tax",
+      "title": "When the bank's tax is final",
+      "text": "The tax the bank takes is a final tax on that income only if you file your income tax return, file your withholding tax statements if you are required to, and file sales tax returns if you are required to. PSEB-registered IT exporters do not need the sales tax returns for this purpose. No credit is given for tax paid in another country.",
+      "confidence": "medium_high",
+      "sources": [
+        "ito_154a_text_1",
+        "ito_154a_text_2"
+      ]
+    },
+    {
+      "id": "opt_out",
+      "title": "Choosing not to be taxed this way",
+      "text": "You can choose each year, when you file your return, not to be taxed this way. LanceraOS cannot tell you what this does to the tax your bank already took. Ask a tax advisor before you choose.",
+      "confidence": "medium_high",
+      "sources": [
+        "ito_154a_text_1",
+        "ito_154a_text_2"
+      ]
+    },
+    {
+      "id": "no_expenses",
+      "title": "Expenses",
+      "text": "When the bank's tax is the final tax, it is a percentage of the money you received. Your business expenses do not reduce it.",
+      "confidence": "medium",
+      "sources": [
+        "ito_154a_text_1",
+        "ito_154a_text_2"
+      ]
+    },
+    {
+      "id": "normal_rates",
+      "title": "Normal rates",
+      "text": "Income that is not taxed this way is taxed at the normal rates for non-salaried people. For tax year 2027 nothing is payable up to Rs 600,000, then the rates step up to 15%, 20%, 30% and 40%, and 45% above Rs 5,600,000. A 10% surcharge on the tax applies when taxable income is above Rs 10,000,000.",
+      "confidence": "medium_high",
+      "sources": [
+        "slabs_pkrevenue_2027",
+        "slabs_taxwizard",
+        "fbr_circular_2026_27"
+      ]
+    },
+    {
+      "id": "tax_year",
+      "title": "Tax year",
+      "text": "A tax year runs from 1 July to 30 June and is named for the year it ends in. Tax year 2027 is 1 July 2026 to 30 June 2027.",
+      "confidence": "high",
+      "sources": [
+        "fbr_circular_2026_27"
+      ]
+    },
+    {
+      "id": "return_due",
+      "title": "Return due date",
+      "text": "The income tax return for a tax year is due by 30 September after the year ends. FBR has often moved this date, so check FBR for the current date.",
+      "confidence": "medium",
+      "sources": [
+        "fbr_site"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "key": "fbr_rates_card_2027",
+      "label": "FBR Withholding Tax Rates Card 2027 (updated up to 30 June 2026)",
+      "url": "https://download1.fbr.gov.pk/Docs/202681113864992WithholdingTaxRatesCard2027.pdf",
+      "kind": "fbr"
+    },
+    {
+      "key": "fbr_circular_2026_27",
+      "label": "FBR Circular No. 02 of 2026-27 on the Finance Act 2026 (8 September 2026)",
+      "url": "https://download1.fbr.gov.pk/Docs/202698139527880CircularNo.2of2026-27.pdf",
+      "kind": "fbr"
+    },
+    {
+      "key": "ito_154a_text_1",
+      "label": "Text of section 154A of the Income Tax Ordinance, 2001 (as amended by the Finance Act 2022)",
+      "url": "https://pakarbiter.com/laws-in-pakistan/income-tax-ordinance-2001/ito-section-154a/export-of-services",
+      "kind": "law_text"
+    },
+    {
+      "key": "ito_154a_text_2",
+      "label": "Text of section 154A, second copy",
+      "url": "https://www.thebscon.com/export-of-services-including-it-services-section-154a/",
+      "kind": "law_text"
+    },
+    {
+      "key": "slabs_pkrevenue_2027",
+      "label": "Rates for business individuals and AOPs, tax year 2027 (Pakistan Revenue, 28 July 2026)",
+      "url": "https://pkrevenue.com/fbr-notifies-tax-rates-for-business-individuals-aops-for-tax-year-2027/",
+      "kind": "secondary"
+    },
+    {
+      "key": "slabs_taxwizard",
+      "label": "Income tax slabs 2026-27 (TaxWizard)",
+      "url": "https://taxwizard.pk/tax-slabs/",
+      "kind": "secondary"
+    },
+    {
+      "key": "fbr_ordinance",
+      "label": "Income Tax Ordinance, 2001, FBR consolidated text up to 30 June 2026",
+      "url": "https://download1.fbr.gov.pk/Docs/2026724177725705IncomeTaxOrdinanace2001.pdf",
+      "kind": "fbr"
+    },
+    {
+      "key": "fbr_site",
+      "label": "FBR website",
+      "url": "https://www.fbr.gov.pk",
+      "kind": "fbr"
+    }
+  ],
+  "not_covered": [
+    "Tax on payments from clients inside Pakistan.",
+    "Whether to choose not to be taxed this way for a year.",
+    "Any older tax credit for IT exporters (section 65F). We could not confirm whether it still applies.",
+    "Advance tax paid in instalments during the year.",
+    "Sales tax on services, which the provinces collect.",
+    "Income from salary, property, investments or the sale of assets.",
+    "The tax your bank actually took. Only your bank's records show that."
+  ],
+  "links": {
+    "fbr_iris": "https://iris.fbr.gov.pk",
+    "pseb": "https://www.pseb.org.pk",
+    "fbr": "https://www.fbr.gov.pk"
+  }
+}

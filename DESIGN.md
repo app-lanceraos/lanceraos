@@ -864,6 +864,28 @@ about N points"). No score: "No score yet", the server's message and a text link
 rendered (loading is a skeleton of the final height; an error is `DashboardUnavailable` inside its own card), so it neither delays nor
 hides, and is neither delayed nor hidden by, the rest of the Dashboard. Grid areas and the mobile order are in "Dashboard layout" above.
 
+### Tax page (`/tax`, 10 November 2026, Prompt 21)
+
+One page, three views, chosen by `?view=` and a row of real links (not ARIA tabs): Estimate (default), Calculator, How this works. The row is a
+`<nav aria-label="Tax views">` of `<Link>`s with `aria-current="page"` on the active one, the underline of the Settings tab row, and it scrolls sideways
+inside itself on a phone (the page never does). Below it, on the Estimate and Calculator views only, the shared **tax-year pills** (`FilterPill`s in a
+`role="group"`, `aria-pressed`), whose list comes from the server.
+
+- **Hidden, not unmounted.** All three views are mounted from the first render and the inactive ones carry `hidden`, so typed input and a loaded estimate
+  survive switching. The three wrappers must NOT carry an inline `display` style: it overrides `hidden` and the Estimate shows through on the Calculator.
+- **Colour.** Tax is a calculation, not good or bad news: figures are `--text-primary`, never red or green. The only status colours are the checklist
+  icons (`--status-green-text` done, `--status-amber-text` to do, `--text-tertiary` check) and the status is always written as a word ("Done", "To do",
+  "Check"). Confidence badges are neutral (`--bg-surface-3`, `--text-secondary`) and carry the word.
+- **Server sentences only.** Every sentence about tax and every figure is rendered from the server's payload as a plain text node (`overflowWrap:
+  'anywhere'`); no static string states a rate, a band or a date (a test scans for percent figures and dates). Money in tables comes through `plainAmount` /
+  `formatExact`; the month table's footer row is the server's totals.
+- **Cards.** The headline strip is the `PnlKpiStrip` recipe (auto-fit `minmax(220px, 1fr)`, dims to 0.55 while a refetch runs, never unmounts); the rate card
+  and the summary-download card sit side by side on a `minmax(300px, 1fr)` grid; tables are `MonthlyTable` (the footer is the server's); a year with no payment
+  at all shows the empty-year card ("No payments in tax year N", a "Record a payment" link) instead of the tables, while a PKR-only year is NOT empty.
+- **States.** First load: skeletons with the final footprints under one status ("Loading your tax estimate"); a refetch dims and keeps the content; a failure
+  shows one alert with Reload (the year pills stay usable). The calculator is an explicit form with the field error under the input and the result in an
+  `aria-live="polite"` region.
+
 ## 8. Animation and Transitions
 
 ### Timing tokens

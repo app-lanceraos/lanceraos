@@ -476,4 +476,5 @@ first applied to `apps/proposals/views_public.py`:
 - PSEB status for tax purposes comes from the saved, validated number (`pseb_hash`), never from the self-declared `pseb_registered` checkbox.
 - Tax money follows the ledger rules: one conversion rule (`rollup.convert_row`), the tax of one payment rounded half-up to the cent, every
   total the exact sum of rounded parts, and an unconverted payment counted and left out, never guessed.
+- The Tax pages render the server's tax sentences as plain text and never state a rate, band, date or rule in a static string; a test scans every static string for percent figures and dates.
 

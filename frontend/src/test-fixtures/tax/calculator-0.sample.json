@@ -1,0 +1,22 @@
+{
+  "request": {
+    "taxable_income": "0",
+    "tax_year": 2027
+  },
+  "status": 200,
+  "body": {
+    "tax_year": 2027,
+    "taxable_income": "0.00",
+    "bands": [],
+    "tax_before_surcharge": "0.00",
+    "surcharge_percent": null,
+    "surcharge": "0.00",
+    "total_tax": "0.00",
+    "effective_percent": null,
+    "marginal_percent": "0",
+    "notes": [
+      "This is the tax on the taxable income you typed, at the normal rates for non-salaried individuals for tax year 2027. It is an estimate.",
+      "It does not subtract tax already taken by a bank, and it does not apply the final tax on money from abroad."
+    ]
+  }
+}

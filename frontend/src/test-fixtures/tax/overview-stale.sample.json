@@ -1,0 +1,165 @@
+{
+  "tax_year": 2027,
+  "label": "Tax year 2027",
+  "start": "2026-07-01",
+  "end": "2027-06-30",
+  "counted_to": "2027-06-30",
+  "status": "complete",
+  "currency": "PKR",
+  "rate": {
+    "percent": "0.25",
+    "basis": "pseb_number_saved",
+    "pseb_marked_without_number": false,
+    "sentence": "Your PSEB registration number is saved, so this estimate uses 0.25%, the rate for IT exporters registered with and certified by PSEB. LanceraOS cannot check that your certificate is current."
+  },
+  "export": {
+    "total": "1054760.44",
+    "count": 4,
+    "expected_deduction": "2636.90",
+    "by_currency": [
+      {
+        "currency": "GBP",
+        "amount": "600.00",
+        "count": 1
+      },
+      {
+        "currency": "USD",
+        "amount": "3200.00",
+        "count": 3
+      }
+    ]
+  },
+  "local": {
+    "total": "80000.00",
+    "count": 1
+  },
+  "monthly": [
+    {
+      "month": "2026-07",
+      "export_receipts": "225000.00",
+      "expected_deduction": "562.50",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2026-08",
+      "export_receipts": "300000.00",
+      "expected_deduction": "750.00",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2026-09",
+      "export_receipts": "225000.00",
+      "expected_deduction": "562.50",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2026-10",
+      "export_receipts": "304760.44",
+      "expected_deduction": "761.90",
+      "local_receipts": "80000.00"
+    },
+    {
+      "month": "2026-11",
+      "export_receipts": "0.00",
+      "expected_deduction": "0.00",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2026-12",
+      "export_receipts": "0.00",
+      "expected_deduction": "0.00",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2027-01",
+      "export_receipts": "0.00",
+      "expected_deduction": "0.00",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2027-02",
+      "export_receipts": "0.00",
+      "expected_deduction": "0.00",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2027-03",
+      "export_receipts": "0.00",
+      "expected_deduction": "0.00",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2027-04",
+      "export_receipts": "0.00",
+      "expected_deduction": "0.00",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2027-05",
+      "export_receipts": "0.00",
+      "expected_deduction": "0.00",
+      "local_receipts": "0.00"
+    },
+    {
+      "month": "2027-06",
+      "export_receipts": "0.00",
+      "expected_deduction": "0.00",
+      "local_receipts": "0.00"
+    }
+  ],
+  "unconverted_count": 0,
+  "estimated_count": 0,
+  "return": {
+    "due": "2027-09-30",
+    "sentence": "The income tax return for tax year 2027 is due by 30 Sep 2027. FBR has moved this date in past years, so check FBR for the current date."
+  },
+  "has_ntn": true,
+  "checklist": [
+    {
+      "key": "ntn",
+      "status": "done",
+      "text": "Your NTN is saved."
+    },
+    {
+      "key": "pseb",
+      "status": "done",
+      "text": "Your PSEB registration number is saved."
+    },
+    {
+      "key": "return",
+      "status": "check",
+      "text": "File your income tax return for tax year 2027. The tax your bank took is a final tax only if you file."
+    },
+    {
+      "key": "statements",
+      "status": "check",
+      "text": "File your withholding tax statements if you are required to."
+    },
+    {
+      "key": "bank",
+      "status": "check",
+      "text": "Ask your bank for the tax it took from each foreign payment and compare it with this estimate."
+    }
+  ],
+  "not_covered": [
+    "Tax on payments from clients inside Pakistan.",
+    "Whether to choose not to be taxed this way for a year.",
+    "Any older tax credit for IT exporters (section 65F). We could not confirm whether it still applies.",
+    "Advance tax paid in instalments during the year.",
+    "Sales tax on services, which the provinces collect.",
+    "Income from salary, property, investments or the sale of assets.",
+    "The tax your bank actually took. Only your bank's records show that."
+  ],
+  "notes": [
+    "These figures are estimates built from the payments you recorded in LanceraOS. Your bank's own records show the tax it actually took.",
+    "A payment in a currency other than PKR is treated as money earned from outside Pakistan. A payment in PKR is treated as a local payment, and no bank deduction is estimated for it.",
+    "The estimate applies one rate, the one for your PSEB status today, to every payment in the tax year, including payments from before your PSEB registration.",
+    "The bank takes the tax when the money reaches your bank account in Pakistan. LanceraOS uses the date you recorded for each payment, so money that stayed in a Payoneer or Wise balance for a while may be taxed in a later month.",
+    "The tax rules for tax year 2028 are not loaded yet. The figures use the rules for tax year 2027."
+  ],
+  "stale_law": true,
+  "law": {
+    "version": "2026-11-09",
+    "last_verified": "2026-11-09"
+  }
+}

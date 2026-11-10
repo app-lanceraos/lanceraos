@@ -8,6 +8,7 @@ import FormField from '@/components/FormField'
 import FosAlert from '@/components/FosAlert'
 import SaveButton from '@/components/SaveButton'
 import { validators, formatCNIC } from './validators'
+import { TAX_SETTINGS_PSEB_HINT, TAX_SETTINGS_SUBTITLE } from '../taxHelpers'
 
 function extractDraft(profile) {
   return {
@@ -96,7 +97,7 @@ export default function TaxSection({ profile, loading, onProfileUpdate }) {
 
       <Card
         title="Tax Identity"
-        subtitle="Used for FBR tax filing and the SRO 586 IT-export exemption check"
+        subtitle={TAX_SETTINGS_SUBTITLE}
         action={<SaveButton onClick={handleSave} disabled={!changed} saving={saving} />}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -133,6 +134,7 @@ export default function TaxSection({ profile, loading, onProfileUpdate }) {
               value={draft.pseb}
               onChange={(e) => handleChange('pseb', e.target.value)}
               error={fieldErrors.pseb}
+              hint={TAX_SETTINGS_PSEB_HINT}
             />
           )}
         </div>

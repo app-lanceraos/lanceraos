@@ -1,0 +1,10 @@
+{
+  "request": {
+    "taxable_income": "12000000",
+    "tax_year": 2026
+  },
+  "status": 400,
+  "body": {
+    "error": "For tax year 2026, income above Rs 10,000,000 carries a surcharge and we have not confirmed its rate, so we do not calculate it. Ask a tax advisor."
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "overview_tax_year_400": "tax_year must be 2026 or 2027.",
+  "overview_not_started_400": "That tax year has not started.",
+  "calculator_required_400": "taxable_income is required.",
+  "calculator_unparsable_400": "taxable_income must be a number of rupees, for example 1500000 or 1500000.50.",
+  "calculator_negative_400": "taxable_income cannot be negative.",
+  "calculator_too_big_400": "taxable_income cannot be more than 1,000,000,000,000.",
+  "calculator_year_400": "tax_year must be 2026 or 2027.",
+  "pdf_no_payments_400": "You have no payments in this tax year, so there is nothing to put in the summary.",
+  "pdf_no_ntn_400": "You asked to show your NTN, but none is saved. Add it in Settings, then Tax and PSEB."
+}

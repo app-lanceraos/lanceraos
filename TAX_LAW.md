@@ -38,3 +38,5 @@ Salaried slabs (not the freelancer case): see Circular 02/2026-27, section 7. No
 - FBR Income Tax Ordinance up to 30.06.2026 (not read in full): https://download1.fbr.gov.pk/Docs/2026724177725705IncomeTaxOrdinanace2001.pdf
 - Section 154A text: https://pakarbiter.com/laws-in-pakistan/income-tax-ordinance-2001/ito-section-154a/export-of-services and https://www.thebscon.com/export-of-services-including-it-services-section-154a/
 - Slabs: https://pkrevenue.com/fbr-notifies-tax-rates-for-business-individuals-aops-for-tax-year-2027/ and https://taxwizard.pk/tax-slabs/
+
+The Tax page (`/tax`, Prompt 21) shows these facts verbatim from `GET /api/tax/law/`. The confidence legend in `frontend/src/pages/taxHelpers.js` (`CONFIDENCE_LEGEND`) restates the Confidence line above and is part of the pre-launch review. No law line above was changed.

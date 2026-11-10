@@ -383,6 +383,18 @@ Smoke test: sign in; `GET /api/tax/overview/` returns 200 with a `rate` object a
 returns 200 with `Content-Type: application/pdf` for an account with at least one payment in that tax year (400 "You have no payments in this tax
 year ..." otherwise, which is correct, not an error); signed out, all four return 401.
 
+## 7j. Tax page release (10 November 2026, Prompt 21) **[U]**
+
+Frontend, plus ONE backend sentence. **No migration, no environment variable, no new service, no Celery change.** Prompt 21 rewords overview note 3 in
+`apps/tax/copy.py` (copy only), so: (1) redeploy the **web** service first (on top of 7i; the worker and beat are unaffected); (2) then redeploy the Vercel
+frontend. The page calls the four routes of 7i; without them it shows its load errors.
+
+Smoke test: sign in; the sidebar "Tax" opens `/tax`; the three links change the view and `?view=`; the year pills switch 2026 and 2027 and the Estimate
+figures equal `GET /api/tax/overview/`; the calculator with `1500000` shows total tax `PKR 150,000.00`; "How this works" lists eight facts; "Download tax
+summary (PDF)" downloads a PDF that opens (a 400 with a sentence for an account with no payment in the year is correct); the third note of the estimate reads
+"The estimate applies one rate, the one for your PSEB status today ..."; Settings > Tax & PSEB shows the new subtitle ("Your saved PSEB number sets the rate
+in your tax estimate. ...") and no longer mentions the SRO check; reloading `/tax?view=sources` directly works (`vercel.json` already rewrites to the SPA).
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

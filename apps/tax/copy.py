@@ -64,8 +64,8 @@ def overview_notes(*, unconverted_count, estimated_count, in_progress, start, co
         'tax it actually took.',
         'A payment in a currency other than PKR is treated as money earned from outside Pakistan. A payment in PKR is '
         'treated as a local payment, and no bank deduction is estimated for it.',
-        "The estimate uses today's rate for every payment in the tax year, including payments from before your PSEB "
-        'registration.',
+        'The estimate applies one rate, the one for your PSEB status today, to every payment in the tax year, including '
+        'payments from before your PSEB registration.',
         'The bank takes the tax when the money reaches your bank account in Pakistan. LanceraOS uses the date you '
         'recorded for each payment, so money that stayed in a Payoneer or Wise balance for a while may be taxed in a '
         'later month.',

@@ -27,6 +27,7 @@ import Expenses from '@/pages/Expenses'
 import ProfitAndLoss from '@/pages/ProfitAndLoss'
 import IncomeStatement from '@/pages/IncomeStatement'
 import HealthScore from '@/pages/HealthScore'
+import Tax from '@/pages/Tax'
 import Payments from '@/pages/Payments'
 import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
@@ -214,6 +215,10 @@ export default function App() {
         <Route
           path="/health"
           element={<PrivateRoute><AppShell><HealthScore /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/tax"
+          element={<PrivateRoute><AppShell><Tax /></AppShell></PrivateRoute>}
         />
         <Route
           path="/invoices"
