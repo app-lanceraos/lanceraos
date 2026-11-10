@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ document_title }}</title>
+{% include "invoices/reports/_report_styles.html" %}
+<style>
+  dl.identity { display: grid; grid-template-columns: 90pt 1fr; margin: 10pt 0 12pt; padding: 8pt 10pt; border: 0.75pt solid #cbd5e1; border-radius: 3pt; }
+  dl.identity dt { font-size: 8pt; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; padding: 2pt 0; }
+  dl.identity dd { margin: 0; padding: 2pt 0; min-width: 0; }
+  .box { border: 1.25pt solid #1e293b; border-radius: 3pt; padding: 10pt 12pt; display: flex; margin: 0 0 4pt; break-inside: avoid; }
+  .box .cell { flex: 1 1 0; min-width: 0; padding-right: 10pt; }
+  .box .cell:last-child { padding-right: 0; }
+  .box .label { font-size: 7.5pt; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; }
+  .box .value { font-size: 12pt; font-weight: 600; margin-top: 2pt; white-space: nowrap; }
+  .rate { font-size: 9.5pt; font-weight: 600; margin: 8pt 0 0; }
+  .keep { break-inside: avoid; }
+  .closing { margin-top: 18pt; font-size: 8.5pt; color: #334155; break-inside: avoid; }
+</style>
+</head>
+<body>
+  {% include "invoices/reports/_letterhead.html" %}
+
+  <h1 class="title">{{ document_title }}</h1>
+  <p class="meta">{{ tax_year_line }}</p>
+  {% if counted_line %}<p class="meta">{{ counted_line }}</p>{% endif %}
+
+  <dl class="identity">
+    {% for label, lines in identity %}
+    <dt>{{ label }}</dt>
+    <dd class="wrap">{% for line in lines %}{{ line }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</dd>
+    {% endfor %}
+  </dl>
+
+  <div class="box">
+    <div class="cell"><div class="label">Received from abroad (PKR equivalent)</div><div class="value">{{ export_total }}</div></div>
+    <div class="cell"><div class="label">Estimated tax taken by banks</div><div class="value">{{ expected_deduction }}</div></div>
+    <div class="cell"><div class="label">Received in PKR from local payers (no bank deduction estimated)</div><div class="value">{{ local_total }}</div></div>
+  </div>
+  <p class="rate">{{ rate_line }}</p>
+
+  <h2>Month by month</h2>
+  <table class="data">
+    <thead><tr><th>Month</th><th class="num">Received from abroad</th><th class="num">Estimated tax</th><th class="num">Received in PKR</th></tr></thead>
+    <tbody>
+      {% for row in monthly_rows %}
+      <tr><td>{{ row.month }}</td><td class="num">{{ row.export }}</td><td class="num">{{ row.tax }}</td><td class="num">{{ row.local }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="keep">
+  <h2>Received in these currencies</h2>
+  <table class="data">
+    <thead><tr><th>Currency</th><th class="num">Payments</th><th class="num">Amount received</th></tr></thead>
+    <tbody>
+      {% for row in currency_rows %}
+      <tr><td>{{ row.currency }}</td><td class="num">{{ row.count }}</td><td class="num">{{ row.amount }}</td></tr>
+      {% empty %}
+      <tr><td class="empty" colspan="3">No payments in a currency other than PKR in this tax year.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <h2>Next steps</h2>
+  <ol class="notes">
+    {% for step in next_steps %}<li class="wrap">{{ step }}</li>{% endfor %}
+  </ol>
+
+  <h2>Notes</h2>
+  <ol class="notes">
+    {% for note in notes %}<li class="wrap">{{ note }}</li>{% endfor %}
+  </ol>
+
+  <p class="closing wrap">{{ closing }}</p>
+</body>
+</html>

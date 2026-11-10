@@ -11,6 +11,7 @@ from apps.invoices.views_payment_link import (
 )
 from apps.invoices.views_reports import income_statement_pdf, pnl_pdf
 from apps.invoices.views_statement import client_statement_pdf
+from apps.invoices.views_tax_pdf import tax_summary_pdf
 from core.health import health_check
 from core.notifications import (
     dismiss_notifications,
@@ -25,6 +26,9 @@ urlpatterns = [
     path('api/health/', health_check, name='health_check'),
     # The Health Score (Prompt 18). AFTER the exact probe above: it matches only 'api/health/' itself.
     path('api/health/', include('apps.health.urls')),
+    # The Tax Summary PDF (Prompt 20): WeasyPrint lives in apps.invoices, so it is registered here, BEFORE the apps.tax include.
+    path('api/tax/summary/pdf/', tax_summary_pdf, name='tax_summary_pdf'),
+    path('api/tax/', include('apps.tax.urls')),
     path('admin/', admin.site.urls),
     path('api/auth/', include('apps.users.urls')),
     path('api/admin/', include('apps.admin_panel.urls')),

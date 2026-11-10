@@ -254,6 +254,7 @@ checkbox without ever having a real, validated PSEB number on file. This was fla
 security audit as something to close before the Tax module trusts it for a real SRO 586
 eligibility determination — that module should derive PSEB status from `bool(pseb_hash)`, not
 this flag alone. Not fixed yet; intentionally left as a forward note.
+The Tax module (Prompt 20, 10 November 2026) derives PSEB status from `bool(pseb_hash)` and never reads this flag for a rate; the Health Score still reads the flag.
 
 **Key methods**: `set_cnic()`/`set_ntn()`/`set_pseb()` (validate, check cross-account uniqueness,
 encrypt — never assign the encrypted/hash fields directly), `can_change_email()` (90-day

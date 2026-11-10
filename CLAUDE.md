@@ -13,7 +13,7 @@ through platforms like Upwork, Fiverr, Toptal, and direct contracts.
 The platform is the only product in the Pakistani market that combines:
 - Professional invoicing with PKR conversion and FBR tax compliance
 - Payoneer and Wise CSV income import
-- SRO 586(I)/2022 IT export tax exemption checking
+- IT export tax rate check (0.25% for PSEB-registered exporters, 1% otherwise) and tax estimates
 - AI-powered proposal writing
 - Financial health scoring
 - Digital contract signing
@@ -236,10 +236,13 @@ This is how you investigate "why didn't this happened?"
 
 4. Every PDF generated logs:
    - request_id
-   - document_type (invoice / contract / statement / certificate / pnl)
+   - document_type (invoice / contract / statement / certificate / pnl / tax_summary)
    - generated_at
    - duration_ms
    - success or error
+   Generating a report PDF also writes one core.AuditLog row where the report is a document the person may hand to
+   someone else: `income_statement_generated` and `tax_summary_generated` (ids, dates and booleans only, never an amount,
+   a name, a CNIC or an NTN).
 
 5. When investigating a support issue:
    - Find the request_id from core.ApiRequestLog by user + timestamp
@@ -487,7 +490,14 @@ lanceraos/                          <- Django project root
 │   │                                  /income-certificate PAGES are built (09 Nov 2026, Prompt 17, frontend only: pages/ProfitAndLoss.jsx,
 │   │                                  pages/IncomeStatement.jsx). Tax figures, period comparison, export, receipts, recurring
 │   │                                  expenses and exchange-rate alerts are NOT YET BUILT.
-│   ├── tax/                        <- FBR tax, SRO 586, income certificate
+│   ├── tax/                        <- FBR tax — BUILT, backend only, 10 November 2026 (Prompt 20). No models, no migration, no environment
+│   │                                  variable, no Celery: law.py (EVERY rate, band, date, source and fact sentence, with LAST_VERIFIED; the twin of
+│   │                                  TAX_LAW.md), calc.py (pure slab maths + the per-payment deduction, one rounding rule), domain.py, facts.py (the
+│   │                                  ONLY module that reads the database), copy.py (pure: every sentence), service.py (assembles the payloads and
+│   │                                  parses tax_year), views.py/urls.py (GET /api/tax/overview/, GET /api/tax/law/, POST /api/tax/calculator/). The
+│   │                                  summary PDF is apps/invoices/tax_pdf.py + views_tax_pdf.py + templates/invoices/reports/tax_summary.html
+│   │                                  (GET /api/tax/summary/pdf/). Sits ABOVE apps.payments; imports only core.* and apps.payments non-view modules;
+│   │                                  nothing imports it except config/urls.py and those two PDF modules (AST-tested). The Tax pages are Prompt 21.
 │   ├── health/                     <- Financial health score — BUILT: backend 09 November 2026 (Prompt 18), the /health page and the Dashboard
 │   │                                  widget 09 November 2026 (Prompt 19, frontend only). No models, no migration, no
 │   │                                  environment variable: constants.py (every number, named), domain.py (Facts/AreaResult/Overall/Action),
@@ -3036,54 +3046,55 @@ BUILT (07 November 2026, Payments core) — the income ledger endpoints. All `Is
 ---
 
 ### Module 4 — FBR Tax
-Status: [updated as built]
-App: apps/tax/
+Status: BUILT, backend only (10 November 2026, Prompt 20). The Tax pages and the Settings text change are Prompt 21.
+App: apps/tax/ (+ the summary PDF in apps/invoices/: tax_pdf.py, views_tax_pdf.py, templates/invoices/reports/tax_summary.html)
 
-FBR income tax compliance for Pakistani freelancers.
-Covers the current tax year (2025-26 slabs from Finance Act 2025).
-Tax year runs July 1 to June 30.
+**The verified-only rule.** The tax law behind every figure was checked by hand against FBR documents on 9 November 2026 and is
+written down in `TAX_LAW.md` (repo root) and, as data, in `apps/tax/law.py` (the only file that holds a rate, a band, a date, a
+source or a fact sentence; a law change is a one-file edit plus `TAX_LAW.md` and a new `LAST_VERIFIED`). Anything marked UNKNOWN
+there is never computed, and nothing in this module is "improved" with tax rules from memory. Every sentence says "estimate"
+where it is one, never tells a person what they owe or what to choose, and says "ask a tax advisor" for the topics below.
 
-Tax calculation:
-Uses actual FBR 2025-26 slab structure. Pulls income from
-apps/payments/ for the current tax year. Deducts recorded deductible
-expenses from apps/payments/. Calculates taxable income and tax owed.
-Shows effective rate. Projects year-end based on monthly average.
+**The one fact that matters most.** When money from a client abroad reaches a Pakistani bank, the bank takes income tax under
+section 154A: 0.25% for an IT exporter registered with and certified by PSEB, 1% for everyone else (tax years 2024 to 2029). If
+the person files a return this is a FINAL tax: a percentage of the gross receipts with no expense deduction. LanceraOS knows every
+payment, so it estimates what the banks took, month by month.
 
-SRO 586(I)/2022 checker:
-Checks if user qualifies for complete IT export tax exemption.
-Eligibility requires: income from IT export, PSEB registration number
-in profile. Displays eligibility status, missing requirements, links to
-PSEB registration at pseb.org.pk and FBR Iris at iris.fbr.gov.pk.
+What is built (all `IsAuthenticated`, function views, 240 requests/hour/user per JSON endpoint in separate buckets, the PDF in the
+30/hour bucket shared with the two report PDFs, `Cache-Control: no-store` everywhere):
+- GET /api/tax/overview/?tax_year=2026|2027 (default: the current tax year; from 1 July 2027 until `law.py` is updated the newest
+  supported year with `stale_law: true`): for one tax year (1 July to 30 June, named for the year it ends in), money received from
+  abroad in PKR (every payment in a currency other than PKR is treated as export money; a PKR payment is a local payment with no
+  bank estimate), the rate (0.25% only when a validated PSEB NUMBER is saved, i.e. `pseb_hash`; the self-declared `pseb_registered`
+  checkbox is never the basis), the estimated tax the banks took (each payment's tax is rounded half-up on its own and every total is
+  the sum), month by month, the local receipts, the return due date, a short checklist, what is not covered, and plain-word notes.
+- GET /api/tax/law/: the sourced facts behind the numbers (id, title, text, confidence, sources) for a "How this works" card.
+- POST /api/tax/calculator/ {taxable_income, tax_year?}: normal slab tax for non-salaried individuals, band by band, plus the 10%
+  surcharge above Rs 10,000,000 (tax year 2027). For tax year 2026 the surcharge rate is not verified, so an income above Rs 10,000,000
+  is refused with a 400, not guessed. Pure arithmetic, nothing stored or logged.
+- GET /api/tax/summary/pdf/?tax_year=&include_ntn=: a one-page "Tax Summary (estimate)" for an accountant. The NTN is printed only when
+  asked for and saved; no CNIC; no signature line and no declaration; writes the audit event `tax_summary_generated`.
 
-Quarterly advance tax schedule:
-Shows Q1-Q4 payment deadlines and amounts based on projected annual income.
-Overdue quarters highlighted. Direct link to FBR Iris for payment.
-Celery Beat sends reminder notifications before each deadline.
+What is deliberately NOT built, and why: an SRO 586(I)/2022 "complete exemption" checker (no source for that notification as an IT
+export exemption was found, and current law is a reduced final tax, not an exemption; the number is never cited); slab tax after
+deducting expenses (a final tax is a percentage of gross receipts); a quarterly advance-tax schedule or reminders (no source says
+instalments apply to income the bank already taxed); the opt-out comparison, section 65F, salaried slabs, sales tax; tax actually paid
+as a stored table, bank-certificate upload; Celery tasks, notifications, Pro gating, Urdu, CSV export; AI tax answers (the old plan to
+inject FBR text into AI prompts is a future idea, to be reconsidered only after the law check above exists for the text to inject).
+Topics where the module says "ask a tax advisor": choosing not to be taxed this way for a year, what that does to the tax the bank
+already took, the older IT-exporter tax credit, and instalments.
 
-Monthly income breakdown:
-Month-by-month view of income and tax liability for the full tax year.
-
-Tax statement:
-Printable formal statement for accountant submission or FBR reference.
-Generated by WeasyPrint.
-
-FBR filing guide:
-Step-by-step guide to filing annual return on FBR Iris. Static content.
-
-Context injection for AI tax guidance:
-The actual text of FBR 2025-26 slabs and SRO 586 notification is
-embedded directly in every AI prompt for tax-related questions.
-The model is not asked to recall tax law from training - it is given
-the law as context. This produces accurate, updatable guidance without
-fine-tuning. When tax law changes, only the injected text needs updating.
+Known limits: only tax years 2026 and 2027; every non-PKR payment is treated as export money; today's PSEB status is applied to the
+whole tax year (a certificate's validity cannot be checked); the bank's real deduction can differ; the wording of section 154A was
+read from two law-text websites, not from the Ordinance, so a later amendment could be missing. **Pre-launch rule: before the Tax
+pages are shown to the public, a Pakistani chartered accountant or tax lawyer reviews `TAX_LAW.md` and the wording of the facts
+`final_tax`, `opt_out` and `no_expenses`** (DECISIONS.md, 09 November 2026).
 
 Key API endpoints:
 - GET /api/tax/overview/
-- GET /api/tax/quarterly/
-- GET /api/tax/monthly/
-- GET /api/tax/sro586/
+- GET /api/tax/law/
 - POST /api/tax/calculator/
-- GET /api/tax/statement/pdf/
+- GET /api/tax/summary/pdf/
 
 ---
 

@@ -115,8 +115,8 @@ INSTALLED_APPS = [
     'apps.proposals',
     'apps.dashboard',
     'apps.health',
+    'apps.tax',  # Prompt 20: verified-only tax estimate (no models, no migration)
     # Future modules join this list as their own chats build them:
-    # 'apps.tax',
     # 'apps.contracts', 'apps.subscriptions',
     # 'apps.insights', 'apps.assistant',
 ]

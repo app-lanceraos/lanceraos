@@ -367,6 +367,22 @@ the sidebar's "Health Score" opens `/health` and stays highlighted; each of the 
 line; reloading `/health` directly works; the Network tab shows `GET /api/health/mini/` on the Dashboard and `GET /api/health/score/?months=12` on the
 page (React StrictMode doubles GETs in development only).
 
+## 7i. Tax backend release (10 November 2026, Prompt 20) **[U]**
+
+Backend only. **No migration, no environment variable, no new service, no Celery change.** `apps.tax` has no model, so `makemigrations --check` stays
+clean. Redeploy the **web** service only: the worker and beat do not render PDFs and run no Tax task. Deploy this BEFORE the frontend of Prompt 21
+(the Tax pages call these routes; without them they show their load errors).
+
+The four routes (all need a login, all answer `Cache-Control: no-store`): `GET /api/tax/overview/?tax_year=2026|2027`, `GET /api/tax/law/`,
+`POST /api/tax/calculator/` and `GET /api/tax/summary/pdf/?tax_year=&include_ntn=` (the PDF shares the 30 per hour bucket of the two report PDFs).
+The tax law lives in `apps/tax/law.py` and `TAX_LAW.md`; a change to either is a code deploy. From 1 July 2027 the current tax year is no longer
+supported and the overview answers with `stale_law: true` until `law.py` is updated: put a reminder in the calendar for June 2027.
+
+Smoke test: sign in; `GET /api/tax/overview/` returns 200 with a `rate` object and a `monthly` array; `GET /api/tax/law/` returns 200 with eight `facts`;
+`POST /api/tax/calculator/` with `{"taxable_income":"1500000"}` returns 200 with `"total_tax": "150000.00"`; `GET /api/tax/summary/pdf/?tax_year=2027`
+returns 200 with `Content-Type: application/pdf` for an account with at least one payment in that tax year (400 "You have no payments in this tax
+year ..." otherwise, which is correct, not an error); signed out, all four return 401.
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

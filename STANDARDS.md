@@ -463,3 +463,17 @@ first applied to `apps/proposals/views_public.py`:
 
 - Uploads are read with a byte cap (`file.read(MAX + 1)`, and `Content-Length` checked before the body is parsed) and are never trusted by file name or content type: the bytes are inspected (zip/PDF/UTF-16 magic, NUL bytes) and every refusal is a fixed sentence that never echoes file content.
 - CSV/Excel EXPORTS must neutralise cells that start with `=`, `+`, `-` or `@` (prefix with an apostrophe or a tab). The import side stores such text exactly as typed and React escapes it on screen; an export puts it in front of a spreadsheet, which executes it.
+
+## Tax figures (Prompt 20, 10 November 2026)
+
+- Tax law lives in ONE versioned data file (`apps/tax/law.py`, twin of `TAX_LAW.md`) with a source, a confidence and a last-verified date for
+  every fact. No view, service, serializer or template contains a rate, a band, a date or a source URL; a test greps for it.
+- A figure whose law is unverified is not computed. The code refuses (a 400 that says so) instead of guessing, and the fact sheet says UNKNOWN.
+- Nothing is "corrected" from memory. A doubt about a rate or a sentence goes into the report or the DECISIONS entry, and the law file changes
+  only with a source.
+- Every tax sentence says "estimate" where it is one and never tells a person what they owe, what to choose or that they are "compliant".
+  Uncertain topics say "ask a tax advisor".
+- PSEB status for tax purposes comes from the saved, validated number (`pseb_hash`), never from the self-declared `pseb_registered` checkbox.
+- Tax money follows the ledger rules: one conversion rule (`rollup.convert_row`), the tax of one payment rounded half-up to the cent, every
+  total the exact sum of rounded parts, and an unconverted payment counted and left out, never guessed.
+
