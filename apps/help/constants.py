@@ -1,8 +1,8 @@
 # apps/help/constants.py
 """
 Every number, vocabulary and word list of the Help module, in ONE place (Prompt 24). Nothing magic lives elsewhere: a limit
-is changed here and in the test that pins it. The retrieval thresholds are tuned only in Part 10a of the prompt (see
-AI_EVALUATION.md section 15); nothing else may change them.
+is changed here and in the test that pins it. The retrieval thresholds and TITLE_ALL_TERMS_BONUS are tuned only in Part 10a of
+Prompt 24 and Part 3 of Prompt 25 (see AI_EVALUATION.md sections 15 and 15c); nothing else may change them.
 """
 from .domain import Topic
 
@@ -41,9 +41,10 @@ AI_MAX_TOKENS = 1500
 AI_REASONING_EFFORT = 'low'
 AI_TOTAL_BUDGET_SECONDS = 25
 
-# --- retrieval thresholds (tuned only in Part 10a) ---------------------------------------------------------------------
+# --- retrieval thresholds (tuned only in Prompt 24 Part 10a and Prompt 25 Part 3; nothing else may change them) ----------
 MIN_COVERAGE_TO_LIST = 0.34       # a guide is listed in results / as a "closest guide" at this coverage or more
 MIN_COVERAGE_FOR_AI = 0.5         # the gate: the model is called only if the best match reaches this
+TITLE_ALL_TERMS_BONUS = 0.7       # (Prompt 25) score x (1 + this x query terms / title terms) when EVERY query term is in the title
 TK_COVERAGE_BONUS = 0.5           # score x (1 + this x the share of the question's terms found in the title or keywords)
 PHRASE_BONUS = 2.0                # x idf of the rarest term of a multi-word keyword found whole in the question
 BM25_K1 = 1.2

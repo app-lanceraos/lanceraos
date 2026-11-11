@@ -70,13 +70,20 @@ def blocks_payload(blocks):
     return out
 
 
+def answers_enabled():
+    """True only when written answers are switched on: the per-feature switch AND the global AI switch (decision H21, Prompt 25).
+    The one definition: `ask` checks it at its switch step and the guide index reports it, so the page and the server never disagree."""
+    return bool(settings.HELP_AI_ENABLED and settings.AI_ENABLED)
+
+
 def guide_index():
-    """GET /api/help/guides/: topics with their guides (slug, title, summary), and the six popular guides."""
+    """GET /api/help/guides/: topics with their guides (slug, title, summary), the six popular guides, and whether written answers are on."""
     topics = [{
         'slug': t.slug, 'title': t.title, 'blurb': t.blurb,
         'guides': [{'slug': g.slug, 'title': g.title, 'summary': g.summary} for g in LIBRARY if g.topic == t.slug],
     } for t in c.TOPICS]
-    return {'library_version': LIBRARY_VERSION, 'topics': topics, 'popular': [guide_summary(g) for g in search.popular()]}
+    return {'library_version': LIBRARY_VERSION, 'topics': topics, 'popular': [guide_summary(g) for g in search.popular()],
+            'answers_enabled': answers_enabled()}
 
 
 def guide_detail(slug):
@@ -166,7 +173,7 @@ def _decide(q, prev, user, request_id, use_cache, meta):
     if not search.gate(matches):
         return _guides_only('no_match', copy.NO_MATCH, closest or search.popular(), **meta)
 
-    if not (settings.HELP_AI_ENABLED and settings.AI_ENABLED):
+    if not answers_enabled():
         return _guides_only('ai_off', copy.AI_OFF, closest, **meta)
 
     key = cache_key(q.for_model)

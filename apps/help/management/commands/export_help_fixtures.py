@@ -156,8 +156,16 @@ class Command(BaseCommand):
         client.force_authenticate(user=user)
 
         with override_settings(HELP_AI_ENABLED=True, AI_ENABLED=True, SUPPORT_EMAIL=''):
-            _s, index = self.call(client, 'get', '/api/help/guides/', expect=200)
+            # The default settings (written answers OFF), then the same endpoint with both switches ON (decision H21, Prompt 25).
+            with override_settings(HELP_AI_ENABLED=False, AI_ENABLED=True):
+                _s, index = self.call(client, 'get', '/api/help/guides/', expect=200)
+            if index.get('answers_enabled') is not False:
+                raise CommandError('guides-index must say answers_enabled: false under the default settings.')
             self.add('guides-index', index)
+            _s, index_on = self.call(client, 'get', '/api/help/guides/', expect=200)
+            if index_on.get('answers_enabled') is not True:
+                raise CommandError('guides-index-answers-on must say answers_enabled: true with both switches on.')
+            self.add('guides-index-answers-on', index_on)
             for slug in GUIDES_TO_EXPORT:
                 _s, body = self.call(client, 'get', f'/api/help/guides/{slug}/', expect=200)
                 self.add(f'guide-{slug}', body)
@@ -268,7 +276,7 @@ def _index_js(names):
 
 
 def _readme(count, model_calls):
-    return f"""# Help test fixtures (Prompt 24)
+    return f"""# Help test fixtures (Prompt 24; Prompt 25 added `guides-index-answers-on`)
 
 Tracked on purpose (the `*.test.*` files are gitignored). Every `.json` file here was **generated from the real endpoints** by
 `python manage.py export_help_fixtures --out frontend/src/test-fixtures/help`, not typed by hand. Do not edit them by hand;
@@ -291,7 +299,7 @@ version, never an id or a time).
 
 | File | Source |
 |------|--------|
-| `guides-index` | `GET /api/help/guides/` |
+| `guides-index`, `guides-index-answers-on` | `GET /api/help/guides/` with the default settings (`answers_enabled: false`), and with `HELP_AI_ENABLED` and `AI_ENABLED` both on (`true`) |
 | `guide-create-an-invoice`, `guide-send-an-invoice`, `guide-the-tax-page` | `GET /api/help/guides/<slug>/` (the first has steps, a note and a link block) |
 | `search-hit`, `search-empty` | `GET /api/help/search/?q=` |
 | `ask-answered`, `ask-answered-cached` | `POST /api/help/ask/`: a stubbed model reply that passes the guard; then the same question served from the cache |

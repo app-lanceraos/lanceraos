@@ -4,12 +4,6 @@
   "cached": false,
   "guides": [
     {
-      "slug": "record-an-expense",
-      "summary": "Add what you spend on your business, pick a category, and mark what you consider a business cost.",
-      "title": "Record an expense",
-      "topic": "expenses"
-    },
-    {
       "slug": "record-a-payment-on-an-invoice",
       "summary": "Mark an invoice paid in full, add a part payment, undo the last payment or record a refund.",
       "title": "Record a payment on an invoice",
@@ -20,6 +14,12 @@
       "summary": "Add money you have received to the Payments page, from Payoneer, Wise, a bank, JazzCash and more.",
       "title": "Record a payment",
       "topic": "payments"
+    },
+    {
+      "slug": "create-an-invoice",
+      "summary": "Build an invoice in three stages: the client and dates, the line items, and the options.",
+      "title": "Create an invoice",
+      "topic": "invoices"
     },
     {
       "slug": "link-payments-to-invoices",
@@ -34,7 +34,7 @@
       "topic": "clients"
     }
   ],
-  "library_version": "c9b6e43a562f",
+  "library_version": "c88b2796dcc6",
   "notice": "The AI service took too long to respond. Please try again. These guides match your question.",
   "outcome": "guides_only",
   "reason": "ai_unavailable",

@@ -8,7 +8,7 @@ GUIDES = (
     guide(
         'create-an-invoice', 'Create an invoice', 'invoices',
         'Build an invoice in three stages: the client and dates, the line items, and the options.',
-        ['new invoice', 'make invoice', 'bill', 'billing', 'line items', 'draft', 'tax rate', 'discount', 'due date', 'finalise', 'preset', 'first invoice'],
+        ['new invoice', 'make invoice', 'bill', 'billing', 'line items', 'draft', 'tax rate', 'discount', 'late fee', 'due date', 'finalise', 'preset', 'first invoice'],
         [
             p('Open Invoices in the sidebar and press "New Invoice". The form has three stages: "Client & Dates", "Line Items" and "Options". Your work is saved as a draft while you go, and the page shows "Draft saved".'),
             steps(
@@ -86,7 +86,7 @@ GUIDES = (
         'Make an invoice repeat on a schedule, send each copy automatically or review it first, and pause the series.',
         ['repeat invoice', 'monthly invoice', 'retainer', 'weekly', 'quarterly', 'annual', 'auto send', 'schedule', 'series', 'automatic', 'automatically'],
         [
-            p('In the "Options" stage of a new invoice, switch on "Recurring invoice" and choose an "Interval": "Weekly", "Bi-weekly", "Monthly", "Quarterly" or "Annually". A scheduled task creates the next invoice for you once a day when it is due.'),
+            p('In the "Options" stage of a new invoice, switch on "Recurring invoice" and choose an "Interval". The choices run from "Weekly" and "Bi-weekly" through "Monthly" and every other month to "Quarterly" and "Annually". A scheduled task creates the next invoice for you once a day when it is due.'),
             p('On the invoice, a line shows "Recurring" with the next date. Press "Pause" to stop new copies and "Resume" to continue. "Edit Series" changes how often it repeats and whether copies are sent automatically.'),
             p('With automatic sending off, each new copy is left as a draft for you to review first. With it on, each copy is finalised and sent.'),
             note('If creating a copy keeps failing, the series pauses and you are told. Invoices coming up in the next days are listed on the Dashboard under "Upcoming recurring invoices".'),

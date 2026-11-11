@@ -8,7 +8,7 @@ GUIDES = (
     guide(
         'record-an-expense', 'Record an expense', 'expenses',
         'Add what you spend on your business, pick a category, and mark what you consider a business cost.',
-        ['spending', 'cost', 'laptop', 'software', 'internet bill', 'equipment', 'category', 'deductible', 'fees', 'duplicate expense', 'delete expense'],
+        ['spending', 'cost', 'laptop', 'software', 'equipment', 'category', 'deductible', 'fees', 'duplicate expense', 'delete expense'],
         [
             p('Open Expenses in the sidebar. The page lists what you spend on your business, so you can see what you actually keep.'),
             steps(

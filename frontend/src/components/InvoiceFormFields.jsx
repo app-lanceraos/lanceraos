@@ -222,7 +222,7 @@ export default function InvoiceFormFields({
           <FormField label="Late Fee Rate (% per month)" type="number" value={form.late_fee_rate} onChange={(e) => set('late_fee_rate', e.target.value)} />
         )}
         <OptionToggle
-          label="Recurring invoice" hint="Generates a new copy on the chosen interval (generation itself is not built yet)."
+          label="Recurring invoice" hint="Creates a new copy of this invoice on the chosen interval."
           checked={form.is_recurring} onChange={(v) => set('is_recurring', v)}
         />
         {form.is_recurring && (

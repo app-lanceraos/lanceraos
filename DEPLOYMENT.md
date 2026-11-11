@@ -443,7 +443,7 @@ nothing to undo in the database. A contract already sent stays sent and its link
 ## 7m. Help backend release (11 November 2026, Prompt 24) **[U]**
 
 Release order: **redeploy the web service** (a new app `apps.help` with five endpoints under `/api/help/`). **No migration, no worker change, no Beat change, no new
-service.** The worker needs nothing; redeploying it with the web service is harmless. The Help PAGE is Prompt 25 and is not in this release, so nothing in the
+service.** The worker needs nothing; redeploying it with the web service is harmless. The Help PAGE is Prompt 26 and is not in this release, so nothing in the
 frontend calls these endpoints yet.
 
 Before traffic: the guide library is a Django system check, and `migrate` (the pre-deploy step) runs the system checks, so a structurally broken guide fails the
@@ -458,7 +458,9 @@ Environment variables (both optional): **`HELP_AI_ENABLED`**: only if you want t
 `GROQ_API_KEY` is already set on web and worker for Proposals; Help uses the same key and the same two models, so run `python manage.py check_ai_models` from a web
 shell as before.
 
-Smoke test, with a throwaway account: **(1)** `GET /api/help/guides/` returns the topics and `library_version`; **(2)** `GET /api/help/search/?q=invoice` returns guides;
+Prompt 25 (11 November 2026) changed no deploy step: the guide index now also carries `answers_enabled` (true only when `HELP_AI_ENABLED` and `AI_ENABLED` are both on), with no migration and no new variable.
+
+Smoke test, with a throwaway account: **(1)** `GET /api/help/guides/` returns the topics, `library_version` and `answers_enabled` (a boolean; false while `HELP_AI_ENABLED` is off); **(2)** `GET /api/help/search/?q=invoice` returns guides;
 **(3)** ask one real question (`POST /api/help/ask/` with `{"question": "How do I send an invoice to my client?"}`; it needs the CSRF header like any POST) and see either
 `outcome: "answered"` or `outcome: "guides_only"` with a reason (`ai_off` when AI is off, `ai_unavailable` with an `ai_reason` when the model failed); **(4)** ask nonsense
 (`"what is the weather in Lahore"`) and see `guides_only` with `reason: "no_match"` and the six popular guides, and confirm in `core.AiCallLog` that it made no model call.

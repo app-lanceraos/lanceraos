@@ -16,16 +16,16 @@
       "topic": "clients"
     },
     {
-      "slug": "the-client-portal",
-      "summary": "The private page where a client can view invoices, message you, report a payment and ask for a change.",
-      "title": "What your client sees in the portal",
-      "topic": "clients"
-    },
-    {
       "slug": "create-an-invoice",
       "summary": "Build an invoice in three stages: the client and dates, the line items, and the options.",
       "title": "Create an invoice",
       "topic": "invoices"
+    },
+    {
+      "slug": "the-client-portal",
+      "summary": "The private page where a client can view invoices, message you, report a payment and ask for a change.",
+      "title": "What your client sees in the portal",
+      "topic": "clients"
     },
     {
       "slug": "payment-reminders-and-formal-notice",
@@ -34,7 +34,7 @@
       "topic": "invoices"
     }
   ],
-  "library_version": "c9b6e43a562f",
+  "library_version": "c88b2796dcc6",
   "notice": "You're asking quickly. Wait a moment, then ask again. These guides match your question.",
   "outcome": "guides_only",
   "reason": "slow_down",

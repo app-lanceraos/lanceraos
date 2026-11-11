@@ -7,6 +7,12 @@ The pass rule was fixed BEFORE any result existed (the prompt, Part 10a):
   held-out set:  recall@3 >= 27 of 30  AND  gate open >= 26 of 30  AND  negatives (the 8 of Appendix B) closed >= 7 of 8
   tune set:      recall@3 >= 90 %
 recall@k = any expected slug among the first k LISTED guides (search.listable); "gate open" = search.gate(matches).
+
+Prompt 25 added the short-query rules (fixed before the engine was changed; see AI_EVALUATION.md section 15c):
+  P1  no regression on Prompt 24's sets: tune recall@3 >= 58/60; held-out recall@3 >= 29/30; held-out gate open 30/30;
+      the 8 held-out negatives closed >= 7/8
+  P2  the short tune set: recall@3 >= 46/47; at most 1 extra rule (top1 / absent / gate_open) failing; its 5 negatives all closed
+  P3  the short held-out set (run for counts, never tuned on): recall@3 >= 24/30; its 6 negatives closed >= 5/6
 """
 import json
 import re
@@ -22,6 +28,15 @@ from .library import BY_SLUG
 from .prompts import render_guide_for_model
 from .text import normalise, phrase_regex, redact, strip_markup
 
+P1_TUNE_RECALL_AT_3_MIN = 58
+P1_HELD_OUT_RECALL_AT_3_MIN = 29
+P1_HELD_OUT_GATE_OPEN_MIN = 30
+P1_NEGATIVES_CLOSED_MIN = 7
+P2_RECALL_AT_3_MIN = 46
+P2_EXTRA_RULE_FAILURES_MAX = 1
+P2_NEGATIVES_CLOSED_MIN = 5
+P3_RECALL_AT_3_MIN = 24
+P3_NEGATIVES_CLOSED_MIN = 5
 HELD_OUT_RECALL_AT_3_MIN = 27
 HELD_OUT_GATE_OPEN_MIN = 26
 NEGATIVES_CLOSED_MIN = 7
@@ -42,16 +57,32 @@ def evaluate_positive(cases):
         matches = matches_for(case['q'], case.get('previous', ''))
         listed = [m.guide.slug for m in search.listable(matches)]
         expected = set(case['expected'])
+        failed_rules = _failed_extra_rules(case, listed, search.gate(matches))
         rows.append({
             'id': case['id'], 'q': case['q'], 'expected': list(case['expected']), 'top3': listed[:3],
             'top3_titles': [m.guide.title for m in search.listable(matches)[:3]],
             'hit1': bool(listed[:1]) and listed[0] in expected, 'hit3': bool(expected & set(listed[:3])),
             'gate_open': search.gate(matches),
             'best': (round(matches[0].coverage, 2), matches[0].in_title_or_keywords) if matches else None,
+            'failed_rules': failed_rules,
         })
     n = len(rows)
     return {'n': n, 'recall1': sum(r['hit1'] for r in rows), 'recall3': sum(r['hit3'] for r in rows),
-            'gate_open': sum(r['gate_open'] for r in rows), 'rows': rows}
+            'gate_open': sum(r['gate_open'] for r in rows), 'rows': rows,
+            'extra_rules': sum(len(r['failed_rules']) for r in rows)}
+
+
+def _failed_extra_rules(case, listed, gate_open):
+    """The extra rules of a short tune case that FAIL: 'top1' (rank 1 must be one of these), 'absent' (none in the top three),
+    'gate_open'. A case without extra rules fails none."""
+    failed = []
+    if 'top1' in case and not (listed[:1] and listed[0] in case['top1']):
+        failed.append('top1')
+    if 'absent' in case and set(case['absent']) & set(listed[:3]):
+        failed.append('absent')
+    if case.get('gate_open') and not gate_open:
+        failed.append('gate_open')
+    return failed
 
 
 def evaluate_negative(cases):
@@ -72,6 +103,25 @@ def rule_results(tune, held, negatives_held_out):
          f"{negatives_held_out['closed']}/{negatives_held_out['n']}", f'>= {NEGATIVES_CLOSED_MIN}'),
         ('tune recall@3', tune['recall3'] >= TUNE_RECALL_AT_3_MIN_SHARE * tune['n'], f"{tune['recall3']}/{tune['n']}",
          f'>= {int(TUNE_RECALL_AT_3_MIN_SHARE * 100)} %'),
+    ]
+
+
+def prompt25_rule_results(tune, held, held_negatives, short_tune, short_tune_negatives, short_held, short_held_negatives):
+    """P1, P2 and P3 as (name, passed, actual, needed). P3 states counts only; it never names a question."""
+    return [
+        ('P1 tune recall@3', tune['recall3'] >= P1_TUNE_RECALL_AT_3_MIN, f"{tune['recall3']}/{tune['n']}", f'>= {P1_TUNE_RECALL_AT_3_MIN}'),
+        ('P1 held-out recall@3', held['recall3'] >= P1_HELD_OUT_RECALL_AT_3_MIN, f"{held['recall3']}/{held['n']}", f'>= {P1_HELD_OUT_RECALL_AT_3_MIN}'),
+        ('P1 held-out gate open', held['gate_open'] >= P1_HELD_OUT_GATE_OPEN_MIN, f"{held['gate_open']}/{held['n']}", f'>= {P1_HELD_OUT_GATE_OPEN_MIN}'),
+        ('P1 held-out negatives closed', held_negatives['closed'] >= P1_NEGATIVES_CLOSED_MIN,
+         f"{held_negatives['closed']}/{held_negatives['n']}", f'>= {P1_NEGATIVES_CLOSED_MIN}'),
+        ('P2 short tune recall@3', short_tune['recall3'] >= P2_RECALL_AT_3_MIN, f"{short_tune['recall3']}/{short_tune['n']}", f'>= {P2_RECALL_AT_3_MIN}'),
+        ('P2 short tune extra rules failing', short_tune['extra_rules'] <= P2_EXTRA_RULE_FAILURES_MAX, str(short_tune['extra_rules']),
+         f'<= {P2_EXTRA_RULE_FAILURES_MAX}'),
+        ('P2 short tune negatives closed', short_tune_negatives['closed'] >= P2_NEGATIVES_CLOSED_MIN,
+         f"{short_tune_negatives['closed']}/{short_tune_negatives['n']}", f'>= {P2_NEGATIVES_CLOSED_MIN}'),
+        ('P3 short held-out recall@3', short_held['recall3'] >= P3_RECALL_AT_3_MIN, f"{short_held['recall3']}/{short_held['n']}", f'>= {P3_RECALL_AT_3_MIN}'),
+        ('P3 short held-out negatives closed', short_held_negatives['closed'] >= P3_NEGATIVES_CLOSED_MIN,
+         f"{short_held_negatives['closed']}/{short_held_negatives['n']}", f'>= {P3_NEGATIVES_CLOSED_MIN}'),
     ]
 
 

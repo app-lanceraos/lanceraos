@@ -54,10 +54,10 @@ GUIDES = (
     guide(
         'not-available-yet', 'Sidebar items that are not available yet', 'getting-started',
         'Some items in the sidebar are shown before they work, and this guide says which.',
-        ['skill analyzer', 'skill gap', 'unavailable', 'not working', 'missing', 'redirects', 'dashboard instead'],
+        ['skill analyzer', 'skill gap', 'unavailable', 'not working', 'missing', 'redirects'],
         [
             p('"Skill Analyzer" appears in the sidebar under Account, but it is not available yet. If you select it, you end up back on the Dashboard.'),
-            p('Everything else in the sidebar opens a working page. If another item ever sends you back to the Dashboard, reload the page and try once more.'),
+            p('Everything else in the sidebar opens a working page.'),
         ],
         related=['find-your-way-around', 'what-is-lanceraos'],
         ui_labels=['Skill Analyzer'],

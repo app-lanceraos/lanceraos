@@ -28,6 +28,7 @@ export const FIXTURE_NAMES = [
   "guide-send-an-invoice",
   "guide-the-tax-page",
   "guides-index",
+  "guides-index-answers-on",
   "link-targets",
   "rate-400",
   "rate-ok",

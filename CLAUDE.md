@@ -521,7 +521,9 @@ lanceraos/                          <- Django project root
 │   │                                  answers.py (parser, guard, blocks), service.py (answer_question), text.py (normalise/redact), views.py/urls.py (5
 │   │                                  endpoints), checks.py (system check), eval_cases.py/evaluation.py, management/commands/ (check_help_library,
 │   │                                  evaluate_help_retrieval, evaluate_help_assistant, export_help_fixtures). Imports only stdlib, Django, DRF and core.*;
-│   │                                  NO app imports it (AST-tested). The page is Prompt 25.
+│   │                                  NO app imports it (AST-tested). Prompt 25 (11 Nov 2026): short-query search (a title rule in search.py, keyword
+│   │                                  and synonym fixes, three guide mistakes fixed, the short evaluation sets in eval_cases.py) and `answers_enabled` on
+│   │                                  the guide index. The page is Prompt 26.
 │   ├── dashboard/                  <- Dashboard — BUILT (04 November 2026). No models, no migration:
 │   │                                  services.py (one builder per section), views.py (GET
 │   │                                  /api/dashboard/summary/, per-section isolation), urls.py.
@@ -3545,8 +3547,8 @@ stale-response tests.
 ---
 
 ### Module 10 — Help / AI Assistant
-Status: BUILT, backend only (11 November 2026, Prompt 24). The Help PAGE (and wiring the profile menu's Help item, which does nothing today) is
-Prompt 25 and does not exist. No model, no migration, no new service. App: apps/help/ (it imports only the standard library, Django, DRF and `core.*`;
+Status: BUILT, backend only (11 November 2026, Prompt 24; short-query search and `answers_enabled` added in Prompt 25, same day). The Help PAGE (and wiring the profile menu's Help item, which does nothing today) is
+Prompt 26 and does not exist. No model, no migration, no new service. App: apps/help/ (it imports only the standard library, Django, DRF and `core.*`;
 no app imports it; AST-tested).
 
 **The idea (it changes the spec's mechanism, not its intent).** The spec said "LanceraOS documentation embedded in the system prompt". Sending the
@@ -3565,7 +3567,8 @@ whose sources changed after `checked_on`; the structural part is also a Django s
 `LIBRARY_VERSION` (a content hash) invalidates the cache by itself. A change to a screen's wording is not done until its guide is updated (STANDARDS.md).
 
 **The answer path** (`service.answer_question`, the one function the view and the evaluation both call): redact the question (emails, web addresses, digit
-runs of seven or more, long tokens; `<`, `>` and backticks removed) -> soft per-minute limit (`slow_down`) -> BM25 search over title/keywords/summary/body ->
+runs of seven or more, long tokens; `<`, `>` and backticks removed) -> soft per-minute limit (`slow_down`) -> BM25 search over title/keywords/summary/body (plus, since Prompt 25, the TITLE RULE: when every one of the question's own terms is in a guide's title, exact stems and
+no synonyms, its score is multiplied by `1 + TITLE_ALL_TERMS_BONUS x question terms / title terms`, so typing a guide's own subject word puts that guide first) ->
 the GATE (the model is called only if the best guide covers at least `MIN_COVERAGE_FOR_AI` of the question's own terms and hit its title or keywords; else
 `no_match` and NO model call) -> the switches (`HELP_AI_ENABLED` and the global `AI_ENABLED`) -> a 24-hour Redis cache of answered results (key = hash of the
 redacted question + library version + prompt version + both model ids; never the question) -> `core.ai.run_ai_task` (feature `help_assistant`,
@@ -3575,6 +3578,8 @@ banned phrases, "the guides"/"according to"-style leaks, "I have created..." cla
 was sent; links come only from the guides, never from the model. The model receives nothing but the redacted question (and at most one earlier question,
 used only for ranking) and the chosen guides: no profile, no account data. Nothing a person typed and nothing a model wrote is logged, audited or cached
 (a canary test asserts it); the two audit events are `help_question` and `help_answer_rated` (ids, counts, booleans, our own vocabularies).
+
+**Short queries and `answers_enabled` (Prompt 25, 11 November 2026).** With written answers OFF, the search box IS the product, and people type one or two words, not sentences. Measured on 47 such queries (a tune set) and 30 more never used to choose a change, the search lacked the commonest words in the app (`invoice` ranked `record-an-expense` second, `sign in` found the contract guides first, `payments` did not find `record-a-payment`, `logout` found nothing). Fixed with ONE new scoring rule (the title rule above, constant `TITLE_ALL_TERMS_BONUS` = 0.7), a few keyword changes (a keyword that is a synonym of another guide's subject word was pulling that guide in), and the removal of one synonym group; the thresholds, the prompt and the guard did not change. Three guide mistakes were fixed (`recurring-invoices` listed five of the six intervals; `not-available-yet` gave advice with no basis; the invoice form's own hint said recurring generation was not built). `GET /api/help/guides/` now carries `answers_enabled` (true only when `HELP_AI_ENABLED` and `AI_ENABLED` are both on), so the Prompt 26 page can show a question box and its "sent to an outside AI service" line only when written answers are really on. Follow-up questions (`previous_question`) are unchanged and the page will not use them. No model request was made. See AI_EVALUATION.md section 15c and DECISIONS.md.
 
 **Endpoints** (all `IsAuthenticated`, function views, `Cache-Control: no-store`, errors `{"error": "..."}`): `GET /api/help/guides/`,
 `GET /api/help/guides/<slug>/`, `GET /api/help/search/?q=`, `POST /api/help/ask/` (`{question, previous_question?}`; 120 an hour then 429; more than six a
@@ -3589,7 +3594,7 @@ section 15. Outcome: retrieval met its pre-registered rule; the live evaluation 
 words with any guide misses (mitigated by curated keywords and synonyms). Login required for everything (a public Help for signed-out people needs a
 marketing surface that does not exist). No streaming, no stored conversations, no admin screen for the ratings. A model can still say something the guard
 cannot detect, which is why every answer shows its guides. On the free tier the whole key serves about four AI questions a minute, shared with Proposals and
-the Dashboard. Not built: the page (Prompt 25), a public Help, Urdu, feedback text, an admin reader for the ratings.
+the Dashboard. Not built: the page (Prompt 26), a public Help, Urdu, feedback text, an admin reader for the ratings.
 
 ---
 
@@ -3628,7 +3633,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Contracts            | Built (10 Nov 2026, Prompt 22): `apps/contracts` (one table, five templates as data, send with both sides signing by typing a name, public sign/decline page API, SHA-256 fingerprint checked at signing, signed PDF, audit + bell + emails, Celery `send_signed_copies`); Prompt 23 added `GET .../send-check/`, the 600/hour PATCH limit, the per-status PDF signing sentence and the `export_contract_fixtures` command | Built (10 Nov 2026, Prompt 23): `/contracts`, `/contracts/new`, `/contracts/:id` and the public `/contract/:token`; the generic `useDraftAutosave`; "Create contract" on an accepted proposal | backend `apps/contracts/tests/` + `apps/invoices/tests/test_contract_pdf.py` (untracked); frontend 2538 of 2539 (the 1 failure is the pre-existing `SecuritySection.test.jsx`; new tests in gitignored `*.test.*`) | Built (no AI, no Pro gating; a lawyer must read `CONTRACTS_LAW.md` and the wording before public launch) |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | Built: apps/dashboard (no models, no migration) — GET /api/dashboard/summary/ with per-section isolation; the invoice KPI maths extracted to apps/invoices/kpis.py (invoice_summary output byte-identical) | Built: `/dashboard` (greeting, 4 KPI cards, 6-month chart, Needs attention, Upcoming recurring, Recent activity, Exchange rates), now the landing page | backend 54 new (`apps.dashboard`); frontend 77 new (Dashboard, dashboardHelpers, App routing, AppShell pill) | Built without AI (04 Nov 2026); AI insights + Financial Health widget still to come |
-| Help / AI Assistant  | Built (11 Nov 2026, Prompt 24): `apps/help` (no model, no migration) — 49 guides, search with a gate, a guarded AI answer, 5 endpoints, `check_help_library`, the two evaluations | Not built (Prompt 25: the page and the profile menu's Help item) | backend 240 passing (`python manage.py test apps.help --keepdb`) in `apps/help/tests/` (untracked, gitignored); fixtures in `frontend/src/test-fixtures/help/` (tracked) | Backend built; AI answers default OFF (see AI_EVALUATION.md section 15) |
+| Help / AI Assistant  | Built (11 Nov 2026, Prompt 24): `apps/help` (no model, no migration) — 49 guides, search with a gate, a guarded AI answer, 5 endpoints, `check_help_library`, the two evaluations; Prompt 25 (11 Nov 2026): short-query search (title rule, keyword and synonym fixes; measured on a tune and a held-out set of one- and two-word queries, AI_EVALUATION.md section 15c) and `answers_enabled` on `GET /api/help/guides/` | Not built (Prompt 26: the page and the profile menu's Help item) | backend 271 passing (`python manage.py test apps.help --keepdb`; 240 before Prompt 25) in `apps/help/tests/` (untracked, gitignored); fixtures in `frontend/src/test-fixtures/help/` (tracked) | Backend built; AI answers default OFF (see AI_EVALUATION.md section 15) |
 
 ---
 

@@ -1,4 +1,4 @@
-# Help test fixtures (Prompt 24)
+# Help test fixtures (Prompt 24; Prompt 25 added `guides-index-answers-on`)
 
 Tracked on purpose (the `*.test.*` files are gitignored). Every `.json` file here was **generated from the real endpoints** by
 `python manage.py export_help_fixtures --out frontend/src/test-fixtures/help`, not typed by hand. Do not edit them by hand;
@@ -17,11 +17,11 @@ version, never an id or a time).
 * It deletes the cache keys it touches (the throwaway user's rate-limit counters and the two answer-cache entries) before and after.
   It never clears the whole cache.
 
-## Files (26 JSON files and this README, plus `index.js`)
+## Files (27 JSON files and this README, plus `index.js`)
 
 | File | Source |
 |------|--------|
-| `guides-index` | `GET /api/help/guides/` |
+| `guides-index`, `guides-index-answers-on` | `GET /api/help/guides/` with the default settings (`answers_enabled: false`), and with `HELP_AI_ENABLED` and `AI_ENABLED` both on (`true`) |
 | `guide-create-an-invoice`, `guide-send-an-invoice`, `guide-the-tax-page` | `GET /api/help/guides/<slug>/` (the first has steps, a note and a link block) |
 | `search-hit`, `search-empty` | `GET /api/help/search/?q=` |
 | `ask-answered`, `ask-answered-cached` | `POST /api/help/ask/`: a stubbed model reply that passes the guard; then the same question served from the cache |

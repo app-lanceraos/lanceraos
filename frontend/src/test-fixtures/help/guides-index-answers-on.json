@@ -1,0 +1,373 @@
+{
+  "answers_enabled": true,
+  "library_version": "c88b2796dcc6",
+  "popular": [
+    {
+      "slug": "create-an-invoice",
+      "summary": "Build an invoice in three stages: the client and dates, the line items, and the options.",
+      "title": "Create an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "send-an-invoice",
+      "summary": "Email a finalised invoice to your client from LanceraOS, or record that you sent it yourself.",
+      "title": "Send an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "record-a-payment",
+      "summary": "Add money you have received to the Payments page, from Payoneer, Wise, a bank, JazzCash and more.",
+      "title": "Record a payment",
+      "topic": "payments"
+    },
+    {
+      "slug": "import-payments-from-a-file",
+      "summary": "Bring many payments in at once from a Wise, Payoneer or bank statement saved as a CSV file.",
+      "title": "Import payments from a file",
+      "topic": "payments"
+    },
+    {
+      "slug": "write-a-proposal-with-ai",
+      "summary": "Paste a job post and get a first draft you can edit, or start from a blank proposal.",
+      "title": "Write a proposal with AI",
+      "topic": "proposals"
+    },
+    {
+      "slug": "the-tax-page",
+      "summary": "An estimate of the tax your bank took on money from abroad, built from the payments you recorded.",
+      "title": "The Tax page",
+      "topic": "tax"
+    }
+  ],
+  "topics": [
+    {
+      "blurb": "What LanceraOS does and where to begin.",
+      "guides": [
+        {
+          "slug": "what-is-lanceraos",
+          "summary": "LanceraOS helps freelancers in Pakistan run the money side of their work from one place.",
+          "title": "What LanceraOS does"
+        },
+        {
+          "slug": "first-steps",
+          "summary": "The first things to fill in so your invoices and documents carry the right details.",
+          "title": "Set up your account"
+        },
+        {
+          "slug": "find-your-way-around",
+          "summary": "Where things are: the sidebar, the bell, your profile menu and the light and dark theme.",
+          "title": "Find your way around"
+        },
+        {
+          "slug": "not-available-yet",
+          "summary": "Some items in the sidebar are shown before they work, and this guide says which.",
+          "title": "Sidebar items that are not available yet"
+        }
+      ],
+      "slug": "getting-started",
+      "title": "Getting started"
+    },
+    {
+      "blurb": "Signing in, passwords, two-factor sign-in, devices and deleting your account.",
+      "guides": [
+        {
+          "slug": "sign-up-and-verify-your-email",
+          "summary": "Create an account with your email or with Google or Facebook, and confirm your email address.",
+          "title": "Sign up and confirm your email"
+        },
+        {
+          "slug": "reset-or-change-your-password",
+          "summary": "Reset a forgotten password, change your password while signed in, or add a password to a Google or Facebook account.",
+          "title": "Reset or change your password"
+        },
+        {
+          "slug": "two-factor-sign-in",
+          "summary": "Turn on a code sent to your email each time you sign in, and turn it off again.",
+          "title": "Two-factor sign-in"
+        },
+        {
+          "slug": "your-devices-and-sessions",
+          "summary": "See where you are signed in, rename a device and sign other devices out.",
+          "title": "Your devices and sessions"
+        },
+        {
+          "slug": "change-your-email-or-username",
+          "summary": "Change your name and username in Settings, and change your email through a confirmation link.",
+          "title": "Change your email or username"
+        },
+        {
+          "slug": "delete-your-account",
+          "summary": "Delete your account from Settings, and cancel it by signing in again before it is final.",
+          "title": "Delete your account"
+        }
+      ],
+      "slug": "account",
+      "title": "Your account and sign-in"
+    },
+    {
+      "blurb": "Your business details, tax details, notifications and email sending.",
+      "guides": [
+        {
+          "slug": "business-details-and-payment-methods",
+          "summary": "Set your address, invoicing defaults and the ways clients can pay you.",
+          "title": "Business details and payment methods"
+        },
+        {
+          "slug": "tax-and-pseb-details",
+          "summary": "Save your CNIC, NTN and PSEB registration number, and see where each one is used.",
+          "title": "Tax and PSEB details"
+        },
+        {
+          "slug": "notification-settings",
+          "summary": "Choose which kinds of events you are told about, and know which alerts always stay on.",
+          "title": "Notification settings"
+        },
+        {
+          "slug": "send-emails-from-your-own-address",
+          "summary": "Connect your own mailbox so emails to your clients come from your address.",
+          "title": "Send emails from your own address"
+        }
+      ],
+      "slug": "settings",
+      "title": "Settings"
+    },
+    {
+      "blurb": "Keeping client records, their reliability score, statements and the client portal.",
+      "guides": [
+        {
+          "slug": "add-and-manage-clients",
+          "summary": "Keep a record for each client, then add tags and private notes, flag a client or archive one.",
+          "title": "Add and manage clients"
+        },
+        {
+          "slug": "client-reliability-score",
+          "summary": "A badge that tells you how reliably a client has paid, based on the invoices already settled.",
+          "title": "The client reliability score"
+        },
+        {
+          "slug": "client-statement",
+          "summary": "Download a PDF statement of account for one client over the dates you choose.",
+          "title": "Create a client statement"
+        },
+        {
+          "slug": "the-client-portal",
+          "summary": "The private page where a client can view invoices, message you, report a payment and ask for a change.",
+          "title": "What your client sees in the portal"
+        }
+      ],
+      "slug": "clients",
+      "title": "Clients"
+    },
+    {
+      "blurb": "Creating, sending, getting paid for and managing invoices.",
+      "guides": [
+        {
+          "slug": "create-an-invoice",
+          "summary": "Build an invoice in three stages: the client and dates, the line items, and the options.",
+          "title": "Create an invoice"
+        },
+        {
+          "slug": "invoice-statuses",
+          "summary": "Every status an invoice can show, what moves it forward, and why Overdue is a warning and not a status.",
+          "title": "What each invoice status means"
+        },
+        {
+          "slug": "send-an-invoice",
+          "summary": "Email a finalised invoice to your client from LanceraOS, or record that you sent it yourself.",
+          "title": "Send an invoice"
+        },
+        {
+          "slug": "payment-reminders-and-formal-notice",
+          "summary": "Switch automatic reminders on, send a reminder yourself, and send a formal notice for a severely overdue invoice.",
+          "title": "Payment reminders and formal notice"
+        },
+        {
+          "slug": "record-a-payment-on-an-invoice",
+          "summary": "Mark an invoice paid in full, add a part payment, undo the last payment or record a refund.",
+          "title": "Record a payment on an invoice"
+        },
+        {
+          "slug": "recurring-invoices",
+          "summary": "Make an invoice repeat on a schedule, send each copy automatically or review it first, and pause the series.",
+          "title": "Recurring invoices"
+        },
+        {
+          "slug": "invoice-templates-and-design",
+          "summary": "Pick the look of your invoices from the Template Gallery and choose whether the LanceraOS footer line shows.",
+          "title": "Invoice templates and design"
+        },
+        {
+          "slug": "invoice-messages-and-payment-claims",
+          "summary": "Talk to a client about an invoice, and confirm or reject a payment they say they made.",
+          "title": "Messages and payment claims"
+        },
+        {
+          "slug": "invoice-analytics",
+          "summary": "See how much you invoiced and collected, which clients bring the most, and totals by currency.",
+          "title": "Invoice analytics"
+        },
+        {
+          "slug": "duplicate-and-delete-invoices",
+          "summary": "Copy an invoice, save one as a preset to reuse, and delete drafts you no longer need.",
+          "title": "Duplicate, save as preset and delete"
+        }
+      ],
+      "slug": "invoices",
+      "title": "Invoices"
+    },
+    {
+      "blurb": "Recording money you receive, importing it from a file, and how amounts are converted.",
+      "guides": [
+        {
+          "slug": "record-a-payment",
+          "summary": "Add money you have received to the Payments page, from Payoneer, Wise, a bank, JazzCash and more.",
+          "title": "Record a payment"
+        },
+        {
+          "slug": "link-payments-to-invoices",
+          "summary": "Match a payment you recorded to the invoice it paid, or split it across several invoices.",
+          "title": "Link a payment to an invoice"
+        },
+        {
+          "slug": "import-payments-from-a-file",
+          "summary": "Bring many payments in at once from a Wise, Payoneer or bank statement saved as a CSV file.",
+          "title": "Import payments from a file"
+        },
+        {
+          "slug": "exchange-rates-and-converted-amounts",
+          "summary": "How LanceraOS converts amounts to your currency, and what an estimated rate means.",
+          "title": "Exchange rates and converted amounts"
+        }
+      ],
+      "slug": "payments",
+      "title": "Payments"
+    },
+    {
+      "blurb": "Recording what you spend.",
+      "guides": [
+        {
+          "slug": "record-an-expense",
+          "summary": "Add what you spend on your business, pick a category, and mark what you consider a business cost.",
+          "title": "Record an expense"
+        }
+      ],
+      "slug": "expenses",
+      "title": "Expenses"
+    },
+    {
+      "blurb": "Profit and loss, your income statement and your health score.",
+      "guides": [
+        {
+          "slug": "profit-and-loss",
+          "summary": "See the money you received, the money you spent and what you kept, for any period you choose.",
+          "title": "Profit and loss"
+        },
+        {
+          "slug": "income-statement",
+          "summary": "Make a printable statement of the payments you received, to give to a bank, a visa office or PSEB.",
+          "title": "Your income statement"
+        },
+        {
+          "slug": "health-score",
+          "summary": "A score out of one hundred for how your freelance business looks, worked out from your own records.",
+          "title": "Your health score"
+        }
+      ],
+      "slug": "reports",
+      "title": "Reports and scores"
+    },
+    {
+      "blurb": "What the Tax page shows, the calculator and the summary document.",
+      "guides": [
+        {
+          "slug": "the-tax-page",
+          "summary": "An estimate of the tax your bank took on money from abroad, built from the payments you recorded.",
+          "title": "The Tax page"
+        },
+        {
+          "slug": "the-tax-calculator",
+          "summary": "Type a taxable income and see the tax at the normal rates, band by band, as an estimate.",
+          "title": "The tax calculator"
+        },
+        {
+          "slug": "the-tax-summary-pdf",
+          "summary": "Download a one-page PDF of your tax estimate to give to your accountant.",
+          "title": "The tax summary document"
+        }
+      ],
+      "slug": "tax",
+      "title": "Tax"
+    },
+    {
+      "blurb": "Writing, sending and converting proposals, and how AI is used.",
+      "guides": [
+        {
+          "slug": "write-a-proposal-with-ai",
+          "summary": "Paste a job post and get a first draft you can edit, or start from a blank proposal.",
+          "title": "Write a proposal with AI"
+        },
+        {
+          "slug": "proposal-score-and-tips",
+          "summary": "What the proposal score card checks, and how the tips can help you improve a draft.",
+          "title": "Your proposal score and tips"
+        },
+        {
+          "slug": "send-a-proposal",
+          "summary": "Send a proposal by email or as a link, see when your client opens it, and withdraw it if needed.",
+          "title": "Send a proposal"
+        },
+        {
+          "slug": "turn-a-proposal-into-an-invoice",
+          "summary": "Create a draft invoice from an accepted proposal, or start a contract from it.",
+          "title": "Turn an accepted proposal into an invoice"
+        },
+        {
+          "slug": "ai-features-in-lanceraos",
+          "summary": "Where LanceraOS uses AI, what it sees, and why you should check what it writes.",
+          "title": "AI in LanceraOS"
+        }
+      ],
+      "slug": "proposals",
+      "title": "Proposals and AI"
+    },
+    {
+      "blurb": "Creating, sending and signing contracts.",
+      "guides": [
+        {
+          "slug": "create-a-contract",
+          "summary": "Start a contract from a template or an accepted proposal, fill in the blanks and the key terms.",
+          "title": "Create a contract"
+        },
+        {
+          "slug": "send-and-sign-a-contract",
+          "summary": "Sign and send a contract by email or link, and see how your client signs or declines.",
+          "title": "Send a contract and get it signed"
+        },
+        {
+          "slug": "signed-contracts-and-the-pdf",
+          "summary": "What the signature record shows, how to get the signed PDF, and what the fingerprint means.",
+          "title": "Signed contracts and the PDF"
+        }
+      ],
+      "slug": "contracts",
+      "title": "Contracts"
+    },
+    {
+      "blurb": "What the dashboard shows and how notifications work.",
+      "guides": [
+        {
+          "slug": "your-dashboard",
+          "summary": "What each card on the Dashboard shows, from your key figures to what needs your attention.",
+          "title": "Your dashboard"
+        },
+        {
+          "slug": "notifications",
+          "summary": "Use the bell to see what has happened, mark things read, and control what you are told about.",
+          "title": "Notifications"
+        }
+      ],
+      "slug": "dashboard",
+      "title": "Dashboard and notifications"
+    }
+  ]
+}

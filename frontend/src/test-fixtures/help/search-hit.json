@@ -14,12 +14,6 @@
       "topic": "invoices"
     },
     {
-      "slug": "record-an-expense",
-      "summary": "Add what you spend on your business, pick a category, and mark what you consider a business cost.",
-      "title": "Record an expense",
-      "topic": "expenses"
-    },
-    {
       "slug": "recurring-invoices",
       "summary": "Make an invoice repeat on a schedule, send each copy automatically or review it first, and pause the series.",
       "title": "Recurring invoices",
@@ -42,6 +36,12 @@
       "summary": "See how much you invoiced and collected, which clients bring the most, and totals by currency.",
       "title": "Invoice analytics",
       "topic": "invoices"
+    },
+    {
+      "slug": "notification-settings",
+      "summary": "Choose which kinds of events you are told about, and know which alerts always stay on.",
+      "title": "Notification settings",
+      "topic": "settings"
     }
   ]
 }

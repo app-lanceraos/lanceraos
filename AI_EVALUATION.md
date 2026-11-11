@@ -328,3 +328,53 @@ Method. 27 invented, English cases (Appendix B of the prompt), one request each,
 **Known limits.** English only (r01 "invoice kaise banate hain" ends `guides_only`/`no_match`); lexical search misses a question that shares no words with any guide; login required; no streaming; one model.
 
 **How to re-run, and when.** `python manage.py check_ai_models` (2 requests; stop if a model is dead), `python manage.py evaluate_help_retrieval` (no model), `python manage.py evaluate_help_assistant` (a dry run that prints the plan), then `python manage.py evaluate_help_assistant --yes` (about 17 requests; results in the gitignored `eval_runs/`, with `manual_read.txt` for the E7 read). Re-run after any change to `prompts.py`, the guides' structure, the two coverage thresholds, or the Groq models; re-run the retrieval evaluation after any guide or keyword change (it is also kept as a regression test).
+
+
+### 15c. Short-query retrieval (Prompt 25, 11 November 2026): `python manage.py evaluate_help_retrieval`
+
+**Why.** Written answers ship OFF (section 15b), so on the showcase Help is search plus guides and the search box is the product. Prompt 24 measured the search on whole questions; people type one or two words ("invoice", "sign in", "payments"). Running 47 such words against the real search at `a702d4a` found the right guide in the top three for 43, but the misses were the commonest words in the app and several hits had a wrong guide ranked second. No model is involved: zero live requests (`core.AiCallLog` was 99 rows before and 99 after).
+
+**The sets.** Tune set: 47 short queries and 5 negatives (`SHORT_TUNE_CASES`, `SHORT_TUNE_NEGATIVES`; the prompt's Appendix A, which the author had already run; may be looked at when tuning). Fresh set: 30 short queries and 6 negatives (`SHORT_HELD_OUT_CASES`, `SHORT_HELD_OUT_NEGATIVES`; Appendix B, written but never run before this work, never used to choose a change). All four are in `apps/help/eval_cases.py` word for word and pinned by a fingerprint test. A short tune case may carry extra rules: rank 1 must be one of some guides (`top1`), some guides must not be in the top three (`absent`), the gate must open (`gate_open`).
+
+**Pass rules, fixed before the engine was changed.** P1, no regression on Prompt 24's sets: tune recall@3 at least 58 of 60; held-out recall@3 at least 29 of 30; held-out gate open 30 of 30; the 8 held-out negatives closed at least 7 of 8. P2, the short tune set: recall@3 at least 46 of 47; at most 1 extra rule failing; its 5 negatives all closed. P3, the fresh set, run once at the end: recall@3 at least 24 of 30; its 6 negatives closed at least 5 of 6. If P3 had failed the work would have stopped there.
+
+**What changed (and ONLY this, decision H20).**
+
+| Change | Why (the tune case that justified it) |
+|---|---|
+| New scoring rule: when EVERY distinct term of the question is in a guide's title (exact stem, no synonym), score x (1 + `TITLE_ALL_TERMS_BONUS` x question terms / title terms). Constant 0.7. | s09 "payment", s10 "payments": "Record a payment" must beat "Business details and payment methods" (a shorter title that is more about the word earns more) |
+| `record-an-expense`: keyword `internet bill` removed | s01 "invoice", s02 "invoices": `bill` is a synonym of `invoice`, so the keyword pulled this guide to rank 2 |
+| `not-available-yet`: keyword `dashboard instead` removed | s30 "dashboard": the guide ranked above `your-dashboard` |
+| `your-devices-and-sessions`: keywords `sign in`, `log in`, `logout`, `log out` added | s03, s07 "logout" (the gate was closed), s08 |
+| `sign-up-and-verify-your-email`, `reset-or-change-your-password`, `two-factor-sign-in`: keywords `sign in`, `log in` added | s03, s04, s05 (a multi-word keyword is what the phrase bonus looks for) |
+| `create-an-invoice`: keyword `late fee` added | s40 "late fee" |
+| Synonym group (`sign`, `signature`, `esign`, `signed`) removed | s03 "sign in": the question reduces to the single term `sign` ("in" is a stop word), and this group pulled the signature text of the two contract guides into it. Probes after the removal ("signature", "esign", "sign a contract", "signed") were not worse, and "sign a contract" now leads with `send-and-sign-a-contract` |
+
+Three guide mistakes were also fixed (not search changes): `recurring-invoices` named five of the six intervals (it now says "every other month" in words, no digit); `not-available-yet` ended with advice ("reload the page and try once more") that had no basis in the code; and the invoice form's own hint said recurring generation "is not built yet" (it is) and now says "Creates a new copy of this invoice on the chosen interval." The thresholds (0.34, 0.5), the BM25 constants, the field weights, the prompt and the guard were not touched.
+
+**Numbers at each stage.** r1 = rank 1, r3 = recall@3, gate = gate open; "extra" = short tune extra rules failing.
+
+| Stage | tune (60): r1 / r3 / gate | held-out (30): r1 / r3 / gate | 8 held-out negatives closed | short tune (47): r1 / r3 / gate / extra | short tune negatives (5) | fresh (30): r1 / r3 / gate | fresh negatives (6) |
+|---|---|---|---|---|---|---|---|
+| baseline `a702d4a` (`LIBRARY_VERSION` c9b6e43a562f) | 57 / 60 / 59 | 27 / 29 / 30 | 7 | 35 / 43 / 46 / not measured | 5 | 29 / 30 / 30 | 6 |
+| data fixes only (c88b2796dcc6) | 57 / 60 / 59 | 27 / 29 / 30 | 7 | 38 / 45 / 47 / 3 | 5 | 30 / 30 / 30 | 6 |
+| + title rule and synonym group removed (final) | 57 / 60 / 59 | 28 / 29 / 30 | 7 | 44 / 47 / 47 / 0 | 5 | 30 / 30 / 30 | 6 |
+
+All of P1, P2 and P3 pass. The final run (`--final-misses`, run once after everything was frozen) listed no fresh-set miss. The only held-out miss anywhere is Prompt 24's own h24, unchanged. **The fresh set was already 30 of 30 at recall@3 before any change**, so P3 shows that nothing regressed, not that anything improved; the evidence that the search got better is the short tune set, which is also the set the changes were chosen from.
+
+**Trying the constant.** With the synonym group still present: 0.3 gave 39 / 47 / extra 3; 0.5 gave 40 / 47 / 3; 0.55 to 0.7 gave 42 / 47 / 1; 1.0 and 1.5 gave 42 / 47 / 1 (the one failure, s03, then needed the group removed). With the group removed: 0.0 gave 40 / 45 / 2; 0.1 to 0.5 gave 41 to 42 / 47 / 2; 0.52 to 1.0 gave 44 / 47 / 0. P1's numbers were identical at every value tried. The smallest value that satisfies P2 is 0.52, but there the two competing guides for "payment" score 5.61 and 5.61 (a tie to two decimals), so the winner is an accident of rounding; 0.7 is the first value on a 0.1 grid with a clear gap (6.02 against 5.84, about 3 percent), and it is the one shipped. This is a deliberate departure from "the smallest value that satisfies P1 and P2".
+
+**The six examples (top three listed guides, before then after).**
+
+| Query | Before | After |
+|---|---|---|
+| `invoice` | create-an-invoice, **record-an-expense**, send-an-invoice | create-an-invoice, send-an-invoice, recurring-invoices |
+| `sign in` | **signed-contracts-and-the-pdf**, **send-and-sign-a-contract**, your-devices-and-sessions | two-factor-sign-in, sign-up-and-verify-your-email, your-devices-and-sessions |
+| `payments` | business-details-and-payment-methods, client-reliability-score, profit-and-loss (record-a-payment 4th) | record-a-payment, business-details-and-payment-methods, client-reliability-score |
+| `logout` | nothing (the gate was closed) | your-devices-and-sessions |
+| `late fee` | client-reliability-score, payment-reminders-and-formal-notice, record-an-expense | create-an-invoice, client-reliability-score, payment-reminders-and-formal-notice |
+| `dashboard` | not-available-yet, your-dashboard | your-dashboard |
+
+**Honest limits.** Search is lexical: a word that no guide uses still finds nothing. The tail of a results list is noisy (for `late fee` the second and third results match only the word "late"). The short tune set is not independent evidence for the changes made from it, and the fresh set is 30 queries written by the author, already at ceiling before the work, so it cannot show an improvement. Rank 1 is not guaranteed for any query without a `top1` rule. Two Prompt 24 misses remain: held-out h24 "I need a document showing my income" and the negative n2 "write me a poem about the sea" (the gate opens on the word "write"); neither was tuned on. Follow-up questions (`previous_question`) are unchanged: Prompt 24's evaluation showed that a short follow-up cannot open the gate by itself, fixing that needs a model evaluation, and the Prompt 26 page sends one question at a time.
+
+**Mutation checks.** Eight changes were applied one at a time and each made at least one named test fail (the bonus set to 0, the bonus applied on ANY matching term, `internet bill` put back, a digit in the recurring guide, the removed sentence restored, the gate threshold changed, `answers_enabled` ignoring `HELP_AI_ENABLED`, `answers_enabled` returning a string); every file was restored byte for byte. The digit one is stopped earlier than the tests, by the guide system check `help.E001`.

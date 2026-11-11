@@ -8,7 +8,7 @@ GUIDES = (
     guide(
         'sign-up-and-verify-your-email', 'Sign up and confirm your email', 'account',
         'Create an account with your email or with Google or Facebook, and confirm your email address.',
-        ['register', 'create account', 'signup', 'verify', 'verification email', 'confirm email', 'google', 'facebook', 'login', 'spam'],
+        ['register', 'create account', 'signup', 'verify', 'verification email', 'confirm email', 'google', 'facebook', 'login', 'sign in', 'log in', 'spam'],
         [
             p('You can sign up with your email, or continue with Google or Facebook. With your email, you go through a short form: your name and date of birth, then your email address and username, then a password.'),
             p('Before the form is sent, LanceraOS asks you to confirm the email address, so a typing mistake does not send your link to the wrong place. Choose "Edit email" to fix it, or "Yes, that\'s correct" to go on.'),
@@ -27,7 +27,7 @@ GUIDES = (
     guide(
         'reset-or-change-your-password', 'Reset or change your password', 'account',
         'Reset a forgotten password, change your password while signed in, or add a password to a Google or Facebook account.',
-        ['forgot password', 'reset link', 'new password', 'lost password', 'cannot sign in', 'locked out', 'add password', 'google account'],
+        ['forgot password', 'reset link', 'new password', 'lost password', 'cannot sign in', 'locked out', 'add password', 'google account', 'sign in', 'log in'],
         [
             p('If you cannot sign in, open the sign-in page and choose the forgotten password link. Enter your email address and LanceraOS sends you a reset link. Open it and choose a new password.'),
             p('If you are already signed in, open Settings, then "Security", and use "Change Password". You enter your current password and the new one twice. Changing it signs you out of your other devices.'),
@@ -42,7 +42,7 @@ GUIDES = (
     guide(
         'two-factor-sign-in', 'Two-factor sign-in', 'account',
         'Turn on a code sent to your email each time you sign in, and turn it off again.',
-        ['2fa', 'two factor', 'two step', 'otp', 'verification code', 'security code', 'authenticator', 'trusted device'],
+        ['2fa', 'two factor', 'two step', 'otp', 'verification code', 'security code', 'authenticator', 'trusted device', 'sign in', 'log in'],
         [
             p('With two-factor sign-in on, signing in with your email and password also needs a code that LanceraOS emails to you. This protects your account if someone learns your password.'),
             steps(
@@ -61,7 +61,7 @@ GUIDES = (
     guide(
         'your-devices-and-sessions', 'Your devices and sessions', 'account',
         'See where you are signed in, rename a device and sign other devices out.',
-        ['sessions', 'devices', 'logged in', 'sign out other device', 'revoke', 'rename device', 'login limit', 'active sessions'],
+        ['sessions', 'devices', 'logged in', 'sign out other device', 'revoke', 'rename device', 'login limit', 'active sessions', 'sign in', 'log in', 'logout', 'log out'],
         [
             p('Open Settings and choose "Sessions". The "Active Sessions" card lists the devices that are signed in to your account. Its subtitle tells you how many devices can be signed in at one time.'),
             steps(

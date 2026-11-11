@@ -2,7 +2,7 @@
 """
 Plain lexical search over the guide library (decision H1; Prompt 24, Part 4): BM25 over title (x3), keywords (x3), summary
 (x2) and body (x1), a deterministic light stemmer, curated synonym groups, a bonus for a multi-word keyword found whole in
-the question, and two thresholds on COVERAGE (the share of the question's own terms that a guide matches):
+the question, a bonus for the guide whose TITLE contains every one of the question's own terms (Prompt 25), and two thresholds on COVERAGE (the share of the question's own terms that a guide matches):
   * MIN_COVERAGE_TO_LIST - a guide may be listed (search results, "closest guides");
   * MIN_COVERAGE_FOR_AI  - the GATE: the model is called only if the best match reaches this.
 Terms of the earlier question weigh 0.5 and count only for ranking, only when the current question is very short, and never
@@ -25,7 +25,9 @@ STOPWORDS = frozenset((
 _TOKEN_RE = re.compile(r'[a-z0-9]+')
 
 # Curated synonym groups: the words a Pakistani freelancer types and the app's own words. Every group stays small; every
-# member is stemmed on load. Tuned only in Part 10a, from the tune set and the guides (never from a held-out question).
+# member is stemmed on load. Tuned only in Prompt 24 Part 10a and Prompt 25 Part 3, from the tune sets and the guides (never from a
+# held-out question). The ('sign', 'signature', 'esign', 'signed') group was removed in Prompt 25 (tune case s03, "sign in"): it pulled
+# the signature text of the two contract guides into every query containing "sign".
 SYNONYM_GROUPS = (
     ('invoice', 'bill', 'billing'),
     ('client', 'customer', 'buyer', 'employer'),
@@ -33,7 +35,6 @@ SYNONYM_GROUPS = (
     ('expense', 'spending', 'cost', 'spent'),
     ('proposal', 'pitch', 'bid', 'quote'),
     ('contract', 'agreement'),
-    ('sign', 'signature', 'esign', 'signed'),
     ('password', 'passcode'),
     ('2fa', 'otp', 'authenticator', 'verification'),
     ('pkr', 'rupee', 'rupees', 'rs'),
@@ -116,6 +117,7 @@ class Index:
         self.guides = tuple(guides)
         self.weighted = []        # per guide: Counter(term -> weighted tf)
         self.tk_terms = []        # per guide: set of terms of title + keywords
+        self.title_terms = []     # per guide: set of terms of the title alone (exact stems, no synonyms)
         self.phrases = []         # per guide: list of tuples of stems (multi-word keywords)
         for g in self.guides:
             tf = Counter()
@@ -124,7 +126,8 @@ class Index:
                 for t in terms(text):
                     tf[t] += c.FIELD_WEIGHTS[field]
             self.weighted.append(tf)
-            self.tk_terms.append(set(terms(g.title)) | set(terms(' '.join(g.keywords))))
+            self.title_terms.append(set(terms(g.title)))
+            self.tk_terms.append(self.title_terms[-1] | set(terms(' '.join(g.keywords))))
             self.phrases.append([tuple(stem(t) for t in tokens(k)) for k in g.keywords if len(tokens(k)) > 1])
         n = len(self.guides)
         self.lengths = [sum(tf.values()) for tf in self.weighted]
@@ -172,6 +175,12 @@ class Index:
             # A guide whose TITLE / KEYWORDS carry more of the question's own terms is a better answer than one that merely
             # repeats a single term many times in its body, so the score grows with that share.
             score *= 1 + c.TK_COVERAGE_BONUS * len(in_tk_terms) / len(distinct)
+            # A person who types a guide's own subject word ("payments") wants the guide that is ABOUT it, not one that merely
+            # mentions it often: when every term of the question is in the guide's title (exact stems, no synonyms) the score grows
+            # with how much of the title the question covers, so "Record a payment" beats "Business details and payment methods".
+            title = self.title_terms[i]
+            if title and all(t in title for t in distinct):
+                score *= 1 + c.TITLE_ALL_TERMS_BONUS * len(distinct) / len(title)
             out.append((score, i, Match(g, round(score, 6), coverage, in_tk)))
         out.sort(key=lambda row: (-row[0], row[1]))
         return [m for _s, _i, m in out[:limit]]

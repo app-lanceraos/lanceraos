@@ -1,15 +1,25 @@
 # apps/help/eval_cases.py
 """
-The evaluation questions (Prompt 24, Part 10), tracked on purpose (the gitignored tests/ folder is not the place for data the
-evaluation needs). Three retrieval sets and the live AI set:
+The evaluation questions (Prompt 24, Part 10; Prompt 25, Part 2), tracked on purpose (the gitignored tests/ folder is not the
+place for data the evaluation needs). Retrieval sets and the live AI set:
 
   TUNE_CASES      written by the module's author AFTER the library existed, as a Pakistani freelancer would type them
-                  (misspellings, very short, very long); none copied from a guide title. The ONLY set the retrieval tuning may look at.
-  HELD_OUT_CASES  the 30 questions of the prompt's Appendix B, verbatim, never edited, never used to choose a keyword or a synonym.
+                  (misspellings, very short, very long); none copied from a guide title.
+  HELD_OUT_CASES  the 30 questions of Prompt 24's Appendix B, verbatim, never edited, never used to choose a keyword or a synonym.
   NEGATIVE_CASES  questions that are NOT about LanceraOS: the gate must stay closed (the 8 of Appendix B plus 8 more).
   LIVE_CASES      the 27 cases of the live AI evaluation (one request each), with their rule ids.
 
-`expected` is "any of these slugs".
+Prompt 25 added the SHORT-QUERY sets (one or two words, the way people use a search box), verbatim from that prompt's appendices:
+
+  SHORT_TUNE_CASES / SHORT_TUNE_NEGATIVES            Appendix A: 47 + 5. May be looked at when tuning.
+  SHORT_HELD_OUT_CASES / SHORT_HELD_OUT_NEGATIVES    Appendix B: 30 + 6. Never used to choose a change; run for counts.
+
+WHICH SETS MAY BE LOOKED AT WHEN TUNING: TUNE_CASES, SHORT_TUNE_CASES and SHORT_TUNE_NEGATIVES (and, for the Prompt 24 rules,
+nothing else). WHICH MAY NOT: HELD_OUT_CASES, SHORT_HELD_OUT_CASES, SHORT_HELD_OUT_NEGATIVES and the 8 held-out NEGATIVE_CASES.
+Only `evaluate_help_retrieval --final-misses` prints the misses of the held-out sets.
+
+`expected` is "any of these slugs". The short tune cases may carry extra rules: `top1` (the guide at rank 1 must be one of these),
+`absent` (none of these may be in the top three) and `gate_open` (the gate must open).
 """
 
 TUNE_CASES = [
@@ -128,6 +138,111 @@ NEGATIVE_CASES = [
     {'id': 'n14', 'q': 'explain quantum physics', 'held_out': False},
     {'id': 'n15', 'q': 'how to learn python programming', 'held_out': False},
     {'id': 'n16', 'q': 'when is the next cricket world cup', 'held_out': False},
+]
+
+# --- Prompt 25: the short-query sets (verbatim from the prompt's appendices; never edited afterwards) --------------------
+# Appendix A, the SHORT TUNE set (47): may be looked at when tuning.
+SHORT_TUNE_CASES = [
+    {'id': 's01', 'q': 'invoice', 'expected': ('create-an-invoice', 'send-an-invoice',), 'top1': ('create-an-invoice', 'send-an-invoice',), 'absent': ('record-an-expense',)},
+    {'id': 's02', 'q': 'invoices', 'expected': ('create-an-invoice', 'send-an-invoice',), 'top1': ('create-an-invoice', 'send-an-invoice',), 'absent': ('record-an-expense',)},
+    {'id': 's03', 'q': 'sign in', 'expected': ('two-factor-sign-in', 'sign-up-and-verify-your-email', 'reset-or-change-your-password', 'your-devices-and-sessions',), 'top1': ('two-factor-sign-in', 'sign-up-and-verify-your-email', 'reset-or-change-your-password', 'your-devices-and-sessions',)},
+    {'id': 's04', 'q': 'login', 'expected': ('sign-up-and-verify-your-email', 'two-factor-sign-in', 'reset-or-change-your-password',)},
+    {'id': 's05', 'q': 'log in', 'expected': ('sign-up-and-verify-your-email', 'two-factor-sign-in', 'reset-or-change-your-password',)},
+    {'id': 's06', 'q': 'password', 'expected': ('reset-or-change-your-password',), 'top1': ('reset-or-change-your-password',)},
+    {'id': 's07', 'q': 'logout', 'expected': ('your-devices-and-sessions',), 'gate_open': True},
+    {'id': 's08', 'q': 'sign out', 'expected': ('your-devices-and-sessions',)},
+    {'id': 's09', 'q': 'payment', 'expected': ('record-a-payment',), 'top1': ('record-a-payment', 'record-a-payment-on-an-invoice', 'link-payments-to-invoices', 'import-payments-from-a-file',)},
+    {'id': 's10', 'q': 'payments', 'expected': ('record-a-payment', 'import-payments-from-a-file',), 'top1': ('record-a-payment', 'record-a-payment-on-an-invoice', 'link-payments-to-invoices', 'import-payments-from-a-file',)},
+    {'id': 's11', 'q': 'expense', 'expected': ('record-an-expense',), 'top1': ('record-an-expense',)},
+    {'id': 's12', 'q': 'expenses', 'expected': ('record-an-expense',), 'top1': ('record-an-expense',)},
+    {'id': 's13', 'q': 'client', 'expected': ('add-and-manage-clients',), 'top1': ('add-and-manage-clients',)},
+    {'id': 's14', 'q': 'clients', 'expected': ('add-and-manage-clients',), 'top1': ('add-and-manage-clients',)},
+    {'id': 's15', 'q': 'proposal', 'expected': ('write-a-proposal-with-ai', 'send-a-proposal',)},
+    {'id': 's16', 'q': 'proposals', 'expected': ('write-a-proposal-with-ai', 'send-a-proposal',)},
+    {'id': 's17', 'q': 'contract', 'expected': ('create-a-contract', 'send-and-sign-a-contract',)},
+    {'id': 's18', 'q': 'contracts', 'expected': ('create-a-contract', 'send-and-sign-a-contract',)},
+    {'id': 's19', 'q': 'report', 'expected': ('profit-and-loss', 'income-statement',), 'top1': ('profit-and-loss', 'income-statement',)},
+    {'id': 's20', 'q': 'profit', 'expected': ('profit-and-loss',), 'top1': ('profit-and-loss',)},
+    {'id': 's21', 'q': 'score', 'expected': ('health-score', 'client-reliability-score',)},
+    {'id': 's22', 'q': 'notifications', 'expected': ('notifications', 'notification-settings',)},
+    {'id': 's23', 'q': 'email', 'expected': ('send-emails-from-your-own-address', 'change-your-email-or-username',)},
+    {'id': 's24', 'q': 'currency', 'expected': ('exchange-rates-and-converted-amounts',)},
+    {'id': 's25', 'q': 'csv', 'expected': ('import-payments-from-a-file',), 'top1': ('import-payments-from-a-file',)},
+    {'id': 's26', 'q': 'refund', 'expected': ('record-a-payment-on-an-invoice',)},
+    {'id': 's27', 'q': 'reminder', 'expected': ('payment-reminders-and-formal-notice',), 'top1': ('payment-reminders-and-formal-notice',)},
+    {'id': 's28', 'q': 'reminders', 'expected': ('payment-reminders-and-formal-notice',), 'top1': ('payment-reminders-and-formal-notice',)},
+    {'id': 's29', 'q': 'template', 'expected': ('invoice-templates-and-design',)},
+    {'id': 's30', 'q': 'dashboard', 'expected': ('your-dashboard',), 'top1': ('your-dashboard',)},
+    {'id': 's31', 'q': 'profile', 'expected': ('first-steps',)},
+    {'id': 's32', 'q': 'settings', 'expected': ('business-details-and-payment-methods', 'notification-settings',)},
+    {'id': 's33', 'q': 'ai', 'expected': ('ai-features-in-lanceraos', 'write-a-proposal-with-ai',)},
+    {'id': 's34', 'q': 'pdf', 'expected': ('send-an-invoice', 'the-tax-summary-pdf', 'signed-contracts-and-the-pdf',)},
+    {'id': 's35', 'q': 'ntn', 'expected': ('tax-and-pseb-details',)},
+    {'id': 's36', 'q': 'pseb', 'expected': ('tax-and-pseb-details',)},
+    {'id': 's37', 'q': 'cnic', 'expected': ('tax-and-pseb-details',)},
+    {'id': 's38', 'q': 'logo', 'expected': ('first-steps', 'invoice-templates-and-design',)},
+    {'id': 's39', 'q': 'wise', 'expected': ('import-payments-from-a-file', 'record-a-payment',)},
+    {'id': 's40', 'q': 'late fee', 'expected': ('create-an-invoice',)},
+    {'id': 's41', 'q': 'recurring', 'expected': ('recurring-invoices',), 'top1': ('recurring-invoices',)},
+    {'id': 's42', 'q': 'statement', 'expected': ('client-statement', 'income-statement',)},
+    {'id': 's43', 'q': 'delete account', 'expected': ('delete-your-account',), 'top1': ('delete-your-account',)},
+    {'id': 's44', 'q': '2fa', 'expected': ('two-factor-sign-in',), 'top1': ('two-factor-sign-in',)},
+    {'id': 's45', 'q': 'health', 'expected': ('health-score',), 'top1': ('health-score',)},
+    {'id': 's46', 'q': 'tax', 'expected': ('the-tax-page',)},
+    {'id': 's47', 'q': 'portal', 'expected': ('the-client-portal',), 'top1': ('the-client-portal',)},
+]
+
+# Appendix A negatives (5): the gate must stay closed.
+SHORT_TUNE_NEGATIVES = [
+    {'id': 'sn1', 'q': 'price'},
+    {'id': 'sn2', 'q': 'pricing'},
+    {'id': 'sn3', 'q': 'plans'},
+    {'id': 'sn4', 'q': 'weather'},
+    {'id': 'sn5', 'q': 'hello'},
+]
+
+# Appendix B, the SHORT HELD-OUT set (30): NEVER used to choose a change; run for counts.
+SHORT_HELD_OUT_CASES = [
+    {'id': 'b01', 'q': 'how to invoice', 'expected': ('create-an-invoice', 'send-an-invoice',)},
+    {'id': 'b02', 'q': 'forgot my password', 'expected': ('reset-or-change-your-password',)},
+    {'id': 'b03', 'q': 'change email', 'expected': ('change-your-email-or-username',)},
+    {'id': 'b04', 'q': 'add client', 'expected': ('add-and-manage-clients',)},
+    {'id': 'b05', 'q': 'record expense', 'expected': ('record-an-expense',)},
+    {'id': 'b06', 'q': 'upload csv', 'expected': ('import-payments-from-a-file',)},
+    {'id': 'b07', 'q': 'payoneer import', 'expected': ('import-payments-from-a-file',)},
+    {'id': 'b08', 'q': 'client signs contract', 'expected': ('send-and-sign-a-contract',)},
+    {'id': 'b09', 'q': 'tax estimate', 'expected': ('the-tax-page',)},
+    {'id': 'b10', 'q': 'download tax summary', 'expected': ('the-tax-summary-pdf',)},
+    {'id': 'b11', 'q': 'income certificate', 'expected': ('income-statement',)},
+    {'id': 'b12', 'q': 'profit and loss', 'expected': ('profit-and-loss',)},
+    {'id': 'b13', 'q': 'what is health score', 'expected': ('health-score',)},
+    {'id': 'b14', 'q': 'ai proposal', 'expected': ('write-a-proposal-with-ai',)},
+    {'id': 'b15', 'q': 'send reminder', 'expected': ('payment-reminders-and-formal-notice',)},
+    {'id': 'b16', 'q': 'partial payment', 'expected': ('record-a-payment-on-an-invoice',)},
+    {'id': 'b17', 'q': 'mark as paid', 'expected': ('record-a-payment-on-an-invoice',)},
+    {'id': 'b18', 'q': 'invoice template', 'expected': ('invoice-templates-and-design',)},
+    {'id': 'b19', 'q': 'change theme', 'expected': ('find-your-way-around',)},
+    {'id': 'b20', 'q': 'notification email', 'expected': ('notification-settings', 'notifications',)},
+    {'id': 'b21', 'q': 'gmail smtp', 'expected': ('send-emails-from-your-own-address',)},
+    {'id': 'b22', 'q': 'my devices', 'expected': ('your-devices-and-sessions',)},
+    {'id': 'b23', 'q': 'exchange rate', 'expected': ('exchange-rates-and-converted-amounts',)},
+    {'id': 'b24', 'q': 'client statement pdf', 'expected': ('client-statement',)},
+    {'id': 'b25', 'q': 'client reliability', 'expected': ('client-reliability-score',)},
+    {'id': 'b26', 'q': 'unlink payment', 'expected': ('link-payments-to-invoices',)},
+    {'id': 'b27', 'q': 'duplicate invoice', 'expected': ('duplicate-and-delete-invoices',)},
+    {'id': 'b28', 'q': 'withdraw proposal', 'expected': ('send-a-proposal',)},
+    {'id': 'b29', 'q': 'convert proposal', 'expected': ('turn-a-proposal-into-an-invoice',)},
+    {'id': 'b30', 'q': 'signed contract pdf', 'expected': ('signed-contracts-and-the-pdf',)},
+]
+
+# Appendix B negatives (6): the gate must stay closed. Held out.
+SHORT_HELD_OUT_NEGATIVES = [
+    {'id': 'bn1', 'q': 'weather today'},
+    {'id': 'bn2', 'q': 'pricing plans'},
+    {'id': 'bn3', 'q': 'hello there'},
+    {'id': 'bn4', 'q': 'how to cook rice'},
+    {'id': 'bn5', 'q': 'bitcoin price'},
+    {'id': 'bn6', 'q': 'movie tickets'},
 ]
 
 # The live AI evaluation (Part 10b): 27 cases, one request each. `kind` names the rule they belong to.
