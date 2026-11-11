@@ -1,0 +1,58 @@
+{
+  "blocks": [
+    {
+      "text": "Open Tax in the sidebar. The page has three views in a row at the top: \"Estimate\", \"Calculator\" and \"How this works\". Pick a tax year with the \"Tax year\" buttons.",
+      "type": "p"
+    },
+    {
+      "text": "The \"Estimate\" view is built from the payments you recorded in a currency other than PKR in that tax year. It shows the money received, the rate used, the estimated tax the banks took, a table \"Month by month\", the currencies received, the return date and a short checklist. The card \"Rate used in this estimate\" says why that rate was chosen. Your saved PSEB number sets the rate; the self-declared box alone does not.",
+      "type": "p"
+    },
+    {
+      "text": "\"What to do next\" gives the checklist, and \"What this estimate does not cover\" lists what is left out. \"How this works\" shows each fact behind the numbers, how sure the page is about it and its sources.",
+      "type": "p"
+    },
+    {
+      "text": "These figures are estimates built from the payments you recorded in LanceraOS. Your bank's own records show the tax it actually took. The page is not a tax return, a tax certificate or tax advice, so ask a tax advisor about your own situation.",
+      "type": "note"
+    },
+    {
+      "label": "Open Tax",
+      "to": "/tax",
+      "type": "link"
+    }
+  ],
+  "checked_on": "2026-11-11",
+  "library_version": "c9b6e43a562f",
+  "related": [
+    {
+      "slug": "the-tax-calculator",
+      "summary": "Type a taxable income and see the tax at the normal rates, band by band, as an estimate.",
+      "title": "The tax calculator",
+      "topic": "tax"
+    },
+    {
+      "slug": "the-tax-summary-pdf",
+      "summary": "Download a one-page PDF of your tax estimate to give to your accountant.",
+      "title": "The tax summary document",
+      "topic": "tax"
+    },
+    {
+      "slug": "tax-and-pseb-details",
+      "summary": "Save your CNIC, NTN and PSEB registration number, and see where each one is used.",
+      "title": "Tax and PSEB details",
+      "topic": "settings"
+    },
+    {
+      "slug": "record-a-payment",
+      "summary": "Add money you have received to the Payments page, from Payoneer, Wise, a bank, JazzCash and more.",
+      "title": "Record a payment",
+      "topic": "payments"
+    }
+  ],
+  "slug": "the-tax-page",
+  "summary": "An estimate of the tax your bank took on money from abroad, built from the payments you recorded.",
+  "title": "The Tax page",
+  "topic": "tax",
+  "topic_title": "Tax"
+}

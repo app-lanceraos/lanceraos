@@ -11,11 +11,12 @@ by hand; re-run the command and review the diff.
   profile, a client, an accepted proposal and a draft proposal, then drives the real owner and public views with Django's test
   client (`force_authenticate` for the owner; the owner's real minted access cookie only for the "owner opens their own link"
   cases; no cookies for the visitor). It never touches a real account.
-* **Nothing is sent and nothing is queued.** For the duration of the run, these are replaced (`unittest.mock.patch`):
+* **Nothing is sent and nothing really reaches a queue.** For the duration of the run, these are replaced (`unittest.mock.patch`):
   `apps.contracts.views.send_client_facing_email` (the "sent by email" contract gets a stub reply), `core.email.send_email` (the
   freelancer's "declined" notice), `apps.contracts.tasks.send_signed_copies.delay` (the signed-copy task), and
-  `core.email.requests.post` (set to raise, so any real mail call would fail the run). Calls to the stubs were: 1 client email,
-  1 freelancer notice, 0 queued tasks.
+  `core.email.requests.post` (set to raise, so any real mail call would fail the run). The command counts the calls to the stubs and fails (`CommandError`) unless
+  they equal the numbers the run is built to produce: 1 client email, 1 freelancer notice, and 2 requests to queue the signed
+  copies (one per successful client signing; the mocked `.delay` swallows both, so no broker is reached).
 * The clock is frozen inside the command only (`django.utils.timezone.now` returns 2026-11-10 12:00:00 plus one second per
   call), so times are ordered and the output is byte-stable between runs. The sign-by dates are relative to that frozen day.
 * The rate-limit counters the run touches (the fake IPs and the throwaway user's keys) are deleted before and after.

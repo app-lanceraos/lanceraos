@@ -1,0 +1,62 @@
+{
+  "blocks": [
+    {
+      "text": "Open a finalised invoice from the Invoices list. Press \"Send\" and confirm in the \"Send Invoice\" box. LanceraOS emails your client with the invoice PDF attached. The email goes from your own address if you set up \"Custom Email\" in Settings, otherwise from the LanceraOS address. You are copied on it.",
+      "type": "p"
+    },
+    {
+      "text": "You can do both steps at once: on the last stage of the invoice form, \"Finalise & Send\" finalises the invoice and emails it in one go.",
+      "type": "p"
+    },
+    {
+      "text": "If you sent the invoice yourself, for example by WhatsApp, press \"Mark as Sent\". That only records that you sent it. Nothing is emailed.",
+      "type": "p"
+    },
+    {
+      "text": "\"Copy Invoice Link\" in the More menu copies the page your client opens. \"Resend Invoice\" in the same menu sends it again.",
+      "type": "p"
+    },
+    {
+      "text": "The invoice PDF is fixed when you finalise. Changing your profile or business details afterwards does not change an invoice that is already finalised.",
+      "type": "note"
+    },
+    {
+      "label": "Open Invoices",
+      "to": "/invoices",
+      "type": "link"
+    }
+  ],
+  "checked_on": "2026-11-11",
+  "library_version": "c9b6e43a562f",
+  "related": [
+    {
+      "slug": "payment-reminders-and-formal-notice",
+      "summary": "Switch automatic reminders on, send a reminder yourself, and send a formal notice for a severely overdue invoice.",
+      "title": "Payment reminders and formal notice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "send-emails-from-your-own-address",
+      "summary": "Connect your own mailbox so emails to your clients come from your address.",
+      "title": "Send emails from your own address",
+      "topic": "settings"
+    },
+    {
+      "slug": "the-client-portal",
+      "summary": "The private page where a client can view invoices, message you, report a payment and ask for a change.",
+      "title": "What your client sees in the portal",
+      "topic": "clients"
+    },
+    {
+      "slug": "invoice-statuses",
+      "summary": "Every status an invoice can show, what moves it forward, and why Overdue is a warning and not a status.",
+      "title": "What each invoice status means",
+      "topic": "invoices"
+    }
+  ],
+  "slug": "send-an-invoice",
+  "summary": "Email a finalised invoice to your client from LanceraOS, or record that you sent it yourself.",
+  "title": "Send an invoice",
+  "topic": "invoices",
+  "topic_title": "Invoices"
+}

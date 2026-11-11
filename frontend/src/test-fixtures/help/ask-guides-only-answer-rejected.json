@@ -1,0 +1,42 @@
+{
+  "ai_reason": "",
+  "answer": null,
+  "cached": false,
+  "guides": [
+    {
+      "slug": "send-an-invoice",
+      "summary": "Email a finalised invoice to your client from LanceraOS, or record that you sent it yourself.",
+      "title": "Send an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "the-client-portal",
+      "summary": "The private page where a client can view invoices, message you, report a payment and ask for a change.",
+      "title": "What your client sees in the portal",
+      "topic": "clients"
+    },
+    {
+      "slug": "add-and-manage-clients",
+      "summary": "Keep a record for each client, then add tags and private notes, flag a client or archive one.",
+      "title": "Add and manage clients",
+      "topic": "clients"
+    },
+    {
+      "slug": "send-and-sign-a-contract",
+      "summary": "Sign and send a contract by email or link, and see how your client signs or declines.",
+      "title": "Send a contract and get it signed",
+      "topic": "contracts"
+    },
+    {
+      "slug": "invoice-statuses",
+      "summary": "Every status an invoice can show, what moves it forward, and why Overdue is a warning and not a status.",
+      "title": "What each invoice status means",
+      "topic": "invoices"
+    }
+  ],
+  "library_version": "c9b6e43a562f",
+  "notice": "I couldn't put together a reliable answer to that. These guides are the closest match.",
+  "outcome": "guides_only",
+  "reason": "answer_rejected",
+  "support_email": ""
+}

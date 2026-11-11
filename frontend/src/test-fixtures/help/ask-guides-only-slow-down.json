@@ -1,0 +1,42 @@
+{
+  "ai_reason": "",
+  "answer": null,
+  "cached": false,
+  "guides": [
+    {
+      "slug": "send-an-invoice",
+      "summary": "Email a finalised invoice to your client from LanceraOS, or record that you sent it yourself.",
+      "title": "Send an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "add-and-manage-clients",
+      "summary": "Keep a record for each client, then add tags and private notes, flag a client or archive one.",
+      "title": "Add and manage clients",
+      "topic": "clients"
+    },
+    {
+      "slug": "the-client-portal",
+      "summary": "The private page where a client can view invoices, message you, report a payment and ask for a change.",
+      "title": "What your client sees in the portal",
+      "topic": "clients"
+    },
+    {
+      "slug": "create-an-invoice",
+      "summary": "Build an invoice in three stages: the client and dates, the line items, and the options.",
+      "title": "Create an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "payment-reminders-and-formal-notice",
+      "summary": "Switch automatic reminders on, send a reminder yourself, and send a formal notice for a severely overdue invoice.",
+      "title": "Payment reminders and formal notice",
+      "topic": "invoices"
+    }
+  ],
+  "library_version": "c9b6e43a562f",
+  "notice": "You're asking quickly. Wait a moment, then ask again. These guides match your question.",
+  "outcome": "guides_only",
+  "reason": "slow_down",
+  "support_email": ""
+}

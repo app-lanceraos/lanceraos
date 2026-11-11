@@ -1,0 +1,42 @@
+{
+  "ai_reason": "",
+  "answer": null,
+  "cached": false,
+  "guides": [
+    {
+      "slug": "record-an-expense",
+      "summary": "Add what you spend on your business, pick a category, and mark what you consider a business cost.",
+      "title": "Record an expense",
+      "topic": "expenses"
+    },
+    {
+      "slug": "record-a-payment-on-an-invoice",
+      "summary": "Mark an invoice paid in full, add a part payment, undo the last payment or record a refund.",
+      "title": "Record a payment on an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "record-a-payment",
+      "summary": "Add money you have received to the Payments page, from Payoneer, Wise, a bank, JazzCash and more.",
+      "title": "Record a payment",
+      "topic": "payments"
+    },
+    {
+      "slug": "link-payments-to-invoices",
+      "summary": "Match a payment you recorded to the invoice it paid, or split it across several invoices.",
+      "title": "Link a payment to an invoice",
+      "topic": "payments"
+    },
+    {
+      "slug": "client-reliability-score",
+      "summary": "A badge that tells you how reliably a client has paid, based on the invoices already settled.",
+      "title": "The client reliability score",
+      "topic": "clients"
+    }
+  ],
+  "library_version": "c9b6e43a562f",
+  "notice": "The guides don't cover that yet. These are the closest ones.",
+  "outcome": "guides_only",
+  "reason": "not_covered",
+  "support_email": ""
+}

@@ -1,0 +1,6 @@
+{
+  "body": {
+    "error": "Please keep your question under 300 characters."
+  },
+  "status": 400
+}

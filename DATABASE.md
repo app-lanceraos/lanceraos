@@ -1842,6 +1842,15 @@ db_table 'contracts'; ordering -created_at; indexes (user, status), (user, creat
 
 ---
 
+## apps.help (Prompt 24, 11 November 2026)
+
+**`apps.help` has no tables and no migration.** Its guide library is Python data (`apps/help/guides/`), its answer cache lives in Redis (24 hours, keyed by a hash,
+holding the answer and guide slugs only, never the question), and the two things it records go to existing tables: one `core.AuditLog` row per question
+(`help_question`: ids, counts, booleans and words from our own vocabularies) and per rating (`help_answer_rated`), and one `core.AiCallLog` row per model call
+(sizes only). Neither event is a bell notification. See DECISIONS.md "Help / AI Assistant: the backend (Prompt 24)".
+
+---
+
 ## Not yet built
 
 Tax, Health Score, Proposals, Subscriptions, and the rest of Payments (income tracking,

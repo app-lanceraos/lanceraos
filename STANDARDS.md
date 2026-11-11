@@ -60,6 +60,11 @@ Facts and numbers come from code; a feature that shows model text next to number
 fixed fallback sentence per fact so the feature works with AI off. Send the model only what is needed and nothing that identifies a
 person or client. Decide the pass rule of an evaluation BEFORE running it and do not edit the prompt afterwards to pass it.
 
+**Help (`apps/help`, Prompt 24, 11 November 2026) is the third AI feature and the one with a gate BEFORE the model and a guard AFTER it.**
+Code searches a library of hand-written guides first; if no guide matches well enough, the model is never called. When it is called,
+it sees only the redacted question and the two or three best guides, and its reply is parsed and checked (links, numbers, banned words,
+markup, length) before anything is shown. Every outcome carries guides, so the feature works with AI off. See "Help guides" at the end.
+
 ## Multi-row writes are atomic; state-dependent edits re-check state under a lock
 
 A write that touches more than one row (a record plus its line items, a total recalculated afterwards) runs in ONE
@@ -414,6 +419,8 @@ Enforced by `apps/payments/tests/test_direction.py` (AST, lazy imports inside fu
 
 **`apps.health` sits above `apps.payments` (Prompt 18, 09 November 2026).** It imports only the standard library, Django/DRF, `core.*` and, from `apps.payments`, the non-view modules `ledger`, `expense_ledger`, `rollup`, `models`, `constants` and `http`; never `apps.invoices`, `apps.clients`, `apps.dashboard`, `apps.proposals`, `apps.users`, `apps.admin_panel` or a `views*` module. **No app imports it** (only `config/urls.py` and `config/settings.py` name it), and `apps.payments` is forbidden from importing it. Enforced by `apps/health/tests/test_direction.py` and `apps/payments/tests/test_direction.py`.
 
+**`apps.help` sits beside `apps.health` and imports less (Prompt 24, 11 November 2026).** It imports only the standard library, Django, DRF and `core.*` — never another `apps.*` package, never a `views*` module of another app. The guides are Python data, so Help needs no model and no migration. **No app imports it** (only `config/urls.py` and `config/settings.py` name it). Enforced by `apps/help/tests/test_direction.py` (AST, lazy imports inside functions included), which also fails on a `print()`, on `requests`, and on a Groq URL or key inside the app.
+
 **A score or a grade is computed in a pure module from a facts object (Prompt 18).** The database is read in one place (`apps/health/facts.py`) and turned into a frozen `Facts`; `scoring.py`, `tips.py` and `copy.py` import no Django and no `apps.*`, so they are tested without a database. **A "how to improve" figure is computed by re-running the same scoring on a modified copy of the facts** (`dataclasses.replace`), and the gain shown is the change in the DISPLAYED total, never estimated separately; a step worth under one point is dropped. A sentence a person reads is built from the person's numbers by a template and from the same constants the formula uses, so the words cannot disagree with the maths. An area with too little data is "not enough data", never zero, and the total is rescaled over the areas that could be scored.
 
 **Two ledgers, one app (Prompt 14, 08 November 2026).** Money in (`Payment`) and money out (`Expense`) are two ledgers inside
@@ -505,3 +512,11 @@ first applied to `apps/proposals/views_public.py`:
 - An outcome that is unknown (no reply, a timeout, a 5xx, a page that is not ours) is settled by reading the record, never by sending again.
 - Fixtures for the frontend are generated from the real endpoints by a management command that refuses to run outside DEBUG, works in one rolled-back transaction, sends and queues nothing, and checks its own output for secrets, ids and addresses (`export_contract_fixtures`).
 
+## Help guides (Prompt 24, 11 November 2026)
+
+- **A change to a screen's wording or behaviour is not done until its guide is updated.** Every guide lists the repo files it was written from (`sources`), the date it was last checked (`checked_on`) and the exact on-screen words it quotes (`ui_labels`). After changing a screen: update the guide, bump `checked_on`, run `python manage.py check_help_library` (it checks that every quoted label is in the frontend source and every link is a real route) and `python manage.py check_help_library --stale` (it lists guides whose sources changed in git after `checked_on`). The library is also a Django system check, so a structural mistake fails `manage.py migrate` in the pre-deploy step instead of failing for users.
+- **A guide contains no digit, no limit, no rate, no date, no plan or price word, and no tax or legal conclusion** (`apps/help/constants.py` has the one list of banned phrases; a test scans every guide and every sentence Help writes). Guides describe what works today. Quoted words are in straight double quotes and equal `ui_labels` exactly; the guide never invents a menu path.
+- **Building the feature behind a sidebar item means rewriting `not-available-yet`** in the same change (today it names "Skill Analyzer").
+- Links in a guide come from `apps/help/links.py` (`LINK_TARGETS`), never from the model; the model's text may contain no link, path or address (the guard rejects it) and the guides shown beside an answer are the ones it cited, intersected with the ones it was sent.
+- A question a person types may hold a name, a CNIC, a phone number or an account number. It is redacted before it leaves the server, and neither it nor any model text is written to a log line, an audit row, a cache value or `AiCallLog` (a canary test asserts it). The audit rows `help_question` and `help_answer_rated` carry ids, counts and words from our own vocabularies only.
+- A change to the Help prompt, the guide structure, the two coverage thresholds or the Groq models is re-measured (`evaluate_help_retrieval`, then `evaluate_help_assistant`) and the result recorded in `AI_EVALUATION.md` section 15. The pass rule is written before the run and the prompt is not edited afterwards to pass it.

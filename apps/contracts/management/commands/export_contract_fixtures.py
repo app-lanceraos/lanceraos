@@ -44,6 +44,9 @@ FAKE_EMAIL_RESULT = {
     'sent': True, 'sent_via': 'resend', 'smtp_host': None, 'provider_message_id': 'msg_fixture',
     'fallback_used': False, 'error': None,
 }
+# What one run is built to ask of the stubs: one contract sent by email, one declined (the freelancer's notice), and two
+# successful client signings, each of which asks (the mocked) `.delay` once for the signed copies. Nothing reaches a broker.
+EXPECTED_STUB_CALLS = {'client_emails': 1, 'owner_emails': 1, 'signed_copy_queue_requests': 2}
 UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 IP_RE = re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b')
 SECRET_RE = re.compile(r'gsk_[A-Za-z0-9]|\bre_[A-Za-z0-9]{8}')
@@ -140,8 +143,16 @@ class Command(BaseCommand):
         return True
 
     def _assert_nothing_sent(self, delay):
-        if delay.call_count < 0:  # pragma: no cover - the stub exists to make an enqueue impossible
-            raise CommandError('unreachable')
+        """
+        Compares the stub counters with what the run is built to produce, and fails loudly on any difference.
+        `.delay` IS reached (once per successful client signing, straight after the signing commit), but it is the
+        mock's: nothing reaches a broker. The expected numbers are constants so a change to the run has to update them.
+        """
+        self.queue_requests = delay.call_count
+        actual = {'client_emails': self.stub_calls['email'], 'owner_emails': self.stub_calls['owner_email'],
+                  'signed_copy_queue_requests': delay.call_count}
+        if actual != EXPECTED_STUB_CALLS:
+            raise CommandError(f'The stub counters {actual} differ from the expected {EXPECTED_STUB_CALLS}; the run sent or queued something it should not have, or the run changed.')
 
     def _counts(self):
         return {
@@ -502,7 +513,8 @@ class Command(BaseCommand):
         (out / 'index.js').write_text(_index_js(names), encoding='utf-8')
         self.stdout.write(self.style.SUCCESS(
             f'Wrote {len(rendered)} fixtures to {out} (stubbed client emails asked for: {self.stub_calls["email"]}, '
-            f'freelancer notice emails asked for: {self.stub_calls["owner_email"]}; none sent). Rows before/after: {before} / {after}.'))
+            f'freelancer notice emails asked for: {self.stub_calls["owner_email"]}; signed-copy queue requests swallowed by the mock: '
+            f'{self.queue_requests}; nothing sent, nothing really queued). Rows before/after: {before} / {after}.'))
 
 
 def _index_js(names):

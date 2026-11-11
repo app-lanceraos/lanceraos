@@ -1,0 +1,47 @@
+{
+  "query": "how do I send an invoice",
+  "results": [
+    {
+      "slug": "send-an-invoice",
+      "summary": "Email a finalised invoice to your client from LanceraOS, or record that you sent it yourself.",
+      "title": "Send an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "create-an-invoice",
+      "summary": "Build an invoice in three stages: the client and dates, the line items, and the options.",
+      "title": "Create an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "record-an-expense",
+      "summary": "Add what you spend on your business, pick a category, and mark what you consider a business cost.",
+      "title": "Record an expense",
+      "topic": "expenses"
+    },
+    {
+      "slug": "recurring-invoices",
+      "summary": "Make an invoice repeat on a schedule, send each copy automatically or review it first, and pause the series.",
+      "title": "Recurring invoices",
+      "topic": "invoices"
+    },
+    {
+      "slug": "payment-reminders-and-formal-notice",
+      "summary": "Switch automatic reminders on, send a reminder yourself, and send a formal notice for a severely overdue invoice.",
+      "title": "Payment reminders and formal notice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "invoice-statuses",
+      "summary": "Every status an invoice can show, what moves it forward, and why Overdue is a warning and not a status.",
+      "title": "What each invoice status means",
+      "topic": "invoices"
+    },
+    {
+      "slug": "invoice-analytics",
+      "summary": "See how much you invoiced and collected, which clients bring the most, and totals by currency.",
+      "title": "Invoice analytics",
+      "topic": "invoices"
+    }
+  ]
+}

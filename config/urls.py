@@ -62,6 +62,8 @@ urlpatterns = [
     path('api/contracts/public/<str:view_token>/pdf/', contract_pdf_public, name='contract_pdf_public'),
     path('api/contracts/', include('apps.contracts.urls')),
     path('api/dashboard/', include('apps.dashboard.urls')),
+    # The Help assistant (Prompt 24): guides, search, a guarded AI answer.
+    path('api/help/', include('apps.help.urls')),
     # Lives at the root, not under api/auth/ — matches what the frontend
     # (AppShell.jsx) already calls directly via api.get('/notifications/'),
     # which resolves against the API base URL, not through /auth/.

@@ -1,0 +1,6 @@
+{
+  "body": {
+    "error": "Choose helpful or not helpful."
+  },
+  "status": 400
+}

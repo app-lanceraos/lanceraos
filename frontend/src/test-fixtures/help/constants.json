@@ -1,0 +1,16 @@
+{
+  "GUIDE_COUNT": 49,
+  "LIBRARY_VERSION": "c9b6e43a562f",
+  "POPULAR_SLUGS": [
+    "create-an-invoice",
+    "send-an-invoice",
+    "record-a-payment",
+    "import-payments-from-a-file",
+    "write-a-proposal-with-ai",
+    "the-tax-page"
+  ],
+  "QUESTION_MAX_CHARS": 300,
+  "QUESTION_MIN_CHARS": 3,
+  "SEARCH_MAX_CHARS": 120,
+  "SEARCH_MIN_CHARS": 2
+}

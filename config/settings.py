@@ -117,9 +117,9 @@ INSTALLED_APPS = [
     'apps.dashboard',
     'apps.health',
     'apps.tax',  # Prompt 20: verified-only tax estimate (no models, no migration)
+    'apps.help',  # Prompt 24: the Help assistant (guide library + search + optional AI answer; no models, no migration)
     # Future modules join this list as their own chats build them:
-    # 'apps.contracts', 'apps.subscriptions',
-    # 'apps.insights', 'apps.assistant',
+    # 'apps.subscriptions', 'apps.insights',
 ]
 
 MIDDLEWARE = [
@@ -476,6 +476,13 @@ AI_RATE_LIMIT_PER_HOUR = env.int('AI_RATE_LIMIT_PER_HOUR', default=20)
 # DEFAULT IS False: the pre-registered live evaluation (AI_EVALUATION.md section 14) did not clear its "no claim the facts
 # do not support" read for either model, so the owner decides. Set DASHBOARD_INSIGHTS_AI_ENABLED=True to turn it on.
 DASHBOARD_INSIGHTS_AI_ENABLED = env.bool('DASHBOARD_INSIGHTS_AI_ENABLED', default=False)
+# The Help assistant's AI layer (Prompt 24). Search and the guides never need it. The global AI_ENABLED overrides it.
+# DEFAULT IS False: the pre-registered live evaluation (AI_EVALUATION.md section 15) did not clear its manual read (one answered text stated a
+# step the guide does not give, in both the original prompt and the one allowed revision), so the owner decides. Set HELP_AI_ENABLED=True to turn
+# written answers on; with it off Help is search plus the guides.
+HELP_AI_ENABLED = env.bool('HELP_AI_ENABLED', default=False)
+# Where Help's "I couldn't find that" points. EMPTY means "show no contact line". Never put a placeholder address here.
+SUPPORT_EMAIL = env('SUPPORT_EMAIL', default='').strip()
 
 # ══════════════════════════════════════════════════════════════════
 # CELERY / CHANNELS

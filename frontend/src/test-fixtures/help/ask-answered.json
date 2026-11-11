@@ -1,0 +1,36 @@
+{
+  "ai_reason": "",
+  "answer": {
+    "blocks": [
+      {
+        "text": "Open the invoice from the Invoices list.",
+        "type": "p"
+      },
+      {
+        "items": [
+          "Press Send.",
+          "Confirm in the box."
+        ],
+        "type": "steps"
+      },
+      {
+        "text": "Your client gets the invoice by email.",
+        "type": "p"
+      }
+    ]
+  },
+  "cached": false,
+  "guides": [
+    {
+      "slug": "send-an-invoice",
+      "summary": "Email a finalised invoice to your client from LanceraOS, or record that you sent it yourself.",
+      "title": "Send an invoice",
+      "topic": "invoices"
+    }
+  ],
+  "library_version": "c9b6e43a562f",
+  "notice": "",
+  "outcome": "answered",
+  "reason": "",
+  "support_email": ""
+}

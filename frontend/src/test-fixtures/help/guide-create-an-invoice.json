@@ -1,0 +1,63 @@
+{
+  "blocks": [
+    {
+      "text": "Open Invoices in the sidebar and press \"New Invoice\". The form has three stages: \"Client & Dates\", \"Line Items\" and \"Options\". Your work is saved as a draft while you go, and the page shows \"Draft saved\".",
+      "type": "p"
+    },
+    {
+      "items": [
+        "In \"Client & Dates\", search for your client, or type a new one and tick \"Save this as a new client\". Choose an \"Issue Date\" and a \"Due Date\". The due date must come after the issue date.",
+        "In \"Line Items\", press \"Add Line Item\" and fill in the description, quantity and unit price. Choose the \"Currency\" and, if they apply, a \"Tax Rate (%)\" and a \"Discount\". The subtotal and total update as you type.",
+        "In \"Options\", add \"Notes for Client\" and \"Payment Terms\". You can also switch on a late fee or make the invoice recurring.",
+        "Press \"Preview PDF\" to see it, then \"Finalise\" when it is right."
+      ],
+      "type": "steps"
+    },
+    {
+      "text": "Finalising gives the invoice its number and freezes its PDF. A draft has no number yet and you can still change it. After that you can no longer edit the invoice.",
+      "type": "note"
+    },
+    {
+      "text": "\"Start from Preset\" on the Invoices page fills a new invoice from one you saved earlier.",
+      "type": "note"
+    },
+    {
+      "label": "Open Invoices",
+      "to": "/invoices",
+      "type": "link"
+    }
+  ],
+  "checked_on": "2026-11-11",
+  "library_version": "c9b6e43a562f",
+  "related": [
+    {
+      "slug": "send-an-invoice",
+      "summary": "Email a finalised invoice to your client from LanceraOS, or record that you sent it yourself.",
+      "title": "Send an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "invoice-statuses",
+      "summary": "Every status an invoice can show, what moves it forward, and why Overdue is a warning and not a status.",
+      "title": "What each invoice status means",
+      "topic": "invoices"
+    },
+    {
+      "slug": "recurring-invoices",
+      "summary": "Make an invoice repeat on a schedule, send each copy automatically or review it first, and pause the series.",
+      "title": "Recurring invoices",
+      "topic": "invoices"
+    },
+    {
+      "slug": "duplicate-and-delete-invoices",
+      "summary": "Copy an invoice, save one as a preset to reuse, and delete drafts you no longer need.",
+      "title": "Duplicate, save as preset and delete",
+      "topic": "invoices"
+    }
+  ],
+  "slug": "create-an-invoice",
+  "summary": "Build an invoice in three stages: the client and dates, the line items, and the options.",
+  "title": "Create an invoice",
+  "topic": "invoices",
+  "topic_title": "Invoices"
+}

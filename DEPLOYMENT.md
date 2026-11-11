@@ -440,6 +440,36 @@ nothing to undo in the database. A contract already sent stays sent and its link
 **No public announcement of Contracts** until a Pakistani lawyer has reviewed the clause library, the signing wording, the emails and the PDF text
 (`CONTRACTS_LAW.md`, "Pages (Prompt 23)").
 
+## 7m. Help backend release (11 November 2026, Prompt 24) **[U]**
+
+Release order: **redeploy the web service** (a new app `apps.help` with five endpoints under `/api/help/`). **No migration, no worker change, no Beat change, no new
+service.** The worker needs nothing; redeploying it with the web service is harmless. The Help PAGE is Prompt 25 and is not in this release, so nothing in the
+frontend calls these endpoints yet.
+
+Before traffic: the guide library is a Django system check, and `migrate` (the pre-deploy step) runs the system checks, so a structurally broken guide fails the
+release before the new web service starts. You can run the same check by hand in the container: `python manage.py check_help_library --no-repo` (the Docker image
+does not carry `frontend/`, so the checks against the real routes and labels run from a development checkout: `python manage.py check_help_library`).
+
+**Before each release that touches a screen:** run `python manage.py check_help_library` and `python manage.py check_help_library --stale` from a checkout and review
+the list (a guide whose sources changed after its `checked_on` date may be out of date). This is a development step, not a deploy step.
+
+Environment variables (both optional): **`HELP_AI_ENABLED`**: only if you want to override the shipped default (the shipped default is OFF; set it to True to turn written answers on; AI_EVALUATION.md section 15; the global
+`AI_ENABLED` still overrides it). **`SUPPORT_EMAIL`**: leave it EMPTY until the mailbox exists (empty means Help shows no contact line); never put a placeholder in it.
+`GROQ_API_KEY` is already set on web and worker for Proposals; Help uses the same key and the same two models, so run `python manage.py check_ai_models` from a web
+shell as before.
+
+Smoke test, with a throwaway account: **(1)** `GET /api/help/guides/` returns the topics and `library_version`; **(2)** `GET /api/help/search/?q=invoice` returns guides;
+**(3)** ask one real question (`POST /api/help/ask/` with `{"question": "How do I send an invoice to my client?"}`; it needs the CSRF header like any POST) and see either
+`outcome: "answered"` or `outcome: "guides_only"` with a reason (`ai_off` when AI is off, `ai_unavailable` with an `ai_reason` when the model failed); **(4)** ask nonsense
+(`"what is the weather in Lahore"`) and see `guides_only` with `reason: "no_match"` and the six popular guides, and confirm in `core.AiCallLog` that it made no model call.
+
+Rollback: redeploy the previous web image. Nothing is migrated, so there is nothing to undo; the two audit events (`help_question`, `help_answer_rated`) already written
+are harmless rows in `core.AuditLog`.
+
+**Pre-launch gates for Help (add to the public-launch list):** **(a)** the privacy policy page (`PrivacyPolicy.jsx`) does not name the AI service provider or say that
+proposal job posts and Help questions are sent to it; a lawyer must write that sentence before public launch. **(b)** The support mailbox must exist before `SUPPORT_EMAIL`
+is set. **(c)** The guides describe the app as it is today; re-run `check_help_library --stale` and read the list before the showcase.
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

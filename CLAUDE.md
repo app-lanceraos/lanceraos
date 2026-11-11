@@ -122,7 +122,10 @@ Every module must follow them exactly.
    (Groq limits are per organization; see DECISIONS.md, 02 November 2026).
    AI features so far: Proposals (the first) and the Dashboard insights card (the second, 06 November 2026 —
    facts and numbers computed by code, model text number-checked before it is shown, a per-feature kill switch
-   DASHBOARD_INSIGHTS_AI_ENABLED that DEFAULTS TO OFF after its evaluation, see DECISIONS.md and AI_EVALUATION.md section 14).
+   DASHBOARD_INSIGHTS_AI_ENABLED that DEFAULTS TO OFF after its evaluation, see DECISIONS.md and AI_EVALUATION.md section 14);
+   and Help (the third, 11 November 2026 — a code-run search over hand-written guides picks the guides, a GATE decides whether the model is
+   called at all, the model only words an answer from those guides, a GUARD checks it before anything is shown, a per-feature switch
+   HELP_AI_ENABLED; see Module 10, DECISIONS.md and AI_EVALUATION.md section 15).
 5. All prompts live in a prompts.py file inside the relevant app.
    Never hardcode prompt strings inside view functions.
 6. Sensitive fields (SMTP passwords, API keys stored per user) are
@@ -512,6 +515,13 @@ lanceraos/                          <- Django project root
 │   │                                  Sits ABOVE apps.payments: imports only core.* and apps.payments non-view modules; NO app imports it
 │   │                                  (AST-tested). The page, the radar chart and the widget are in frontend/ (pages/HealthScore.jsx, Health*.jsx,
 │   │                                  DashboardHealthCard.jsx).
+│   ├── help/                       <- Help / AI assistant — BUILT, backend only, 11 November 2026 (Prompt 24). No models, no migration: guides/ (49
+│   │                                  hand-written guides as validated Python data, 12 topic modules + the p/steps/note/link builders), library.py (LIBRARY,
+│   │                                  LIBRARY_VERSION, problems()), links.py (LINK_TARGETS), search.py (BM25, stemmer, synonyms, the gate), prompts.py,
+│   │                                  answers.py (parser, guard, blocks), service.py (answer_question), text.py (normalise/redact), views.py/urls.py (5
+│   │                                  endpoints), checks.py (system check), eval_cases.py/evaluation.py, management/commands/ (check_help_library,
+│   │                                  evaluate_help_retrieval, evaluate_help_assistant, export_help_fixtures). Imports only stdlib, Django, DRF and core.*;
+│   │                                  NO app imports it (AST-tested). The page is Prompt 25.
 │   ├── dashboard/                  <- Dashboard — BUILT (04 November 2026). No models, no migration:
 │   │                                  services.py (one builder per section), views.py (GET
 │   │                                  /api/dashboard/summary/, per-section isolation), urls.py.
@@ -3535,11 +3545,51 @@ stale-response tests.
 ---
 
 ### Module 10 — Help / AI Assistant
-Status: Built last, after all other modules complete.
+Status: BUILT, backend only (11 November 2026, Prompt 24). The Help PAGE (and wiring the profile menu's Help item, which does nothing today) is
+Prompt 25 and does not exist. No model, no migration, no new service. App: apps/help/ (it imports only the standard library, Django, DRF and `core.*`;
+no app imports it; AST-tested).
 
-A dedicated Help page (not a floating widget).
-Uses Groq AI with LanceraOS documentation embedded in system prompt
-as context. Answers questions about how to use the platform only.
+**The idea (it changes the spec's mechanism, not its intent).** The spec said "LanceraOS documentation embedded in the system prompt". Sending the
+whole library on every call (about 70,000 characters, roughly 17,000 tokens) is more than twice the free tier's per-minute allowance in ONE request, so
+Help instead keeps a library of 49 short HAND-WRITTEN guides, SEARCHES it with plain code, and puts only the two or three best guides (at most 5,000
+characters) in the prompt. Code finds the guides; the model only words an answer from them; code checks the words before they are shown. Search and the
+guides work with AI switched off: every response of `ask` carries guides (except `off_topic`), and AI off, busy, failing or rejected is HTTP 200
+`outcome: "guides_only"` with a reason, never an HTTP error.
+
+**The guides** are Python data (`apps/help/guides/<topic>.py`, 12 topics, built only with `p / steps / note / link`, each of which validates itself at
+import). A guide has a slug, title, summary, keywords, typed blocks, related slugs, `ui_labels` (the exact on-screen words it quotes, which must equal the
+quoted words in its text), `sources` (the repo files it was written from) and `checked_on`. Rules (`library.problems()`): no digit anywhere in shown
+text, no banned phrase (`constants.BANNED_PHRASES`: nothing about legal effect, tax conclusions, plans or prices), no markdown, links only from
+`links.LINK_TARGETS`. `python manage.py check_help_library [--no-repo] [--stale]` checks them against the real frontend (labels, routes) and lists guides
+whose sources changed after `checked_on`; the structural part is also a Django system check, so a bad guide fails `migrate` in the pre-deploy step.
+`LIBRARY_VERSION` (a content hash) invalidates the cache by itself. A change to a screen's wording is not done until its guide is updated (STANDARDS.md).
+
+**The answer path** (`service.answer_question`, the one function the view and the evaluation both call): redact the question (emails, web addresses, digit
+runs of seven or more, long tokens; `<`, `>` and backticks removed) -> soft per-minute limit (`slow_down`) -> BM25 search over title/keywords/summary/body ->
+the GATE (the model is called only if the best guide covers at least `MIN_COVERAGE_FOR_AI` of the question's own terms and hit its title or keywords; else
+`no_match` and NO model call) -> the switches (`HELP_AI_ENABLED` and the global `AI_ENABLED`) -> a 24-hour Redis cache of answered results (key = hash of the
+redacted question + library version + prompt version + both model ids; never the question) -> `core.ai.run_ai_task` (feature `help_assistant`,
+`GROQ_MODEL_FAST` first, `GROQ_MODEL_QUALITY` as the rate-limit fallback, reasoning effort low, 1,500 tokens, 25 s) -> the parser (`STATUS: ANSWER |
+NOT_COVERED | OFF_TOPIC`) -> the GUARD (`answers.check_answer`: length, markup characters, links/paths/addresses, numbers not in the guides or the question,
+banned phrases, "the guides"/"according to"-style leaks, "I have created..." claims) -> typed blocks. The model's sources are intersected with the guides it
+was sent; links come only from the guides, never from the model. The model receives nothing but the redacted question (and at most one earlier question,
+used only for ranking) and the chosen guides: no profile, no account data. Nothing a person typed and nothing a model wrote is logged, audited or cached
+(a canary test asserts it); the two audit events are `help_question` and `help_answer_rated` (ids, counts, booleans, our own vocabularies).
+
+**Endpoints** (all `IsAuthenticated`, function views, `Cache-Control: no-store`, errors `{"error": "..."}`): `GET /api/help/guides/`,
+`GET /api/help/guides/<slug>/`, `GET /api/help/search/?q=`, `POST /api/help/ask/` (`{question, previous_question?}`; 120 an hour then 429; more than six a
+minute is a 200 `slow_down`), `POST /api/help/rate/`. Settings: `HELP_AI_ENABLED` (default decided by the evaluation, see below; the global `AI_ENABLED`
+overrides it) and `SUPPORT_EMAIL` (empty by default; the `ask` response includes `support_email` only when the outcome is not `answered` and the value looks
+like an address; never invent one).
+
+**Evaluation** (`python manage.py evaluate_help_retrieval` — no model; `python manage.py evaluate_help_assistant` — dry run unless `--yes`): AI_EVALUATION.md
+section 15. Outcome: retrieval met its pre-registered rule; the live evaluation passed E1-E6 and E8 but its manual read flagged one answered text, and the one allowed prompt revision did not clear it, so the revision was reverted and **`HELP_AI_ENABLED` defaults to OFF** (Help ships as search plus the guides; the owner decides whether to turn written answers on). 46 live requests in total.
+
+**Known limits (stated, not hidden).** English only (a Roman Urdu or Urdu question mostly lands on "no match"). Search is lexical: a question that shares no
+words with any guide misses (mitigated by curated keywords and synonyms). Login required for everything (a public Help for signed-out people needs a
+marketing surface that does not exist). No streaming, no stored conversations, no admin screen for the ratings. A model can still say something the guard
+cannot detect, which is why every answer shows its guides. On the free tier the whole key serves about four AI questions a minute, shared with Proposals and
+the Dashboard. Not built: the page (Prompt 25), a public Help, Urdu, feedback text, an admin reader for the ratings.
 
 ---
 
@@ -3578,7 +3628,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Contracts            | Built (10 Nov 2026, Prompt 22): `apps/contracts` (one table, five templates as data, send with both sides signing by typing a name, public sign/decline page API, SHA-256 fingerprint checked at signing, signed PDF, audit + bell + emails, Celery `send_signed_copies`); Prompt 23 added `GET .../send-check/`, the 600/hour PATCH limit, the per-status PDF signing sentence and the `export_contract_fixtures` command | Built (10 Nov 2026, Prompt 23): `/contracts`, `/contracts/new`, `/contracts/:id` and the public `/contract/:token`; the generic `useDraftAutosave`; "Create contract" on an accepted proposal | backend `apps/contracts/tests/` + `apps/invoices/tests/test_contract_pdf.py` (untracked); frontend 2538 of 2539 (the 1 failure is the pre-existing `SecuritySection.test.jsx`; new tests in gitignored `*.test.*`) | Built (no AI, no Pro gating; a lawyer must read `CONTRACTS_LAW.md` and the wording before public launch) |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | Built: apps/dashboard (no models, no migration) — GET /api/dashboard/summary/ with per-section isolation; the invoice KPI maths extracted to apps/invoices/kpis.py (invoice_summary output byte-identical) | Built: `/dashboard` (greeting, 4 KPI cards, 6-month chart, Needs attention, Upcoming recurring, Recent activity, Exchange rates), now the landing page | backend 54 new (`apps.dashboard`); frontend 77 new (Dashboard, dashboardHelpers, App routing, AppShell pill) | Built without AI (04 Nov 2026); AI insights + Financial Health widget still to come |
-| Help / AI Assistant  | -       | -        | -     | Not started |
+| Help / AI Assistant  | Built (11 Nov 2026, Prompt 24): `apps/help` (no model, no migration) — 49 guides, search with a gate, a guarded AI answer, 5 endpoints, `check_help_library`, the two evaluations | Not built (Prompt 25: the page and the profile menu's Help item) | backend 240 passing (`python manage.py test apps.help --keepdb`) in `apps/help/tests/` (untracked, gitignored); fixtures in `frontend/src/test-fixtures/help/` (tracked) | Backend built; AI answers default OFF (see AI_EVALUATION.md section 15) |
 
 ---
 
@@ -3659,6 +3709,12 @@ ENCRYPTION_KEY=
 # here. Opposite security properties by design (randomized vs.
 # deterministic) and must be rotatable independently.
 BLIND_INDEX_KEY=
+
+### Help assistant (Prompt 24)
+HELP_AI_ENABLED=
+# Written answers in Help. Search and the guides never need it; the global AI_ENABLED overrides it. Shipped default: False (OFF) (AI_EVALUATION.md section 15).
+SUPPORT_EMAIL=
+# The address Help shows when it cannot answer. EMPTY (the default) shows no contact line; create the mailbox before setting it. Never a placeholder.
 
 ### Observability
 SENTRY_DSN=

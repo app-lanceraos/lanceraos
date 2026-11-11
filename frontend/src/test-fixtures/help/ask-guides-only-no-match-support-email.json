@@ -1,0 +1,48 @@
+{
+  "ai_reason": "",
+  "answer": null,
+  "cached": false,
+  "guides": [
+    {
+      "slug": "create-an-invoice",
+      "summary": "Build an invoice in three stages: the client and dates, the line items, and the options.",
+      "title": "Create an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "send-an-invoice",
+      "summary": "Email a finalised invoice to your client from LanceraOS, or record that you sent it yourself.",
+      "title": "Send an invoice",
+      "topic": "invoices"
+    },
+    {
+      "slug": "record-a-payment",
+      "summary": "Add money you have received to the Payments page, from Payoneer, Wise, a bank, JazzCash and more.",
+      "title": "Record a payment",
+      "topic": "payments"
+    },
+    {
+      "slug": "import-payments-from-a-file",
+      "summary": "Bring many payments in at once from a Wise, Payoneer or bank statement saved as a CSV file.",
+      "title": "Import payments from a file",
+      "topic": "payments"
+    },
+    {
+      "slug": "write-a-proposal-with-ai",
+      "summary": "Paste a job post and get a first draft you can edit, or start from a blank proposal.",
+      "title": "Write a proposal with AI",
+      "topic": "proposals"
+    },
+    {
+      "slug": "the-tax-page",
+      "summary": "An estimate of the tax your bank took on money from abroad, built from the payments you recorded.",
+      "title": "The Tax page",
+      "topic": "tax"
+    }
+  ],
+  "library_version": "c9b6e43a562f",
+  "notice": "I couldn't find that in the Help guides. Try different words, or start with one of these.",
+  "outcome": "guides_only",
+  "reason": "no_match",
+  "support_email": "help@example.com"
+}

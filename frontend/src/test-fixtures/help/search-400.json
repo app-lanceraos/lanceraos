@@ -1,0 +1,6 @@
+{
+  "body": {
+    "error": "Type at least 2 letters to search."
+  },
+  "status": 400
+}
