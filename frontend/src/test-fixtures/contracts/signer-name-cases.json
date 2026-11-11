@@ -1,0 +1,242 @@
+[
+  {
+    "input": "Ali Amir",
+    "normalised": "Ali Amir",
+    "ok": true
+  },
+  {
+    "input": "  Ali   Amir  ",
+    "normalised": "Ali Amir",
+    "ok": true
+  },
+  {
+    "input": "A",
+    "message": "Your name must be between 2 and 120 characters.",
+    "ok": false
+  },
+  {
+    "input": "AB",
+    "normalised": "AB",
+    "ok": true
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalised": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ok": true
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "message": "Your name must be between 2 and 120 characters.",
+    "ok": false
+  },
+  {
+    "input": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "message": "Your name must be between 2 and 120 characters.",
+    "ok": false
+  },
+  {
+    "input": "12345",
+    "message": "Use letters in your name.",
+    "ok": false
+  },
+  {
+    "input": "1a",
+    "normalised": "1a",
+    "ok": true
+  },
+  {
+    "input": "a1",
+    "normalised": "a1",
+    "ok": true
+  },
+  {
+    "input": "--",
+    "message": "Use letters in your name.",
+    "ok": false
+  },
+  {
+    "input": "",
+    "message": "Type your full name to sign.",
+    "ok": false
+  },
+  {
+    "input": "   ",
+    "message": "Type your full name to sign.",
+    "ok": false
+  },
+  {
+    "input": "\u0007",
+    "message": "Type your full name to sign.",
+    "ok": false
+  },
+  {
+    "input": "Ali\u0000Amir",
+    "normalised": "AliAmir",
+    "ok": true
+  },
+  {
+    "input": "Ali\tAmir",
+    "normalised": "AliAmir",
+    "ok": true
+  },
+  {
+    "input": "Ali\nAmir",
+    "normalised": "Ali Amir",
+    "ok": true
+  },
+  {
+    "input": "Ali\r\nAmir",
+    "normalised": "Ali Amir",
+    "ok": true
+  },
+  {
+    "input": "AliAmir",
+    "normalised": "Ali Amir",
+    "ok": true
+  },
+  {
+    "input": "Ali Amir",
+    "normalised": "Ali Amir",
+    "ok": true
+  },
+  {
+    "input": "Ali Amir",
+    "normalised": "Ali Amir",
+    "ok": true
+  },
+  {
+    "input": " Ali ",
+    "normalised": "Ali",
+    "ok": true
+  },
+  {
+    "input": "Ali Amir",
+    "normalised": "Ali Amir",
+    "ok": true
+  },
+  {
+    "input": "A​B",
+    "normalised": "A​B",
+    "ok": true
+  },
+  {
+    "input": "😀😀",
+    "message": "Use letters in your name.",
+    "ok": false
+  },
+  {
+    "input": "😀A",
+    "normalised": "😀A",
+    "ok": true
+  },
+  {
+    "input": "😀😀😀b",
+    "normalised": "😀😀😀b",
+    "ok": true
+  },
+  {
+    "input": "علی امیر",
+    "normalised": "علی امیر",
+    "ok": true
+  },
+  {
+    "input": "علی",
+    "normalised": "علی",
+    "ok": true
+  },
+  {
+    "input": "José Álvarez",
+    "normalised": "José Álvarez",
+    "ok": true
+  },
+  {
+    "input": "Zoë",
+    "normalised": "Zoë",
+    "ok": true
+  },
+  {
+    "input": "O'Brien-Smith",
+    "normalised": "O'Brien-Smith",
+    "ok": true
+  },
+  {
+    "input": "Ａｌｉ",
+    "normalised": "Ａｌｉ",
+    "ok": true
+  },
+  {
+    "input": "𝕬𝕭",
+    "normalised": "𝕬𝕭",
+    "ok": true
+  },
+  {
+    "input": "𠮷野家",
+    "normalised": "𠮷野家",
+    "ok": true
+  },
+  {
+    "input": "á",
+    "normalised": "á",
+    "ok": true
+  },
+  {
+    "input": "٣٤٥",
+    "message": "Use letters in your name.",
+    "ok": false
+  },
+  {
+    "input": "ǅ",
+    "message": "Your name must be between 2 and 120 characters.",
+    "ok": false
+  },
+  {
+    "input": "ª",
+    "message": "Your name must be between 2 and 120 characters.",
+    "ok": false
+  },
+  {
+    "input": "Dr. Ali Amir Jr.",
+    "normalised": "Dr. Ali Amir Jr.",
+    "ok": true
+  },
+  {
+    "input": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀ab",
+    "message": "Your name must be between 2 and 120 characters.",
+    "ok": false
+  },
+  {
+    "input": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "message": "Your name must be between 2 and 120 characters.",
+    "ok": false
+  },
+  {
+    "input": "A﻿",
+    "normalised": "A﻿",
+    "ok": true
+  },
+  {
+    "input": "﻿AB",
+    "normalised": "﻿AB",
+    "ok": true
+  },
+  {
+    "input": "Ali᠎Amir",
+    "normalised": "Ali᠎Amir",
+    "ok": true
+  },
+  {
+    "input": "Ali​Amir",
+    "normalised": "Ali​Amir",
+    "ok": true
+  },
+  {
+    "input": "Ali\u000bAmir",
+    "normalised": "AliAmir",
+    "ok": true
+  },
+  {
+    "input": "Ali\u001cAmir",
+    "normalised": "AliAmir",
+    "ok": true
+  }
+]

@@ -28,7 +28,10 @@ import { ProposalTextField } from './ProposalFields'
 
 const SEARCH_DEBOUNCE_MS = 300
 
-export default function ProposalClientFields({ value, onChange, errors = {}, disabled = false, pickOnly = false }) {
+export default function ProposalClientFields({
+  value, onChange, errors = {}, disabled = false, pickOnly = false,
+  emailFieldId = 'proposal-field-client-email', emailHint = 'Needed to send the proposal by email',
+}) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [open, setOpen] = useState(false)
@@ -156,9 +159,9 @@ export default function ProposalClientFields({ value, onChange, errors = {}, dis
           {dropdown}
         </div>
         <ProposalTextField
-          id="proposal-field-client-email" label="Client email" type="email" value={value.client_email} disabled={disabled} error={errors.client_email}
+          id={emailFieldId} label="Client email" type="email" value={value.client_email} disabled={disabled} error={errors.client_email}
           onChange={(text) => onChange({ client_email: text, client: null })}
-          hint="Needed to send the proposal by email"
+          hint={emailHint}
         />
       </div>
       <ProposalTextField

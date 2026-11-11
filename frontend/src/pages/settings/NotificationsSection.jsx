@@ -9,7 +9,7 @@ import FosAlert from '@/components/FosAlert'
 
 const TOGGLES = [
   { field: 'notif_invoice_events', label: 'Invoice Events', hint: 'Recurring invoice activity, client acknowledgments, overdue escalations, and stale-draft reminders', Icon: FileText },
-  { field: 'notif_client_messages', label: 'Client Messages', hint: 'When a client messages you in the portal, or accepts or declines a proposal', Icon: MessageSquare },
+  { field: 'notif_client_messages', label: 'Client Messages', hint: 'When a client messages you in the portal, accepts or declines a proposal, or signs or declines a contract', Icon: MessageSquare },
   { field: 'notif_payments', label: 'Payments', hint: 'When a client reports a payment for you to review and confirm', Icon: Wallet },
 ]
 

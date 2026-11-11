@@ -1,0 +1,119 @@
+{
+  "client": "00000000-0000-4000-8000-000000000001",
+  "client_company": "Acme Holdings",
+  "client_email": "client@example.com",
+  "client_name": "Acme Co",
+  "content_hash": "",
+  "contract_number": null,
+  "created_at": "2026-11-10T12:00:21",
+  "currency": "USD",
+  "end_date": null,
+  "fee_amount": "900.00",
+  "id": "00000000-0000-4000-8000-000000000002",
+  "invoice": null,
+  "is_editable": true,
+  "is_expired": false,
+  "notices": [],
+  "owner_signed_at": null,
+  "owner_signed_name": "",
+  "parties": {
+    "client": {
+      "company": "Acme Holdings",
+      "name": "Acme Co"
+    },
+    "freelancer": {
+      "business_name": "Fixture Studio",
+      "city": "Lahore",
+      "country": "Pakistan",
+      "name": "Sara Fixture"
+    }
+  },
+  "payment_terms": "Half now, half on delivery",
+  "proposal": {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "title": "React dashboard build"
+  },
+  "public_url": null,
+  "responded_at": null,
+  "response_message": "",
+  "sections": [
+    {
+      "id": "scope",
+      "text": "The Freelancer will give the Client advice and support on: Dashboard\nBuild the charts.\n\nHandover\nDocs.",
+      "title": "Scope of services"
+    },
+    {
+      "id": "deliverables",
+      "text": "The Freelancer will provide: [[List the reports, sessions or hours.]]\n\nMeetings are held online unless the parties agree otherwise. A meeting that the Client cancels with less than 24 hours' notice counts as used.\n\nWork starts on the start date in Key terms and ends on the end date, if one is shown.",
+      "title": "Deliverables and meetings"
+    },
+    {
+      "id": "advice-only",
+      "text": "The Freelancer gives advice based on the information the Client provides. The Client makes its own decisions and is responsible for them. The Freelancer does not give legal, tax or financial advice unless this contract says it does.",
+      "title": "Advice only"
+    },
+    {
+      "id": "changes",
+      "text": "Work outside the scope above is extra work. Its price is agreed in writing before it starts.",
+      "title": "Changes to the scope"
+    },
+    {
+      "id": "fees",
+      "text": "The Client will pay the Freelancer the Fee shown under Key terms, in the currency shown there, following the payment terms shown there.\n\nEach party pays the charges made by its own bank or payment provider. The Fee does not include taxes that the law puts on the Client.\n\nIf an invoice that is not in dispute is not paid by its due date, the Freelancer may pause work until it is paid, after telling the Client in writing.",
+      "title": "Fee and payment"
+    },
+    {
+      "id": "client-duties",
+      "text": "The Client will give the Freelancer the information, files, access and feedback the work needs, within a reasonable time. If input is late or missing, the dates in this contract move by the same amount of time.",
+      "title": "What the Client provides"
+    },
+    {
+      "id": "ownership",
+      "text": "When the Freelancer has been paid in full, the Client owns the final work made specifically for the Client under this contract. Until then the Freelancer keeps all rights in it.\n\nThe Freelancer keeps ownership of its own tools, templates and know-how, and gives the Client a non-exclusive right to use any of them that are built into the final work.\n\nThe Freelancer may show the finished work in its portfolio, unless the Client asks in writing for it not to.",
+      "title": "Ownership of the work"
+    },
+    {
+      "id": "confidentiality",
+      "text": "Each party will keep the other party's non-public business information private, use it only for this contract, and not share it, except with advisers who need it or when the law requires it. This does not apply to information that is already public through no fault of the party holding it. This duty continues for two years after this contract ends.",
+      "title": "Confidentiality"
+    },
+    {
+      "id": "contractor",
+      "text": "The Freelancer works as an independent contractor, not as an employee, partner or agent of the Client. The Freelancer decides how, where and when the work is done, within the dates in this contract, and is responsible for its own taxes and insurance.",
+      "title": "Independent contractor"
+    },
+    {
+      "id": "ending",
+      "text": "Either party may end this contract by giving the other 14 days' notice in writing (email is enough).\n\nThe Client will pay for the work done up to the end date, and for agreed expenses already committed.\n\nEither party may end this contract at once if the other seriously breaks it and does not fix the problem within 7 days of being told in writing.",
+      "title": "Ending this contract"
+    },
+    {
+      "id": "liability",
+      "text": "As far as the law allows, each party's total liability to the other under this contract is limited to the Fee, and neither party is liable for lost profit or indirect loss. This does not limit the Client's duty to pay the Fee, or any liability that the law does not allow to be limited.",
+      "title": "Limit of liability"
+    },
+    {
+      "id": "law",
+      "text": "This contract is governed by the laws of Pakistan. If there is a dispute, the parties will first try to settle it by talking to each other in good faith. If that does not work within 30 days, either party may take the dispute to the courts of Pakistan.",
+      "title": "Governing law and disputes"
+    },
+    {
+      "id": "whole-agreement",
+      "text": "This contract, with its Key terms, is the whole agreement about this work and replaces earlier discussions. A change is valid only if both parties agree to it in writing.\n\nThe parties agree that typing their names on LanceraOS is how they sign this contract, and that a copy of it showing those names and the times they were typed is a record of their agreement.",
+      "title": "Whole agreement and signing"
+    }
+  ],
+  "sent_at": null,
+  "sent_via": "",
+  "signature_record": null,
+  "signed_name": "",
+  "start_date": null,
+  "status": "draft",
+  "template_key": "consulting",
+  "template_version": "2026-11-10",
+  "title": "React dashboard build",
+  "updated_at": "2026-11-10T12:00:22",
+  "valid_until": null,
+  "viewed_at": null,
+  "withdrawn_at": null
+}

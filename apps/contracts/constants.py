@@ -17,6 +17,8 @@ SIGN_LIMIT_PER_HOUR = 10
 DECLINE_LIMIT_PER_HOUR = 10
 PUBLIC_PDF_LIMIT_PER_HOUR = 20
 MUTATIONS_PER_HOUR = 60
+# Autosave sends a PATCH about every 1.5 s while someone types; 60/hour would lock them out after ~90 s of typing.
+UPDATES_PER_HOUR = 600
 SENDS_PER_HOUR = 10
 
 TOKEN_MAX_LENGTH = 32  # Contract.view_token's column width

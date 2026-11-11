@@ -81,6 +81,8 @@ function pageTitleFor(pathname) {
   if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname]
   if (pathname === '/proposals/new') return 'New Proposal'
   if (pathname.startsWith('/proposals/')) return 'Proposal'
+  if (pathname === '/contracts/new') return 'New Contract'
+  if (pathname.startsWith('/contracts/')) return 'Contract'
   return 'LanceraOS'
 }
 
@@ -108,7 +110,9 @@ function pageTitleFor(pathname) {
 //                  /proposals/:id, so end:true would leave the pill
 //                  inactive on the two sub-pages — the same bug /invoices
 //                  had. Locked in by AppShell.test.jsx.
-//   /payments, /expenses, /pnl, /tax, /contracts, /health,
+//   /contracts   — end:false (Prompt 23). Real routes now exist: /contracts, /contracts/new and /contracts/:id, so end:true
+//                  would leave the pill inactive on the two sub-pages, the same bug /invoices and /proposals had.
+//   /payments, /expenses, /pnl, /tax, /health,
 //   /income-certificate, /skill-gap — all end:true, but NONE of these
 //                  have any real route in App.jsx yet (every one of
 //                  those modules is "Not started" per CLAUDE.md's own
@@ -139,7 +143,7 @@ const NAV_GROUPS = [
     label: 'Docs',
     items: [
       { to: '/proposals', label: 'Proposals', tip: 'Proposals', Icon: FileText, end: false },
-      { to: '/contracts', label: 'Contracts', tip: 'Contracts', Icon: FileText, end: true },
+      { to: '/contracts', label: 'Contracts', tip: 'Contracts', Icon: FileText, end: false },
     ],
   },
   {

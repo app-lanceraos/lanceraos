@@ -1,10 +1,9 @@
 // src/hooks/usePublicPageMeta.js
 //
-// Keeps a link-only public page (the client's proposal page) out of search
-// engines and out of Referer headers while it is mounted: the URL's token IS
-// the credential, so it must not be indexed, archived or leaked to a third
-// party the page links to. Mirrors the response headers vercel.json adds for
-// /proposal/* (X-Robots-Tag, Referrer-Policy) — the tags cover dev and any
+// Keeps a link-only public page (the client's proposal page, /proposal/:token, and the client's contract page,
+// /contract/:token) out of search engines and out of Referer headers while it is mounted: the URL's token IS the
+// credential, so it must not be indexed, archived or leaked to a third party the page links to. Mirrors the response
+// headers vercel.json adds for /proposal/* and /contract/* (X-Robots-Tag, Referrer-Policy) — the tags cover dev and any
 // host that does not send them.
 //
 // Creates the tags, or updates ones that already exist, and puts the previous

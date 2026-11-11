@@ -48,6 +48,10 @@ import PortalThemeRoot from '@/pages/portal/PortalThemeRoot'
 import InvoiceView from '@/pages/InvoiceView'
 import PaymentDetails from '@/pages/PaymentDetails'
 import ProposalPublic from '@/pages/ProposalPublic'
+import Contracts from '@/pages/Contracts'
+import ContractNew from '@/pages/ContractNew'
+import ContractEditor from '@/pages/ContractEditor'
+import ContractPublic from '@/pages/ContractPublic'
 import InvoicePreviewPdf from '@/pages/InvoicePreviewPdf'
 
 export default function App() {
@@ -157,6 +161,11 @@ export default function App() {
             one (see ProposalPublic.jsx and lib/api.js). */}
         <Route path="/proposal/:token" element={<ProposalPublic />} />
 
+        {/* The client's contract page (Contracts frontend, Prompt 23) — public, shell-less and outside every guard, exactly
+            like /proposal/:token: the token in the URL is the credential, and the page talks to the backend only through
+            the bare publicApi instance (see ContractPublic.jsx and usePublicContract.js). */}
+        <Route path="/contract/:token" element={<ContractPublic />} />
+
         {/* Private — require an active session */}
         {/* NewInvoiceWizard.jsx's "Preview PDF" action — real bug fix,
             see InvoicePreviewPdf.jsx's own header comment and
@@ -253,6 +262,21 @@ export default function App() {
         <Route
           path="/proposals/:id"
           element={<PrivateRoute><AppShell><ProposalEditor /></AppShell></PrivateRoute>}
+        />
+
+        {/* Contracts (Prompt 23) — routed pages, like Proposals. /contracts/new must stay before /contracts/:id so "new" is
+            never read as an id (and ContractEditor refuses anything that is not a UUID without a request). */}
+        <Route
+          path="/contracts"
+          element={<PrivateRoute><AppShell><Contracts /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/contracts/new"
+          element={<PrivateRoute><AppShell><ContractNew /></AppShell></PrivateRoute>}
+        />
+        <Route
+          path="/contracts/:id"
+          element={<PrivateRoute><AppShell><ContractEditor /></AppShell></PrivateRoute>}
         />
 
         {/* The root is the Dashboard; PrivateRoute bounces to /login if

@@ -1,0 +1,130 @@
+{
+  "client": null,
+  "client_company": "Acme Holdings",
+  "client_email": "client@example.com",
+  "client_name": "Acme Co",
+  "content_hash": "e61a9d0026b993a58a42a3436f1be2f916e282cacd9e61cb57056cdf0f99bbe0",
+  "contract_number": "CON-2026-0004",
+  "created_at": "2026-11-10T12:02:38",
+  "currency": "USD",
+  "end_date": null,
+  "fee_amount": "1500.00",
+  "id": "00000000-0000-4000-8000-000000000001",
+  "invoice": null,
+  "is_editable": false,
+  "is_expired": false,
+  "owner_signed_at": "2026-11-10T12:02:46",
+  "owner_signed_name": "Sara Fixture",
+  "parties": {
+    "client": {
+      "company": "Acme Holdings",
+      "name": "Acme Co"
+    },
+    "freelancer": {
+      "business_name": "Fixture Studio",
+      "city": "Lahore",
+      "country": "Pakistan",
+      "name": "Sara Fixture"
+    }
+  },
+  "payment_terms": "Half now, half on delivery",
+  "proposal": null,
+  "public_url": "http://localhost:5173/contract/TOKEN_FIXTURE_00000004",
+  "responded_at": "2026-11-10T12:02:53",
+  "response_message": "",
+  "sections": [
+    {
+      "id": "scope",
+      "text": "The Freelancer will create the design work described here: the agreed work",
+      "title": "Scope of work"
+    },
+    {
+      "id": "deliverables",
+      "text": "The Freelancer will deliver the final files in these formats: the agreed work Working files are not included unless they are listed here.\n\nWork starts on the start date in Key terms and the Freelancer will aim to finish by the end date.",
+      "title": "Deliverables and file formats"
+    },
+    {
+      "id": "revisions",
+      "text": "The Freelancer will present the agreed work first concept(s). The Client chooses one, and the Fee includes the agreed work rounds of changes to it. A round is one set of feedback given together. A change of direction after a concept is chosen, and extra rounds, are extra work and are priced and agreed in writing before they start.",
+      "title": "Concepts and revisions"
+    },
+    {
+      "id": "licensed-material",
+      "text": "Fonts, stock images and other material licensed from third parties are included only if this contract lists them. Otherwise the Client buys the licences it needs.",
+      "title": "Fonts, images and licensed material"
+    },
+    {
+      "id": "fees",
+      "text": "The Client will pay the Freelancer the Fee shown under Key terms, in the currency shown there, following the payment terms shown there.\n\nEach party pays the charges made by its own bank or payment provider. The Fee does not include taxes that the law puts on the Client.\n\nIf an invoice that is not in dispute is not paid by its due date, the Freelancer may pause work until it is paid, after telling the Client in writing.",
+      "title": "Fee and payment"
+    },
+    {
+      "id": "client-duties",
+      "text": "The Client will give the Freelancer the information, files, access and feedback the work needs, within a reasonable time. If input is late or missing, the dates in this contract move by the same amount of time.",
+      "title": "What the Client provides"
+    },
+    {
+      "id": "ownership",
+      "text": "When the Freelancer has been paid in full, the Client owns the final work made specifically for the Client under this contract. Until then the Freelancer keeps all rights in it.\n\nThe Freelancer keeps ownership of its own tools, templates and know-how, and gives the Client a non-exclusive right to use any of them that are built into the final work.\n\nThe Freelancer may show the finished work in its portfolio, unless the Client asks in writing for it not to.",
+      "title": "Ownership of the work"
+    },
+    {
+      "id": "confidentiality",
+      "text": "Each party will keep the other party's non-public business information private, use it only for this contract, and not share it, except with advisers who need it or when the law requires it. This does not apply to information that is already public through no fault of the party holding it. This duty continues for two years after this contract ends.",
+      "title": "Confidentiality"
+    },
+    {
+      "id": "contractor",
+      "text": "The Freelancer works as an independent contractor, not as an employee, partner or agent of the Client. The Freelancer decides how, where and when the work is done, within the dates in this contract, and is responsible for its own taxes and insurance.",
+      "title": "Independent contractor"
+    },
+    {
+      "id": "ending",
+      "text": "Either party may end this contract by giving the other 14 days' notice in writing (email is enough).\n\nThe Client will pay for the work done up to the end date, and for agreed expenses already committed.\n\nEither party may end this contract at once if the other seriously breaks it and does not fix the problem within 7 days of being told in writing.",
+      "title": "Ending this contract"
+    },
+    {
+      "id": "liability",
+      "text": "As far as the law allows, each party's total liability to the other under this contract is limited to the Fee, and neither party is liable for lost profit or indirect loss. This does not limit the Client's duty to pay the Fee, or any liability that the law does not allow to be limited.",
+      "title": "Limit of liability"
+    },
+    {
+      "id": "law",
+      "text": "This contract is governed by the laws of Pakistan. If there is a dispute, the parties will first try to settle it by talking to each other in good faith. If that does not work within 30 days, either party may take the dispute to the courts of Pakistan.",
+      "title": "Governing law and disputes"
+    },
+    {
+      "id": "whole-agreement",
+      "text": "This contract, with its Key terms, is the whole agreement about this work and replaces earlier discussions. A change is valid only if both parties agree to it in writing.\n\nThe parties agree that typing their names on LanceraOS is how they sign this contract, and that a copy of it showing those names and the times they were typed is a record of their agreement.",
+      "title": "Whole agreement and signing"
+    }
+  ],
+  "sent_at": "2026-11-10T12:02:46",
+  "sent_via": "link",
+  "signature_record": {
+    "client": {
+      "ip": "198.51.100.7",
+      "name": "Zainab Khan",
+      "responded_at": "2026-11-10T12:02:53",
+      "user_agent": "FixtureClientBrowser/1.0"
+    },
+    "content_hash": "e61a9d0026b993a58a42a3436f1be2f916e282cacd9e61cb57056cdf0f99bbe0",
+    "owner": {
+      "ip": "203.0.113.9",
+      "name": "Sara Fixture",
+      "signed_at": "2026-11-10T12:02:46",
+      "user_agent": "FixtureOwnerBrowser/1.0"
+    },
+    "signed_hash": "e61a9d0026b993a58a42a3436f1be2f916e282cacd9e61cb57056cdf0f99bbe0"
+  },
+  "signed_name": "Zainab Khan",
+  "start_date": null,
+  "status": "signed",
+  "template_key": "design",
+  "template_version": "2026-11-10",
+  "title": "Brand identity",
+  "updated_at": "2026-11-10T12:02:54",
+  "valid_until": "2026-11-24",
+  "viewed_at": "2026-11-10T12:02:53",
+  "withdrawn_at": null
+}

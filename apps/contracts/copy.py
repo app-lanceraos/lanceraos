@@ -31,6 +31,18 @@ SEND_NO_SIGN_BY = 'Set a sign-by date before sending.'
 SEND_SIGN_BY_PASSED = 'The sign-by date has passed. Choose a future date.'
 SEND_NO_CLIENT_EMAIL = "Add the client's email address to send by email, or choose Copy link."
 
+SEND_CHECK_BAD_METHOD = 'Choose email or link.'
+
+# -- Send checklist: the sentence shown when a check passes, and the one advisory warning --------------------------
+CHECK_OK_TITLE = 'The contract has a title.'
+CHECK_OK_CLIENT_NAME = "The client's name is filled in."
+CHECK_OK_SECTIONS = 'Every section has a title and text.'
+CHECK_OK_PLACEHOLDERS = 'No text is left in double square brackets.'
+CHECK_OK_FEE = 'The fee or the payment terms are filled in.'
+CHECK_OK_SIGN_BY = 'The sign-by date is set.'
+CHECK_OK_CLIENT_EMAIL = "The client's email address is filled in."
+WARN_FEE_ZERO = 'The fee is 0, so the key terms will show no amount. Check that the payment terms say what the client will pay.'
+
 # -- Public errors -------------------------------------------------------------------------------------------------
 NOT_FOUND = 'Not found.'
 TOO_MANY_REQUESTS = 'Too many requests. Please try again in a little while.'
@@ -66,7 +78,8 @@ PDF_FINGERPRINT_NOTE = (
     'The fingerprint is calculated from the text of this contract when it was sent. '
     'If any word changes, the fingerprint changes.'
 )
-PDF_SIGNING_NOTE = 'Each person signed by typing their name. Times are Pakistan time (PKT).'
+PDF_SIGNING_NOTE_BOTH = 'Each person signed by typing their name. Times are Pakistan time (PKT).'
+PDF_SIGNING_NOTE_OWNER = 'The freelancer signed by typing their name. Times are Pakistan time (PKT).'
 
 # -- Words the module must never use in any sentence a person reads (decision K16) ---------------------------------
 BANNED_WORDS = [

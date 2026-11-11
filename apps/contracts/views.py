@@ -33,7 +33,7 @@ from core.ratelimit import rate_limited
 
 from . import copy as words
 from .clauses import CLAUSE_LIBRARY_VERSION, template_summaries
-from .constants import MUTATIONS_PER_HOUR, SENDS_PER_HOUR, TITLE_MAX
+from .constants import MUTATIONS_PER_HOUR, SENDS_PER_HOUR, TITLE_MAX, UPDATES_PER_HOUR
 from .emails import build_client_contract_email
 from .integrity import compute_hash, parties_snapshot
 from .models import Contract
@@ -41,7 +41,7 @@ from .serializers import (
     ConfirmSerializer, ContractCreateSerializer, ContractDetailSerializer, ContractListSerializer,
     ContractUpdateSerializer, SendRequestSerializer,
 )
-from .services import assign_number_and_mark_sent, create_from_template, normalise_line, send_problem
+from .services import assign_number_and_mark_sent, create_from_template, normalise_line, send_checks, send_problem, send_warnings
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +195,7 @@ def contract_detail(request, pk):
             deleted_id = str(contract.pk)
             contract.delete()
         else:
-            if _mutation_rate_limited('update', request.user):
+            if _mutation_rate_limited('update', request.user, UPDATES_PER_HOUR):
                 return _too_many(words.TOO_MANY_ACTIONS)
             serializer = ContractUpdateSerializer(contract, data=request.data, partial=True, context={'request': request})
             if not serializer.is_valid():
@@ -211,6 +211,34 @@ def contract_detail(request, pk):
 
 
 # -- Send ----------------------------------------------------------------------------------------------------------
+
+@no_store
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def contract_send_check(request, pk):
+    """
+    The pre-send checklist for a DRAFT, computed by the same function the real send uses (services.send_checks), so
+    the two can never disagree. `?method=email|link`. A read: no rate limit, no side effect. A contract that is no
+    longer a draft answers 409 `not_draft`.
+    """
+    contract = get_object_or_404(Contract, pk=pk, user=request.user)
+    method = request.query_params.get('method')
+    if method not in ('email', 'link'):
+        return _error(words.SEND_CHECK_BAD_METHOD, status.HTTP_400_BAD_REQUEST)
+    if contract.status != 'draft':
+        return _error(_not_draft_send_message(contract), status.HTTP_409_CONFLICT, reason='not_draft')
+    checks = send_checks(contract, method)
+    return Response({
+        'method': method,
+        'ready': all(check['ok'] for check in checks),
+        'checks': [
+            {'id': c['id'], 'ok': c['ok'], 'message': c['ok_message'] if c['ok'] else c['fail_message'],
+             'target': c['target']}
+            for c in checks
+        ],
+        'warnings': send_warnings(contract),
+    })
+
 
 @no_store
 @api_view(['POST'])

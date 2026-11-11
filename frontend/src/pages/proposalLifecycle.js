@@ -46,7 +46,7 @@ export function availableActions(detail) {
   if (status === 'accepted') {
     return [
       detail.converted_invoice ? entry('open_invoice', 'primary') : entry('convert', 'primary'),
-      entry('copy_link', 'secondary'), entry('preview', 'menu'), entry('duplicate', 'menu'),
+      entry('create_contract', 'secondary'), entry('copy_link', 'secondary'), entry('preview', 'menu'), entry('duplicate', 'menu'),
     ]
   }
   // declined, withdrawn

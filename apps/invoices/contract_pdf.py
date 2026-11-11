@@ -126,7 +126,7 @@ def build_contract_context(contract):
         'fingerprint_label': words.PDF_FINGERPRINT_LABEL,
         'fingerprint': contract.content_hash,
         'fingerprint_note': words.PDF_FINGERPRINT_NOTE,
-        'signing_note': words.PDF_SIGNING_NOTE,
+        'signing_note': words.PDF_SIGNING_NOTE_BOTH if contract.status == 'signed' else words.PDF_SIGNING_NOTE_OWNER,
         'generated_on': report_pdf.fmt_date(timezone.now().date()),
         **FONT_CONTEXT,
     }

@@ -11,6 +11,7 @@ urlpatterns = [
     path('public/<str:view_token>/sign/', views_public.contract_public_sign, name='contract_public_sign'),
     path('public/<str:view_token>/decline/', views_public.contract_public_decline, name='contract_public_decline'),
     path('<uuid:pk>/', views.contract_detail, name='contract_detail'),
+    path('<uuid:pk>/send-check/', views.contract_send_check, name='contract_send_check'),
     path('<uuid:pk>/send/', views.contract_send, name='contract_send'),
     path('<uuid:pk>/withdraw/', views.contract_withdraw, name='contract_withdraw'),
     path('<uuid:pk>/duplicate/', views.contract_duplicate, name='contract_duplicate'),

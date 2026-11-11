@@ -7,7 +7,7 @@
 // draws them: one primary accent button, ghost buttons, and the rest inside
 // "More actions".
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Check, Copy, ExternalLink, Eye, FileText, Link2, MoreHorizontal, Send, Trash2, Undo2 } from 'lucide-react'
+import { ArrowLeft, Check, Copy, ExternalLink, Eye, FileSignature, FileText, Link2, MoreHorizontal, Send, Trash2, Undo2 } from 'lucide-react'
 
 import DropdownMenu from '@/components/DropdownMenu'
 import ProposalStatusBadge from '@/components/ProposalStatusBadge'
@@ -15,11 +15,11 @@ import { availableActions } from '@/pages/proposalLifecycle'
 
 const ICONS = {
   send: Send, preview: Eye, copy_link: Link2, withdraw: Undo2, convert: FileText,
-  open_invoice: ExternalLink, duplicate: Copy, delete: Trash2,
+  open_invoice: ExternalLink, duplicate: Copy, delete: Trash2, create_contract: FileSignature,
 }
 const LABELS = {
   send: 'Send', preview: 'Preview', copy_link: 'Copy link', withdraw: 'Withdraw', convert: 'Create invoice',
-  open_invoice: 'Open invoice', duplicate: 'Duplicate', delete: 'Delete',
+  open_invoice: 'Open invoice', duplicate: 'Duplicate', delete: 'Delete', create_contract: 'Create contract',
 }
 
 /**

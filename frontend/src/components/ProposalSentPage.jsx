@@ -5,6 +5,7 @@
 // and the dialogs those actions open. WHICH actions appear is availableActions()
 // in proposalLifecycle.js; everything shown is the server's own detail.
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import useProposalActions from '@/hooks/useProposalActions'
 import ConvertProposalDialog from '@/components/ConvertProposalDialog'
@@ -24,11 +25,14 @@ import WithdrawProposalDialog from '@/components/WithdrawProposalDialog'
  */
 export default function ProposalSentPage({ detail, banners, onNotDraft, onApplyDetail, onReload }) {
   const actions = useProposalActions({ detail, onNotDraft })
+  const navigate = useNavigate()
   const [dialog, setDialog] = useState(null) // null | 'withdraw' | 'convert' | 'preview'
 
   function handleAction(key) {
     if (key === 'duplicate') actions.duplicate()
     else if (key === 'copy_link') actions.copyLink()
+    // An accepted proposal can become a contract: the new-contract page reads ?proposal= and fills the draft from it.
+    else if (key === 'create_contract') navigate(`/contracts/new?proposal=${detail.id}`)
     else setDialog(key)
   }
 

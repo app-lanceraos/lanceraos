@@ -27,3 +27,13 @@ Amendments after 2002; whether courts accept a typed name in practice; stamp dut
 
 ## Before public launch
 A Pakistani lawyer reads this file, the clause library (`apps/contracts/clauses.py`), the signing-page wording (Prompt 23), the contract emails and the PDF text. Until then the Contracts pages must not be announced publicly.
+
+## Pages (Prompt 23)
+The screens add wording a lawyer should read as well (all in `frontend/src/pages/contractCopy.js`; nothing on them says a contract is legally binding, valid, enforceable or certified, and a test scans for those words):
+- The signing wording the client sees: "Review and sign", "Type your full name to sign", "I have read this contract and I agree to it.", "Your signature is final. You won't be able to change it afterwards.", "Typing your name here is how you sign."
+- The link note: "Anyone who has this link can sign this contract. Only sign if you are the client named above." and, for the owner, "Anyone who has the link can sign it, so send it only to your client. We do not check who is typing the name."
+- The recorded-data note: "When you sign, we record the name you type, the time, your IP address and your browser details." (the same sentence as the email), and the owner's "We record your name, the time, your IP address and your browser details when you send."
+- The signature-record caption on the owner's page: "This is a record of what was entered when each person signed. It does not prove who the person was." and the two printed record sentences ("Each person signed by typing their name..." and "The freelancer signed by typing their name...").
+- The disclaimer on the new-contract page, the editor and the Send dialog: "These templates are starting points, not legal advice. Read every section, change what does not fit your work, and have a lawyer check the contract before you rely on it."
+- The expired, withdrawn and declined panels, and the withdraw confirmation ("We do not email your client").
+

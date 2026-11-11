@@ -1,0 +1,43 @@
+{
+  "checks": [
+    {
+      "id": "title",
+      "message": "The contract has a title.",
+      "ok": true,
+      "target": "title"
+    },
+    {
+      "id": "client_name",
+      "message": "Add the client's name before sending.",
+      "ok": false,
+      "target": "client_name"
+    },
+    {
+      "id": "sections",
+      "message": "Every section has a title and text.",
+      "ok": true,
+      "target": "sections"
+    },
+    {
+      "id": "placeholders",
+      "message": "No text is left in double square brackets.",
+      "ok": true,
+      "target": "sections"
+    },
+    {
+      "id": "fee",
+      "message": "The fee or the payment terms are filled in.",
+      "ok": true,
+      "target": "fee_amount"
+    },
+    {
+      "id": "sign_by",
+      "message": "The sign-by date is set.",
+      "ok": true,
+      "target": "valid_until"
+    }
+  ],
+  "method": "link",
+  "ready": false,
+  "warnings": []
+}

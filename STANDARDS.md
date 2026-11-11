@@ -495,3 +495,13 @@ first applied to `apps/proposals/views_public.py`:
 - Signed copies are sent by a Celery task, never inside the signer's request, and the task is idempotent (a timestamp on the row, checked under a row lock).
 - Money is never compared or converted through a float; a source-scanning test enforces it where a behavioural test cannot tell the difference.
 - A promoted shared helper keeps its old import names in the apps that used it, so no existing test or caller changes.
+
+## Drafts, autosave and public pages (Prompt 23, 10 November 2026)
+
+- Any editor that autosaves a draft uses the generic hook `src/hooks/useDraftAutosave.js` with a `spec` (URL, method, save keys, payload, diff, validation, error parsing, which statuses mean "no longer a draft"). `useProposalAutosave` and `useContractAutosave` are thin wrappers; do not copy the hook. The snapshot is what was SENT, never what the server returned.
+- An action that reads the server's copy (Send, PDF, Duplicate) first awaits `flushNow()` and then asks `readiness()`; `flushNow()` alone says true even when a field is held back as invalid. A rule that the real send enforces is served to the UI by an endpoint built on the same function (`GET .../send-check/`), not mirrored in JavaScript.
+- A no-login public page (`/proposal/:token`, `/contract/:token`) is shell-less, uses the fixed light palette, imports `publicApi` and never `api` or the auth store, touches no cookie or storage, calls `usePublicPageMeta()`, and has a `vercel.json` header entry for its prefix (`/contract/(.*)`, never a pattern that also matches the owner's `/contracts...`).
+- A request that must happen once has a REF lock, not just a disabled button: a disabled button is not enough when two presses land in one tick. Test it with two clicks inside one `act()`.
+- An outcome that is unknown (no reply, a timeout, a 5xx, a page that is not ours) is settled by reading the record, never by sending again.
+- Fixtures for the frontend are generated from the real endpoints by a management command that refuses to run outside DEBUG, works in one rolled-back transaction, sends and queues nothing, and checks its own output for secrets, ids and addresses (`export_contract_fixtures`).
+

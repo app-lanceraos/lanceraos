@@ -419,6 +419,27 @@ open that public URL's API form (`/api/contracts/public/<token>/`) in a private 
 `signature_record`; `GET /api/contracts/public/<token>/pdf/` now returns a PDF (409 before signing); within a minute the worker log shows
 `Signed copies sent for contract <id>`. Signed out, every owner route returns 401.
 
+
+## 7l. Contracts pages release (10 November 2026, Prompt 23) **[U]**
+
+Release order: **(1)** redeploy the **web** service (a new endpoint `GET /api/contracts/<id>/send-check/`, the owner PATCH limit raised to 600 per hour,
+the contract PDF's signing sentence fixed per status). **No migration, no environment variable, no new service, no Beat change.** The worker needs no
+change; redeploying it with the web service is harmless. **(2)** deploy the **Vercel frontend**: it includes the `/contract/*` response headers
+(`X-Robots-Tag: noindex, nofollow, noarchive`, `Referrer-Policy: no-referrer`, in `frontend/vercel.json`, matching `/contract/...` and NOT `/contracts...`).
+Web first, so the pages never call a route that does not exist yet. **If section 7k is not live yet, 7k and 7l ship together** (7k first).
+
+Smoke test, against the real deployment, with a throwaway account and a contract with NO client email (so no email can be sent): create a contract from a
+template, fill every `[[blank]]`, set the fee and a sign-by date, send **by link** (type your name), open the link in a **private window**, sign it with
+another name, download the signed PDF (both names, the fingerprint, "Each person signed by typing their name"), check the owner page says Signed and shows
+both fingerprints as the same, then create and send a second contract, **withdraw** it and reload its link (it must say withdrawn). Also check the response
+headers of `/contract/<anything>` (noindex, no-referrer) and that `/contracts` does not carry them.
+
+Rollback: redeploy the previous Vercel build first (the pages vanish; the API keeps working), then the previous web image. Nothing is migrated, so there is
+nothing to undo in the database. A contract already sent stays sent and its link keeps working through the API.
+
+**No public announcement of Contracts** until a Pakistani lawyer has reviewed the clause library, the signing wording, the emails and the PDF text
+(`CONTRACTS_LAW.md`, "Pages (Prompt 23)").
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

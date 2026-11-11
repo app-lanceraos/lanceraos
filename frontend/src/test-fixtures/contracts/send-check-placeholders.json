@@ -1,0 +1,43 @@
+{
+  "checks": [
+    {
+      "id": "title",
+      "message": "The contract has a title.",
+      "ok": true,
+      "target": "title"
+    },
+    {
+      "id": "client_name",
+      "message": "The client's name is filled in.",
+      "ok": true,
+      "target": "client_name"
+    },
+    {
+      "id": "sections",
+      "message": "Every section has a title and text.",
+      "ok": true,
+      "target": "sections"
+    },
+    {
+      "id": "placeholders",
+      "message": "Fill in or remove the text in double square brackets in the section \"Scope of work\".",
+      "ok": false,
+      "target": "section:scope"
+    },
+    {
+      "id": "fee",
+      "message": "The fee or the payment terms are filled in.",
+      "ok": true,
+      "target": "fee_amount"
+    },
+    {
+      "id": "sign_by",
+      "message": "The sign-by date is set.",
+      "ok": true,
+      "target": "valid_until"
+    }
+  ],
+  "method": "link",
+  "ready": false,
+  "warnings": []
+}

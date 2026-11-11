@@ -1,0 +1,169 @@
+{
+  "create_proposal_not_accepted_409": {
+    "body": {
+      "error": "Only an accepted proposal can be turned into a contract.",
+      "reason": "proposal_not_accepted"
+    },
+    "status": 409
+  },
+  "delete_not_draft_403": {
+    "body": {
+      "error": "Only a draft can be changed. This contract has already been sent."
+    },
+    "status": 403
+  },
+  "patch_field_errors_400": {
+    "body": {
+      "error": "A valid number is required.",
+      "fee_amount": [
+        "A valid number is required."
+      ],
+      "start_date": [
+        "Date has wrong format. Use one of these formats instead: YYYY-MM-DD."
+      ]
+    },
+    "status": 400
+  },
+  "patch_not_draft_403": {
+    "body": {
+      "error": "Only a draft can be changed. This contract has already been sent."
+    },
+    "status": 403
+  },
+  "patch_template_key_400": {
+    "body": {
+      "error": "The template cannot be changed after the contract is created.",
+      "template_key": [
+        "The template cannot be changed after the contract is created."
+      ]
+    },
+    "status": 400
+  },
+  "patch_too_many_sections_400": {
+    "body": {
+      "error": "Ensure this field has no more than 30 elements.",
+      "sections": [
+        "Ensure this field has no more than 30 elements."
+      ]
+    },
+    "status": 400
+  },
+  "patch_valid_until_past_400": {
+    "body": {
+      "error": "The sign-by date cannot be in the past.",
+      "valid_until": [
+        "The sign-by date cannot be in the past."
+      ]
+    },
+    "status": 400
+  },
+  "public_404": {
+    "body": {
+      "error": "Not found."
+    },
+    "status": 404
+  },
+  "public_decline_too_long_400": {
+    "body": {
+      "error": "Your reason is 5 characters too long."
+    },
+    "status": 400
+  },
+  "public_pdf_not_signed_409": {
+    "body": {
+      "error": "The signed copy is available after the contract is signed.",
+      "reason": "not_signed"
+    },
+    "status": 409
+  },
+  "public_sign_agree_400": {
+    "body": {
+      "error": "Tick the box to confirm you agree."
+    },
+    "status": 400
+  },
+  "public_sign_already_answered_409": {
+    "body": {
+      "error": "This contract has already been answered.",
+      "reason": "already_answered"
+    },
+    "status": 409
+  },
+  "public_sign_expired_409": {
+    "body": {
+      "error": "This contract is past its sign-by date.",
+      "reason": "expired"
+    },
+    "status": 409
+  },
+  "public_sign_integrity_409": {
+    "body": {
+      "error": "This contract can no longer be signed. Please ask the sender to send it again.",
+      "reason": "integrity"
+    },
+    "status": 409
+  },
+  "public_sign_name_400": {
+    "body": {
+      "error": "Type your full name to sign."
+    },
+    "status": 400
+  },
+  "public_sign_owner_403": {
+    "body": {
+      "error": "You can't sign your own contract.",
+      "reason": "owner"
+    },
+    "status": 403
+  },
+  "public_sign_withdrawn_409": {
+    "body": {
+      "error": "This contract has been withdrawn.",
+      "reason": "withdrawn"
+    },
+    "status": 409
+  },
+  "send_check_not_draft_409": {
+    "body": {
+      "error": "This contract has already been sent.",
+      "reason": "not_draft"
+    },
+    "status": 409
+  },
+  "send_name_400": {
+    "body": {
+      "error": "Type your full name to sign the contract before sending.",
+      "signer_name": [
+        "Type your full name to sign the contract before sending."
+      ]
+    },
+    "status": 400
+  },
+  "send_not_draft_409": {
+    "body": {
+      "error": "This contract has already been sent.",
+      "reason": "not_draft"
+    },
+    "status": 409
+  },
+  "send_problem_400": {
+    "body": {
+      "error": "Add the client's name before sending."
+    },
+    "status": 400
+  },
+  "withdraw_draft_409": {
+    "body": {
+      "error": "Drafts are deleted, not withdrawn.",
+      "reason": "not_sent"
+    },
+    "status": 409
+  },
+  "withdraw_signed_409": {
+    "body": {
+      "error": "This contract has already been signed, so it cannot be withdrawn.",
+      "reason": "not_withdrawable"
+    },
+    "status": 409
+  }
+}

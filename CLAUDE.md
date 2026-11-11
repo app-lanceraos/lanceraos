@@ -522,7 +522,7 @@ lanceraos/                          <- Django project root
 │   │                                  shared helpers (apps.invoices.kpis, core.*) from other apps;
 │   │                                  NO other app may import it (AST-tested).
 │   ├── proposals/                  <- Proposals + AI writer
-│   ├── contracts/                  <- Contracts + digital signing — BUILT, backend only (10 November 2026, Prompt 22): models.py (one
+│   ├── contracts/                  <- Contracts + digital signing — BUILT (backend 10 November 2026, Prompt 22; pages and four backend follow-ups Prompt 23: send-check, the 600/hour PATCH limit, the per-status PDF note, management/commands/export_contract_fixtures.py): models.py (one
 │   │                                  table, Contract), clauses.py (the five templates as data, CLAUSE_LIBRARY_VERSION), integrity.py (the
 │   │                                  SHA-256 fingerprint: pure), services.py (create from a template or an accepted proposal, text
 │   │                                  normalisation, send_problem, numbering), copy.py (every shared sentence + the banned-word lists),
@@ -634,8 +634,16 @@ lanceraos/                          <- Django project root
 │   │   │   └── hoverProps.js       <- Touch-safe props for JS-driven hover effects (replaces onMouseEnter/Leave)
 │   │   ├── hooks/
 │   │   │   ├── useWebSocket.js     <- Shared WebSocket hook
-│   │   │   ├── useProposalAutosave.js <- Proposal draft autosave: diff-only, 1.5 s debounce, one request in flight, back-off;
-│   │   │   │                              `readiness()` says whether the server holds everything the person sees
+│   │   │   ├── useDraftAutosave.js <- The GENERIC draft autosave (Prompt 23): diff-only, 1.5 s debounce, 10 s max wait, one request in flight,
+│   │   │   │                              back-off, 429 pause, 403/404 stop, `readiness()` says whether the server holds everything the person
+│   │   │   │                              sees. Driven by a `spec` ({url, method, saveKeys, buildSavePayload, diffPayload, validateForm,
+│   │   │   │                              fieldErrorsFromResponse, errorMessage, notDraftStatuses})
+│   │   │   ├── useProposalAutosave.js <- A thin WRAPPER over useDraftAutosave (PUT /proposals/<id>/); same exports and behaviour as before
+│   │   │   ├── useContractAutosave.js <- The same wrapper for contracts (PATCH /contracts/<id>/, 403 and 409 both mean "not a draft")
+│   │   │   ├── useContractActions.js, useContractPdf.js, useContractSendCheck.js, usePublicContract.js <- Contracts (Prompt 23): duplicate / delete /
+│   │   │   │                              copy link / owner PDF; a blob PDF download that takes its Axios instance as an argument; the Send dialog's
+│   │   │   │                              server checklist; and EVERYTHING the client's signing page asks of the server (only publicApi, one request
+│   │   │   │                              per answer, an unknown outcome is settled by READING the contract, never by resending)
 │   │   │   ├── useProposalActions.js, useFocusTrap.js, useFlashMessage.js, usePublicPageMeta.js  <- Proposals part B
 │   │   │   ├── usePaymentImport.js, usePaymentImportBatches.js <- The import dialog's flow (stateless server: the File is kept in the
 │   │   │   │                              browser and re-sent on commit; request-id guard, unmount guard, commit double-click lock;
@@ -660,6 +668,20 @@ lanceraos/                          <- Django project root
 │   │                              how, the rows left behind (none) and the NTN/PSEB assertion
 │   │   ├── test-fixtures/health/   <- TRACKED test data generated from the real /api/health/score/ and /mini/ endpoints (12 score personas, 7 mini,
 │   │   │                              the months=7 error body, an index.js loader); README.md says how, the rows left behind (none) and the NTN assertion
+│   │   ├── pages/Contracts.jsx, ContractNew.jsx, ContractEditor.jsx, ContractPublic.jsx + contractCopy.js, contractHelpers.js, contractLifecycle.js
+│   │   │                              <- Contracts (BUILT 10 November 2026, Prompt 23): the routed pages /contracts, /contracts/new, /contracts/:id and the
+│   │   │                                 PUBLIC /contract/:token (no login, no AppShell, fixed light palette, publicApi only). contractCopy.js is every
+│   │   │                                 static sentence (scanned for the words the module never uses; the sentences that mirror the server's are
+│   │   │                                 drift-tested), contractHelpers.js the pure logic (limits, blanks, payload/diff/validation, signer-name check,
+│   │   │                                 the document model), contractLifecycle.js the action table per status, the timeline and send-failure rules
+│   │   ├── components/Contract*.jsx, SendContractDialog.jsx, WithdrawContractDialog.jsx <- ContractDocument (the ONE component the client's page, the
+│   │   │                                 owner's sent view and the draft preview all render), ContractSectionsEditor (accordion cards, blanks),
+│   │   │                                 ContractSentPage (+ LinkCard, Timeline, SignatureCard), ContractHeader, ContractTable, ContractStatusBadge,
+│   │   │                                 ContractTemplatePicker, ContractPreviewModal. They reuse the generic Proposals primitives by import
+│   │   │                                 (ProposalFields, ProposalDialog, ProposalColumns, ProposalBanners, ProposalSaveIndicator, ProposalClientFields)
+│   │   ├── test-fixtures/contracts/ <- TRACKED test data generated from the REAL owner and public endpoints by `python manage.py
+│   │   │                              export_contract_fixtures` (DEBUG only; one rolled-back transaction; nothing sent, nothing queued): every
+│   │   │                              status, the 7 failing send checks, the public payloads, the real error bodies, the signer-name oracle; README.md
 │   │   ├── test-fixtures/reports/  <- TRACKED test data generated from the real report views and PDF builders (P&L and statement
 │   │   │                              samples for every state, the four period sentences, the PDF 400 bodies, the notes oracle, three
 │   │   │                              profiles with invented CNIC/NTN, the purposes table); README.md says how
@@ -3357,9 +3379,9 @@ items 12-16 (and the new 13a/13b) against the real deployment.
 ---
 
 ### Module 7 — Contracts
-Status: BUILT, backend only (10 November 2026, Prompt 22). The pages are Prompt 23. No AI, no Pro gating, no new environment variable, no
+Status: BUILT, backend (10 November 2026, Prompt 22) and pages (10 November 2026, Prompt 23). No AI, no Pro gating, no new environment variable, no
 new service. One migration, `contracts.0001_initial`. Not announced publicly until a Pakistani lawyer has read `CONTRACTS_LAW.md`, the clause
-library and the wording (`CONTRACTS_LAW.md`, "Before public launch").
+library and the wording (`CONTRACTS_LAW.md`, "Before public launch", which now also lists the sentences on the screens).
 App: apps/contracts/ (+ the PDF in apps/invoices/: contract_pdf.py, views_contract_pdf.py, templates/invoices/contracts/)
 
 A freelancer picks one of five templates (Web Development, Design, Consulting, Content Writing, Custom), optionally starting from an
@@ -3404,9 +3426,25 @@ Key API endpoints (all `Cache-Control: no-store`):
 - GET /api/contracts/{id}/pdf/ (apps.invoices)
 - GET /api/contracts/public/{token}/ + POST .../sign/ ({signer_name, agree: true}) + POST .../decline/ ({reason}) + GET .../pdf/ (signed only)
 
-Not built (do not stub): any frontend page (Prompt 23); an email code or any identity check beyond the emailed link; reminders for unsigned
+Not built (do not stub): an email code or any identity check beyond the emailed link; reminders for unsigned
 contracts; amending or terminating a signed contract; more than one signer per side; a drawn or uploaded signature; AI-written contracts;
 contract line items; Pro gating; client-portal integration; Dashboard or Health Score changes; stored PDFs; Urdu; e-stamping.
+
+**The pages (BUILT 10 November 2026, Prompt 23; DECISIONS.md "Contracts: the pages (Prompt 23)", F1-F15).**
+- Owner pages inside AppShell: `/contracts` (status pills, search, the amber Expired badge, `?contract=<uuid>` from the bell/email is redirected BEFORE any
+  request and a junk value is dropped), `/contracts/new` (five templates as a radiogroup; optional client; `?proposal=<uuid>` from the Proposals page's new
+  "Create contract" action), `/contracts/:id` (a draft: autosaving editor with an accordion sections editor, a blanks list, key terms, Preview, the Send dialog;
+  anything else: the sent page with the client link, timeline, signature record and contract text). A non-UUID id is a not-found page with no request.
+- The Send dialog's checklist is the SERVER's: `GET /api/contracts/<id>/send-check/?method=email|link` runs the same function the real send runs
+  (`services.send_checks`; `send_problem` is its first failing sentence), so the two can never disagree. The signer's name is never prefilled. A lost answer is
+  settled by READING the contract and recognising the freelancer's own signature, never by sending again.
+- The client's page `/contract/:token` is public and shell-less. It imports only `publicApi`; every answer is one request (a ref lock, tested with two
+  presses in the same tick); an unknown outcome is settled by reading the contract (signed with the same name = the person's own, anything else = "answered
+  differently", still open = "we couldn't record it", the read failing too = locked until reload). `agree` is the boolean `true`. Vercel adds noindex and
+  no-referrer headers for `/contract/*` (never `/contracts*`).
+- Backend follow-ups: the owner PATCH limit is 600/hour (`UPDATES_PER_HOUR`; autosave sends one about every 1.5 s) while every other mutation stays at 60;
+  the PDF's record box prints the signing sentence that is true for the status (both signed / the freelancer signed); EMAILS.md documents the four emails.
+- Fixtures: `python manage.py export_contract_fixtures --out frontend/src/test-fixtures/contracts` regenerates them from the real endpoints (DEBUG only).
 
 ---
 
@@ -3537,7 +3575,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | FBR Tax              | Built (10 Nov 2026, Prompt 20): `apps.tax` (no model, no migration) — overview, law, slab calculator, summary PDF; Prompt 21 changed one sentence (overview note 3) | Built (10 Nov 2026, Prompt 21): `/tax` (Estimate, Calculator, How this works), the summary PDF download, the Settings > Tax & PSEB text fix | backend `apps.tax` tests (untracked); frontend 1979 -> 2112 tests (133 new, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Built (no AI, no Pro gating; pre-launch accountant review still required) |
 | Health Score         | Built (09 Nov 2026, Prompt 18): `apps/health` (no model, no migration) — `GET /api/health/score/` and `/mini/`; five areas, rescaled total, computed tips | Built (09 Nov 2026, Prompt 19): `/health` (window pills, score + grade, radar, "Where to start", five area cards, notes) and the Dashboard "Financial health" widget | backend `apps.health` tests (untracked, see DECISIONS.md); frontend 1816 -> 1979 tests (162 new, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Built (no AI, no history, no Pro gating) |
 | Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A (list, create, autosaving draft editor, score/tips) and part B (Send dialog with pre-flight and verify-by-checking, the client's public page `/proposal/:token`, withdraw, convert to invoice, activity timeline, client link, client's answer, in-app Preview) — 04 Nov 2026 | backend 479 passing (`apps.proposals` 299 + `core` 181; untouched by part B); frontend 1037 of 1038 passing (221 new for part B; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Complete; real-deployment smoke tests (DEPLOYMENT.md Section 8, items 12-16) still to run |
-| Contracts            | Built (10 Nov 2026, Prompt 22): `apps/contracts` (one table, five templates as data, send with both sides signing by typing a name, public sign/decline page API, SHA-256 fingerprint checked at signing, signed PDF, audit + bell + emails, Celery `send_signed_copies`) | Not started (Prompt 23) | backend `apps/contracts/tests/` + `apps/invoices/tests/test_contract_pdf.py` (untracked) | Backend built (no AI, no Pro gating; a lawyer must read `CONTRACTS_LAW.md` and the wording before public launch) |
+| Contracts            | Built (10 Nov 2026, Prompt 22): `apps/contracts` (one table, five templates as data, send with both sides signing by typing a name, public sign/decline page API, SHA-256 fingerprint checked at signing, signed PDF, audit + bell + emails, Celery `send_signed_copies`); Prompt 23 added `GET .../send-check/`, the 600/hour PATCH limit, the per-status PDF signing sentence and the `export_contract_fixtures` command | Built (10 Nov 2026, Prompt 23): `/contracts`, `/contracts/new`, `/contracts/:id` and the public `/contract/:token`; the generic `useDraftAutosave`; "Create contract" on an accepted proposal | backend `apps/contracts/tests/` + `apps/invoices/tests/test_contract_pdf.py` (untracked); frontend 2538 of 2539 (the 1 failure is the pre-existing `SecuritySection.test.jsx`; new tests in gitignored `*.test.*`) | Built (no AI, no Pro gating; a lawyer must read `CONTRACTS_LAW.md` and the wording before public launch) |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | Built: apps/dashboard (no models, no migration) — GET /api/dashboard/summary/ with per-section isolation; the invoice KPI maths extracted to apps/invoices/kpis.py (invoice_summary output byte-identical) | Built: `/dashboard` (greeting, 4 KPI cards, 6-month chart, Needs attention, Upcoming recurring, Recent activity, Exchange rates), now the landing page | backend 54 new (`apps.dashboard`); frontend 77 new (Dashboard, dashboardHelpers, App routing, AppShell pill) | Built without AI (04 Nov 2026); AI insights + Financial Health widget still to come |
 | Help / AI Assistant  | -       | -        | -     | Not started |

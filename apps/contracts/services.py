@@ -139,32 +139,80 @@ def create_from_template(user, *, template_key, client=None, client_fields=None,
 
 # -- Sending -------------------------------------------------------------------------------------------------------
 
-def send_problem(contract, method):
+def _check(check_id, ok, fail_message, ok_message, target):
+    return {'id': check_id, 'ok': ok, 'fail_message': fail_message, 'ok_message': ok_message, 'target': target}
+
+
+def send_checks(contract, method):
     """
-    The FIRST reason (in this order) a draft cannot be sent as `method`, as a sentence a person can act on, or None.
+    The ordered list of checks a draft must pass before it can be sent as `method` ('email' or 'link'). Each is
+    {id, ok, fail_message, ok_message, target}; `target` names the field (or `section:<id>`) a person should go to.
+    This is the ONE implementation of the send rules: send_problem() is the first failing check's sentence, and the
+    send-check endpoint serves the list as it is, so the checklist and the real send can never disagree.
     The fee is compared as a Decimal, never a float.
     """
-    if not (contract.title or '').strip():
-        return words.SEND_NO_TITLE
-    if not (contract.client_name or '').strip():
-        return words.SEND_NO_CLIENT_NAME
     sections = contract.sections or []
-    if not sections or any(not (s.get('title') or '').strip() or not (s.get('text') or '').strip() for s in sections):
-        return words.SEND_EMPTY_SECTION
-    for section in sections:
-        if PLACEHOLDER_RE.search(section.get('title') or '') or PLACEHOLDER_RE.search(section.get('text') or ''):
-            return words.SEND_PLACEHOLDER.format(title=section.get('title') or '')
-    if Decimal(contract.fee_amount) == Decimal('0') and not (contract.payment_terms or '').strip():
-        return words.SEND_NO_FEE
+
+    def first_section(predicate):
+        for section in sections:
+            if predicate(section):
+                return section
+        return None
+
+    empty = first_section(lambda s: not (s.get('title') or '').strip() or not (s.get('text') or '').strip())
+    blank = first_section(
+        lambda s: bool(PLACEHOLDER_RE.search(s.get('title') or '')) or bool(PLACEHOLDER_RE.search(s.get('text') or '')))
+    fee_missing = Decimal(contract.fee_amount) == Decimal('0') and not (contract.payment_terms or '').strip()
     if contract.valid_until is None:
-        return words.SEND_NO_SIGN_BY
-    if contract.valid_until < _today():
-        return words.SEND_SIGN_BY_PASSED
+        sign_by_fail, sign_by_ok = words.SEND_NO_SIGN_BY, False
+    elif contract.valid_until < _today():
+        sign_by_fail, sign_by_ok = words.SEND_SIGN_BY_PASSED, False
+    else:
+        sign_by_fail, sign_by_ok = words.SEND_NO_SIGN_BY, True
+
+    if not sections:
+        sections_target = 'sections'
+    elif empty is not None:
+        sections_target = f"section:{empty.get('id')}"
+    else:
+        sections_target = 'sections'
+
+    checks = [
+        _check('title', bool((contract.title or '').strip()), words.SEND_NO_TITLE, words.CHECK_OK_TITLE, 'title'),
+        _check('client_name', bool((contract.client_name or '').strip()), words.SEND_NO_CLIENT_NAME,
+               words.CHECK_OK_CLIENT_NAME, 'client_name'),
+        _check('sections', bool(sections) and empty is None, words.SEND_EMPTY_SECTION, words.CHECK_OK_SECTIONS,
+               sections_target),
+        _check('placeholders', blank is None,
+               words.SEND_PLACEHOLDER.format(title=(blank.get('title') or '') if blank else ''),
+               words.CHECK_OK_PLACEHOLDERS, f"section:{blank.get('id')}" if blank else 'sections'),
+        _check('fee', not fee_missing, words.SEND_NO_FEE, words.CHECK_OK_FEE, 'fee_amount'),
+        _check('sign_by', sign_by_ok, sign_by_fail, words.CHECK_OK_SIGN_BY, 'valid_until'),
+    ]
     if method == 'email':
         try:
             validate_email((contract.client_email or '').strip())
+            email_ok = True
         except DjangoValidationError:
-            return words.SEND_NO_CLIENT_EMAIL
+            email_ok = False
+        checks.append(_check('client_email', email_ok, words.SEND_NO_CLIENT_EMAIL, words.CHECK_OK_CLIENT_EMAIL,
+                             'client_email'))
+    return checks
+
+
+def send_warnings(contract):
+    """Advisory sentences that never block a send: [{id, message}]."""
+    warnings = []
+    if Decimal(contract.fee_amount) == Decimal('0') and (contract.payment_terms or '').strip():
+        warnings.append({'id': 'fee_zero', 'message': words.WARN_FEE_ZERO})
+    return warnings
+
+
+def send_problem(contract, method):
+    """The FIRST reason (in send_checks' order) a draft cannot be sent as `method`, as a sentence a person can act on, or None."""
+    for check in send_checks(contract, method):
+        if not check['ok']:
+            return check['fail_message']
     return None
 
 

@@ -1,0 +1,104 @@
+{
+  "templates": [
+    {
+      "description": "For building a website or web application.",
+      "key": "web_development",
+      "label": "Web Development",
+      "section_titles": [
+        "Scope of work",
+        "Deliverables and timeline",
+        "Revisions and changes",
+        "Hosting, third-party services and fixes",
+        "Fee and payment",
+        "What the Client provides",
+        "Ownership of the work",
+        "Confidentiality",
+        "Independent contractor",
+        "Ending this contract",
+        "Limit of liability",
+        "Governing law and disputes",
+        "Whole agreement and signing"
+      ]
+    },
+    {
+      "description": "For logos, brand work, screens and illustrations.",
+      "key": "design",
+      "label": "Design",
+      "section_titles": [
+        "Scope of work",
+        "Deliverables and file formats",
+        "Concepts and revisions",
+        "Fonts, images and licensed material",
+        "Fee and payment",
+        "What the Client provides",
+        "Ownership of the work",
+        "Confidentiality",
+        "Independent contractor",
+        "Ending this contract",
+        "Limit of liability",
+        "Governing law and disputes",
+        "Whole agreement and signing"
+      ]
+    },
+    {
+      "description": "For advice, reviews, workshops and ongoing support.",
+      "key": "consulting",
+      "label": "Consulting",
+      "section_titles": [
+        "Scope of services",
+        "Deliverables and meetings",
+        "Advice only",
+        "Changes to the scope",
+        "Fee and payment",
+        "What the Client provides",
+        "Ownership of the work",
+        "Confidentiality",
+        "Independent contractor",
+        "Ending this contract",
+        "Limit of liability",
+        "Governing law and disputes",
+        "Whole agreement and signing"
+      ]
+    },
+    {
+      "description": "For articles, copy and other written work.",
+      "key": "content_writing",
+      "label": "Content Writing",
+      "section_titles": [
+        "Scope of work",
+        "Deliverables and deadlines",
+        "Revisions",
+        "Originality and facts",
+        "Fee and payment",
+        "What the Client provides",
+        "Ownership of the work",
+        "Confidentiality",
+        "Independent contractor",
+        "Ending this contract",
+        "Limit of liability",
+        "Governing law and disputes",
+        "Whole agreement and signing"
+      ]
+    },
+    {
+      "description": "A short general agreement you fill in yourself.",
+      "key": "custom",
+      "label": "Custom",
+      "section_titles": [
+        "Scope of work",
+        "Deliverables and timeline",
+        "Revisions and changes",
+        "Fee and payment",
+        "What the Client provides",
+        "Ownership of the work",
+        "Confidentiality",
+        "Independent contractor",
+        "Ending this contract",
+        "Limit of liability",
+        "Governing law and disputes",
+        "Whole agreement and signing"
+      ]
+    }
+  ],
+  "version": "2026-11-10"
+}

@@ -1,0 +1,23 @@
+{
+  "AGREE_REQUIRED": "Tick the box to confirm you agree.",
+  "ALREADY_ANSWERED": "This contract has already been answered.",
+  "EMAIL_RECORDED": "When you sign, we record the name you type, the time, your IP address and your browser details.",
+  "EXPIRED": "This contract is past its sign-by date.",
+  "INTEGRITY": "This contract can no longer be signed. Please ask the sender to send it again.",
+  "NAME_LENGTH": "Your name must be between 2 and 120 characters.",
+  "NAME_NEEDS_LETTERS": "Use letters in your name.",
+  "NAME_REQUIRED": "Type your full name to sign.",
+  "NOT_FOUND": "Not found.",
+  "NOT_SIGNED_YET": "The signed copy is available after the contract is signed.",
+  "OWN_CONTRACT": "You can't sign your own contract.",
+  "PDF_FINGERPRINT_LABEL": "Document fingerprint (SHA-256):",
+  "PDF_FINGERPRINT_NOTE": "The fingerprint is calculated from the text of this contract when it was sent. If any word changes, the fingerprint changes.",
+  "PDF_SIGNING_NOTE_BOTH": "Each person signed by typing their name. Times are Pakistan time (PKT).",
+  "PDF_SIGNING_NOTE_OWNER": "The freelancer signed by typing their name. Times are Pakistan time (PKT).",
+  "PROPOSAL_NOT_ACCEPTED": "Only an accepted proposal can be turned into a contract.",
+  "REASON_TOO_LONG": "Your reason is {n} characters too long.",
+  "TOO_MANY_ACTIONS": "Too many actions. Please try again later.",
+  "TOO_MANY_REQUESTS": "Too many requests. Please try again in a little while.",
+  "TOO_MANY_SENDS": "You have sent a lot of contracts recently. Please try again later.",
+  "WITHDRAWN": "This contract has been withdrawn."
+}
