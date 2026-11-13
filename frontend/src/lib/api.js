@@ -1,10 +1,15 @@
 // src/lib/api.js
 import axios from 'axios'
 
-import { classifyAuthError } from '@/lib/authErrors'
+import { classifyAuthError, isCsrfFailure } from '@/lib/authErrors'
 import { refreshCoordinator } from '@/lib/refreshCoordinator'
+import { retryDelayMs, shouldRetry } from '@/lib/retryPolicy'
 
 const REFRESH_TIMEOUT_MS = 15000
+// Bare axios has no default timeout. Without one a hung GET /auth/csrf/ would never settle, and every write waits on it.
+const CSRF_TIMEOUT_MS = 10000
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const BASE_URL = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
@@ -20,14 +25,16 @@ const api = axios.create({
 })
 
 // A bare instance for PUBLIC pages that need no CSRF and no session refresh
-// (the client's proposal page, /proposal/:token). It has NO interceptors on
-// purpose: the shared instance above prefetches GET /auth/csrf/ and reads
-// document.cookie before any non-GET request, and its 401 handler can redirect
-// to /login — none of which a person who has never used LanceraOS should ever
-// trigger just by pressing Accept. The two public proposal endpoints are
-// CSRF-exempt (they carry no ambient credential) and never answer 401, so this
-// makes "the page cannot call /auth/ or force a logout" structural, not a
-// convention. withCredentials stays true: the backend recognises the owner only
+// (the client's proposal page, /proposal/:token). It has NO request interceptor
+// and NO 401 handler on purpose: the shared instance above prefetches
+// GET /auth/csrf/ and reads document.cookie before any non-GET request, and its
+// 401 handler can redirect to /login — none of which a person who has never
+// used LanceraOS should ever trigger just by pressing Accept. The two public
+// proposal endpoints are CSRF-exempt (they carry no ambient credential) and
+// never answer 401, so this makes "the page cannot call /auth/ or force a
+// logout" structural, not a convention. The one response interceptor it does
+// get (attachRetryInterceptor, below) only re-sends a failed GET/HEAD; it
+// touches no cookie, no auth state and no other URL. withCredentials stays true: the backend recognises the owner only
 // from the login cookie, and without it every owner visit would count as a
 // client view.
 export const publicApi = axios.create({
@@ -52,17 +59,35 @@ export function getCookie(name) {
 
 let csrfReadyPromise = null
 
+// GET /auth/csrf/ with the same retry rule as any other safe request (it uses bare axios, so the interceptor below does
+// not see it). Never throws: if every attempt fails, the write that wanted the token is still sent and the server answers
+// it (a 403 CSRF, which the caller reports).
+async function fetchCsrfCookie() {
+  for (let retries = 0; ; retries += 1) {
+    try {
+      await axios.get(`${BASE_URL}/auth/csrf/`, { withCredentials: true, timeout: CSRF_TIMEOUT_MS })
+      return
+    } catch (error) {
+      if (!shouldRetry(error, retries)) return
+      await sleep(retryDelayMs(retries))
+    }
+  }
+}
+
+// One fetch at a time: callers that arrive while it is running share it. The shared promise is dropped the moment it
+// settles, success or failure. A FAILED fetch used to be cached for the life of the page, so one dropped request meant
+// every later write went out without a token and got a 403 until the person reloaded. After a success the csrftoken
+// cookie short-circuits ensureCsrfCookie(), so dropping the promise costs nothing.
+function loadCsrfCookie() {
+  if (!csrfReadyPromise) {
+    csrfReadyPromise = fetchCsrfCookie().finally(() => { csrfReadyPromise = null })
+  }
+  return csrfReadyPromise
+}
+
 async function ensureCsrfCookie() {
   if (getCookie('csrftoken')) return
-  if (!csrfReadyPromise) {
-    csrfReadyPromise = axios
-      .get(`${BASE_URL}/auth/csrf/`, { withCredentials: true })
-      .catch(() => {
-        /* If this fails, the subsequent request will fail with a clear
-           403 CSRF error anyway — no need to also throw here. */
-      })
-  }
-  await csrfReadyPromise
+  await loadCsrfCookie()
 }
 
 const SAFE_METHODS = new Set(['get', 'head', 'options'])
@@ -140,6 +165,33 @@ const SKIP_REFRESH_URLS = [
   '/clients/portal/', '/invoices/portal/',
 ]
 
+async function postRefresh() {
+  await ensureCsrfCookie()
+  const csrfToken = getCookie('csrftoken')
+  await axios.post(`${BASE_URL}/auth/token/refresh/`, {}, {
+    withCredentials: true,
+    // Bare axios has no default timeout; without one a hung refresh
+    // would hold the cross-tab lock (and block every other tab) forever.
+    timeout: REFRESH_TIMEOUT_MS,
+    headers: csrfToken ? { 'X-CSRFToken': csrfToken } : {},
+  })
+}
+
+// The refresh POST, plus exactly one repeat when the server refused it for CSRF (a missing or stale csrftoken cookie —
+// typically after an earlier prefetch failed). apps/users/views/auth.py refresh() runs enforce_csrf_standalone() as its
+// first statement, before the session lookup and the token rotation, so a CSRF refusal changed nothing and repeating the
+// POST is safe. The CSRF cookie is fetched again first (even if an old cookie is present — it may be the stale one).
+// Runs inside refreshCoordinator's lock, so the repeat never races another tab. Any other failure is thrown unchanged.
+async function refreshSession() {
+  try {
+    await postRefresh()
+  } catch (error) {
+    if (!isCsrfFailure(error)) throw error
+    await loadCsrfCookie()
+    await postRefresh()
+  }
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -163,17 +215,7 @@ api.interceptors.response.use(
     const sawUnauthorizedAt = Date.now()
 
     try {
-      await refreshCoordinator.refresh(sawUnauthorizedAt, async () => {
-        await ensureCsrfCookie()
-        const csrfToken = getCookie('csrftoken')
-        await axios.post(`${BASE_URL}/auth/token/refresh/`, {}, {
-          withCredentials: true,
-          // Bare axios has no default timeout; without one a hung refresh
-          // would hold the cross-tab lock (and block every other tab) forever.
-          timeout: REFRESH_TIMEOUT_MS,
-          headers: csrfToken ? { 'X-CSRFToken': csrfToken } : {},
-        })
-      })
+      await refreshCoordinator.refresh(sawUnauthorizedAt, refreshSession)
       flushQueue(null)
       // Deliberately not `await`ed: a failure of the RETRY itself must
       // reach the caller as-is, not be mistaken for a refresh failure by
@@ -195,6 +237,11 @@ api.interceptors.response.use(
       // cookie, get a 401, and the server then deletes every auth cookie —
       // worse than failing once. A retry is only safe once the backend
       // accepts the previous refresh token for a short grace window.
+      //
+      // The one exception to "no automatic retry" is a CSRF refusal, handled in refreshSession() above: the server checks
+      // CSRF as the very first thing it does in refresh(), before it looks at the session, so a refusal means nothing
+      // was rotated and sending the refresh again cannot do any harm. A CSRF 403 that survives that single retry still
+      // is not a sign-out (classifyAuthError calls it transient): the session was never examined.
       if (classifyAuthError(refreshError) === 'definitive') {
         _forceLogout()
       }
@@ -204,6 +251,38 @@ api.interceptors.response.use(
     }
   },
 )
+
+// ══════════════════════════════════════════════════════════════════
+// RETRY OF SAFE REQUESTS — hides short connection cuts
+// ══════════════════════════════════════════════════════════════════
+// A GET/HEAD that fails at the connection level (or is answered 502/503/504 by the tunnel) is sent again, up to twice,
+// after 300 ms and 900 ms plus jitter. The rules live in lib/retryPolicy.js; this is only the plumbing. The retry goes
+// back through the same instance, so every request interceptor runs again.
+//
+// REGISTRATION ORDER MATTERS. Response interceptors run in the order they were added, so this one is added AFTER the 401
+// handler above:
+//   * the original error reaches the 401 handler first. A 401 is handled there (refresh once, re-send once) and never
+//     reaches this handler as a 401; every other error passes through the 401 handler untouched and arrives here;
+//   * a request this handler re-sends runs the WHOLE chain again, so if the re-sent request now answers 401 it reaches
+//     the 401 handler exactly once and is refreshed like any other; a re-sent request that fails again reaches this
+//     handler with its count carried on the config, so the limit of 2 retries holds across the nesting.
+// Added the other way round, the 401 handler would see the outcome of the retry a second time, as the error coming out of
+// this handler.
+function attachRetryInterceptor(instance) {
+  instance.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+      const retriesMade = error?.config?.retryCount || 0
+      if (!shouldRetry(error, retriesMade)) return Promise.reject(error)
+      error.config.retryCount = retriesMade + 1
+      await sleep(retryDelayMs(retriesMade))
+      return instance.request(error.config)
+    },
+  )
+}
+
+attachRetryInterceptor(api)
+attachRetryInterceptor(publicApi)
 
 // A real hard navigation (not React Router's navigate) is deliberate here —
 // this runs inside a plain axios interceptor with no router context, and a

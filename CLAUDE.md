@@ -274,8 +274,16 @@ This is how you investigate "why didn't this happened?"
    plus a non-secret localStorage timestamp) so two tabs never rotate the
    same refresh cookie at once. Public pages that need no CSRF and no
    refresh (the client's proposal page, /proposal/:token) use the bare
-   `publicApi` export from the same file instead: no interceptors, so they
-   can never trigger the /auth/csrf/ prefetch or a forced logout.
+   `publicApi` export from the same file instead: no request interceptor and
+   no 401 handler, so they can never trigger the /auth/csrf/ prefetch or a
+   forced logout. Safe requests (GET/HEAD only) are retried twice, after
+   about 300 ms then 900 ms, when the connection itself fails or the tunnel
+   answers 502/503/504 (src/lib/retryPolicy.js; applies to `api` and
+   `publicApi`; `{ retry: false }` opts out); never a timeout, a cancel, or
+   any POST/PUT/PATCH/DELETE. A failed /auth/csrf/ prefetch is retried the
+   same way and is never cached, so the next write tries again. A CSRF 403
+   on the refresh call (isCsrfFailure) re-fetches the CSRF cookie and
+   retries the refresh once, and never logs a user out.
 4. Auth state (user object, loading, isAuthenticated, initError) lives in
    src/store/authStore.js using Zustand. initialize() retries /auth/me/
    (3 attempts, 8s each) and only treats 401/403 as logged out; if the

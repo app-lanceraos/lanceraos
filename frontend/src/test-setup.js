@@ -38,3 +38,11 @@ if (typeof window !== 'undefined' && !window.ResizeObserver) {
     disconnect() {}
   }
 }
+// A browser that has already talked to the API holds the csrftoken cookie, and lib/api.js only fetches GET /auth/csrf/
+// when it is missing. Without this, every test that sends a POST through the shared Axios instance would first try to
+// reach a server that does not exist, and since that fetch is now retried (lib/retryPolicy.js, ~1.2-1.7 s of waiting)
+// the POST would arrive after `waitFor`'s one-second default. Tests that care about the cookie being absent clear it
+// themselves (lib/api.retry.test.js, lib/publicApi.test.js).
+if (typeof document !== 'undefined') {
+  document.cookie = 'csrftoken=test-setup-token'
+}

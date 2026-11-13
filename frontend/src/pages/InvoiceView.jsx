@@ -76,7 +76,11 @@ export default function InvoiceView() {
     // cancels the wasted backend work instead of just ignoring it.
     const controller = new AbortController()
     let objectUrl = null
-    api.get(`/invoices/portal/view/${token}/`, { responseType: 'blob', signal: controller.signal })
+    // retry: false — the one GET that opts out of lib/retryPolicy.js. Its 503 is this endpoint's own deliberate
+    // "nothing frozen yet" answer (not a tunnel blip), and the endpoint records a view (Sent -> Viewed and an
+    // InvoiceViewEvent) BEFORE it answers, so re-sending a 503 would log up to three views for one page load and delay
+    // the message by over a second.
+    api.get(`/invoices/portal/view/${token}/`, { responseType: 'blob', signal: controller.signal, retry: false })
       .then(({ data, headers }) => {
         objectUrl = URL.createObjectURL(data)
         setPdfUrl(objectUrl)
