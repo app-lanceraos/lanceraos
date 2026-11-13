@@ -465,6 +465,10 @@ Smoke test, with a throwaway account: **(1)** `GET /api/help/guides/` returns th
 `outcome: "answered"` or `outcome: "guides_only"` with a reason (`ai_off` when AI is off, `ai_unavailable` with an `ai_reason` when the model failed); **(4)** ask nonsense
 (`"what is the weather in Lahore"`) and see `guides_only` with `reason: "no_match"` and the six popular guides, and confirm in `core.AiCallLog` that it made no model call.
 
+**The Help page (13 November 2026, Prompt 26) is frontend only.** Deploy order: the web service with Prompts 24 and 25 first (the page reads `answers_enabled`, which Prompt 25 added), then Vercel. No migration, no new variable, no worker or Beat change, no new header rule (the page is behind login, unlike `/proposal/*` and `/contract/*`).
+
+Browser smoke test with a throwaway account, once both are live: **(1)** open the profile menu and press **Help**: `/help` opens; **(2)** type `invoice` in the box: guides are listed; **(3)** open one: the guide shows and the page is at the top; **(4)** press the browser's Back: you are on `/help` with `invoice` still in the box and the same list, with no new request in the network panel. With `HELP_AI_ENABLED` at its default (OFF) the box is labelled "Search the guides" and there is **no Ask button** and no line about an outside AI service; if you see an Ask button, `HELP_AI_ENABLED` and `AI_ENABLED` are both on. Open `/help/not-a-guide`: "That guide doesn't exist." with a link back and no Reload button.
+
 Rollback: redeploy the previous web image. Nothing is migrated, so there is nothing to undo; the two audit events (`help_question`, `help_answer_rated`) already written
 are harmless rows in `core.AuditLog`.
 

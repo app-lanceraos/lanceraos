@@ -523,7 +523,7 @@ lanceraos/                          <- Django project root
 │   │                                  evaluate_help_retrieval, evaluate_help_assistant, export_help_fixtures). Imports only stdlib, Django, DRF and core.*;
 │   │                                  NO app imports it (AST-tested). Prompt 25 (11 Nov 2026): short-query search (a title rule in search.py, keyword
 │   │                                  and synonym fixes, three guide mistakes fixed, the short evaluation sets in eval_cases.py) and `answers_enabled` on
-│   │                                  the guide index. The page is Prompt 26.
+│   │                                  the guide index. The page is built (Prompt 26, 13 Nov 2026: frontend only, see the frontend tree and Module 10).
 │   ├── dashboard/                  <- Dashboard — BUILT (04 November 2026). No models, no migration:
 │   │                                  services.py (one builder per section), views.py (GET
 │   │                                  /api/dashboard/summary/, per-section isolation), urls.py.
@@ -678,6 +678,15 @@ lanceraos/                          <- Django project root
 │   │   ├── test-fixtures/tax/      <- TRACKED test data generated from the real /api/tax/overview/, /law/ and /calculator/ endpoints (10 overview
 │   │                              personas, the law, 9 calculator cases, the real 400 sentences, PAYMENT_COUNTS, an index.js loader); README.md says
 │   │                              how, the rows left behind (none) and the NTN/PSEB assertion
+│   │   ├── pages/Help.jsx + helpHelpers.js, components/Help*.jsx (HelpCard, HelpBlocks, HelpSearchBox, HelpGuideLinks, HelpTopics, HelpAnswer, HelpRating,
+│   │   │   HelpGuideView), hooks/useHelpAsk.js, useHelpRating.js, useDebouncedValue.js
+│   │   │                          <- Help (BUILT 13 November 2026, Prompt 26, frontend only): the routed page `/help/:slug?` (ONE route, so the page stays mounted
+│   │   │                             when a guide opens), opened from the profile menu's Help item (no sidebar item). helpHelpers.js is the pure logic and every
+│   │   │                             static sentence (the limits are drift-tested against constants.json; a scan checks every sentence and every rendered state
+│   │   │                             against the BACKEND's banned lists); the mode comes from `answers_enabled === true` and fails closed to search mode
+│   │   ├── test-fixtures/help/     <- TRACKED test data generated from the real /api/help/ endpoints by `python manage.py export_help_fixtures` (27 files; the
+│   │   │                              `constants` fixture carries the four limits, LIBRARY_VERSION, POPULAR_SLUGS, GUIDE_COUNT, AI_TOTAL_BUDGET_SECONDS,
+│   │   │                              BANNED_PHRASES and STYLE_WORDS); README.md says how
 │   │   ├── test-fixtures/health/   <- TRACKED test data generated from the real /api/health/score/ and /mini/ endpoints (12 score personas, 7 mini,
 │   │   │                              the months=7 error body, an index.js loader); README.md says how, the rows left behind (none) and the NTN assertion
 │   │   ├── pages/Contracts.jsx, ContractNew.jsx, ContractEditor.jsx, ContractPublic.jsx + contractCopy.js, contractHelpers.js, contractLifecycle.js
@@ -3547,8 +3556,8 @@ stale-response tests.
 ---
 
 ### Module 10 — Help / AI Assistant
-Status: BUILT, backend only (11 November 2026, Prompt 24; short-query search and `answers_enabled` added in Prompt 25, same day). The Help PAGE (and wiring the profile menu's Help item, which does nothing today) is
-Prompt 26 and does not exist. No model, no migration, no new service. App: apps/help/ (it imports only the standard library, Django, DRF and `core.*`;
+Status: BUILT: backend (11 November 2026, Prompt 24; short-query search and `answers_enabled` added in Prompt 25, same day) and the page (13 November 2026, Prompt 26, frontend only,
+below). The profile menu's Help item opens it. No model, no migration, no new service. App: apps/help/ (it imports only the standard library, Django, DRF and `core.*`;
 no app imports it; AST-tested).
 
 **The idea (it changes the spec's mechanism, not its intent).** The spec said "LanceraOS documentation embedded in the system prompt". Sending the
@@ -3594,7 +3603,19 @@ section 15. Outcome: retrieval met its pre-registered rule; the live evaluation 
 words with any guide misses (mitigated by curated keywords and synonyms). Login required for everything (a public Help for signed-out people needs a
 marketing surface that does not exist). No streaming, no stored conversations, no admin screen for the ratings. A model can still say something the guard
 cannot detect, which is why every answer shows its guides. On the free tier the whole key serves about four AI questions a minute, shared with Proposals and
-the Dashboard. Not built: the page (Prompt 26), a public Help, Urdu, feedback text, an admin reader for the ratings.
+the Dashboard. Not built: a public Help, Urdu, feedback text, an admin reader for the ratings.
+
+**The page (BUILT 13 November 2026, Prompt 26, frontend only; DECISIONS.md H23-H31).** `/help` and `/help/<slug>` are ONE route (`/help/:slug?`) rendering one component, so
+Back from a guide returns to the typed text, the search results and (in ask mode) the answer on screen with no new request. The mode comes from `answers_enabled === true`
+(the strict boolean) on `GET /api/help/guides/` and fails closed: anything else, including a failed index, is **search mode** (one box that searches the guides as you type;
+nothing typed there is ever sent to `/help/ask/`; no Ask button, no AI disclosure, no rating row). **Ask mode** has an explicit Ask button, the "sent to an outside AI service"
+line as visible text, a written answer or the server's notice (every outcome is a normal 200 answer, the page shows `notice` and never `reason` / `ai_reason`), and a rating
+row only on a real answer (`POST /help/rate/` with at most three guide slugs). A result area replaces the browse area (Popular guides + Browse by topic) while it has
+something to show. Nothing a person types is kept (no URL parameter, no storage, no history entry, no `previous_question`). The ask call has its own 40 s timeout (the
+server's AI budget is 25 s, the shared instance times out at 15 s). Link blocks are drawn only when `to` is an in-app path and every one of the 26 link targets is
+drift-tested against `App.jsx`, `Settings.jsx`' `VALID_TABS` and the Tax views. The support address shows only on a guides-only result and only when it is a plain
+`local@domain.tld`. A guide is drawn only when complete and never under another guide's URL; the page scrolls its own scroll parent (AppShell's inner container) to
+the top and moves focus to the heading when the slug changes.
 
 ---
 
@@ -3633,7 +3654,7 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Contracts            | Built (10 Nov 2026, Prompt 22): `apps/contracts` (one table, five templates as data, send with both sides signing by typing a name, public sign/decline page API, SHA-256 fingerprint checked at signing, signed PDF, audit + bell + emails, Celery `send_signed_copies`); Prompt 23 added `GET .../send-check/`, the 600/hour PATCH limit, the per-status PDF signing sentence and the `export_contract_fixtures` command | Built (10 Nov 2026, Prompt 23): `/contracts`, `/contracts/new`, `/contracts/:id` and the public `/contract/:token`; the generic `useDraftAutosave`; "Create contract" on an accepted proposal | backend `apps/contracts/tests/` + `apps/invoices/tests/test_contract_pdf.py` (untracked); frontend 2538 of 2539 (the 1 failure is the pre-existing `SecuritySection.test.jsx`; new tests in gitignored `*.test.*`) | Built (no AI, no Pro gating; a lawyer must read `CONTRACTS_LAW.md` and the wording before public launch) |
 | Subscriptions        | -       | -        | -     | Not started |
 | Dashboard            | Built: apps/dashboard (no models, no migration) — GET /api/dashboard/summary/ with per-section isolation; the invoice KPI maths extracted to apps/invoices/kpis.py (invoice_summary output byte-identical) | Built: `/dashboard` (greeting, 4 KPI cards, 6-month chart, Needs attention, Upcoming recurring, Recent activity, Exchange rates), now the landing page | backend 54 new (`apps.dashboard`); frontend 77 new (Dashboard, dashboardHelpers, App routing, AppShell pill) | Built without AI (04 Nov 2026); AI insights + Financial Health widget still to come |
-| Help / AI Assistant  | Built (11 Nov 2026, Prompt 24): `apps/help` (no model, no migration) — 49 guides, search with a gate, a guarded AI answer, 5 endpoints, `check_help_library`, the two evaluations; Prompt 25 (11 Nov 2026): short-query search (title rule, keyword and synonym fixes; measured on a tune and a held-out set of one- and two-word queries, AI_EVALUATION.md section 15c) and `answers_enabled` on `GET /api/help/guides/` | Not built (Prompt 26: the page and the profile menu's Help item) | backend 271 passing (`python manage.py test apps.help --keepdb`; 240 before Prompt 25) in `apps/help/tests/` (untracked, gitignored); fixtures in `frontend/src/test-fixtures/help/` (tracked) | Backend built; AI answers default OFF (see AI_EVALUATION.md section 15) |
+| Help / AI Assistant  | Built (11 Nov 2026, Prompt 24): `apps/help` (no model, no migration) — 49 guides, search with a gate, a guarded AI answer, 5 endpoints, `check_help_library`, the two evaluations; Prompt 25 (11 Nov 2026): short-query search (title rule, keyword and synonym fixes; measured on a tune and a held-out set of one- and two-word queries, AI_EVALUATION.md section 15c) and `answers_enabled` on `GET /api/help/guides/`; Prompt 26 (13 Nov 2026): the `constants` fixture also carries `AI_TOTAL_BUDGET_SECONDS`, `BANNED_PHRASES`, `STYLE_WORDS` | Built (13 Nov 2026, Prompt 26): `/help` and `/help/:slug` (search mode by default, ask mode when `answers_enabled`, guide view, ratings), the profile menu's Help item; no sidebar item | backend 271 passing (`python manage.py test apps.help --keepdb`) in `apps/help/tests/` (untracked, gitignored); frontend 2540 -> 2789 tests (249 new, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`); fixtures in `frontend/src/test-fixtures/help/` (tracked) | Built; AI answers default OFF (see AI_EVALUATION.md section 15), so the page ships as search plus guides |
 
 ---
 

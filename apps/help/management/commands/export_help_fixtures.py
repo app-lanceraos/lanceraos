@@ -237,7 +237,10 @@ class Command(BaseCommand):
         self.add('constants', {
             'QUESTION_MIN_CHARS': c.QUESTION_MIN_CHARS, 'QUESTION_MAX_CHARS': c.QUESTION_MAX_CHARS,
             'SEARCH_MIN_CHARS': c.SEARCH_MIN_CHARS, 'SEARCH_MAX_CHARS': c.SEARCH_MAX_CHARS, 'LIBRARY_VERSION': LIBRARY_VERSION,
-            'POPULAR_SLUGS': list(c.POPULAR_SLUGS), 'GUIDE_COUNT': len(BY_SLUG)})
+            'POPULAR_SLUGS': list(c.POPULAR_SLUGS), 'GUIDE_COUNT': len(BY_SLUG),
+            # (Prompt 26) so the page's copy scan and timeout test read the backend's own values, never a pasted copy
+            'AI_TOTAL_BUDGET_SECONDS': c.AI_TOTAL_BUDGET_SECONDS, 'BANNED_PHRASES': list(c.BANNED_PHRASES),
+            'STYLE_WORDS': list(c.STYLE_WORDS)})
 
     # -- writing ----------------------------------------------------------------------------------------------------
 
@@ -311,5 +314,9 @@ version, never an id or a time).
 | `ask-guides-only-slow-down` | the soft per-minute limit |
 | `ask-400-empty`, `ask-400-long`, `ask-429`, `guide-404`, `search-400`, `rate-400` | the real `{{status, body}}` of the refused requests |
 | `rate-ok` | `POST /api/help/rate/` |
-| `link-targets`, `topics`, `constants` | `apps/help/links.py`, `apps/help/constants.py` |
+| `link-targets`, `topics` | `apps/help/links.py`, `apps/help/constants.py` |
+| `constants` | `apps/help/constants.py`: `QUESTION_MIN_CHARS`, `QUESTION_MAX_CHARS`, `SEARCH_MIN_CHARS`, `SEARCH_MAX_CHARS`, `LIBRARY_VERSION`, `POPULAR_SLUGS`, `GUIDE_COUNT`, and (Prompt 26) `AI_TOTAL_BUDGET_SECONDS`, `BANNED_PHRASES`, `STYLE_WORDS` |
+
+The Help page's tests (`frontend/src/pages/__tests__/Help*.test.jsx`, `helpDrift.test.js`) read these files; a limit, a banned word or a sentence that the
+page mirrors must change here first (re-run the command), never in a test.
 """

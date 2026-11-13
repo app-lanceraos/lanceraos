@@ -28,6 +28,7 @@ import ProfitAndLoss from '@/pages/ProfitAndLoss'
 import IncomeStatement from '@/pages/IncomeStatement'
 import HealthScore from '@/pages/HealthScore'
 import Tax from '@/pages/Tax'
+import Help from '@/pages/Help'
 import Payments from '@/pages/Payments'
 import Invoices from '@/pages/Invoices'
 import InvoiceAnalytics from '@/pages/InvoiceAnalytics'
@@ -228,6 +229,12 @@ export default function App() {
         <Route
           path="/tax"
           element={<PrivateRoute><AppShell><Tax /></AppShell></PrivateRoute>}
+        />
+        {/* Module 10 — Help (Prompt 26). ONE route with an optional slug, so Help stays mounted when a guide opens and
+            Back returns to the typed search or the answer on screen. It has no sidebar item: the profile menu opens it. */}
+        <Route
+          path="/help/:slug?"
+          element={<PrivateRoute><AppShell><Help /></AppShell></PrivateRoute>}
         />
         <Route
           path="/invoices"

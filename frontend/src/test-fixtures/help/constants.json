@@ -1,4 +1,27 @@
 {
+  "AI_TOTAL_BUDGET_SECONDS": 25,
+  "BANNED_PHRASES": [
+    "legally binding",
+    "legally valid",
+    "legal effect",
+    "enforceable",
+    "tamper-proof",
+    "guarantee",
+    "guaranteed",
+    "certified",
+    "court",
+    "audit-proof",
+    "tax-free",
+    "tax free",
+    "exempt",
+    "penalty",
+    "penalties",
+    "premium",
+    "upgrade",
+    "subscription",
+    "pricing",
+    "coming soon"
+  ],
   "GUIDE_COUNT": 49,
   "LIBRARY_VERSION": "c88b2796dcc6",
   "POPULAR_SLUGS": [
@@ -12,5 +35,13 @@
   "QUESTION_MAX_CHARS": 300,
   "QUESTION_MIN_CHARS": 3,
   "SEARCH_MAX_CHARS": 120,
-  "SEARCH_MIN_CHARS": 2
+  "SEARCH_MIN_CHARS": 2,
+  "STYLE_WORDS": [
+    "simply",
+    "just",
+    "easily",
+    "seamless",
+    "powerful",
+    "effortless"
+  ]
 }

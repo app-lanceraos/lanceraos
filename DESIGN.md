@@ -886,6 +886,35 @@ inside itself on a phone (the page never does). Below it, on the Estimate and Ca
   shows one alert with Reload (the year pills stay usable). The calculator is an explicit form with the field error under the input and the result in an
   `aria-live="polite"` region.
 
+### Help page (`/help`, `/help/:slug`, 13 November 2026, Prompt 26)
+
+One route (`/help/:slug?`), one component, two views: the **home** view and the **guide** view. It has no sidebar item; the profile menu's Help item opens it. Every
+guide, notice and answer sentence is the server's, drawn as a plain text node (`overflowWrap: 'anywhere'`).
+
+- **Two modes, one box (`HelpSearchBox`).** Search mode (the default) is a `role="search"` form with a magnifier icon, no button and no AI line; typing searches the guides after
+  350 ms. Ask mode (only when the index says `answers_enabled: true`) adds an **Ask** button (primary, `Send` icon), a hint line and the "sent to an outside AI service" line as
+  always-visible text under the box. The box owns what each mode shows; the page passes the same text to both. The input is 16 px (iOS does not zoom), 46 px tall; the clear
+  button is 44 x 40; the row wraps so it fits 375 px. While the index loads the box is a skeleton of the same height.
+- **The result area replaces the browse area.** With a search or an answer to show, "Matching guides" or the answer card takes the place of "Popular guides" + "Browse by
+  topic"; clearing the box brings them back. A refetch dims the list to 0.55 and never unmounts it.
+- **Cards.** `HelpCard` is the standard card (DESIGN.md Section 7, `--bg-surface`, 1 px `--border-subtle`, `--radius-lg`, header `16px 20px` with a bottom rule, body
+  `16px 20px`) as a labelled `<section>` whose `h2` has `tabIndex={-1}` so it can receive focus. Card titles are `h2`; a topic's name inside the topic grid is `h3`.
+- **Browse by topic.** `repeat(auto-fit, minmax(280px, 1fr))`, 16 px gap, always expanded (a table of contents): one card per topic with its blurb and a plain link per
+  guide. The reading column (search, results, answer, guide) is at most 860 px; the topic grid may use the full width.
+- **Guide rows (`HelpGuideLinks`).** One router link per row: title (600), one-line summary (`--text-secondary`), a neutral topic label written as a word, a
+  `ChevronRight`. Hover is `--bg-surface-3` through `hoverProps` (touch ignored); the browser's focus ring is kept.
+- **Blocks (`HelpBlocks`).** One component for a guide and for an answer, so they cannot look different: paragraph, real `<ol>` for steps, a bordered note with an `Info`
+  icon, a ghost link button with `ArrowRight`. Block gap 12 px.
+- **Answer card.** "You asked: ..." (as text), the blocks, the source note, "From these guides", then the rating row (ghost buttons, each an icon AND a word; the thank-you
+  line is inside a polite live region that is always mounted). A guides-only or off-topic result shows the server's notice in an info alert instead, "Closest guides" when
+  there are any, and "Still stuck? Email ..." only for a plain address; it has no rating row and no source note. The card heading takes focus when a result arrives.
+- **Guide view.** A back link ("All help"), the topic as a neutral label, the title as the card heading (focus target after a slug change), the summary as its subtitle, the
+  blocks, "Last checked on ...", and "Related guides". A first load is a skeleton of the final footprint under one status line; a guide that does not exist shows the
+  sentence, a hint and the back link with no Reload button; any other failure shows an alert and Reload.
+- **Colour and words.** Nothing is red or green for meaning: the only status colours are those of `FosAlert`. Secondary and small text use `--text-secondary` (the tertiary
+  token does not reach 4.5:1 on the card background); topic labels are neutral and carry the word. Measured in a real browser: result summary 8.54:1 light and 7.42:1 dark,
+  topic label 7.52:1 and 6.18:1.
+
 ## 8. Animation and Transitions
 
 ### Timing tokens

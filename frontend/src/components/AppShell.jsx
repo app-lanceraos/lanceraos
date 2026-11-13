@@ -62,8 +62,8 @@ const PAGE_TITLES = {
   '/expenses': 'Expenses',
   '/pnl': 'Profit & Loss',
   '/tax': 'Tax',
-  '/tax/guide': 'Tax Guide',
   '/health': 'Health Score',
+  '/help': 'Help',
   '/proposals': 'Proposals',
   '/contracts': 'Contracts',
   '/profile': 'Profile',
@@ -83,6 +83,7 @@ function pageTitleFor(pathname) {
   if (pathname.startsWith('/proposals/')) return 'Proposal'
   if (pathname === '/contracts/new') return 'New Contract'
   if (pathname.startsWith('/contracts/')) return 'Contract'
+  if (pathname.startsWith('/help/')) return 'Help'
   return 'LanceraOS'
 }
 
@@ -102,9 +103,7 @@ function pageTitleFor(pathname) {
 //                  real routed sub-pages) — exact-match is the right
 //                  behavior today, revisit only if a real /clients/*
 //                  route is ever added.
-//   /dashboard   — end:false already, but /dashboard has no route in
-//                  App.jsx at all yet (Module 9 not started) — moot
-//                  either way until it's built.
+//   /dashboard   — end:false; a real route (Module 9) with no sub-route.
 //   /proposals   — end:false (03 November 2026, Proposals frontend part A).
 //                  Real routes now exist: /proposals, /proposals/new and
 //                  /proposals/:id, so end:true would leave the pill
@@ -112,15 +111,13 @@ function pageTitleFor(pathname) {
 //                  had. Locked in by AppShell.test.jsx.
 //   /contracts   — end:false (Prompt 23). Real routes now exist: /contracts, /contracts/new and /contracts/:id, so end:true
 //                  would leave the pill inactive on the two sub-pages, the same bug /invoices and /proposals had.
-//   /payments, /expenses, /pnl, /tax, /health,
-//   /income-certificate, /skill-gap — all end:true, but NONE of these
-//                  have any real route in App.jsx yet (every one of
-//                  those modules is "Not started" per CLAUDE.md's own
-//                  build-status table) — moot either way, not a live
-//                  bug today. Re-audit each one's own end value against
-//                  its real sub-page shape at build time, don't assume
-//                  end:true is still correct once a module actually
-//                  ships.
+//   /payments, /expenses, /pnl, /health, /income-certificate — end:true,
+//                  each a real route in App.jsx with no sub-route, so an
+//                  exact match is correct. Re-audit one's end value if it
+//                  ever gains a sub-page. /tax is end:false (its views are
+//                  query parameters on the one path).
+//   /skill-gap   — end:true, and the one item with no route in App.jsx yet
+//                  (it falls through to the catch-all redirect).
 const NAV_GROUPS = [
   {
     label: 'Menu',
@@ -315,7 +312,7 @@ function ProfilePopup({ position, theme, onSetTheme, collapsed, onNavigate, onSi
       )}
       <PopupItem icon={<UserIcon size={18} />} label="Profile" onClick={() => { onNavigate('/profile'); onClose() }} />
       <PopupItem icon={<SettingsIcon size={18} />} label="Settings" onClick={() => { onNavigate('/settings'); onClose() }} />
-      <PopupItem icon={<HelpCircle size={18} />} label="Help" onClick={() => { onClose() }} />
+      <PopupItem icon={<HelpCircle size={18} />} label="Help" onClick={() => { onNavigate('/help'); onClose() }} />
       <PopupItem icon={<LogOut size={18} />} label="Sign out" danger onClick={() => { onSignOut(); onClose() }} />
       <style>{`
         @keyframes shell-popup-in {
