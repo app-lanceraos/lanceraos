@@ -42,6 +42,8 @@ channels-redis==4.3.*
 celery==5.6.*
 django-celery-beat==2.9.*
 redis==5.3.*
+# kombu 5.7.0 refuses redis-py 5.x ("requires redis-py 6.1.0 or later"), which crashes the Celery worker and every .delay() call. 5.6.x accepts redis-py 4.5.2 to 6.4. Raise redis and kombu TOGETHER, deliberately, never one without the other.
+kombu>=5.6.0,<5.7
 
 # ── CORS ─────────────────────────────────────────────────────
 django-cors-headers==4.9.*
