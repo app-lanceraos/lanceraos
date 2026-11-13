@@ -620,6 +620,18 @@ class Session(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='sessions',
     )
     refresh_token_hash = models.CharField(max_length=64, unique=True)
+    previous_refresh_token_hash = models.CharField(
+        max_length=64, null=True, blank=True,
+        help_text='SHA-256 of the refresh token this session held BEFORE its last ordinary rotation. refresh() (and only '
+                  'refresh()) still accepts it for settings.REFRESH_GRACE_SECONDS after previous_rotated_at, so a '
+                  'refresh whose response was lost can be repeated. Not unique: it is only ever looked up together with '
+                  'the time window. Null until the first rotation.',
+    )
+    previous_rotated_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='When the last ordinary rotation happened: the START of the grace window. A grace use never changes it, '
+                  'so the window does not slide. Null until the first rotation.',
+    )
     device_name = models.CharField(max_length=300, blank=True)
     trusted_device = models.ForeignKey(
         'TrustedDevice', null=True, blank=True, on_delete=models.SET_NULL, related_name='sessions',
@@ -638,6 +650,7 @@ class Session(models.Model):
         indexes = [
             models.Index(fields=['user', 'last_used_at']),
             models.Index(fields=['refresh_token_hash']),
+            models.Index(fields=['previous_refresh_token_hash']),
             models.Index(fields=['expires_at']),
         ]
 
@@ -650,11 +663,51 @@ class Session(models.Model):
 
     @classmethod
     def get_valid(cls, raw_token):
-        """Looks up a live (non-expired) session by raw refresh token."""
+        """
+        Looks up a live (non-expired) session by raw refresh token. STRICT: it matches the CURRENT token only. The
+        previous token's grace window is applied by get_for_refresh(), which only auth.refresh() calls; logout, the
+        sessions list, the security views and the refresh-cookie identity helper all stay on this method on purpose.
+        """
         return cls.objects.filter(
             refresh_token_hash=cls._hash_token(raw_token),
             expires_at__gt=timezone.now(),
         ).first()
+
+    @classmethod
+    def get_for_refresh(cls, raw_token):
+        """
+        The lookup auth.refresh() uses. Returns (session, is_grace_use); (None, False) when nothing matches.
+
+        MUST be called inside transaction.atomic(): the row comes back locked (select_for_update) and stays locked until
+        that transaction ends, so the caller's checks and its rotation run as one unit and two requests presenting the
+        same cookie are serialised on the row.
+
+        Order: (a) the CURRENT hash, then (b) the PREVIOUS hash, only while now - previous_rotated_at <= REFRESH_GRACE_SECONDS
+        (inclusive: exactly 30.000000 s is still inside, 30.000001 s is outside).
+
+        What PostgreSQL does for the second of two simultaneous requests (READ COMMITTED, the default): its query (a)
+        blocks on the row lock the first request holds; when the first commits, PostgreSQL re-evaluates the WHERE clause
+        against the UPDATED row, the current hash no longer matches, so (a) returns nothing. Query (b) is a new statement
+        with a fresh snapshot, sees the committed row, matches the previous hash inside the window and takes the lock
+        in its turn. Verified by RefreshGraceConcurrencyTests (6 real threads, 3 trials, all 200); not just reasoned.
+        """
+        token_hash = cls._hash_token(raw_token)
+        now = timezone.now()
+        locked = cls.objects.select_for_update()
+
+        session = locked.filter(refresh_token_hash=token_hash, expires_at__gt=now).first()
+        if session is not None:
+            return session, False
+
+        window_start = now - timedelta(seconds=settings.REFRESH_GRACE_SECONDS)
+        session = locked.filter(
+            previous_refresh_token_hash=token_hash,
+            previous_rotated_at__gte=window_start,
+            expires_at__gt=now,
+        ).first()
+        if session is not None:
+            return session, True
+        return None, False
 
     @classmethod
     def create_for_user(cls, user, raw_token, device_name, ip_address, lifetime_days, trusted_device=None):
@@ -682,10 +735,31 @@ class Session(models.Model):
             )
 
     def rotate(self, new_raw_token, lifetime_days):
-        """Called on token refresh — same row, new hash, new expiry."""
+        """
+        Called on token refresh — same row, new hash, new expiry. The hash being replaced moves to
+        previous_refresh_token_hash and `now` becomes previous_rotated_at, which starts the grace window.
+        """
+        now = timezone.now()
+        self.previous_refresh_token_hash = self.refresh_token_hash
+        self.previous_rotated_at = now
         self.refresh_token_hash = self._hash_token(new_raw_token)
-        self.last_used_at = timezone.now()
-        self.expires_at = timezone.now() + timedelta(days=lifetime_days)
+        self.last_used_at = now
+        self.expires_at = now + timedelta(days=lifetime_days)
+        self.save(update_fields=[
+            'previous_refresh_token_hash', 'previous_rotated_at', 'refresh_token_hash', 'last_used_at', 'expires_at',
+        ])
+
+    def rotate_for_grace_use(self, new_raw_token, lifetime_days):
+        """
+        A repeated refresh that presented the PREVIOUS token inside its window: issue a new CURRENT token but leave
+        previous_refresh_token_hash and previous_rotated_at exactly as they are, so the window ends REFRESH_GRACE_SECONDS
+        after the real rotation and never slides forward. (A separate method, not a flag on rotate(): getting this wrong
+        would silently turn a 30-second window into an unbounded one.)
+        """
+        now = timezone.now()
+        self.refresh_token_hash = self._hash_token(new_raw_token)
+        self.last_used_at = now
+        self.expires_at = now + timedelta(days=lifetime_days)
         self.save(update_fields=['refresh_token_hash', 'last_used_at', 'expires_at'])
 
     def touch(self):

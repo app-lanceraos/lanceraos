@@ -272,6 +272,13 @@ SIMPLE_JWT = {
     'UPDATE_LAST_LOGIN': False,  # updated manually in views (see auth._update_last_login)
 }
 
+# How long after a refresh-token rotation the server still accepts the PREVIOUS refresh token, in seconds. Only
+# POST /api/auth/token/refresh/ honours it (apps/users/models.py Session.get_for_refresh). It lets a person whose refresh
+# response was lost on a flaky connection (or whose two requests collided) repeat the refresh instead of being logged
+# out. The trade-off: a stolen OLD refresh cookie keeps working for up to this many seconds longer. A plain constant, not an
+# environment variable, on purpose: it is a security parameter, not a deployment setting.
+REFRESH_GRACE_SECONDS = 30
+
 # ══════════════════════════════════════════════════════════════════
 # PASSWORD HASHING — Argon2 (CLAUDE.md rule 7, never bcrypt/plaintext)
 # ══════════════════════════════════════════════════════════════════

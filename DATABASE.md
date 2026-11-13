@@ -270,6 +270,8 @@ One row per active login (refresh token), capped at 3 concurrent per user.
 ```
 id, user (FK, CASCADE)
 refresh_token_hash          CharField(64), unique  — SHA-256 of the refresh token, never the token itself
+previous_refresh_token_hash CharField(64), null, NOT unique, indexed — the hash replaced by the last ordinary rotation (users.0019)
+previous_rotated_at         DateTimeField, null    — when that rotation happened: the start of the grace window (users.0019)
 device_name                  CharField(300), blank  — normalized UA string, e.g. "Chrome on Windows"
 trusted_device                 FK to TrustedDevice, nullable, SET_NULL
 ip_address                       GenericIPAddressField, nullable
@@ -278,13 +280,19 @@ created_at, last_used_at, expires_at
 
 1. **Mutable?** Yes — refreshing rotates `refresh_token_hash`/`last_used_at`/`expires_at` on the
    **same row**, deliberately (otherwise "3 sessions max" would silently mean "3 refreshes since
-   login," not 3 actual devices).
+   login," not 3 actual devices). An ordinary rotation also moves the replaced hash into
+   `previous_refresh_token_hash` and stamps `previous_rotated_at`; `POST /api/auth/token/refresh/`
+   (and nothing else) accepts that previous hash while `now - previous_rotated_at` is at most
+   `REFRESH_GRACE_SECONDS` (30, `config/settings.py`). A repeated use inside the window issues a
+   new current hash but never changes the two previous-* columns, so the window does not slide.
+   Only ONE previous slot exists: the next ordinary rotation overwrites it.
 2. **Soft deleted?** No — hard-deleted on logout, revocation, or expiry. No business/legal
    significance to preserving a dead session row.
 3. **Audit trail?** Yes — session creation, revocation (`session_revoked`), and rotation-relevant
    events are logged via `log_event()` from the views that trigger them.
 4. **Indexed?** `(user, last_used_at)` (the eviction-of-oldest query), `refresh_token_hash`
-   (lookup on every authenticated request), `expires_at` (the daily cleanup sweep).
+   (lookup on every authenticated request), `previous_refresh_token_hash` (looked up by
+   `refresh()` when the current hash does not match), `expires_at` (the daily cleanup sweep).
 5. **Encrypted?** No — only a SHA-256 hash of the token is stored, never the raw value. No HMAC
    secret needed here (unlike CNIC/NTN/PSEB) since a JWT refresh token already carries its own
    entropy from signing — there's nothing a dictionary attack could exploit the way it could
@@ -300,6 +308,13 @@ consequence: a device's very first-ever session is never retroactively linked, s
 `TrustedDevice` row is created moments *after* the `Session` row during login — only the second
 login onward produces a renameable session. Not a bug; a consequence of the call order this was
 built with. See `DECISIONS.md`.
+
+Concurrency (refresh): `Session.get_for_refresh()` runs inside the view's `transaction.atomic()` and
+locks the session row (`select_for_update()`); the lookup, the user/active/`pca` checks and the rotation
+are one unit, so simultaneous refreshes with the same cookie serialise on the row (the first rotates,
+the rest become grace uses). Added in migration `users.0019_session_refresh_grace_window`, purely
+additive and nullable, no backfill. The two new columns hold only a hash and a timestamp; the hash is
+never returned by any API or written to any log or audit row.
 
 Concurrency: `create_for_user()` locks the user row (`select_for_update()`) for the duration of
 the check-evict-create sequence — without this, concurrent logins could both read the same

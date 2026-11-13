@@ -56,7 +56,7 @@ class SessionAdmin(admin.ModelAdmin):
     list_display = ['user', 'device_name', 'ip_address', 'created_at', 'last_used_at', 'expires_at']
     list_filter = ['created_at']
     search_fields = ['user__email', 'device_name', 'ip_address']
-    readonly_fields = ['refresh_token_hash', 'created_at']
+    readonly_fields = ['refresh_token_hash', 'previous_refresh_token_hash', 'previous_rotated_at', 'created_at']
 
 
 @admin.register(UserSocialAccount)

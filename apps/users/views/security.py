@@ -43,6 +43,9 @@ def _find_current_session(request, user):
     raw_refresh = request.COOKIES.get(REFRESH_COOKIE_NAME)
     if not raw_refresh:
         return None
+    # Strict (current token only): the grace window belongs to refresh() alone. These flows change credentials, so they
+    # never act on a token that has already been rotated away; with none found, change_password falls back to revoking
+    # every session and issuing a fresh one.
     session = Session.get_valid(raw_refresh)
     if session and session.user_id == user.pk:
         return session

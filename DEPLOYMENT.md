@@ -491,6 +491,16 @@ The worker and Beat need nothing; redeploying them with the web service is harml
 
 Rollback: redeploy the previous web image. The deleted `facebook` rows (expected: none) cannot be restored; migrating back (`migrate users 0017`) only restores the field's choices.
 
+## 7o. Refresh grace window release (13 November 2026, Prompt 6) **[U]**
+
+Written for the Docker Compose server (`deploy/`), not Railway. Backend only: no frontend change (Vercel needs nothing), no environment variable, no new service. One additive migration, `users.0019_session_refresh_grace_window`: two nullable columns and one index on `sessions`, no default and no backfill, so Postgres does not rewrite the table and the migration is quick.
+
+1. **Back up first:** `deploy/backup.sh`.
+2. **Deploy:** `cd ~/LanceraOS && git pull && cd deploy && docker compose up -d --build`. The one-shot `migrate` service applies `users.0019` automatically before `web` starts; the worker and Beat restart with the same image. Then `docker compose ps`.
+3. **Smoke test.** **(a)** Log in, leave the app open past an access-token refresh (15 minutes) or delete only the `lanceraos_access` cookie in DevTools and reload: you stay logged in. **(b)** Optional, from a shell with a real browser session's cookies (a valid `lanceraos_refresh` value and a `csrftoken` cookie and header): `POST /api/auth/token/refresh/` twice with the SAME refresh cookie within 30 seconds, both answer **200**; a third time with that cookie after 31 seconds answers **401** and clears the cookies (use a throwaway test account, not your own, since the last step logs that session out). **(c)** Settings > Sessions still lists your sessions and marks one "current".
+4. **Rollback:** deploy the previous commit (`git checkout <previous commit>` or `git revert`, then the same `docker compose up -d --build`). The two new columns are nullable and unknown to older code, so the migration does NOT need to be undone for a code rollback; leave it applied. (Only if you must undo the schema too: `docker compose run --rm web python manage.py migrate users 0018`, which drops the two columns and the index; sessions themselves are untouched.)
+5. What this does not do: it does not change how long anyone stays logged in, and it only helps when the repeated refresh arrives within 30 seconds. It also means a stolen OLD refresh cookie works for up to 30 seconds after it was replaced.
+
 ## 8. Smoke tests (run in order; stop at the first failure)
 
 **Proposals release (04 November 2026).** Read this before deploying the release that adds Proposals

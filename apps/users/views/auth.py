@@ -1,4 +1,5 @@
 # apps/users/views/auth.py
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta
@@ -44,10 +45,11 @@ from ..serializers import (
     validate_password_strength,
 )
 from ..tasks import send_password_reset_email_task, send_verification_email_task
-from ..token_service import issue_tokens_and_session, rotate_session
+from ..token_service import issue_tokens_and_session, rotate_session, rotate_session_for_grace_use
 from ..tokens import decode_uid, email_verification_token, encode_uid, password_reset_token
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 # Precomputed once at module load. Used only to burn comparable Argon2
 # time on the "user not found" login path, so it can't be distinguished
@@ -452,6 +454,10 @@ def logout(request):
     """Revokes the current session (deletes its Session row) and clears cookies."""
     raw_refresh = request.COOKIES.get(REFRESH_COOKIE_NAME)
     if raw_refresh:
+        # Strict on purpose (current token only; the grace window belongs to refresh() alone). Consequence: a person
+        # who logs out while their browser still holds a just-rotated-away token (a lost refresh response, inside the
+        # 30 s window) clears their cookies but leaves that session row until it expires or is revoked in Settings >
+        # Sessions. The token that row now holds was never delivered to any browser, so nothing can use it.
         session = Session.get_valid(raw_refresh)
         if session:
             session.delete()
@@ -470,13 +476,21 @@ def logout(request):
 @authentication_classes(NO_AUTH)
 @permission_classes([AllowAny])
 def refresh(request):
-    # If you change the validity rules here, change identify_user_from_refresh_cookie
-    # (apps/users/authentication.py) and its parity test in apps/users/tests/ too.
+    # Validity rules here are the same as identify_user_from_refresh_cookie (apps/users/authentication.py) EXCEPT the
+    # grace window, which only this view applies. If you change either, change the other and its parity test
+    # (apps/users/tests/test_refresh_cookie_identity.py).
     """
     Rotates the access/refresh pair using the refresh cookie. Must work
     even when the access-token cookie has expired (that's the whole
     point) — see the NO_AUTH note at the top of this file for why
     authentication is disabled on this view specifically.
+
+    Grace window (Prompt 6, DECISIONS.md 13 November 2026): the PREVIOUS refresh token is also accepted for
+    settings.REFRESH_GRACE_SECONDS after a rotation, so a refresh whose response was lost, or two refreshes in flight
+    with the same cookie, do not log the person out. Everything runs in ONE transaction with the session row locked
+    (Session.get_for_refresh), so concurrent requests with the same cookie are serialised: the first rotates, the others
+    become grace uses. A grace use issues a new current token but never moves the window. Logout, the sessions list and
+    the security views deliberately stay strict (current token only): this is the one place that is allowed to be generous.
     """
     enforce_csrf_standalone(request)
     raw_refresh = request.COOKIES.get(REFRESH_COOKIE_NAME)
@@ -485,50 +499,67 @@ def refresh(request):
         clear_auth_cookies(response)
         return response
 
-    session = Session.get_valid(raw_refresh)
-    if not session:
-        response = Response({'error': 'Session expired or revoked. Please sign in again.'}, status=status.HTTP_401_UNAUTHORIZED)
-        clear_auth_cookies(response)
-        return response
-
-    try:
-        from rest_framework_simplejwt.tokens import RefreshToken
-        validated = RefreshToken(raw_refresh)
-    except TokenError:
-        session.delete()
-        response = Response({'error': 'Invalid refresh token. Please sign in again.'}, status=status.HTTP_401_UNAUTHORIZED)
-        clear_auth_cookies(response)
-        return response
-
-    try:
-        user = User.objects.get(pk=validated['user_id'])
-    except User.DoesNotExist:
-        session.delete()
-        response = Response({'error': 'Account no longer exists.'}, status=status.HTTP_401_UNAUTHORIZED)
-        clear_auth_cookies(response)
-        return response
-
-    if not user.is_active:
-        session.delete()
-        response = Response({'error': 'Your account has been disabled.'}, status=status.HTTP_403_FORBIDDEN)
-        clear_auth_cookies(response)
-        return response
-
-    # pca check — same invalidation rule as CookieJWTAuthentication, applied
-    # here too since this path never goes through that authentication class.
-    pca_claim = validated.get('pca')
-    if pca_claim is not None and user.password_changed_at is not None:
-        if int(pca_claim) < int(user.password_changed_at.timestamp()):
-            session.delete()
-            response = Response(
-                {'error': 'Session invalidated by a password change. Please sign in again.'},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+    with transaction.atomic():
+        session, grace_use = Session.get_for_refresh(raw_refresh)
+        if not session:
+            response = Response({'error': 'Session expired or revoked. Please sign in again.'}, status=status.HTTP_401_UNAUTHORIZED)
             clear_auth_cookies(response)
             return response
 
-    access, new_refresh_str = rotate_session(user, session, request)
-    days = max(1, (session.expires_at - session.created_at).days)
+        try:
+            from rest_framework_simplejwt.tokens import RefreshToken
+            validated = RefreshToken(raw_refresh)
+        except TokenError:
+            session.delete()
+            response = Response({'error': 'Invalid refresh token. Please sign in again.'}, status=status.HTTP_401_UNAUTHORIZED)
+            clear_auth_cookies(response)
+            return response
+
+        try:
+            user = User.objects.get(pk=validated['user_id'])
+        except User.DoesNotExist:
+            session.delete()
+            response = Response({'error': 'Account no longer exists.'}, status=status.HTTP_401_UNAUTHORIZED)
+            clear_auth_cookies(response)
+            return response
+
+        if not user.is_active:
+            session.delete()
+            response = Response({'error': 'Your account has been disabled.'}, status=status.HTTP_403_FORBIDDEN)
+            clear_auth_cookies(response)
+            return response
+
+        # pca check — same invalidation rule as CookieJWTAuthentication, applied
+        # here too since this path never goes through that authentication class.
+        pca_claim = validated.get('pca')
+        if pca_claim is not None and user.password_changed_at is not None:
+            if int(pca_claim) < int(user.password_changed_at.timestamp()):
+                session.delete()
+                response = Response(
+                    {'error': 'Session invalidated by a password change. Please sign in again.'},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+                clear_auth_cookies(response)
+                return response
+
+        if grace_use:
+            access, new_refresh_str = rotate_session_for_grace_use(user, session, request)
+        else:
+            access, new_refresh_str = rotate_session(user, session, request)
+        days = max(1, (session.expires_at - session.created_at).days)
+
+    # After the transaction (the row lock is released): the audit row and the log line are not part of the rotation.
+    if grace_use:
+        # 'session_pk', not 'session_id': core.observability redacts any metadata key named session_id.
+        log_event(
+            'session_refresh_grace_used', user=user, request=request,
+            metadata={'session_pk': str(session.pk), 'user_id': str(user.pk)},
+        )
+        logger.info(
+            '[REFRESH] grace use request_id=%s session_id=%s',
+            getattr(request, 'request_id', None), session.pk,
+        )
+
     response = Response({'message': 'Token refreshed.'})
     set_auth_cookies(response, access, new_refresh_str, refresh_lifetime_days=days)
     return response

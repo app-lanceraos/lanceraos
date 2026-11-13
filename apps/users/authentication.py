@@ -136,8 +136,9 @@ def identify_user_from_refresh_cookie(request):
     counted as a view.
 
     Known race (it can still happen): refresh() rotates the Session row IN PLACE
-    (Session.rotate overwrites the one stored hash) and nothing accepts the previous
-    refresh token, so there is no grace period. If that rotation has committed
+    (Session.rotate moves the old hash to the previous slot) and THIS helper stays strict:
+    it accepts the current token only, never the previous one that refresh() tolerates for
+    REFRESH_GRACE_SECONDS. If that rotation has committed
     before the proposal request is looked at, the old refresh cookie the proposal
     request carries no longer matches any row, Session.get_valid() is None, and the
     owner is treated as a client: the proposal flips sent -> viewed once and one
@@ -151,12 +152,19 @@ def identify_user_from_refresh_cookie(request):
 
     The answer can only ever REDUCE what happens (the owner sees a preview, the view
     is not counted, they cannot answer); it grants nothing. A cookie that passes
-    here already passes auth.refresh(), which grants a whole session.
+    here already passes auth.refresh(), which grants a whole session. The reverse is not
+    true in one case, on purpose: a previous token inside the grace window passes
+    refresh() and not this helper.
 
     auth.refresh() stays the single authority on refresh-cookie validity and is
     deliberately NOT refactored to share this code: it interleaves deletes and
     rotation with its checks and is the login core. A parity test
     (apps/users/tests/test_refresh_cookie_identity.py) guards drift instead.
+
+    The rule is "same as refresh() except the grace window, which only refresh() applies":
+    a previous refresh token inside its 30 s window is refused here. This helper is
+    read-only and must not recognise a token that has already been replaced; the worst
+    outcome is the harmless one described above (the owner sees the client view for one load).
 
     Two checks are intentionally stricter than refresh(), so the answer matches
     what refresh() followed by an authenticated request would end up giving:

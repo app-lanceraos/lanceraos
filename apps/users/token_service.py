@@ -60,25 +60,40 @@ def issue_tokens_and_session(user, request, remember_me=False, trusted_device=No
     access['sid'] = str(session.pk)
     return str(access), refresh_str, session
 
-def rotate_session(user, session, request):
+def _issue_rotated_pair(user, session, request, apply_rotation):
     """
-    Used by the refresh endpoint — rotates the SAME session row (new
-    refresh hash, new expiry) rather than creating a new one, which
-    would otherwise make "3 sessions" actually mean "3 refreshes since
-    login." Preserves the session's original remember-me duration by
-    re-deriving it from (expires_at - created_at) rather than adding a
-    dedicated remember_me column to Session — DATABASE.md's Session spec
-    is already finalized with exactly the fields agreed on, and this
-    achieves the same result without revising that spec.
+    The shared body of rotate_session and rotate_session_for_grace_use. Preserves the session's original remember-me
+    duration by re-deriving it from (expires_at - created_at) rather than adding a dedicated remember_me column to
+    Session, then lets `apply_rotation` (a Session method) store the new refresh token's hash.
     """
     original_days = max(1, (session.expires_at - session.created_at).days)
     refresh = _build_refresh_token(user, original_days)
     refresh_str = str(refresh)
 
-    session.rotate(refresh_str, lifetime_days=original_days)
+    apply_rotation(refresh_str, lifetime_days=original_days)
     session.ip_address = get_client_ip(request) or session.ip_address
     session.save(update_fields=['ip_address'])
 
     access = refresh.access_token
     access['sid'] = str(session.pk)
     return str(access), refresh_str
+
+
+def rotate_session(user, session, request):
+    """
+    Used by the refresh endpoint — rotates the SAME session row (new
+    refresh hash, new expiry) rather than creating a new one, which
+    would otherwise make "3 sessions" actually mean "3 refreshes since
+    login." The replaced hash becomes the session's previous hash and
+    starts the grace window (Session.rotate).
+    """
+    return _issue_rotated_pair(user, session, request, session.rotate)
+
+
+def rotate_session_for_grace_use(user, session, request):
+    """
+    Used by the refresh endpoint ONLY when the request presented the previous refresh token inside its grace window:
+    issues a new current token but leaves the previous slot and its timestamp alone, so the window never extends
+    (Session.rotate_for_grace_use).
+    """
+    return _issue_rotated_pair(user, session, request, session.rotate_for_grace_use)

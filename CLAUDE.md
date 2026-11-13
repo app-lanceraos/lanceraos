@@ -805,8 +805,12 @@ creates duplicate accounts.
 JWT strategy: access token 15 minutes, refresh token 30 days (90 days
 if Remember Me), stored in httpOnly cookies (never localStorage,
 never returned in any JSON response body). Silent background refresh
-works even when the access-token cookie has already expired. Maximum
-3 concurrent sessions per account, tracked via a first-class Session
+works even when the access-token cookie has already expired. Rotation
+keeps the PREVIOUS refresh token valid for 30 more seconds
+(REFRESH_GRACE_SECONDS), and only POST /api/auth/token/refresh/ honours
+it, under a row lock, so a lost refresh response or two simultaneous
+refreshes do not log anyone out (see DECISIONS.md, 13 November 2026).
+Maximum 3 concurrent sessions per account, tracked via a first-class Session
 model (device, IP, refresh-token hash, timestamps) — 4th login evicts
 the least-recently-used session. Sessions listable/individually
 revocable at GET/DELETE /api/auth/sessions/ (frontend: Settings > Sessions).

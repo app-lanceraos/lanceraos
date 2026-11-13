@@ -16,6 +16,8 @@ def _current_session_id(request):
     raw_refresh = request.COOKIES.get(REFRESH_COOKIE_NAME)
     if not raw_refresh:
         return None
+    # Strict (current token only): the grace window belongs to refresh() alone. Inside the 30 s window after a lost
+    # refresh response no row is marked "current" for that browser; the next refresh fixes it.
     session = Session.get_valid(raw_refresh)
     return session.pk if session else None
 
