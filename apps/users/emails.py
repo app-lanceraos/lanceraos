@@ -219,7 +219,7 @@ def send_add_password_confirmation_email(user, token, uid) -> bool:
         _heading('Add a password to your account')
         + _paragraph(
             f'Hi {_name(user)}, we received a request to add a password to your LanceraOS account. '
-            f'This lets you also sign in with your email and password, alongside your existing Google/Facebook sign-in.'
+            f'This lets you also sign in with your email and password, alongside your existing Google sign-in.'
         )
         + f'<div style="text-align:center;margin:24px 0;">{_button(url, "Add Password")}</div>'
         + _paragraph('This link expires in 24 hours. If you did not request this, you can safely ignore this email.')

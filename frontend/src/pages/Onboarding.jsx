@@ -3,8 +3,8 @@
 // New for v2 — this feature did not exist in v1. Required for everyone
 // after their first successful login: email/password users already gave
 // their name/DOB at registration, so they only see the profession/
-// income-source/platform fields; OAuth users (Google/Facebook never
-// supply a birthday, and typically only supply name+email) additionally
+// income-source/platform fields; OAuth users (Google never
+// supplies a birthday, and typically only supply name+email) additionally
 // see a username-review field (pre-filled with their auto-generated
 // username, editable) and a required date-of-birth field, since that's
 // the only point at which their age can be verified at all.

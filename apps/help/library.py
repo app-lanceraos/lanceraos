@@ -137,7 +137,7 @@ def problems(guides=None, *, repo_root=None, topics=_DEFAULT, popular=_DEFAULT, 
     """
     Returns a list of human sentences, one per problem, each naming the guide. Pure unless `repo_root` is given (then the
     repo checks run: sources exist, every ui_label appears in the frontend source, every link is a real route).
-    With `guides=None` the real library, topics, popular list and the 49 expected slugs are checked; with a list given,
+    With `guides=None` the real library, topics, popular list and the 48 expected slugs are checked; with a list given,
     topics / popular / expected_slugs are checked only when passed (tests use hand-made libraries).
     """
     real = guides is None

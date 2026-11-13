@@ -310,12 +310,12 @@ see `DECISIONS.md`).
 
 ## `user_social_accounts` (`UserSocialAccount`)
 
-Links a `User` to a Google or Facebook identity.
+Links a `User` to a Google identity. (Facebook sign-in was removed in Prompt 27, 13 November 2026: migration `users.0018_remove_facebook_social_accounts` deleted every `facebook` row, none existed in the dev database, and narrowed the choices to Google. A person who had only a Facebook link is now an ordinary account with no password and no social link, so "Forgot password" works for them.)
 
 **Schema**:
 ```
 id, user (FK, CASCADE)
-provider          CharField, choices ('google', 'facebook')
+provider          CharField, choices ('google',)
 provider_uid      CharField(200)
 created_at
 ```
@@ -324,11 +324,11 @@ created_at
    and never edited.
 2. **Soft deleted?** No — hard-deleted alongside the user via `anonymize()`. No independent
    significance once the account is gone.
-3. **Audit trail?** Login events via this provider are logged (`login_google`/`login_facebook`),
+3. **Audit trail?** Login events via this provider are logged (`login_google`),
    not the linking itself as a separate event.
 4. **Indexed?** Implicit unique index on `(provider, provider_uid)` — this is what makes
-   "does this Google/Facebook identity already have an account" a fast, safe lookup.
-5. **Encrypted?** No — `provider_uid` is an opaque ID from Google/Facebook, not a secret.
+   "does this Google identity already have an account" a fast, safe lookup.
+5. **Encrypted?** No — `provider_uid` is an opaque ID from Google, not a secret.
 6. **Cascade behavior?** `CASCADE` from `User`.
 
 ---
@@ -526,8 +526,9 @@ Every self-service call site leaves this `null`, since the actor and the subject
 same person captured in `user`. Only admin-initiated actions on someone else's account populate
 it. **Resolved** (this document previously flagged this as unconfirmed): checked directly against
 `core/migrations/0004_auditlog_actor.py` and `core/models.py`'s current `Meta.indexes` — the
-migration is a bare `AddField`, no `AddIndex`/`index_together` operation, and `Meta.indexes` lists
-only `user`, `event`, `ip_address`, and `request_id`. The composite `(actor, created_at)` index was
+migration is a bare `AddField`, no `AddIndex`/`index_together` operation, and `Meta.indexes` then listed
+only `user`, `event`, `ip_address`, and `request_id` (today it lists those plus `client`, see item 4 above;
+the `actor` column still has no composite index). The composite `(actor, created_at)` index was
 never created; only the bare `actor` column exists, indexed solely via Django's automatic
 single-column FK index. Filtering the admin audit-log viewer by actor (`views_audit.py`) or by
 `admin_only=true` therefore does not benefit from a `created_at`-ordered composite index the way
@@ -1059,11 +1060,13 @@ assignment logic (`invoice_create`/`_finalise_invoice`) changed after Batch 1 �
 values it can legally hold grew.
 `view_token` (unique, indexed), `client_name`/`client_email`/`client_company`/
 `client_address`/`client_phone` (immutable snapshot at creation), `currency` (CharField(3), no
-`choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`,
+`choices=`), `subtotal`/`tax_rate`/`tax_amount`/`discount_amount`/`total`/`amount_paid`/`refunded_amount` (Decimal(12,2), default 0 — set once by Refund,
+never accumulated),
 `rate_to_usd_at_issue` (Decimal(10,6), nullable — **invariant: a non-draft USD invoice always stores 1**,
 enforced by `Invoice.save()` and backfilled by migration `0022_backfill_usd_rates`; non-USD and draft rows may
 legitimately be NULL), `exchange_rate_snapshot` (FK →
-`payments.ExchangeRateSnapshot`, `SET_NULL`, nullable), `pdf_url`/`pdf_generated_at`,
+`payments.ExchangeRateSnapshot`, `SET_NULL`, nullable), `pdf_url`/`pdf_generated_at`/`pdf_public_id` (CharField(200), blank — the Cloudinary public id kept beside the URL so a
+re-upload overwrites the same asset),
 `issue_date`/`due_date`/`paid_date`/`sent_at`, `notes`/`terms`, `reminders_enabled`/
 `reminder_count`/`last_reminder_sent_at`, `late_fee_enabled`/`late_fee_rate`, `is_recurring`/
 `recurring_interval_days`/`recurring_auto_send`/`recurring_paused`, `parent_invoice` (self FK,
@@ -1851,14 +1854,17 @@ holding the answer and guide slugs only, never the question), and the two things
 
 ---
 
-## Not yet built
+## Not yet in the database
 
-Tax, Health Score, Proposals, Subscriptions, and the rest of Payments (income tracking,
-expense receipts, P&L) — none of these exist yet. Within `apps.invoices` itself, this step was
-models-only: no views, serializers, URLs, PDF generation, email delivery, the client portal,
-payment claims *workflow* (the table exists; confirm/reject actions don't), comments *delivery*
-(the table exists; posting/WebSocket endpoints don't), or recurring/reminder *tasks* (the fields and
-`InvoiceReminder` table exist; the Celery Beat generation/escalation logic doesn't). This document
-only covers what's actually in the database today (`apps.users`' six tables, `apps.admin_panel`'s
-one table, `apps.payments`'s two tables, `apps.clients`' three tables, `apps.invoices`' ten tables —
-twenty-three tables spanning five apps — and the three shared `core` tables).
+**31 tables across eight apps** are documented above and all of them exist: `apps.users` 6 (`users`, `freelancer_profiles`,
+`sessions`, `user_social_accounts`, `trusted_devices`, `email_change_requests`), `apps.admin_panel` 1 (`admin_sessions`),
+`apps.clients` 4 (`clients`, `client_notes`, `client_tags`, `client_portal_sessions`), `apps.invoices` 9 (`invoices`,
+`invoice_items`, `invoice_partial_payments`, `invoice_reminders`, `invoice_view_events`, `invoice_comments`, `payment_claims`,
+`invoice_presets`, `invoice_preset_items`; `invoice_designs` and `invoice_design_versions` were removed), `apps.payments` 4
+(`exchange_rate_snapshots`, `payments`, `payment_import_batches`, `expenses`), `apps.proposals` 2 (`proposals`, `proposal_items`),
+`apps.contracts` 1 (`contracts`) and the four shared `core` tables (`audit_log`, `api_request_logs`, `ai_call_logs`,
+`notification_reads`). (The count was checked against the installed models on 13 November 2026.)
+
+No table exists, on purpose or not yet, for: Subscriptions (the app has no models), exchange-rate alerts, expense receipts, recurring
+or imported expenses, a refund ledger, and stored tax figures. `apps.tax`, `apps.health`, `apps.dashboard` and `apps.help` compute
+everything on request and have no model or migration.

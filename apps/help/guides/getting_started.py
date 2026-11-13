@@ -22,7 +22,7 @@ GUIDES = (
         'The first things to fill in so your invoices and documents carry the right details.',
         ['getting started', 'new account', 'onboarding', 'welcome', 'begin', 'first invoice', 'profile', 'setup', 'start'],
         [
-            p('After your first sign-in you see a short welcome form about your work. It asks for your profession, how you earn and where you find clients. If you signed up with Google or Facebook it also asks you to review your username and add your date of birth.'),
+            p('After your first sign-in you see a short welcome form about your work. It asks for your profession, how you earn and where you find clients. If you signed up with Google it also asks you to review your username and add your date of birth.'),
             steps(
                 'Finish the welcome form and press "Continue to LanceraOS".',
                 'On the Profile page, add your "Display Name" and "Business Name", and upload your "Business Logo" if you have one.',
@@ -48,18 +48,7 @@ GUIDES = (
             p('You can close the sidebar to give the page more room. Use the button at the top of the sidebar, or "Open menu" on a phone.'),
             note('Profile is about how you appear on invoices. Settings is where you change your account, business, tax details, security and email sending.'),
         ],
-        related=['what-is-lanceraos', 'notifications', 'not-available-yet'],
+        related=['what-is-lanceraos', 'notifications'],
         ui_labels=['Sign out', 'Open menu'],
         sources=['frontend/src/components/AppShell.jsx'], checked_on=TODAY),
-    guide(
-        'not-available-yet', 'Sidebar items that are not available yet', 'getting-started',
-        'Some items in the sidebar are shown before they work, and this guide says which.',
-        ['skill analyzer', 'skill gap', 'unavailable', 'not working', 'missing', 'redirects'],
-        [
-            p('"Skill Analyzer" appears in the sidebar under Account, but it is not available yet. If you select it, you end up back on the Dashboard.'),
-            p('Everything else in the sidebar opens a working page.'),
-        ],
-        related=['find-your-way-around', 'what-is-lanceraos'],
-        ui_labels=['Skill Analyzer'],
-        sources=['frontend/src/components/AppShell.jsx', 'frontend/src/App.jsx'], checked_on=TODAY),
 )

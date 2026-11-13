@@ -1,7 +1,8 @@
 // src/components/HelpTopics.jsx
 //
-// "Browse by topic": a grid of cards, one per topic, each with its blurb and a plain link to every guide in it. Always expanded
+// "Browse by topic": a grid of cards, one per topic, each with its blurb and a link to every guide in it, each with a trailing chevron so it reads as tappable without a hover. Always expanded
 // (no fold-outs): the page is a table of contents, so a person can see everything that exists without opening anything.
+import { ChevronRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useId } from 'react'
 
@@ -39,15 +40,18 @@ function TopicCard({ topic }) {
             <Link
               to={guideRoute(guide.slug)}
               style={{
-                display: 'block', padding: '7px 10px', margin: '0 -10px', borderRadius: 'var(--radius-md)', textDecoration: 'none',
-                fontSize: '0.85rem', color: 'var(--text-primary)', background: 'transparent', overflowWrap: 'anywhere', transition: 'background 0.15s ease',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 10px', margin: '0 -10px',
+                borderRadius: 'var(--radius-md)', textDecoration: 'none', fontSize: '0.85rem', color: 'var(--text-primary)',
+                background: 'transparent', transition: 'background 0.15s ease',
               }}
               {...hoverProps(
                 (e) => { e.currentTarget.style.background = 'var(--bg-surface-3)' },
                 (e) => { e.currentTarget.style.background = 'transparent' },
               )}
             >
-              {guide.title}
+              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{guide.title}</span>
+              {/* Without a hover (a phone), the chevron is what says "this opens a guide" (Prompt 27, B1). */}
+              <ChevronRight size={16} aria-hidden="true" data-guide-link-cue="" style={{ flexShrink: 0, color: 'var(--text-tertiary)' }} />
             </Link>
           </li>
         ))}

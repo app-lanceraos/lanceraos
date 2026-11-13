@@ -22,9 +22,9 @@ the only exception is the deliberately unconverted GBP pair in `score-unconverte
 
 | File | Source | What it holds |
 |------|--------|---------------|
-| `score-rich.sample.json` | `GET /api/health/score/?months=12` | Excellent, 97: 18 steady months, four payers none above 28%, expenses 30% of income, NTN saved, PSEB marked, records in the last 90 days, growth +20%. `tips` is empty (the only step is worth under one point) |
+| `score-rich.sample.json` | `GET /api/health/score/?months=12` | Excellent, 97: 18 steady months, four payers none above 28%, expenses 30% of income, NTN saved, PSEB number saved, records in the last 90 days, growth +20%. `tips` is empty (the only step is worth under one point) |
 | `score-rich-3`, `-6`, `-24` | same, `months=3` / `6` / `24` | The same user at other windows: different `window` dates. At 24 months Income growth is `not_enough_data` (nothing recorded in the earlier window), so it is `partial: true` with a score of 100 |
-| `score-mixed.sample.json` | same | Good, 65: one month with no payment, margin 45%, growth -8%, the top payer at 60% of named income, NTN saved and PSEB not marked. Five `improve` tips (growth, weakest month, PSEB, costs, payer spread); the "no payment in 1 month" `record` step is NOT in `tips` (it is in the Income consistency `steps`), which is what the "More steps for this area" rule needs |
+| `score-mixed.sample.json` | same | Good, 65: one month with no payment, margin 45%, growth -8%, the top payer at 60% of named income, NTN saved and no PSEB number. Five `improve` tips (growth, weakest month, PSEB, costs, payer spread); the "no payment in 1 month" `record` step is NOT in `tips` (it is in the Income consistency `steps`), which is what the "More steps for this area" rule needs |
 | `score-partial.sample.json` | same | A score that is not null with `partial: true` (94, counted over 65 of 100 points): 8 months, most income without a "Received from" name; Client diversity (`few_payer_names`) and Income growth (`too_little_history`) are `not_enough_data`; `notes` includes the partial note |
 | `score-none.sample.json` | same | A new user with nothing: `score: null`, `grade: null`, the `message`, five `record` tips, Tax compliance scored at 0 |
 | `score-short.sample.json` | same | 2 months of payments, no expenses: `score: null`; Tax compliance 12 of 20, Client diversity scored at 0 |
@@ -37,3 +37,9 @@ the only exception is the deliberately unconverted GBP pair in `score-unconverte
 
 To regenerate: run the generator (a Django shell script that builds the same data inside `transaction.atomic()` and raises to
 roll back), then review the diff. Do not edit these files by hand.
+
+**Prompt 27 (13 November 2026).** "PSEB registration marked" became "PSEB number saved": Health now asks the same question the Tax page does (is a PSEB
+registration NUMBER saved), not whether the self-declared checkbox is ticked. The generator script is not kept in the repository, so the
+files were updated by replacing exactly the four changed sentences (the check label, the area's "about", the "needed" list and the PSEB tip);
+`apps/health/tests/test_pseb_wording.py` fails if a file drifts from the real `copy.py` / `constants.py` text. No persona's points are expected to change:
+the personas saved their PSEB through `set_pseb()` as well as ticking the box (the generator was not re-run, so this is from the files' own record, not a new measurement).

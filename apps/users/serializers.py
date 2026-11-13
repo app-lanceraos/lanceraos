@@ -459,7 +459,7 @@ class OnboardingSerializer(serializers.Serializer):
         )],
     )
     # Only required for users who don't already have one (OAuth signups —
-    # neither Google nor Facebook's current integration supplies a
+    # Google's current integration supplies no
     # birthday). Enforced conditionally in validate(), not here, since
     # whether it's required depends on the user in context.
     date_of_birth = serializers.DateField(required=False)

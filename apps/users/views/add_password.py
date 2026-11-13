@@ -1,7 +1,7 @@
 # apps/users/views/add_password.py
 """
 Lets an OAuth-only account add a real password, unlocking email/password
-login alongside their existing Google/Facebook sign-in, which in turn
+login alongside their existing Google sign-in, which in turn
 unlocks 2FA (meaningless without a password to protect) and eventually
 is_oauth_only() becoming False for every password-gated flow already
 in this codebase, with zero changes needed to those flows themselves.

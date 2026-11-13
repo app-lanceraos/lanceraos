@@ -67,12 +67,12 @@
       "reason": null,
       "points": 0,
       "percent": 0,
-      "about": "Whether your tax basics are in place: an NTN saved (8 points), PSEB registration marked (4 points), a payment recorded in the last 90 days (4 points) and an expense recorded in the last 90 days (4 points). The NTN and PSEB are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+      "about": "Whether your tax basics are in place: an NTN saved (8 points), a PSEB registration number saved (4 points), a payment recorded in the last 90 days (4 points) and an expense recorded in the last 90 days (4 points). The NTN and PSEB number are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
       "measure": "0 of 4 checks are in place.",
-      "needed": "To score higher, complete the missing checks: NTN saved; PSEB registration marked; Payment recorded in the last 90 days; Expense recorded in the last 90 days.",
+      "needed": "To score higher, complete the missing checks: NTN saved; PSEB number saved; Payment recorded in the last 90 days; Expense recorded in the last 90 days.",
       "steps": [
         "Save your NTN in Settings, then Tax & PSEB. An NTN is the number you need to file a tax return with FBR.",
-        "If you are registered with PSEB, mark it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+        "If you have a PSEB registration number, save it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
         "No payment is recorded in the last 90 days. Record the money you have received on the Payments page.",
         "No expense is recorded in the last 90 days. Record your business costs on the Expenses page, so your profit is not overstated."
       ],
@@ -87,7 +87,7 @@
           },
           {
             "key": "pseb",
-            "label": "PSEB registration marked",
+            "label": "PSEB number saved",
             "done": false,
             "points": 0,
             "max_points": 4
@@ -167,7 +167,7 @@
     {
       "dimension": "tax_compliance",
       "kind": "record",
-      "text": "If you are registered with PSEB, mark it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+      "text": "If you have a PSEB registration number, save it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
       "gain": null
     },
     {

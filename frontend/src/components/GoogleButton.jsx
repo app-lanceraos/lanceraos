@@ -22,7 +22,16 @@ function GoogleG({ size = 16 }) {
   )
 }
 
-export default function GoogleButton({ onError, onSuccess, disabled = false, credentialOnly = false }) {
+const LABEL = 'Continue with Google'
+
+/**
+ * The one social sign-in button. It carries a visible label (Prompt 27): it is the only social button in its
+ * row, and a single wide icon-only button is an odd control. `labelColor` defaults to the auth pages' fixed palette; the
+ * authenticated Settings page passes a theme token instead, because there the surface follows the light/dark theme.
+ */
+export default function GoogleButton({
+  onError, onSuccess, disabled = false, credentialOnly = false, labelColor = authTokens.primaryText,
+}) {
   const loginSuccess = useAuthStore((s) => s.loginSuccess)
 
   const completeLogin = async (accessToken) => {
@@ -55,8 +64,7 @@ export default function GoogleButton({ onError, onSuccess, disabled = false, cre
       type="button"
       onClick={() => triggerLogin()}
       disabled={disabled}
-      aria-label="Continue with Google"
-      title="Continue with Google"
+      aria-label={LABEL}
       style={{
         flex: 1,
         height: '2.5rem',
@@ -66,6 +74,14 @@ export default function GoogleButton({ onError, onSuccess, disabled = false, cre
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: 10,
+        padding: '0 1rem',
+        minWidth: 0,
+        whiteSpace: 'nowrap',
+        fontFamily: 'inherit',
+        fontSize: '0.875rem',
+        fontWeight: 500,
+        color: labelColor,
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.5 : 1,
         transition: 'background 0.15s ease',
@@ -76,6 +92,7 @@ export default function GoogleButton({ onError, onSuccess, disabled = false, cre
       )}
     >
       <GoogleG size={18} />
+      <span>{LABEL}</span>
     </button>
   )
 }

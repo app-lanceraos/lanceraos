@@ -28,7 +28,6 @@ urlpatterns = [
 
     # ── OAuth ────────────────────────────────────────────────────
     path('google/', oauth.google_login, name='google_login'),
-    path('facebook/', oauth.facebook_login, name='facebook_login'),
 
     # ── Email verification ──────────────────────────────────────
     path('verify-email/<str:uid>/<str:token>/', auth.verify_email, name='verify_email'),

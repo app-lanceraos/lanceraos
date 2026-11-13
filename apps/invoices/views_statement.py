@@ -36,13 +36,13 @@ from datetime import timedelta
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.clients.models import Client
+from apps.payments.http import parse_date_param
 
 from .pdf_generator import render_client_statement_pdf
 
@@ -70,11 +70,14 @@ def client_statement_pdf(request, pk):
     end_param = request.query_params.get('end')
 
     today = timezone.now().date()
-    end_date = parse_date(end_param) if end_param else today
+    # apps.payments.http.parse_date_param, not Django's parse_date: that one raises ValueError on 2026-13-45 (a 500).
+    end_date, _end_problem = parse_date_param(end_param) if end_param else (today, None)
     if end_param and end_date is None:
         return Response({'error': 'end must be a real date in YYYY-MM-DD format.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    start_date = parse_date(start_param) if start_param else (end_date - timedelta(days=DEFAULT_STATEMENT_WINDOW_DAYS))
+    start_date, _start_problem = (
+        parse_date_param(start_param) if start_param else (end_date - timedelta(days=DEFAULT_STATEMENT_WINDOW_DAYS), None)
+    )
     if start_param and start_date is None:
         return Response({'error': 'start must be a real date in YYYY-MM-DD format.'}, status=status.HTTP_400_BAD_REQUEST)
 

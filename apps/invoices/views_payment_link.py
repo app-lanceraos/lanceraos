@@ -28,7 +28,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.payments import services as payment_services
-from apps.payments.http import no_store, too_many_requests
+from apps.payments.http import bad_request, no_store, too_many_requests
 from apps.payments.models import Payment
 from apps.payments.selectors import serialize_payment
 from core.events import emit
@@ -51,10 +51,6 @@ LINKABLE_STATUSES = ('created', 'sent', 'viewed', 'partially_paid')
 CLOSED_STATUSES = ('cancelled', 'bad_debt', 'refunded', 'draft')
 
 CENT = Decimal('0.01')
-
-
-def _bad_request(message):
-    return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
 
 
 def _parse_uuid(raw):
@@ -133,40 +129,40 @@ def payment_link_invoice(request, pk):
 
     invoice_id = _parse_uuid(request.data.get('invoice_id'))
     if invoice_id is None:
-        return _bad_request('invoice_id is required.')
+        return bad_request('invoice_id is required.')
     amount = None
     if request.data.get('amount') not in (None, ''):
         amount, error = _parse_amount(request.data.get('amount'))
         if error:
-            return _bad_request(error)
+            return bad_request(error)
 
     with transaction.atomic():
         invoice = _get_locked_invoice(invoice_id, request.user)
         payment = get_object_or_404(Payment.objects.select_for_update(), pk=pk, user=request.user)
 
         if invoice.status in CLOSED_STATUSES:
-            return _bad_request(f'Cannot link a payment to a {invoice.status} invoice.')
+            return bad_request(f'Cannot link a payment to a {invoice.status} invoice.')
         if invoice.currency != payment.currency:
-            return _bad_request(
+            return bad_request(
                 f'This payment is in {payment.currency} and the invoice is in {invoice.currency}. '
                 'Linking across currencies is not supported yet.'
             )
         remaining = payment_services.remaining_amount(payment)
         if remaining <= 0:
-            return _bad_request('This payment is already fully linked to invoices.')
+            return bad_request('This payment is already fully linked to invoices.')
         outstanding = invoice.outstanding_amount
         if outstanding <= 0:
-            return _bad_request('This invoice has no outstanding balance.')
+            return bad_request('This invoice has no outstanding balance.')
         if amount is None:
             amount = min(remaining, outstanding)
         if amount > remaining:
-            return _bad_request(f'Amount cannot exceed what is left of this payment ({remaining} {payment.currency}).')
+            return bad_request(f'Amount cannot exceed what is left of this payment ({remaining} {payment.currency}).')
         if amount > outstanding:
-            return _bad_request(f'Amount cannot exceed the invoice\'s outstanding balance of {outstanding} {invoice.currency}.')
+            return bad_request(f'Amount cannot exceed the invoice\'s outstanding balance of {outstanding} {invoice.currency}.')
         try:
             validate_payment_date_for_invoice(payment.payment_date, invoice)
         except DRFValidationError as exc:
-            return _bad_request(str(exc.detail[0]))
+            return bad_request(str(exc.detail[0]))
 
         allocation = InvoicePartialPayment.objects.create(
             invoice=invoice, payment=payment, amount=amount, currency=payment.currency,
@@ -210,7 +206,7 @@ def payment_unlink_invoice(request, pk, allocation_id):
         raise Http404  # unknown allocation, someone else's payment or invoice: one and the same 404
 
     if request.data.get('confirm') is not True:
-        return _bad_request('confirm: true is required to unlink this payment.')
+        return bad_request('confirm: true is required to unlink this payment.')
 
     with transaction.atomic():
         invoice = _get_locked_invoice(invoice_id, request.user)
@@ -218,9 +214,9 @@ def payment_unlink_invoice(request, pk, allocation_id):
         allocation = get_object_or_404(InvoicePartialPayment, pk=allocation_id, payment=payment, invoice=invoice)
 
         if payment.origin == 'invoice':
-            return _bad_request('Remove it with Undo payment on the invoice.')
+            return bad_request('Remove it with Undo payment on the invoice.')
         if invoice.status in CLOSED_STATUSES:
-            return _bad_request(f'Cannot unlink a payment from a {invoice.status} invoice.')
+            return bad_request(f'Cannot unlink a payment from a {invoice.status} invoice.')
 
         amount = allocation.amount
         allocation.delete()

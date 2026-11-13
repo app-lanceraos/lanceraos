@@ -46,7 +46,7 @@ SHARE_FULL_AT = Decimal('0.30')         # 30% or less
 # Tax compliance: four checks, in this order.
 TAX_CHECKS = (
     ('ntn', 'NTN saved', 8),
-    ('pseb', 'PSEB registration marked', 4),
+    ('pseb', 'PSEB number saved', 4),
     ('recent_payment', 'Payment recorded in the last 90 days', 4),
     ('recent_expense', 'Expense recorded in the last 90 days', 4),
 )

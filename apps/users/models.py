@@ -200,8 +200,8 @@ class User(AbstractUser):
 
     def is_oauth_only(self):
         """
-        True if the user has at least one linked social account (Google or
-        Facebook) and no usable password — i.e. they've never set one, so
+        True if the user has at least one linked social account (Google)
+        and no usable password — i.e. they've never set one, so
         password-based flows (change password, 2FA-via-password-confirm)
         don't apply to them.
         """
@@ -698,11 +698,11 @@ class Session(models.Model):
 
 
 # ══════════════════════════════════════════════════════════════════
-# SOCIAL ACCOUNT — Google / Facebook links
+# SOCIAL ACCOUNT — Google links
 # ══════════════════════════════════════════════════════════════════
 
 class UserSocialAccount(models.Model):
-    PROVIDER_CHOICES = [('google', 'Google'), ('facebook', 'Facebook')]
+    PROVIDER_CHOICES = [('google', 'Google')]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(

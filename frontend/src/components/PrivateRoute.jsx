@@ -90,7 +90,7 @@ export default function PrivateRoute({ children }) {
   }
 
   // Centralized here rather than in each of Login.jsx/Register.jsx/
-  // GoogleButton.jsx/FacebookButton.jsx's post-success navigation — every
+  // GoogleButton.jsx's post-success navigation — every
   // one of those already just navigates to getRedirectPath() (typically
   // /profile), so catching "onboarding not done yet" once, for every
   // private route, is simpler and can't drift out of sync across four

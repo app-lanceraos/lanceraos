@@ -13,7 +13,6 @@ import AuthButton from '@/components/AuthButton'
 import AuthAlert from '@/components/AuthAlert'
 import PasswordStrength, { isPasswordValid } from '@/components/PasswordStrength'
 import GoogleButton from '@/components/GoogleButton'
-import FacebookButton from '@/components/FacebookButton'
 import DeletionModal from '@/components/DeletionModal'
 
 const STEPS = [
@@ -551,7 +550,6 @@ export default function Register() {
           </div>
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             <GoogleButton onSuccess={handleOAuthSuccess} onError={setServerError} />
-            <FacebookButton onSuccess={handleOAuthSuccess} onError={setServerError} />
           </div>
         </div>
 

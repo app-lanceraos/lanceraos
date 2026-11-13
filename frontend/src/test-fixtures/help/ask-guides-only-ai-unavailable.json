@@ -34,7 +34,7 @@
       "topic": "clients"
     }
   ],
-  "library_version": "c88b2796dcc6",
+  "library_version": "cfdeb924d63b",
   "notice": "The AI service took too long to respond. Please try again. These guides match your question.",
   "outcome": "guides_only",
   "reason": "ai_unavailable",

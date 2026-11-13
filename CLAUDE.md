@@ -51,11 +51,12 @@ Developer: Solo founder - Ali Amir
 - Admin brute-force protection: django-axes (added after a security audit
   found /admin/ had none of the app's own account-lockout protections —
   see DECISIONS.md)
-- OAuth: hand-rolled (Google + Facebook), same account-linking logic for
-  both providers — not django-allauth. v1's working Google flow was
-  hand-rolled and already handled account-linking collisions correctly;
-  allauth would mean re-deriving that same logic inside its own hooks
-  for no benefit. See DECISIONS.md.
+- OAuth: hand-rolled, Google only (Facebook sign-in was removed in
+  Prompt 27, 13 November 2026 — the Meta app was never created). Not
+  django-allauth: v1's working Google flow was hand-rolled and already
+  handled account-linking collisions correctly; allauth would mean
+  re-deriving that same logic inside its own hooks for no benefit. The
+  account-linking code stays provider-agnostic. See DECISIONS.md.
 - Email: Resend HTTP API (platform emails) + Custom SMTP per user (client-facing emails)
 - PDF generation: WeasyPrint
 - Media storage: Cloudinary
@@ -296,8 +297,10 @@ This is how you investigate "why didn't this happened?"
    never define their own layout frame.
    CURRENT STATE: AppShell.jsx is now the full, v1-faithful
    implementation — collapsible sidebar with the liquid-glass nav pill,
-   every nav group/item from v1 (including modules not yet built —
-   see DECISIONS.md), a real notification bell/panel backed by
+   every nav item pointing at a real route and carrying its own icon (a
+   sidebar item without a route is not allowed, and no two items share an
+   icon — both enforced by AppShell.nav.test.jsx, Prompt 27; the unbuilt
+   Skill Analyzer item was removed), a real notification bell/panel backed by
    core/notifications.py (GET/POST /api/notifications/...) with a real
    WebSocket push (core/consumers.py's NotificationConsumer) — the badge
    is fetched immediately on mount, updated live, and stays in sync
@@ -447,10 +450,10 @@ lanceraos/                          <- Django project root
 │   │   ├── views_audit.py                   <- Audit log viewer (filterable)
 │   │   └── views_deletion.py                 <- Deletion-queue management
 │   ├── invoices/                   <- BUILT (kpis.py, 04 Nov 2026: the Outstanding/Overdue/Collected/month-over-month
-│   │                                  maths, shared by invoice_summary and the Dashboard): models.py (10 tables — Invoice/InvoiceItem/
+│   │                                  maths, shared by invoice_summary and the Dashboard): models.py (9 tables — Invoice/InvoiceItem/
 │   │                                  InvoicePartialPayment/InvoiceReminder/InvoiceViewEvent/
-│   │                                  InvoiceComment/PaymentClaim/InvoiceDesign/InvoicePreset/
-│   │                                  InvoicePresetItem) + serializers.py/views.py/urls.py
+│   │                                  InvoiceComment/PaymentClaim/InvoicePreset/
+│   │                                  InvoicePresetItem; InvoiceDesign was removed 12 September 2026) + serializers.py/views.py/urls.py
 │   │                                  (CRUD + lifecycle endpoints, incl. real GET .../pdf/ —
 │   │                                  only /send/ excluded, see Module 2) + pdf_generator.py
 │   │                                  (WeasyPrint render pipeline) + the LanceraOS Template
@@ -523,7 +526,7 @@ lanceraos/                          <- Django project root
 │   │                                  Sits ABOVE apps.payments: imports only core.* and apps.payments non-view modules; NO app imports it
 │   │                                  (AST-tested). The page, the radar chart and the widget are in frontend/ (pages/HealthScore.jsx, Health*.jsx,
 │   │                                  DashboardHealthCard.jsx).
-│   ├── help/                       <- Help / AI assistant — BUILT, backend only, 11 November 2026 (Prompt 24). No models, no migration: guides/ (49
+│   ├── help/                       <- Help / AI assistant — BUILT, backend only, 11 November 2026 (Prompt 24). No models, no migration: guides/ (48
 │   │                                  hand-written guides as validated Python data, 12 topic modules + the p/steps/note/link builders), library.py (LIBRARY,
 │   │                                  LIBRARY_VERSION, problems()), links.py (LINK_TARGETS), search.py (BM25, stemmer, synonyms, the gate), prompts.py,
 │   │                                  answers.py (parser, guard, blocks), service.py (answer_question), text.py (normalise/redact), views.py/urls.py (5
@@ -790,11 +793,14 @@ before that final submit, a confirm-your-email modal ("We'll send your
 verification link to X — is this correct?") catches typos before a
 wasted send; declining sends the user back to the email/username step.
 
-Auth providers: Email/password, Google OAuth, Facebook OAuth (hand-rolled,
-identical account-linking logic for both — see DECISIONS.md).
-Account linking: if a user registers via email then tries Google or
-Facebook OAuth with the same email, it auto-links to the existing
-account. Never creates duplicate accounts.
+Auth providers: Email/password and Google OAuth (hand-rolled — see
+DECISIONS.md). Facebook sign-in was removed in Prompt 27: migration
+users.0018 deleted any `facebook` rows in user_social_accounts (none
+existed), and an account that had only a Facebook link is an ordinary
+account recovered with "Forgot password".
+Account linking: if a user registers via email then tries Google OAuth
+with the same email, it auto-links to the existing account. Never
+creates duplicate accounts.
 
 JWT strategy: access token 15 minutes, refresh token 30 days (90 days
 if Remember Me), stored in httpOnly cookies (never localStorage,
@@ -821,7 +827,7 @@ now only accepts action=enable; the old action=disable branch on that
 endpoint was removed rather than left as a second working path.
 
 OAuth-only accounts adding a password: an account that signed up via
-Google/Facebook and never set a password (is_oauth_only()) can add one
+Google and never set a password (is_oauth_only()) can add one
 from Settings > Security. Requires an email-confirmation step rather
 than setting the password directly from the already-authenticated
 session — if that session were ever hijacked (XSS, stolen cookie),
@@ -841,7 +847,7 @@ OAuth-only re-authentication path.
 
 Account deletion for OAuth-only accounts: since there's no password to
 confirm with, initiate-deletion-oauth re-authenticates via the OAuth
-provider itself (a fresh Google/Facebook sign-in) instead of a password
+provider itself (a fresh Google sign-in) instead of a password
 prompt, then proceeds through the same OTP -> confirm -> 30-day-recovery
 pipeline as the password path below.
 
@@ -914,7 +920,6 @@ Key API endpoints:
 - GET /api/auth/csrf/ (triggers Django's CSRF cookie issuance)
 - GET /api/auth/me/ (session check on app load)
 - POST /api/auth/google/
-- POST /api/auth/facebook/
 - GET/PUT /api/auth/account/ (Settings > Account: name/username/DOB)
 - GET/PUT /api/auth/profile/ (Profile page + Settings > Business/Tax —
   same FreelancerProfile object, partial=True so each page/section can
@@ -3216,9 +3221,9 @@ The five areas, as built (the original spec's "Savings Buffer" and "FBR awarenes
 2. **Profit margin** (20) - was "Savings Buffer". LanceraOS has no balances, savings or personal spending, so a cushion cannot be measured;
    what can be is the share of income left after the business expenses recorded: 60% or more is full marks, 0% or less is zero. Not scored
    with no income, and NOT scored with no converted expense (no expenses recorded would give a fake perfect margin).
-3. Tax compliance (20) - four checks: NTN saved 8, PSEB registration marked 4, a payment in the last 90 days 4, an expense in the last 90
+3. Tax compliance (20) - four checks: NTN saved 8, a saved PSEB registration number 4, a payment in the last 90 days 4, an expense in the last 90
    days 4. "FBR awareness" is dropped (LanceraOS does not know whether a return was filed; the Tax module may add a "return filed" check).
-   Always scored. It reads only WHETHER an NTN is saved and whether `pseb_registered` is true, never a digit of either.
+   Always scored. It reads only WHETHER an NTN and a PSEB number are saved (`pseb_hash`, the same fact the Tax page uses for its rate; the self-declared `pseb_registered` checkbox does not score, Prompt 27), never a digit of either.
 4. Income growth (20) - the average month of the window against the average month of the earlier window: a fall of 30% is zero, flat is
    half marks, +30% is full marks. Needs 3 effective months in the earlier window and a non-zero earlier average.
 5. Client diversity (15) - the biggest NAMED payer's share of named income, grouped by the "Received from" name (normalised: case,
@@ -3570,7 +3575,7 @@ no app imports it; AST-tested).
 
 **The idea (it changes the spec's mechanism, not its intent).** The spec said "LanceraOS documentation embedded in the system prompt". Sending the
 whole library on every call (about 70,000 characters, roughly 17,000 tokens) is more than twice the free tier's per-minute allowance in ONE request, so
-Help instead keeps a library of 49 short HAND-WRITTEN guides, SEARCHES it with plain code, and puts only the two or three best guides (at most 5,000
+Help instead keeps a library of 48 short HAND-WRITTEN guides, SEARCHES it with plain code, and puts only the two or three best guides (at most 5,000
 characters) in the prompt. Code finds the guides; the model only words an answer from them; code checks the words before they are shown. Search and the
 guides work with AI switched off: every response of `ask` carries guides (except `off_topic`), and AI off, busy, failing or rejected is HTTP 200
 `outcome: "guides_only"` with a reason, never an HTTP error.
@@ -3597,6 +3602,8 @@ used only for ranking) and the chosen guides: no profile, no account data. Nothi
 (a canary test asserts it); the two audit events are `help_question` and `help_answer_rated` (ids, counts, booleans, our own vocabularies).
 
 **Short queries and `answers_enabled` (Prompt 25, 11 November 2026).** With written answers OFF, the search box IS the product, and people type one or two words, not sentences. Measured on 47 such queries (a tune set) and 30 more never used to choose a change, the search lacked the commonest words in the app (`invoice` ranked `record-an-expense` second, `sign in` found the contract guides first, `payments` did not find `record-a-payment`, `logout` found nothing). Fixed with ONE new scoring rule (the title rule above, constant `TITLE_ALL_TERMS_BONUS` = 0.7), a few keyword changes (a keyword that is a synonym of another guide's subject word was pulling that guide in), and the removal of one synonym group; the thresholds, the prompt and the guard did not change. Three guide mistakes were fixed (`recurring-invoices` listed five of the six intervals; `not-available-yet` gave advice with no basis; the invoice form's own hint said recurring generation was not built). `GET /api/help/guides/` now carries `answers_enabled` (true only when `HELP_AI_ENABLED` and `AI_ENABLED` are both on), so the Prompt 26 page can show a question box and its "sent to an outside AI service" line only when written answers are really on. Follow-up questions (`previous_question`) are unchanged and the page will not use them. No model request was made. See AI_EVALUATION.md section 15c and DECISIONS.md.
+
+**Prompt 27 (13 November 2026).** The unbuilt Skill Analyzer is gone from the product, so the guide that apologised for it (`not-available-yet`) was deleted: the library is 48 guides (`EXPECTED_GUIDE_COUNT`), `LIBRARY_VERSION` is `cfdeb924d63b`, and the Google/Facebook wording in the account guides says Google only. Evaluation cases `t04` (tune set) was removed and live case `a10` now asks "How do I download my tax summary?" (expected `the-tax-summary-pdf`); no live run was made, so the next one must be pre-registered afresh. The search placeholder is `Search, e.g. "send an invoice"` and the ask placeholder `Ask a question` (both measured to fit at 360 px), and the topic list's guide links carry a trailing chevron.
 
 **Endpoints** (all `IsAuthenticated`, function views, `Cache-Control: no-store`, errors `{"error": "..."}`): `GET /api/help/guides/`,
 `GET /api/help/guides/<slug>/`, `GET /api/help/search/?q=`, `POST /api/help/ask/` (`{question, previous_question?}`; 120 an hour then 429; more than six a
@@ -3629,9 +3636,9 @@ the top and moves focus to the heading when the slug changes.
 
 ## 6. Database Schema
 See DATABASE.md — the 6-question framework answered for every table
-that exists: core.AuditLog, core.ApiRequestLog, core.NotificationRead,
-all six apps.users tables, and apps.admin_panel's admin_sessions table
-(the users/admin tables being seven, spanning two apps) — as of this writing.
+that exists: 31 tables across eight apps (users 6, admin_panel 1, clients 4,
+invoices 9, payments 4, proposals 2, contracts 1 and the four shared core
+tables), checked against the installed models on 13 November 2026.
 
 ---
 
@@ -3661,8 +3668,8 @@ segfault on this dev machine, not a real failure, see DECISIONS.md), incl. the 1
 | Proposals            | Built: part 1 (model, CRUD, code-computed score, AI generation) and part 2 (send by email/link, public no-login page, accept/decline, withdraw, duplicate, idempotent convert to draft invoice, audit + bell/email) | Built: part A (list, create, autosaving draft editor, score/tips) and part B (Send dialog with pre-flight and verify-by-checking, the client's public page `/proposal/:token`, withdraw, convert to invoice, activity timeline, client link, client's answer, in-app Preview) — 04 Nov 2026 | backend 479 passing (`apps.proposals` 299 + `core` 181; untouched by part B); frontend 1037 of 1038 passing (221 new for part B; the 1 failure is the pre-existing `SecuritySection.test.jsx`) | Complete; real-deployment smoke tests (DEPLOYMENT.md Section 8, items 12-16) still to run |
 | Contracts            | Built (10 Nov 2026, Prompt 22): `apps/contracts` (one table, five templates as data, send with both sides signing by typing a name, public sign/decline page API, SHA-256 fingerprint checked at signing, signed PDF, audit + bell + emails, Celery `send_signed_copies`); Prompt 23 added `GET .../send-check/`, the 600/hour PATCH limit, the per-status PDF signing sentence and the `export_contract_fixtures` command | Built (10 Nov 2026, Prompt 23): `/contracts`, `/contracts/new`, `/contracts/:id` and the public `/contract/:token`; the generic `useDraftAutosave`; "Create contract" on an accepted proposal | backend `apps/contracts/tests/` + `apps/invoices/tests/test_contract_pdf.py` (untracked); frontend 2538 of 2539 (the 1 failure is the pre-existing `SecuritySection.test.jsx`; new tests in gitignored `*.test.*`) | Built (no AI, no Pro gating; a lawyer must read `CONTRACTS_LAW.md` and the wording before public launch) |
 | Subscriptions        | -       | -        | -     | Not started |
-| Dashboard            | Built: apps/dashboard (no models, no migration) — GET /api/dashboard/summary/ with per-section isolation; the invoice KPI maths extracted to apps/invoices/kpis.py (invoice_summary output byte-identical) | Built: `/dashboard` (greeting, 4 KPI cards, 6-month chart, Needs attention, Upcoming recurring, Recent activity, Exchange rates), now the landing page | backend 54 new (`apps.dashboard`); frontend 77 new (Dashboard, dashboardHelpers, App routing, AppShell pill) | Built without AI (04 Nov 2026); AI insights + Financial Health widget still to come |
-| Help / AI Assistant  | Built (11 Nov 2026, Prompt 24): `apps/help` (no model, no migration) — 49 guides, search with a gate, a guarded AI answer, 5 endpoints, `check_help_library`, the two evaluations; Prompt 25 (11 Nov 2026): short-query search (title rule, keyword and synonym fixes; measured on a tune and a held-out set of one- and two-word queries, AI_EVALUATION.md section 15c) and `answers_enabled` on `GET /api/help/guides/`; Prompt 26 (13 Nov 2026): the `constants` fixture also carries `AI_TOTAL_BUDGET_SECONDS`, `BANNED_PHRASES`, `STYLE_WORDS` | Built (13 Nov 2026, Prompt 26): `/help` and `/help/:slug` (search mode by default, ask mode when `answers_enabled`, guide view, ratings), the profile menu's Help item; no sidebar item | backend 271 passing (`python manage.py test apps.help --keepdb`) in `apps/help/tests/` (untracked, gitignored); frontend 2540 -> 2789 tests (249 new, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`); fixtures in `frontend/src/test-fixtures/help/` (tracked) | Built; AI answers default OFF (see AI_EVALUATION.md section 15), so the page ships as search plus guides |
+| Dashboard            | Built: apps/dashboard (no models, no migration) — GET /api/dashboard/summary/ with per-section isolation (the invoice KPI maths extracted to apps/invoices/kpis.py, invoice_summary output byte-identical); AI insights, 06 Nov 2026: `GET /api/dashboard/insights/` (prompts.py, insight_facts.py, insights.py, evaluation.py + `evaluate_dashboard_insights`), the per-feature switch `DASHBOARD_INSIGHTS_AI_ENABLED` DEFAULTS TO OFF | Built: `/dashboard` (greeting, 4 KPI cards, 6-month chart, Needs attention, Upcoming recurring, Recent activity, Exchange rates, the Insights card and the Financial health widget, 09 Nov 2026), now the landing page | backend `apps/dashboard/tests/` 150 passing (54 summary + 96 insights); frontend `Dashboard.test.jsx`, `Dashboard.health.test.jsx`, `DashboardInsightsCard.test.jsx`, `DashboardHealthCard.test.jsx`, `dashboardHelpers.test.js`, `App.dashboard.test.jsx`, a Dashboard case in `AppShell.test.jsx` | Built (04 Nov 2026); AI insights card built, text off by default (06 Nov 2026); Financial health widget built (09 Nov 2026) |
+| Help / AI Assistant  | Built (11 Nov 2026, Prompt 24): `apps/help` (no model, no migration) — 48 guides, search with a gate, a guarded AI answer, 5 endpoints, `check_help_library`, the two evaluations; Prompt 25 (11 Nov 2026): short-query search (title rule, keyword and synonym fixes; measured on a tune and a held-out set of one- and two-word queries, AI_EVALUATION.md section 15c) and `answers_enabled` on `GET /api/help/guides/`; Prompt 26 (13 Nov 2026): the `constants` fixture also carries `AI_TOTAL_BUDGET_SECONDS`, `BANNED_PHRASES`, `STYLE_WORDS` | Built (13 Nov 2026, Prompt 26): `/help` and `/help/:slug` (search mode by default, ask mode when `answers_enabled`, guide view, ratings), the profile menu's Help item; no sidebar item | backend 271 passing (`python manage.py test apps.help --keepdb`) in `apps/help/tests/` (untracked, gitignored); frontend 2540 -> 2789 tests (249 new, gitignored; the 1 failure is the pre-existing `SecuritySection.test.jsx`); fixtures in `frontend/src/test-fixtures/help/` (tracked) | Built; AI answers default OFF (see AI_EVALUATION.md section 15), so the page ships as search plus guides |
 
 ---
 
@@ -3703,9 +3710,7 @@ CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
 GOOGLE_CLIENT_ID=
-FACEBOOK_APP_ID=
-FACEBOOK_APP_SECRET=
-# VITE_API_URL / VITE_WS_URL / VITE_GOOGLE_CLIENT_ID / VITE_FACEBOOK_APP_ID are FRONTEND build-time
+# VITE_API_URL / VITE_WS_URL / VITE_GOOGLE_CLIENT_ID are FRONTEND build-time
 # variables: they live in frontend/.env (see frontend/.env.example; Vercel env vars in production),
 # NOT in the backend .env — Vite reads frontend/.env. Production: wss://api.lanceraos.com for WS.
 FRONTEND_URL=http://localhost:5173

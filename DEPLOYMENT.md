@@ -161,7 +161,6 @@ more. "W/K/B" = needed by web / worker / beat. Everything is read by `config/set
 | `RESEND_FROM_NAME` | `LanceraOS` | x | x | x |
 | `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET` | from Cloudinary | x | x | x |
 | `GOOGLE_CLIENT_ID` | same as frontend `VITE_GOOGLE_CLIENT_ID` | x | | |
-| `FACEBOOK_APP_ID` / `_SECRET` | leave blank (app not created) | | | |
 | `GROQ_API_KEY` | from Groq | x | x | |
 | `CLOUDFLARE_WEBHOOK_SECRET` | generated | x | | |
 | `SECURE_HSTS_SECONDS` | omit (default 3600); raise per section 10 | x | | |
@@ -211,7 +210,6 @@ header `X-Webhook-Secret: <CLOUDFLARE_WEBHOOK_SECRET>` to `POST /api/invoices/em
    | `VITE_API_URL` | `https://api.lanceraos.com` |
    | `VITE_WS_URL` | `wss://api.lanceraos.com` |
    | `VITE_GOOGLE_CLIENT_ID` | your Google OAuth client ID |
-   | `VITE_FACEBOOK_APP_ID` | blank |
 
    **Set these before the first build.** If `VITE_API_URL` is missing, `src/lib/api.js` silently
    falls back to `http://localhost:8000/api` (and `useWebSocket.js` to `ws://localhost:8000`) and
@@ -440,7 +438,7 @@ nothing to undo in the database. A contract already sent stays sent and its link
 **No public announcement of Contracts** until a Pakistani lawyer has reviewed the clause library, the signing wording, the emails and the PDF text
 (`CONTRACTS_LAW.md`, "Pages (Prompt 23)").
 
-## 7m. Help backend release (11 November 2026, Prompt 24) **[U]**
+## 7m. Help release: backend and page (11 and 13 November 2026, Prompts 24 to 26) **[U]**
 
 Release order: **redeploy the web service** (a new app `apps.help` with five endpoints under `/api/help/`). **No migration, no worker change, no Beat change, no new
 service.** The worker needs nothing; redeploying it with the web service is harmless. The Help PAGE is Prompt 26 and is not in this release, so nothing in the
@@ -473,8 +471,25 @@ Rollback: redeploy the previous web image. Nothing is migrated, so there is noth
 are harmless rows in `core.AuditLog`.
 
 **Pre-launch gates for Help (add to the public-launch list):** **(a)** the privacy policy page (`PrivacyPolicy.jsx`) does not name the AI service provider or say that
-proposal job posts and Help questions are sent to it; a lawyer must write that sentence before public launch. **(b)** The support mailbox must exist before `SUPPORT_EMAIL`
+proposal job posts and Help questions are sent to it; a lawyer must write that sentence before public launch, and the same lawyer re-reads the privacy policy and the terms of service after Prompt 27 removed the word Facebook from them (see 7n). **(b)** The support mailbox must exist before `SUPPORT_EMAIL`
 is set. **(c)** The guides describe the app as it is today; re-run `check_help_library --stale` and read the list before the showcase.
+
+## 7n. Prompt 27 release: Skill Analyzer and Facebook sign-in removed, bug fixes (13 November 2026) **[U]**
+
+Release order: **back up the database first** (migration `users.0018` deletes rows), then **redeploy the web service** (it runs the migration in the pre-deploy step), then **Vercel**.
+The worker and Beat need nothing; redeploying them with the web service is harmless. No new variable.
+
+1. **Back up first.** `deploy/backup.sh` (or Railway's backup). The migration deletes `user_social_accounts` rows whose provider is `facebook`; the deleted rows cannot be restored from the migration.
+2. **Before migrating, count the rows** in production, read-only. From a web shell:
+   `python manage.py shell -c "from apps.users.models import UserSocialAccount as U; print(U.objects.filter(provider='facebook').count())"`
+   The expected answer is **0** (the Meta app was never created, so Facebook sign-in has never worked; the development database also holds 0). **Any other number: stop and tell Ali** before migrating.
+3. Deploy the web service (it runs `users.0018_remove_facebook_social_accounts`), then Vercel.
+4. Optional clean-up, harmless if skipped: remove `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` from the server environment and `VITE_FACEBOOK_APP_ID` from Vercel. Nothing reads them any more.
+5. A person who had only a Facebook link (none are expected) is now an ordinary account with no password and no social link; **Forgot password** recovers it.
+6. **Smoke tests:** **(a)** `/login` and `/register` show exactly one social button, "Continue with Google", with its text visible. **(b)** `POST /api/auth/facebook/` answers **404**. **(c)** The sidebar has no "Skill Analyzer"; every sidebar item opens its own page. **(d)** `/help` works and `GET /api/help/guides/` reports **48** guides and `library_version` `cfdeb924d63b`. **(e)** The response headers of `/portal`, `/portal/invoices` and `/invoice/<any token>` include `X-Robots-Tag: noindex, nofollow, noarchive` and `Referrer-Policy: no-referrer` (also `/reset-password/...`, `/verify-email/...`, `/change-email/...`, `/activate-email/...`, `/add-password/...`); these headers cannot be tested locally, this is where they are verified. After deploying, open a client portal link and press **Report a Payment** or **Acknowledge** once to confirm the portal's writes still work with `no-referrer` (they should: Django skips its Referer check when an `Origin` header is present). **(f)** `GET /api/invoices/exchange-rate/?date=2026-13-45` answers **400**, not 500; so does `GET /api/clients/<id>/statement/pdf/?end=2026-02-30`.
+7. **Pre-launch lawyer item:** the privacy policy and the terms of service lost the words "Facebook" (three places in the privacy policy, one in the terms). The terms version string was not bumped because no right or duty changed; the lawyer who reviews those pages before public launch should read them in their current form.
+
+Rollback: redeploy the previous web image. The deleted `facebook` rows (expected: none) cannot be restored; migrating back (`migrate users 0017`) only restores the field's choices.
 
 ## 8. Smoke tests (run in order; stop at the first failure)
 

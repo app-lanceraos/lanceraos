@@ -25,8 +25,8 @@ lookup on the shared `requests` module at call time, never a cached
 local reference, so it's intercepted no matter which app imported
 send_email() or when.
 
-Only .post is patched (not .get) — apps/users/oauth/{google,facebook}.py
-verify tokens via requests.get, and those paths are unaffected by this
+Only .post is patched (not .get) — apps/users/oauth/google.py
+verifies tokens via requests.get, and that path is unaffected by this
 patch.
 """
 from unittest.mock import MagicMock, patch

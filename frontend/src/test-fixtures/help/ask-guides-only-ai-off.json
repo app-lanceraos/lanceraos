@@ -34,7 +34,7 @@
       "topic": "invoices"
     }
   ],
-  "library_version": "c88b2796dcc6",
+  "library_version": "cfdeb924d63b",
   "notice": "Written answers are switched off right now. These guides match your question.",
   "outcome": "guides_only",
   "reason": "ai_off",

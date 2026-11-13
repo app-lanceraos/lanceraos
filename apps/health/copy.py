@@ -79,10 +79,10 @@ def area_about(key):
     if key == c.TAX_COMPLIANCE:
         p = c.TAX_POINTS
         return (
-            f'Whether your tax basics are in place: an NTN saved ({p["ntn"]} points), PSEB registration marked '
+            f'Whether your tax basics are in place: an NTN saved ({p["ntn"]} points), a PSEB registration number saved '
             f'({p["pseb"]} points), a payment recorded in the last {c.RECENT_DAYS} days ({p["recent_payment"]} points) '
             f'and an expense recorded in the last {c.RECENT_DAYS} days ({p["recent_expense"]} points). The NTN and PSEB '
-            'are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who '
+            'number are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who '
             'export IT services, so it may not apply to your work.'
         )
     if key == c.INCOME_GROWTH:
@@ -241,7 +241,7 @@ def action_text(action, currency):
         return f'Save your NTN in Settings, then Tax & PSEB. An NTN is the number you need to file a tax return with FBR.{gain}'
     if key == 'tax_pseb':
         return (
-            'If you are registered with PSEB, mark it in Settings, then Tax & PSEB. PSEB registration is for people who '
+            'If you have a PSEB registration number, save it in Settings, then Tax & PSEB. PSEB registration is for people who '
             f'export IT services, so it may not apply to your work.{gain}'
         )
     if key == 'tax_payment':

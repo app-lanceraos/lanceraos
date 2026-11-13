@@ -1,12 +1,9 @@
 # apps/users/oauth/base.py
 """
-Shared account-linking logic for every OAuth provider. Collision
-handling is identical regardless of which provider verified the
-identity — only how that identity dict got produced differs (see
-oauth/google.py and oauth/facebook.py). Keeping this in one place is
-the point: writing it twice would mean the "8 collision scenarios" this
-is meant to handle correctly could silently drift apart between the
-two providers over time.
+Shared account-linking logic for OAuth sign-in. Google is the only
+provider today, but the collision handling is kept provider-agnostic: only how the identity dict got
+produced differs (see oauth/google.py), so a future provider reuses the
+same "8 collision scenarios" handling instead of rewriting it.
 """
 from django.db import transaction
 
@@ -16,9 +13,8 @@ from apps.users.models import User, UserSocialAccount
 def link_or_create_user(provider, identity):
     """
     identity: {'provider_uid', 'email', 'first_name', 'last_name', 'picture_url'}
-    — the normalized shape both verify_google_token() and
-    verify_facebook_token() return, so this function never needs to
-    know which provider it's handling.
+    — the normalized shape verify_google_token() returns, so this
+    function never needs to know which provider it's handling.
 
     Returns (user, is_new_user).
 

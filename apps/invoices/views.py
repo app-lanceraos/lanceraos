@@ -30,7 +30,6 @@ from django.db.models import Count, Max, Q, Sum
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -43,6 +42,7 @@ from apps.clients.scoring import EXCLUDED_STATUSES as CLIENT_SCORING_EXCLUDED_ST
 from apps.clients.serializers import validate_currency_code
 from apps.clients.views_portal import _send_portal_link_email
 from apps.payments import services as payment_services
+from apps.payments.http import parse_date_param
 from apps.payments.models import ExchangeRateSnapshot
 from apps.users.models import FreelancerProfile, User
 from apps.users.views.profile import ALLOWED_LOGO_EXTENSIONS, MAX_LOGO_SIZE_BYTES
@@ -149,11 +149,15 @@ def _get_latest_snapshot():
 
 
 def _parse_date_param(raw, default=None):
-    """Returns (date_or_None, error_response_or_None)."""
+    """
+    Returns (date_or_None, error_response_or_None). Parsing is apps.payments.http.parse_date_param, which also survives a
+    well-shaped impossible date (2026-13-45, 2026-02-30): Django's parse_date raises ValueError for those, and a query
+    string must never turn into an HTTP 500.
+    """
     if not raw:
         return default, None
-    parsed = parse_date(raw)
-    if parsed is None:
+    parsed, problem = parse_date_param(raw)
+    if problem is not None:
         return None, Response({'error': 'Invalid date — use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
     return parsed, None
 
@@ -1202,6 +1206,8 @@ def invoice_refund(request, pk):
         try:
             amount = Decimal(str(amount_raw))
         except InvalidOperation:
+            return Response({'error': 'amount must be a valid number.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not amount.is_finite():  # "NaN" parses, then raises InvalidOperation on the comparison below
             return Response({'error': 'amount must be a valid number.'}, status=status.HTTP_400_BAD_REQUEST)
         if amount <= Decimal('0') or amount > invoice.amount_paid:
             return Response(

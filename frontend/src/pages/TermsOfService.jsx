@@ -25,7 +25,7 @@ export default function TermsOfService() {
       <Section title="2. Eligibility">
         <P>
           You must be at least 16 years old to use LanceraOS. We verify your date of birth at
-          signup to enforce this — for accounts created through Google or Facebook (which don't
+          signup to enforce this — for accounts created through Google (which doesn't
           give us your birthday), we ask for it separately during account setup, and any account
           found to belong to someone under 16 will be closed.
         </P>

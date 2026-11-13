@@ -11,7 +11,6 @@ import AuthField from '@/components/AuthField'
 import AuthButton from '@/components/AuthButton'
 import AuthAlert from '@/components/AuthAlert'
 import GoogleButton from '@/components/GoogleButton'
-import FacebookButton from '@/components/FacebookButton'
 import DeletionModal from '@/components/DeletionModal'
 
 export default function Login() {
@@ -281,7 +280,6 @@ export default function Login() {
 
             <div style={{ display: 'flex', gap: '0.75rem' }}>
               <GoogleButton onSuccess={handleOAuthSuccess} onError={setError} disabled={inputsDisabled} />
-              <FacebookButton onSuccess={handleOAuthSuccess} onError={setError} disabled={inputsDisabled} />
             </div>
           </div>
         </form>

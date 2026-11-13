@@ -1,11 +1,11 @@
 # apps/users/signals.py
 """
 Every user gets a FreelancerProfile automatically, regardless of which
-path created them: registration, Google OAuth, Facebook OAuth, or
+path created them: registration, Google OAuth, or
 createsuperuser. Centralizing this in one signal — rather than having
 each creation path remember to also create a profile — means no future
-signup path (and there will be more than the two OAuth ones already
-planned) can forget to create one and crash the first time something
+signup path (there may be more than the ones that exist today)
+can forget to create one and crash the first time something
 does user.profile.
 """
 from django.conf import settings

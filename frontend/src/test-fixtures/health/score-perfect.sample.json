@@ -72,7 +72,7 @@
       "reason": null,
       "points": 20,
       "percent": 100,
-      "about": "Whether your tax basics are in place: an NTN saved (8 points), PSEB registration marked (4 points), a payment recorded in the last 90 days (4 points) and an expense recorded in the last 90 days (4 points). The NTN and PSEB are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
+      "about": "Whether your tax basics are in place: an NTN saved (8 points), a PSEB registration number saved (4 points), a payment recorded in the last 90 days (4 points) and an expense recorded in the last 90 days (4 points). The NTN and PSEB number are what you entered; LanceraOS does not check them with FBR or PSEB. PSEB registration is for people who export IT services, so it may not apply to your work.",
       "measure": "4 of 4 checks are in place.",
       "needed": "Nothing more is needed here: this area has the full score.",
       "steps": [],
@@ -87,7 +87,7 @@
           },
           {
             "key": "pseb",
-            "label": "PSEB registration marked",
+            "label": "PSEB number saved",
             "done": true,
             "points": 4,
             "max_points": 4

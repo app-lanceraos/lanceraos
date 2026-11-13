@@ -32,10 +32,13 @@ export const RATING_GUIDE_LIMIT = 3
 // ── Static copy ───────────────────────────────────────────────────────────────────────────────────────────────────
 export const PAGE_LABEL = 'Help'
 export const SEARCH_LABEL = 'Search the guides'
-export const SEARCH_PLACEHOLDER = 'Search the guides, for example "send an invoice"'
+// The two placeholders are the ONLY visible hint in the box (the label is visually hidden), so they must fit at 360 px without being
+// clipped. Measured in a real browser (Prompt 27, B2): the search input's text area is 270 px wide at 360 px and the ask input's 164 px
+// (the Ask button sits beside it). The old wordings were 355 px and 290 px wide.
+export const SEARCH_PLACEHOLDER = 'Search, e.g. "send an invoice"'
 export const SEARCH_TOO_SHORT = `Type at least ${SEARCH_MIN_CHARS} letters to search.`
 export const ASK_LABEL = 'Ask a question'
-export const ASK_PLACEHOLDER = 'Ask how to do something in LanceraOS'
+export const ASK_PLACEHOLDER = 'Ask a question'
 export const ASK_BUTTON = 'Ask'
 export const ASK_BUTTON_BUSY = 'Asking…'
 export const ASK_HINT = `Ask in your own words, ${QUESTION_MIN_CHARS} to ${QUESTION_MAX_CHARS} characters.`

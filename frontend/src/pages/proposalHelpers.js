@@ -205,7 +205,10 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 export function formatDate(isoDate) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate || '')
   if (!match) return '—'
-  return `${Number(match[3])} ${MONTHS[Number(match[2]) - 1]} ${match[1]}`
+  const month = Number(match[2])
+  const day = Number(match[3])
+  if (month < 1 || month > 12 || day < 1 || day > 31) return '—' // never print "undefined"
+  return `${day} ${MONTHS[month - 1]} ${match[1]}`
 }
 
 // The API's timestamps are naive Pakistan time (USE_TZ=False: no Z, no
@@ -214,7 +217,10 @@ export function formatDate(isoDate) {
 export function formatTimestamp(naiveIso) {
   const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(naiveIso || '')
   if (!match) return '—'
-  return `${Number(match[3])} ${MONTHS[Number(match[2]) - 1]} ${match[1]}, ${match[4]}:${match[5]}`
+  const month = Number(match[2])
+  const day = Number(match[3])
+  if (month < 1 || month > 12 || day < 1 || day > 31) return '—' // never print "undefined"
+  return `${day} ${MONTHS[month - 1]} ${match[1]}, ${match[4]}:${match[5]}`
 }
 
 // Freelancer-side times carry an explicit zone label: the API's timestamps are

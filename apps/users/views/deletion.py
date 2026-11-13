@@ -15,8 +15,6 @@ from core.observability import log_event
 from ..cookies import clear_auth_cookies
 from ..emails import send_account_deletion_confirmed_email, send_account_deletion_otp_email
 from ..models import Session, UserSocialAccount
-from ..oauth.facebook import OAuthVerificationError as FacebookError
-from ..oauth.facebook import verify_facebook_token
 from ..oauth.google import OAuthVerificationError as GoogleError
 from ..oauth.google import verify_google_token
 from .auth import _generate_otp, _generate_token, _mask_email
@@ -31,7 +29,7 @@ def initiate_deletion(request):
 
     if user.is_oauth_only():
         return Response(
-            {'error': 'Accounts linked via Google or Facebook cannot be deleted through LanceraOS. '
+            {'error': 'Accounts linked via Google cannot be deleted through LanceraOS. '
                       'Please revoke access from your provider account settings.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
@@ -92,15 +90,12 @@ def initiate_deletion_oauth(request):
     provider = request.data.get('provider', '')
     credential = request.data.get('credential', '')
     access_token = request.data.get('access_token', '')
-    if provider not in ('google', 'facebook'):
+    if provider != 'google':
         return Response({'error': 'Invalid provider.'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        if provider == 'google':
-            identity = verify_google_token(credential=credential or None, access_token=access_token or None)
-        else:
-            identity = verify_facebook_token(access_token)
-    except (GoogleError, FacebookError) as exc:
+        identity = verify_google_token(credential=credential or None, access_token=access_token or None)
+    except GoogleError as exc:
         return Response({'error': f'Re-authentication failed: {exc}'}, status=status.HTTP_401_UNAUTHORIZED)
 
     is_linked = UserSocialAccount.objects.filter(

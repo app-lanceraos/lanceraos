@@ -73,7 +73,7 @@ BLOCKS_MIN, BLOCKS_MAX = 1, 12
 RELATED_MAX = 4
 UI_LABEL_MIN, UI_LABEL_MAX = 2, 40
 POPULAR_COUNT = 6
-EXPECTED_GUIDE_COUNT = 49
+EXPECTED_GUIDE_COUNT = 48
 
 # --- the words Help never uses (decision H15) -----------------------------------------------------------------------------
 # One definition. Guides AND model answers are scanned for BANNED_PHRASES; guides alone for STYLE_WORDS.
@@ -114,9 +114,9 @@ NUMBER_WORDS = (
 # Characters that never appear in shown text (guides) or in a model's answer (the guard): markdown and markup.
 MARKUP_CHARS = frozenset('*#`<>[]{}|~_')
 
-# The 49 guides of Appendix A: these slugs, no more and no fewer.
+# The 48 guides of Appendix A: these slugs, no more and no fewer.
 EXPECTED_SLUGS = (
-    'what-is-lanceraos', 'first-steps', 'find-your-way-around', 'not-available-yet',
+    'what-is-lanceraos', 'first-steps', 'find-your-way-around',
     'sign-up-and-verify-your-email', 'reset-or-change-your-password', 'two-factor-sign-in', 'your-devices-and-sessions',
     'change-your-email-or-username', 'delete-your-account',
     'business-details-and-payment-methods', 'tax-and-pseb-details', 'notification-settings', 'send-emails-from-your-own-address',

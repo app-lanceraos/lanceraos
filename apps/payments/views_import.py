@@ -7,7 +7,6 @@ is a 415, which also keeps parsed rows out of ApiRequestLog (multipart bodies ar
 Errors are {"error": "<sentence>", "code": "<machine code>"}; they never contain file content.
 """
 import json
-import logging
 
 from django.db.models import Count
 from rest_framework import status
@@ -25,8 +24,6 @@ from apps.payments.importing.commit import commit_plan, safe_file_name, undo_bat
 from apps.payments.importing.errors import ImportFileError, ImportProblem, ImportRefused
 from apps.payments.importing.plan import build_plan, plan_payload
 from apps.payments.models import PaymentImportBatch
-
-logger = logging.getLogger(__name__)
 
 PREVIEWS_PER_HOUR = 20
 COMMITS_PER_HOUR = 10

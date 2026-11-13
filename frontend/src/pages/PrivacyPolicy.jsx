@@ -36,8 +36,8 @@ export default function PrivacyPolicy() {
         ]} />
 
         <P>
-          <strong>If you sign up or sign in with Google or Facebook:</strong> we receive your email
-          address and name from that provider. We do not receive or store your Google/Facebook
+          <strong>If you sign up or sign in with Google:</strong> we receive your email
+          address and name from that provider. We do not receive or store your Google
           password.
         </P>
 
@@ -106,7 +106,7 @@ export default function PrivacyPolicy() {
           rows={[
             ['Cloudinary', 'Your profile photo/logo, if uploaded', 'Image storage and delivery'],
             ['Resend', 'Your email address, and the content of transactional emails we send you', 'Email delivery'],
-            ['Google / Facebook', 'Nothing from us — if you use "Sign in with Google/Facebook," you\'re sending your email/name to us, not the other way around', 'Optional sign-in method'],
+            ['Google', 'Nothing from us — if you use "Sign in with Google," you\'re sending your email/name to us, not the other way around', 'Optional sign-in method'],
             [<Needs key="hosting">hosting provider, e.g. Railway</Needs>, 'Everything — this is where our database and servers actually run', 'Infrastructure'],
           ]}
         />

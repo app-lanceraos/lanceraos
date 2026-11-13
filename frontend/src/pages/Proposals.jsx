@@ -16,7 +16,7 @@
 import { hoverProps } from '@/lib/hoverProps'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
-import { FileText, Plus, Search, X } from 'lucide-react'
+import { Plus, Presentation, Search, X } from 'lucide-react'
 
 import api from '@/lib/api'
 import useTitle from '@/hooks/useTitle'
@@ -318,7 +318,7 @@ function EmptyState({ search, statusFilter, onCreate }) {
       : 'No proposals yet.'
   return (
     <div style={{ textAlign: 'center', padding: '48px 24px', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)' }}>
-      <FileText size={28} style={{ color: 'var(--text-tertiary)', marginBottom: 10 }} />
+      <Presentation size={28} aria-hidden="true" style={{ color: 'var(--text-tertiary)', marginBottom: 10 }} />
       <p style={{ margin: 0, fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.95rem' }}>{copy}</p>
       {!isFiltered && (
         <>

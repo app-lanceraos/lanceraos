@@ -11,7 +11,7 @@ class UserManager(BaseUserManager):
     numeric suffix appended on collision. This mirrors v1's behaviour,
     which registration actually never relies on (RegisterSerializer always
     supplies a user-chosen username), but OAuth signup does rely on this,
-    since Google/Facebook don't provide a LanceraOS username at all.
+    since Google doesn't provide a LanceraOS username at all.
     """
     use_in_migrations = True
 

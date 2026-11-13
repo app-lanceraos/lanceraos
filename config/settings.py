@@ -406,12 +406,6 @@ TEST_RUNNER = 'core.test_runner.SafeTestRunner'
 # ══════════════════════════════════════════════════════════════════
 
 GOOGLE_CLIENT_ID = env('GOOGLE_CLIENT_ID', default='')
-# Not yet in .env — Facebook app hasn't been created yet. Reading these
-# with a blank default means apps/users/oauth/facebook.py fails
-# predictably (OAuthVerificationError: "not configured") rather than
-# with a KeyError, until they're added.
-FACEBOOK_APP_ID = env('FACEBOOK_APP_ID', default='')
-FACEBOOK_APP_SECRET = env('FACEBOOK_APP_SECRET', default='')
 
 # ══════════════════════════════════════════════════════════════════
 # CLOUDINARY

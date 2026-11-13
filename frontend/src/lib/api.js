@@ -161,7 +161,7 @@ function flushQueue(error) {
 // interceptor already stays out of the way for /auth/login//register/.
 const SKIP_REFRESH_URLS = [
   '/auth/login/', '/auth/register/', '/auth/token/refresh/',
-  '/auth/google/', '/auth/facebook/', '/auth/2fa/verify/',
+  '/auth/google/', '/auth/2fa/verify/',
   '/clients/portal/', '/invoices/portal/',
 ]
 

@@ -54,7 +54,7 @@ argon2-cffi==23.1.*
 cryptography>=46.0.6,<47.0
 
 # ── HTTP client (core/email.py -> Resend; apps/users/oauth/ ->
-#    Google/Facebook Graph API verification) ────────────────
+#    Google token verification) ────────────────
 requests==2.32.*
 
 # ── Google OAuth ID-token verification ───────────────────────

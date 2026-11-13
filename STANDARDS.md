@@ -262,7 +262,7 @@ vacuous.
 Every file that touches the database, an external service, or security-sensitive logic gets exercised
 with real code before being considered done — not just read over. Concretely: every model change ran
 through an actual migration; every view ran through Django's real test `Client` against real URL
-routing; every external call (Resend, Google, Facebook, Cloudinary, SMTP) was tested against a mocked
+routing; every external call (Resend, Google, Cloudinary, SMTP) was tested against a mocked
 boundary rather than skipped, so the surrounding logic (error handling, redaction, state transitions)
 is still proven. When a test's assumption turns out to be wrong, that's worth surfacing before shipping,
 not smoothing over — e.g. the `password_changed_at` gap found by specifically testing a user's *first*
@@ -465,11 +465,12 @@ first applied to `apps/proposals/views_public.py`:
   one conditional `UPDATE ... WHERE status=...`, emitting only if it changed a row.
 - Escape every interpolated value (`django.utils.html.escape`) in HTML email, and collapse whitespace in subjects. A client's
   free text and a freelancer's titles can both contain markup.
+- **A frontend route whose URL is itself a credential** (a view token, a reset or verification token, a magic link) gets `X-Robots-Tag: noindex, nofollow, noarchive` and `Referrer-Policy: no-referrer` in `frontend/vercel.json`, and `src/vercelConfig.test.js` lists every such route (Prompt 27, B10). `no-referrer` is safe for CSRF-protected writes because Django skips its Referer check whenever an `Origin` header is present, and a cross-origin XHR/fetch always sends one. Adding a token route without adding it to `vercel.json` is a bug.
 
 ## Uploads and exports (Prompt 12, 08 November 2026)
 
 - Uploads are read with a byte cap (`file.read(MAX + 1)`, and `Content-Length` checked before the body is parsed) and are never trusted by file name or content type: the bytes are inspected (zip/PDF/UTF-16 magic, NUL bytes) and every refusal is a fixed sentence that never echoes file content.
-- CSV/Excel EXPORTS must neutralise cells that start with `=`, `+`, `-` or `@` (prefix with an apostrophe or a tab). The import side stores such text exactly as typed and React escapes it on screen; an export puts it in front of a spreadsheet, which executes it.
+- CSV/Excel EXPORTS must neutralise cells that start with `=`, `+`, `-`, `@`, a tab or a carriage return (prefix with an apostrophe). No export exists today (Prompt 27 checked: no `csv.writer`, `DictWriter`, `openpyxl` or `text/csv` anywhere), so this is a rule for the first one. The import side stores such text exactly as typed and React escapes it on screen; an export puts it in front of a spreadsheet, which executes it.
 
 ## Tax figures (Prompt 20, 10 November 2026)
 
@@ -516,7 +517,7 @@ first applied to `apps/proposals/views_public.py`:
 
 - **A change to a screen's wording or behaviour is not done until its guide is updated.** Every guide lists the repo files it was written from (`sources`), the date it was last checked (`checked_on`) and the exact on-screen words it quotes (`ui_labels`). After changing a screen: update the guide, bump `checked_on`, run `python manage.py check_help_library` (it checks that every quoted label is in the frontend source and every link is a real route) and `python manage.py check_help_library --stale` (it lists guides whose sources changed in git after `checked_on`). The library is also a Django system check, so a structural mistake fails `manage.py migrate` in the pre-deploy step instead of failing for users.
 - **A guide contains no digit, no limit, no rate, no date, no plan or price word, and no tax or legal conclusion** (`apps/help/constants.py` has the one list of banned phrases; a test scans every guide and every sentence Help writes). Guides describe what works today. Quoted words are in straight double quotes and equal `ui_labels` exactly; the guide never invents a menu path.
-- **Building the feature behind a sidebar item means rewriting `not-available-yet`** in the same change (today it names "Skill Analyzer").
+- **No sidebar item without a real route, and no Help guide for a feature that is not built** (Prompt 27, 13 November 2026). `AppShell.nav.test.jsx` reads `AppShell.jsx` and `App.jsx` and fails if a `NAV_GROUPS` item points at a path no `<Route>` handles, or if two items share an icon (the collapsed sidebar shows icons only). The unbuilt Skill Analyzer item and its `not-available-yet` guide were removed under this rule; a feature is added to the sidebar and to Help in the change that builds it.
 - Links in a guide come from `apps/help/links.py` (`LINK_TARGETS`), never from the model; the model's text may contain no link, path or address (the guard rejects it) and the guides shown beside an answer are the ones it cited, intersected with the ones it was sent.
 - A question a person types may hold a name, a CNIC, a phone number or an account number. It is redacted before it leaves the server, and neither it nor any model text is written to a log line, an audit row, a cache value or `AiCallLog` (a canary test asserts it). The audit rows `help_question` and `help_answer_rated` carry ids, counts and words from our own vocabularies only.
 - **A keyword is a word a person would type for THAT guide.** A keyword that is also a synonym of another guide's subject word pulls that guide into the wrong results: `record-an-expense` once carried `internet bill`, and `bill` is a synonym of `invoice`, so a search for "invoice" ranked the expenses guide second (Prompt 25). Check a new keyword against `SYNONYM_GROUPS` in `apps/help/search.py`.

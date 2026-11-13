@@ -167,7 +167,7 @@ def request_password_reset(request):
         )
 
     # Confirmed reachable, not theoretical: login() refuses an unverified
-    # account, but oauth.link_or_create_user() links a Google/Facebook
+    # account, but oauth.link_or_create_user() links a Google
     # sign-in to an existing email-registered account WITHOUT flipping
     # is_email_verified, so that person holds a real session on an
     # unverified address. Mailing a reset link to an address that was
@@ -233,7 +233,7 @@ def toggle_2fa(request):
 
     if user.is_oauth_only():
         return Response(
-            {'error': 'Accounts linked via Google or Facebook manage 2FA through that provider.'},
+            {'error': 'Accounts linked via Google manage 2FA through that provider.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
     if not password:
@@ -277,7 +277,7 @@ def request_disable_2fa(request):
 
     if user.is_oauth_only():
         return Response(
-            {'error': 'Accounts linked via Google or Facebook manage 2FA through that provider.'},
+            {'error': 'Accounts linked via Google manage 2FA through that provider.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
     if not user.two_fa_enabled:
@@ -387,7 +387,7 @@ def request_email_change(request):
 
     if user.is_oauth_only():
         return Response(
-            {'error': 'Accounts linked via Google or Facebook manage email through that provider.'},
+            {'error': 'Accounts linked via Google manage email through that provider.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
 

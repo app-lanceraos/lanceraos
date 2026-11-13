@@ -9,7 +9,6 @@ import Card from '@/components/Card'
 import FormField from '@/components/FormField'
 import FosAlert from '@/components/FosAlert'
 import GoogleButton from '@/components/GoogleButton'
-import FacebookButton from '@/components/FacebookButton'
 
 export default function SecuritySection() {
   const user = useAuthStore((s) => s.user)
@@ -243,13 +242,13 @@ export default function SecuritySection() {
     // linked_providers is a list (e.g. ['google']) — a user could
     // theoretically have more than one linked, though today's UI never
     // lets them link an additional provider after signup. Falls back to
-    // the generic "Google or Facebook" wording only if this field is
+    // the generic "Google" wording only if this field is
     // ever missing, rather than showing a broken/empty message.
     const providers = user?.linked_providers || []
-    const providerNames = { google: 'Google', facebook: 'Facebook' }
+    const providerNames = { google: 'Google' }
     const providerLabel = providers.length > 0
       ? providers.map((p) => providerNames[p] || p).join(' and ')
-      : 'Google or Facebook'
+      : 'Google'
 
     return (
       <>
@@ -299,16 +298,9 @@ export default function SecuritySection() {
                     {providers.includes('google') && (
                       <GoogleButton
                         credentialOnly
+                        labelColor="var(--text-primary)"
                         disabled={delSaving}
                         onSuccess={(data) => handleDelInitiateOAuth('google', data)}
-                        onError={setDelReauthErr}
-                      />
-                    )}
-                    {providers.includes('facebook') && (
-                      <FacebookButton
-                        credentialOnly
-                        disabled={delSaving}
-                        onSuccess={(data) => handleDelInitiateOAuth('facebook', data)}
                         onError={setDelReauthErr}
                       />
                     )}
@@ -378,6 +370,10 @@ export default function SecuritySection() {
         <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border-subtle)', maxWidth: 400 }}>
           <p style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
             Don't know your current password?
+          </p>
+          <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.55 }}>
+            We'll email you a link to set a new one. Using the link signs you out of every device,
+            including this one — you'll sign back in with your new password.
           </p>
           {resetLinkMsg.message && (
             <div style={{ marginBottom: 14 }}>

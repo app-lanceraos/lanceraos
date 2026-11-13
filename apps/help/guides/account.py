@@ -7,10 +7,10 @@ TODAY = '2026-11-11'
 GUIDES = (
     guide(
         'sign-up-and-verify-your-email', 'Sign up and confirm your email', 'account',
-        'Create an account with your email or with Google or Facebook, and confirm your email address.',
-        ['register', 'create account', 'signup', 'verify', 'verification email', 'confirm email', 'google', 'facebook', 'login', 'sign in', 'log in', 'spam'],
+        'Create an account with your email or with Google, and confirm your email address.',
+        ['register', 'create account', 'signup', 'verify', 'verification email', 'confirm email', 'google', 'login', 'sign in', 'log in', 'spam'],
         [
-            p('You can sign up with your email, or continue with Google or Facebook. With your email, you go through a short form: your name and date of birth, then your email address and username, then a password.'),
+            p('You can sign up with your email, or continue with Google. With your email, you go through a short form: your name and date of birth, then your email address and username, then a password.'),
             p('Before the form is sent, LanceraOS asks you to confirm the email address, so a typing mistake does not send your link to the wrong place. Choose "Edit email" to fix it, or "Yes, that\'s correct" to go on.'),
             steps(
                 'Open the sign-up page and fill in the three parts of the form.',
@@ -26,13 +26,13 @@ GUIDES = (
         checked_on=TODAY),
     guide(
         'reset-or-change-your-password', 'Reset or change your password', 'account',
-        'Reset a forgotten password, change your password while signed in, or add a password to a Google or Facebook account.',
+        'Reset a forgotten password, change your password while signed in, or add a password to a Google account.',
         ['forgot password', 'reset link', 'new password', 'lost password', 'cannot sign in', 'locked out', 'add password', 'google account', 'sign in', 'log in'],
         [
             p('If you cannot sign in, open the sign-in page and choose the forgotten password link. Enter your email address and LanceraOS sends you a reset link. Open it and choose a new password.'),
             p('If you are already signed in, open Settings, then "Security", and use "Change Password". You enter your current password and the new one twice. Changing it signs you out of your other devices.'),
             p('If you are signed in but do not know your current password, press "Email Me a Reset Link" in the same card. The link signs you out of every device, including this one.'),
-            note('If your account was made with Google or Facebook, it has no password yet. In "Security", press "Add a Password" and follow the link in the email. Adding a password also lets you turn on two-factor sign-in.'),
+            note('If your account was made with Google, it has no password yet. In "Security", press "Add a Password" and follow the link in the email. Adding a password also lets you turn on two-factor sign-in.'),
             link('Open Security settings', '/settings?tab=security'),
         ],
         related=['two-factor-sign-in', 'your-devices-and-sessions', 'sign-up-and-verify-your-email'],
@@ -52,7 +52,7 @@ GUIDES = (
                 'Enter the code and press "Verify and Disable".',
             ),
             p('When you sign in, the code page has a box called "Do not ask again on this device". Tick it on a device you trust and LanceraOS skips the code there.'),
-            note('Two-factor sign-in needs a password. If your account uses Google or Facebook only, add a password first.'),
+            note('Two-factor sign-in needs a password. If your account uses Google only, add a password first.'),
             link('Open Security settings', '/settings?tab=security'),
         ],
         related=['reset-or-change-your-password', 'your-devices-and-sessions'],
@@ -84,7 +84,7 @@ GUIDES = (
             p('Open Settings and stay on "Account". The "Personal Information" card holds your first name, last name, username and date of birth. Change them and press the save button.'),
             p('Your email is in its own card, "Email Address". Press "Change Email Address". LanceraOS sends a link to your current email first. On the page that opens you type your new address and your password, and then a link goes to the new inbox. Press it to finish the change.'),
             note('You can change your email only once in a while. The Account page tells you how long you wait. To stop a change that is waiting, press "Cancel Email Change".'),
-            note('The email card is not shown for an account that uses Google or Facebook only and has no password.'),
+            note('The email card is not shown for an account that uses Google only and has no password.'),
             link('Open Account settings', '/settings?tab=account'),
         ],
         related=['reset-or-change-your-password', 'delete-your-account'],
@@ -103,7 +103,7 @@ GUIDES = (
                 'Read the review page. It lists what will be deleted and says you will be signed out of every device.',
                 'Press "Yes, Delete My Account" to schedule the deletion, or "Cancel — Keep My Account" to stop.',
             ),
-            note('If your account uses Google or Facebook only, you confirm with that sign-in instead of a password.'),
+            note('If your account uses Google only, you confirm with that sign-in instead of a password.'),
             note('When you sign in again during the waiting period, LanceraOS asks if you want to restore your account.'),
         ],
         related=['reset-or-change-your-password', 'change-your-email-or-username'],

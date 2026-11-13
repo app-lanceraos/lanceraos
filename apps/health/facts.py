@@ -99,7 +99,9 @@ def gather(user, months, now=None) -> Facts:
         payers=tuple(payers),
         unnamed_total=unnamed,
         has_ntn=bool(profile.ntn_encrypted),      # whether one is saved, never its digits (decision H15)
-        has_pseb=bool(profile.pseb_registered),
+        # A saved PSEB registration NUMBER (pseb_hash), the same fact apps.tax uses for the 0.25% rate: never the self-declared
+        # `pseb_registered` checkbox, which can be ticked with no number and made Health and Tax disagree (Prompt 27, R8).
+        has_pseb=bool(profile.pseb_hash),
         recent_payment=any(recent_from <= row.on_date <= now for row in income_rows),
         recent_expense=any(recent_from <= row.on_date <= now for row in expense_rows),
         ever_paid=bool(income_rows),

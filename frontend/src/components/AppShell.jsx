@@ -1,14 +1,13 @@
 // src/components/AppShell.jsx
 //
-// Full v1-faithful port. Every nav group/item from v1 is included, even
-// for modules that don't exist yet (Dashboard, Invoices, Clients,
-// Payments, Expenses, P&L, Tax, Proposals, Contracts, Health, Income
-// Certificate, Skill Analyzer) — this is a deliberate choice, not an
-// oversight: clicking one of these today lands on a route App.jsx
-// doesn't recognize, which redirects harmlessly back to /profile (no
-// crash, no dead page) rather than a normal a click. As each module
-// gets built, its route in App.jsx starts resolving and the same nav
-// item becomes real with no further change needed here.
+// The app shell: sidebar, header, notification bell, profile menu.
+//
+// Every sidebar item has a real route in App.jsx. A sidebar item without a
+// route is not allowed (Prompt 27, DECISIONS.md R2): the drift test in
+// AppShell.test.jsx reads this file and App.jsx and fails if a NAV_GROUPS `to`
+// has no matching <Route path>. The Skill Analyzer item, the last one that had
+// no route, was removed in Prompt 27. Sidebar icons are also unique per item
+// (same test), because the collapsed rail shows icons only.
 //
 // The notification bell + panel UI is backed by core/notifications.py
 // (GET/POST /api/notifications/...). A fetch failure still falls back
@@ -32,7 +31,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import ReactDOM from 'react-dom'
 import {
   Bell, CheckCircle2, CheckCheck, CheckSquare, Clock, CreditCard, DollarSign,
-  FileText, HelpCircle, LayoutGrid, LogOut, Mail, MoreVertical, RefreshCw,
+  FileSignature, FileText, HelpCircle, Landmark, LayoutGrid, LogOut, Mail, MoreVertical, Presentation, RefreshCw,
   Receipt, Settings as SettingsIcon, Square, Trash2, TrendingUp, User as UserIcon,
   Users, Wallet, AlertTriangle, Eye,
 } from 'lucide-react'
@@ -69,7 +68,6 @@ const PAGE_TITLES = {
   '/profile': 'Profile',
   '/settings': 'Settings',
   '/income-certificate': 'Income Statement',
-  '/skill-gap': 'Skill Analyzer',
 }
 
 // PAGE_TITLES is an exact-pathname lookup, which cannot title a route with a
@@ -87,8 +85,7 @@ function pageTitleFor(pathname) {
   return 'LanceraOS'
 }
 
-// ── Nav groups — matches v1's structure exactly. Items for modules
-// that don't exist yet will 404-redirect harmlessly until built. ──
+// ── Nav groups. Every item must have a real route in App.jsx (enforced by a test). ──
 // Footer Refinement pass (15 September 2026) — full NAV_GROUPS end:true
 // audit, entry by entry, against the REAL routes App.jsx defines today
 // (confirmed by reading App.jsx directly, not assumed from this list):
@@ -116,8 +113,6 @@ function pageTitleFor(pathname) {
 //                  exact match is correct. Re-audit one's end value if it
 //                  ever gains a sub-page. /tax is end:false (its views are
 //                  query parameters on the one path).
-//   /skill-gap   — end:true, and the one item with no route in App.jsx yet
-//                  (it falls through to the catch-all redirect).
 const NAV_GROUPS = [
   {
     label: 'Menu',
@@ -133,14 +128,14 @@ const NAV_GROUPS = [
       { to: '/payments', label: 'Payments', tip: 'Payments', Icon: CreditCard, end: true },
       { to: '/expenses', label: 'Expenses', tip: 'Expenses', Icon: DollarSign, end: true },
       { to: '/pnl', label: 'P&L', tip: 'Profit & Loss', Icon: TrendingUp, end: true },
-      { to: '/tax', label: 'Tax', tip: 'Tax', Icon: Receipt, end: false },
+      { to: '/tax', label: 'Tax', tip: 'Tax', Icon: Landmark, end: false },
     ],
   },
   {
     label: 'Docs',
     items: [
-      { to: '/proposals', label: 'Proposals', tip: 'Proposals', Icon: FileText, end: false },
-      { to: '/contracts', label: 'Contracts', tip: 'Contracts', Icon: FileText, end: false },
+      { to: '/proposals', label: 'Proposals', tip: 'Proposals', Icon: Presentation, end: false },
+      { to: '/contracts', label: 'Contracts', tip: 'Contracts', Icon: FileSignature, end: false },
     ],
   },
   {
@@ -148,7 +143,6 @@ const NAV_GROUPS = [
     items: [
       { to: '/health', label: 'Health Score', tip: 'Health Score', Icon: CheckCircle2, end: true },
       { to: '/income-certificate', label: 'Income Statement', tip: 'Income Statement', Icon: Receipt, end: true },
-      { to: '/skill-gap', label: 'Skill Analyzer', tip: 'Skill Analyzer', Icon: TrendingUp, end: true },
     ],
   },
 ]

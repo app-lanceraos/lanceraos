@@ -9,7 +9,7 @@
   "top_tip": {
     "dimension": "tax_compliance",
     "kind": "improve",
-    "text": "If you are registered with PSEB, mark it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work. This is worth about 6 points of your score.",
+    "text": "If you have a PSEB registration number, save it in Settings, then Tax & PSEB. PSEB registration is for people who export IT services, so it may not apply to your work. This is worth about 6 points of your score.",
     "gain": 6
   }
 }

@@ -1,6 +1,6 @@
 {
   "answers_enabled": false,
-  "library_version": "c88b2796dcc6",
+  "library_version": "cfdeb924d63b",
   "popular": [
     {
       "slug": "create-an-invoice",
@@ -57,11 +57,6 @@
           "slug": "find-your-way-around",
           "summary": "Where things are: the sidebar, the bell, your profile menu and the light and dark theme.",
           "title": "Find your way around"
-        },
-        {
-          "slug": "not-available-yet",
-          "summary": "Some items in the sidebar are shown before they work, and this guide says which.",
-          "title": "Sidebar items that are not available yet"
         }
       ],
       "slug": "getting-started",
@@ -72,12 +67,12 @@
       "guides": [
         {
           "slug": "sign-up-and-verify-your-email",
-          "summary": "Create an account with your email or with Google or Facebook, and confirm your email address.",
+          "summary": "Create an account with your email or with Google, and confirm your email address.",
           "title": "Sign up and confirm your email"
         },
         {
           "slug": "reset-or-change-your-password",
-          "summary": "Reset a forgotten password, change your password while signed in, or add a password to a Google or Facebook account.",
+          "summary": "Reset a forgotten password, change your password while signed in, or add a password to a Google account.",
           "title": "Reset or change your password"
         },
         {

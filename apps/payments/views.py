@@ -6,7 +6,6 @@ The Payments API (the income ledger). Function views only, every query scoped to
 Linking a payment to an invoice needs both models, so it lives in apps.invoices
 (views_payment_link.py), never here: apps.payments imports nothing from apps.invoices.
 """
-import logging
 
 from django.db import transaction
 from django.db.models import DecimalField, ExpressionWrapper, F, Q
@@ -27,8 +26,6 @@ from .models import Payment
 from .selectors import payments_queryset, serialize_payment
 from .serializers import PaymentSerializer, PaymentWriteSerializer
 from .validators import validate_currency_code
-
-logger = logging.getLogger(__name__)
 
 # Reads are the generous tier.
 READS_PER_HOUR = 240

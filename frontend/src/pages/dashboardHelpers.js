@@ -38,26 +38,45 @@ export function longDate(date) {
 // ── Dates the API sends as plain calendar dates ("2026-11-04"): never run through `new Date()` ──
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
+// A formatting helper never prints "undefined" (Prompt 27, B7): a month outside 01-12 or a day outside 01-31 is not a date
+// we can write, so the date helpers answer a dash and the month helpers hand the input back.
+function monthName(monthDigits) {
+  const month = Number(monthDigits)
+  return month >= 1 && month <= 12 ? MONTHS[month - 1] : null
+}
+
+function dayOfMonth(dayDigits) {
+  const day = Number(dayDigits)
+  return day >= 1 && day <= 31 ? day : null
+}
+
 export function formatIsoDate(iso) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '')
   if (!match) return '—'
-  return `${Number(match[3])} ${MONTHS[Number(match[2]) - 1]} ${match[1]}`
+  const month = monthName(match[2])
+  const day = dayOfMonth(match[3])
+  if (!month || !day) return '—'
+  return `${day} ${month} ${match[1]}`
 }
 
 export function formatIsoDayMonth(iso) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '')
   if (!match) return '—'
-  return `${Number(match[3])} ${MONTHS[Number(match[2]) - 1]}`
+  const month = monthName(match[2])
+  const day = dayOfMonth(match[3])
+  if (!month || !day) return '—'
+  return `${day} ${month}`
 }
 
 export function monthShort(key) {
   const match = /^(\d{4})-(\d{2})$/.exec(key || '')
-  return match ? MONTHS[Number(match[2]) - 1] : key
+  return (match && monthName(match[2])) || key
 }
 
 export function monthLong(key) {
   const match = /^(\d{4})-(\d{2})$/.exec(key || '')
-  return match ? `${MONTHS[Number(match[2]) - 1]} ${match[1]}` : key
+  const month = match && monthName(match[2])
+  return month ? `${month} ${match[1]}` : key
 }
 
 // ── Visually hidden (theme.css has no sr-only class) ──────────────────────────────────────────
