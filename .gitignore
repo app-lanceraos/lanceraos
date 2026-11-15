@@ -70,7 +70,6 @@ coverage.xml
 # MyPy
 .mypy_cache/
 
-v1-reference/
 DOCS
 
 # Backend test suites — untracked deliberately to stay under claude.ai's
@@ -84,11 +83,5 @@ core/tests/
 frontend/**/*.test.jsx
 frontend/**/*.test.js
 
-
-qa_invoice_pdfs/
-qa_invoices/
 # Proposals AI evaluation output (generated text from invented cases; never committed)
 eval_runs/
-
-archive/
-admin-frontend/
