@@ -88,7 +88,11 @@ otherwise have no acceptance mechanism at all), set during onboarding instead, g
 same checkbox pattern as `needsDob`. `terms_version` records *which* version of the Terms/Privacy
 Policy was agreed to (see `apps/users/constants.py`'s `CURRENT_TERMS_VERSION`) — existing users are
 never retroactively required to re-accept when the version bumps, but this preserves a real record
-of what they actually agreed to at the time, which matters if terms are ever disputed.
+of what they actually agreed to at the time, which matters if terms are ever disputed. Since 15 November 2026
+it is the ISO date `2026-11-15`, the single version of the Terms of Service AND the Privacy Policy (the same
+string shown on both pages; a test ties them together), bumped whenever a right or a duty in either changes.
+`date_of_birth` is used only to check the minimum age, which is **18** (raised from 16 on 15 November 2026;
+`MIN_AGE_YEARS` in `apps/users/serializers.py`); existing rows were not touched.
 
 **Key methods**: `is_account_locked()`, `increment_failed_attempts()` (tiered lockout — 5 attempts
 → 15min, 11 → 60min, 16+ → 24h), `is_oauth_only()`, `anonymize()` (strips all PII on both `User`

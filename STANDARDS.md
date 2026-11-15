@@ -275,6 +275,33 @@ of divergence — don't rely on this document or chat history being available to
 `core/email.py`'s docstring explains why it doesn't use Django's mail backend even though that's the
 "obvious" Django way to send email.
 
+## Legal pages stay true (15 November 2026)
+
+The Privacy Policy (`frontend/src/pages/PrivacyPolicy.jsx`) and the Terms of Service (`TermsOfService.jsx`) make factual statements
+about the product. A change that makes one of them false is not finished until the page is updated, in the SAME change:
+
+- a cookie (its name, lifetime or whether page scripts can read it), a browser-storage key of consequence;
+- a third-party service or script the product sends personal data to, or loads in a page (a new backend host, a new `<script>`,
+  `<link>` or font in `frontend/index.html`, a new provider for email, storage, hosting, sign-in or AI);
+- a stored personal field, or what `User.anonymize()` clears or keeps;
+- an AI data flow (what a prompt may contain, which feature sends it, whether a feature is on by default);
+- a log (what `AuditLog`, `ApiRequestLog` or `AiCallLog` keeps) or a retention rule (a task that deletes, a backup count);
+- the minimum age (`MIN_AGE_YEARS`), the sign-in session cap, a plan or a price.
+
+Wording is changed in the page as a legal text, not paraphrased: a factual correction is the smallest edit that makes the sentence
+true, and the new sentence is read by a lawyer before public launch. **When a right or a duty changes** (a new thing we may do with
+data, a new thing the user must not do, a retention promise, a liability or notice term), bump `CURRENT_TERMS_VERSION`
+(`apps/users/constants.py`, an ISO date) and the `version` and `lastUpdated` props of BOTH pages together. A fix to a fact that
+changes no right or duty (a lifetime that was misquoted) does not need a bump.
+
+Drift tests make this checkable, and a failure of one is the signal this section was skipped:
+`frontend/src/pages/__tests__/legalPagesDrift.test.js` reads the cookie modules, `token_service.py`, `MAX_SESSIONS_PER_USER`,
+`MIN_AGE_YEARS`, `CURRENT_TERMS_VERSION`, `frontend/index.html`, the outside hosts in `core/ai.py`, `core/email.py`,
+`apps/users/oauth/google.py` and `apps/payments/tasks.py`, the beat schedule and `anonymize()` from disk and compares them with the
+pages; `legalPages.test.jsx` checks the headings, contents anchors, mailboxes and absence of draft markers;
+`apps/users/tests/test_terms_version.py` ties the constant to the two pages. A new host that receives no personal data (the
+exchange-rate source is the example) is listed as exempt in the drift test with the reason, never silently ignored.
+
 ---
 
 ## Frontend conventions

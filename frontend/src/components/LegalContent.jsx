@@ -8,10 +8,16 @@
 // and later from inside the app (e.g. a future Settings link), unlike
 // the auth pages themselves, which only ever appear during the sign-in
 // moment and intentionally never change appearance.
+//
+// This is a known, deliberate difference from DESIGN.md Section 10, which
+// gives no-login PUBLIC token pages (a client's proposal, contract or
+// invoice link) one fixed light palette. The legal pages are public
+// routes too, but they are not a token credential a client opens once;
+// they are reference text people return to, and follow the theme.
 import { Link } from 'react-router-dom'
 import { LogoSVG, WordmarkSVG } from './Brand'
 
-export function LegalPageShell({ title, lastUpdated, children }) {
+export function LegalPageShell({ title, lastUpdated, version, related, children }) {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-page)', display: 'flex', justifyContent: 'center', padding: '48px 20px' }}>
       <div style={{ width: '100%', maxWidth: 720 }}>
@@ -23,9 +29,11 @@ export function LegalPageShell({ title, lastUpdated, children }) {
         <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px' }}>
           {title}
         </h1>
-        {lastUpdated && (
+        {(lastUpdated || version) && (
           <p style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', margin: '0 0 32px' }}>
-            Last updated: {lastUpdated}
+            {lastUpdated && <span>Last updated: {lastUpdated}</span>}
+            {lastUpdated && version && ' · '}
+            {version && <span>Version {version}</span>}
           </p>
         )}
 
@@ -37,33 +45,49 @@ export function LegalPageShell({ title, lastUpdated, children }) {
           <Link to="/login" style={{ color: 'var(--accent)', fontWeight: 600 }}>Back to Sign In</Link>
           {' · '}
           <Link to="/register" style={{ color: 'var(--accent)', fontWeight: 600 }}>Back to Sign Up</Link>
+          {related && (
+            <>
+              {' · '}
+              <Link to={related.to} style={{ color: 'var(--accent)', fontWeight: 600 }}>{related.label}</Link>
+            </>
+          )}
         </p>
       </div>
     </div>
   )
 }
 
-export function DraftNotice({ children }) {
+// A table of contents: one link per section, each pointing at the id the matching <Section> carries.
+export function LegalContents({ items }) {
   return (
-    <div style={{
-      background: 'var(--warning-bg, rgba(251,191,36,0.08))',
-      border: '1px solid var(--warning-border, rgba(251,191,36,0.25))',
-      borderRadius: 10, padding: '14px 16px', marginBottom: 32,
-      fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6,
-    }}>
-      {children}
-    </div>
+    <nav aria-label="Contents" style={{ marginBottom: 32 }}>
+      <ol style={{ listStyle: 'none', margin: 0, padding: 0, fontSize: '0.9rem' }}>
+        {items.map((item) => (
+          <li key={item.id} style={{ marginBottom: 4 }}>
+            <a href={`#${item.id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>{item.title}</a>
+          </li>
+        ))}
+      </ol>
+    </nav>
   )
 }
 
-export function Section({ title, children }) {
+export function Section({ id, title, children }) {
   return (
     <section style={{ marginBottom: 28 }}>
-      <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 10px' }}>
+      <h2 id={id} style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 10px', scrollMarginTop: 24 }}>
         {title}
       </h2>
       {children}
     </section>
+  )
+}
+
+export function SubHeading({ children }) {
+  return (
+    <h3 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', margin: '18px 0 8px' }}>
+      {children}
+    </h3>
   )
 }
 
@@ -79,11 +103,9 @@ export function UL({ items }) {
   )
 }
 
-export function Needs({ children }) {
+export function MailLink({ address }) {
   return (
-    <span style={{ background: 'rgba(251,191,36,0.15)', color: '#c98a0a', padding: '1px 6px', borderRadius: 4, fontSize: '0.85em', fontWeight: 600 }}>
-      [NEEDS: {children}]
-    </span>
+    <a href={`mailto:${address}`} style={{ color: 'var(--accent)', fontWeight: 600 }}>{address}</a>
   )
 }
 
@@ -94,7 +116,7 @@ export function SimpleTable({ headers, rows }) {
         <thead>
           <tr>
             {headers.map((h, i) => (
-              <th key={i} style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '2px solid var(--border-subtle)', color: 'var(--text-primary)', fontWeight: 700 }}>
+              <th key={i} scope="col" style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '2px solid var(--border-subtle)', color: 'var(--text-primary)', fontWeight: 700 }}>
                 {h}
               </th>
             ))}

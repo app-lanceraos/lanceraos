@@ -784,7 +784,10 @@ Handles all authentication and user account management.
 
 Registration: 3-step wizard (name + birthdate -> email + username ->
 password), submitted as a single API call after the wizard completes.
-Age must be >= 16. Email verification required before login.
+Age must be >= 18 (`MIN_AGE_YEARS` in apps/users/serializers.py, raised from 16 on
+15 November 2026: 18 is the age of majority in Pakistan and a minor's contract is void;
+checked at registration, in Settings > Account and at Google onboarding, where an
+under-18 account is closed and anonymized). Email verification required before login.
 check-availability suggests a real, available alternative username
 (base+2, base+3, ... up to base+99, then a random suffix) when the
 requested one is taken or reserved, not just "not available" — the
@@ -910,6 +913,23 @@ immediately. Frontend: Settings > Security > Danger Zone initiates the
 password+OTP steps (or the OAuth-reauthentication step for an
 OAuth-only account, see above), then hands off to the standalone
 (shell-less) DeletionReview page with the resulting one-time token.
+
+Legal pages (15 November 2026): the final Privacy Policy and Terms of Service, one shared
+version string. `frontend/src/pages/PrivacyPolicy.jsx` (`/privacy`, 16 sections) and
+`TermsOfService.jsx` (`/terms`, 22 sections) render the legal texts VERBATIM through
+`components/LegalContent.jsx` (a contents block, `Section`/`SubHeading`, `MailLink`, no draft
+banner). `CURRENT_TERMS_VERSION` in `apps/users/constants.py` (`2026-11-15`, an ISO date)
+is the "Version" shown on both pages and what `User.terms_version` records at registration
+and Google onboarding; it is bumped whenever a right or a duty in either document changes.
+STANDING RULE (STANDARDS.md, "Legal pages stay true"): any change to a cookie, a third-party
+service or script, a stored personal field, an AI data flow, a log, a retention rule or the
+minimum age updates the Privacy Policy (and the Terms when a right or duty changes) in the
+SAME change. Drift tests enforce it: `frontend/src/pages/__tests__/legalPages.test.jsx`,
+`legalPagesDrift.test.js` and `apps/users/tests/test_terms_version.py`. Known gaps stated in
+the pages and in DECISIONS.md (15 November 2026): anonymization does not scrub clients,
+invoices, payments, proposals, contracts or the signature image; the audit, request and AI
+logs have no retention task; the two mailboxes (`privacy@` and `support@lanceraos.com`)
+must exist before the pages are public.
 
 Key API endpoints:
 - POST /api/auth/register/

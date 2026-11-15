@@ -44,7 +44,10 @@ PASSWORD_RULES = [
     (r'[!@#$%^&*()\-_=+\[\]{};:\'",.<>/?\\|`~]', 'one special character'),
 ]
 
-MIN_AGE_YEARS = 16
+# 18 because that is the age of majority in Pakistan and a minor's contract is void,
+# so a checkbox cannot make a younger person's agreement to the Terms mean anything
+# (raised from 16, 15 November 2026 — see DECISIONS.md and the Terms of Service, section 2).
+MIN_AGE_YEARS = 18
 
 
 def validate_password_strength(value):
@@ -346,7 +349,7 @@ class FreelancerProfileSerializer(serializers.ModelSerializer):
         # disable_custom_smtp) — never through this general-purpose
         # profile PUT. Without this, any authenticated user could
         # PUT {"onboarding_completed": true} directly, skipping the
-        # mandatory 16+ age check entirely (the only place age is
+        # mandatory minimum-age check entirely (the only place age is
         # verified for OAuth signups, which never collect a birthday
         # at registration). Still readable via GET — just not writable
         # through this serializer.

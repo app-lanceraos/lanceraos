@@ -153,7 +153,7 @@ export default function Onboarding() {
       } else {
         const age = calcAge(form.dob_year, form.dob_month, form.dob_day)
         if (age === null) e.date_of_birth = 'Enter a valid date.'
-        else if (age < 16) e.date_of_birth = 'You must be at least 16 years old to use LanceraOS.'
+        else if (age < 18) e.date_of_birth = 'You must be at least 18 years old to use LanceraOS.'
         else if (age > 120) e.date_of_birth = 'Enter a valid date of birth.'
       }
     }
@@ -200,7 +200,7 @@ export default function Onboarding() {
     } catch (err) {
       const data = err.response?.data
 
-      // The account was under 16 and has been anonymized server-side —
+      // The account was under 18 and has been anonymized server-side —
       // there is no session left to return to, only a clear explanation
       // and a path back to (a fresh) login.
       if (err.response?.status === 403 && data?.account_closed) {

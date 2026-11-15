@@ -206,7 +206,7 @@ export default function Register() {
     } else {
       const age = calcAge(form.dob_year, form.dob_month, form.dob_day)
       if (age === null) e.date_of_birth = 'Enter a valid date.'
-      else if (age < 16) e.date_of_birth = 'You must be at least 16 years old.'
+      else if (age < 18) e.date_of_birth = 'You must be at least 18 years old.'
       else if (age > 120) e.date_of_birth = 'Enter a valid date of birth.'
     }
     return e
